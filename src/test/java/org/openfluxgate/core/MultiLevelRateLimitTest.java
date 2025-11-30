@@ -30,7 +30,6 @@ class MultiLevelRateLimitTest {
 
     /**
      * Approach 1: Check two RuleSets sequentially
-     *
      * Pros: Independent management of each limit
      * Cons: Requires two checks
      */
@@ -130,7 +129,6 @@ class MultiLevelRateLimitTest {
 
     /**
      * Approach 2: Using a Helper function to check both limits at once
-     *
      * More convenient for production use
      */
     @Test
@@ -190,7 +188,6 @@ class MultiLevelRateLimitTest {
 
     /**
      * Approach 3: Real-world Production Scenario
-     *
      * Using 100 req/min IP limit and 10,000 req/10min service limit in practice
      */
     @Test
@@ -274,7 +271,6 @@ class MultiLevelRateLimitTest {
 
     /**
      * Multi-Level Rate Limit Checker
-     *
      * Checks multiple levels of rate limits sequentially
      */
     static class MultiLevelRateLimitChecker {

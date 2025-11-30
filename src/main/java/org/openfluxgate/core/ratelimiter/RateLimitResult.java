@@ -2,9 +2,6 @@ package org.openfluxgate.core.ratelimiter;
 
 import org.openfluxgate.core.config.RateLimitRule;
 
-import java.util.Objects;
-
-import org.openfluxgate.core.context.RequestContext;
 import org.openfluxgate.core.key.RateLimitKey;
 
 /**

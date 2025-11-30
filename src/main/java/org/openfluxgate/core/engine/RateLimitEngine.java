@@ -11,7 +11,6 @@ import java.util.Optional;
 
 /**
  * High-level entry point for rate limiting.
- *
  * Responsibilities:
  *  - Resolve {@link RateLimitRuleSet} by id via {@link RateLimitRuleSetProvider}
  *  - Delegate actual token consumption to {@link RateLimiter}
