@@ -59,11 +59,11 @@ This is the **recommended approach** for creating custom rate limiter implementa
 ```java
 package com.yourapp.ratelimit;
 
-import org.openfluxgate.core.ratelimiter.RateLimiter;
-import org.openfluxgate.core.ratelimiter.RateLimitResult;
-import org.openfluxgate.core.config.RateLimitRule;
-import org.openfluxgate.core.context.RequestContext;
-import org.openfluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.ratelimiter.RateLimiter;
+import org.fluxgate.core.ratelimiter.RateLimitResult;
+import org.fluxgate.core.config.RateLimitRule;
+import org.fluxgate.core.context.RequestContext;
+import org.fluxgate.core.key.RateLimitKey;
 import org.springframework.data.redis.core.RedisTemplate;
 
 import java.time.Duration;
@@ -86,7 +86,7 @@ public class RedisRateLimiter implements RateLimiter {
 
     @Override
     public RateLimitResult tryConsume(RequestContext context,
-                                      org.openfluxgate.core.ratelimiter.RateLimitRuleSet ruleSet,
+                                      org.fluxgate.core.ratelimiter.RateLimitRuleSet ruleSet,
                                       long permits) {
 
         Objects.requireNonNull(context, "context must not be null");
@@ -119,7 +119,7 @@ public class RedisRateLimiter implements RateLimiter {
             // Allowed: decrement tokens
             Long remaining = redisTemplate.opsForValue().decrement(redisKey, permits);
 
-            return org.openfluxgate.core.ratelimiter.RateLimitResult.allowed(
+            return org.fluxgate.core.ratelimiter.RateLimitResult.allowed(
                     logicalKey,
                     rule,
                     remaining,
@@ -129,7 +129,7 @@ public class RedisRateLimiter implements RateLimiter {
             // Rejected: not enough tokens
             Long ttl = redisTemplate.getExpire(redisKey, TimeUnit.NANOSECONDS);
 
-            return org.openfluxgate.core.ratelimiter.RateLimitResult.rejected(
+            return org.fluxgate.core.ratelimiter.RateLimitResult.rejected(
                     logicalKey,
                     rule,
                     ttl != null ? ttl : 0L
@@ -148,13 +148,13 @@ public class RedisRateLimiter implements RateLimiter {
 ```java
 package com.yourapp.ratelimit;
 
-import org.openfluxgate.core.ratelimiter.RateLimiter;
-import org.openfluxgate.core.ratelimiter.RateLimitResult;
-org.openfluxgate.core.ratelimiter.RateLimitRuleSet;
-import org.openfluxgate.core.config.RateLimitBand;
-import org.openfluxgate.core.config.RateLimitRule;
-import org.openfluxgate.core.context.RequestContext;
-import org.openfluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.ratelimiter.RateLimiter;
+import org.fluxgate.core.ratelimiter.RateLimitResult;
+org.fluxgate.core.ratelimiter.RateLimitRuleSet;
+import org.fluxgate.core.config.RateLimitBand;
+import org.fluxgate.core.config.RateLimitRule;
+import org.fluxgate.core.context.RequestContext;
+import org.fluxgate.core.key.RateLimitKey;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 
@@ -175,7 +175,7 @@ public class LuaScriptRedisRateLimiter implements RateLimiter {
     }
 
     @Override
-    public org.openfluxgate.core.ratelimiter.RateLimitResult tryConsume(RequestContext context,
+    public org.fluxgate.core.ratelimiter.RateLimitResult tryConsume(RequestContext context,
                                                                         RateLimitRuleSet ruleSet,
                                                                         long permits) {
 
@@ -258,10 +258,10 @@ public class LuaScriptRedisRateLimiter implements RateLimiter {
 ```java
 package com.yourapp.ratelimit;
 
-import org.openfluxgate.core.ratelimiter.RateLimitRuleSet;
-import org.openfluxgate.core.ratelimiter.RateLimiter;
-import org.openfluxgate.core.ratelimiter.RateLimitResult;
-import org.openfluxgate.core.context.RequestContext;
+import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
+import org.fluxgate.core.ratelimiter.RateLimiter;
+import org.fluxgate.core.ratelimiter.RateLimitResult;
+import org.fluxgate.core.context.RequestContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -277,7 +277,7 @@ public class AuditingRateLimiter implements RateLimiter {
     private final RateLimiter delegate;
     private final AuditService auditService;
 
-    public AuditingRateLimiter(org.openfluxgate.core.ratelimiter.RateLimiter delegate, AuditService auditService) {
+    public AuditingRateLimiter(org.fluxgate.core.ratelimiter.RateLimiter delegate, AuditService auditService) {
         this.delegate = Objects.requireNonNull(delegate);
         this.auditService = Objects.requireNonNull(auditService);
     }
@@ -331,8 +331,8 @@ RateLimiter auditingRateLimiter = new AuditingRateLimiter(baseRateLimiter, audit
 ```java
 package com.yourapp.ratelimit;
 
-import org.openfluxgate.core.ratelimiter.RateLimiter;
-import org.openfluxgate.core.context.RequestContext;
+import org.fluxgate.core.ratelimiter.RateLimiter;
+import org.fluxgate.core.context.RequestContext;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -343,7 +343,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * If the underlying storage (Redis, etc.) fails repeatedly,
  * temporarily fail-open to prevent cascading failures.
  */
-public class CircuitBreakerRateLimiter implements org.openfluxgate.core.ratelimiter.RateLimiter {
+public class CircuitBreakerRateLimiter implements org.fluxgate.core.ratelimiter.RateLimiter {
 
     private final RateLimiter delegate;
     private final int failureThreshold;
@@ -367,15 +367,15 @@ public class CircuitBreakerRateLimiter implements org.openfluxgate.core.ratelimi
     }
 
     @Override
-    public org.openfluxgate.core.ratelimiter.RateLimitResult tryConsume(RequestContext context,
-                                                                        org.openfluxgate.core.ratelimiter.RateLimitRuleSet ruleSet,
+    public org.fluxgate.core.ratelimiter.RateLimitResult tryConsume(RequestContext context,
+                                                                        org.fluxgate.core.ratelimiter.RateLimitRuleSet ruleSet,
                                                                         long permits) {
 
         State state = getState();
 
         if (state == State.OPEN) {
             // Circuit is open: fail-open (allow request)
-            return org.openfluxgate.core.ratelimiter.RateLimitResult.allowed(
+            return org.fluxgate.core.ratelimiter.RateLimitResult.allowed(
                     ruleSet.getKeyResolver().resolve(context),
                     ruleSet.getRules().get(0),
                     Long.MAX_VALUE,
@@ -384,7 +384,7 @@ public class CircuitBreakerRateLimiter implements org.openfluxgate.core.ratelimi
         }
 
         try {
-            org.openfluxgate.core.ratelimiter.RateLimitResult result = delegate.tryConsume(context, ruleSet, permits);
+            org.fluxgate.core.ratelimiter.RateLimitResult result = delegate.tryConsume(context, ruleSet, permits);
 
             // Success: reset failure count
             failureCount.set(0);
@@ -398,7 +398,7 @@ public class CircuitBreakerRateLimiter implements org.openfluxgate.core.ratelimi
 
             if (failures >= failureThreshold) {
                 // Open circuit
-                return org.openfluxgate.core.ratelimiter.RateLimitResult.allowed(
+                return org.fluxgate.core.ratelimiter.RateLimitResult.allowed(
                         ruleSet.getKeyResolver().resolve(context),
                         ruleSet.getRules().get(0),
                         Long.MAX_VALUE,
@@ -450,10 +450,10 @@ You can extend `Bucket4jRateLimiter`, but with limitations due to private fields
 ```java
 package com.yourapp.ratelimit;
 
-import org.openfluxgate.core.ratelimiter.RateLimitResult;
-import org.openfluxgate.core.ratelimiter.RateLimitRuleSet;
-import org.openfluxgate.core.ratelimiter.impl.bucket4j.Bucket4jRateLimiter;
-import org.openfluxgate.core.context.RequestContext;
+import org.fluxgate.core.ratelimiter.RateLimitResult;
+import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
+import org.fluxgate.core.ratelimiter.impl.bucket4j.Bucket4jRateLimiter;
+import org.fluxgate.core.context.RequestContext;
 
 /**
  * Extended RateLimiter with IP whitelist support
@@ -494,14 +494,14 @@ package com.yourapp.ratelimit;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
-import org.openfluxgate.core.ratelimiter.RateLimitResult;
-import org.openfluxgate.core.ratelimiter.RateLimitRuleSet;
-import org.openfluxgate.core.context.RequestContext;
+import org.fluxgate.core.ratelimiter.RateLimitResult;
+import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
+import org.fluxgate.core.context.RequestContext;
 
 /**
  * RateLimiter with Micrometer metrics
  */
-public class MetricsRateLimiter extends org.openfluxgate.core.ratelimiter.impl.bucket4j.Bucket4jRateLimiter {
+public class MetricsRateLimiter extends org.fluxgate.core.ratelimiter.impl.bucket4j.Bucket4jRateLimiter {
 
     private final MeterRegistry meterRegistry;
 

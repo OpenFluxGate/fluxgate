@@ -1,15 +1,15 @@
-# OpenFluxGate Core 🚀
+# FluxGate Core 🚀
 
 [![Java Version](https://img.shields.io/badge/Java-21-orange.svg)](https://openjdk.java.net/)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Bucket4j](https://img.shields.io/badge/Bucket4j-8.15.0-purple.svg)](https://github.com/bucket4j/bucket4j)
 
-A **framework-agnostic**, **storage-agnostic** rate limiting engine for modern Java applications. Built on top of [Bucket4j](https://github.com/bucket4j/bucket4j), OpenFluxGate Core provides a clean, extensible abstraction layer for implementing sophisticated rate limiting strategies without coupling to specific HTTP frameworks or storage backends.
+A **framework-agnostic**, **storage-agnostic** rate limiting engine for modern Java applications. Built on top of [Bucket4j](https://github.com/bucket4j/bucket4j), FluxGate Core provides a clean, extensible abstraction layer for implementing sophisticated rate limiting strategies without coupling to specific HTTP frameworks or storage backends.
 
 ---
 
-## 🎯 Why OpenFluxGate Core?
+## 🎯 Why FluxGate Core?
 
 ### The Problem
 
@@ -22,7 +22,7 @@ Rate limiting is critical for protecting APIs from abuse, managing resource cons
 
 ### The Solution
 
-**OpenFluxGate Core** was created to solve these problems by providing:
+**FluxGate Core** was created to solve these problems by providing:
 
 ✅ **Pure Java Rate Limiting Engine** - No framework dependencies
 ✅ **Storage Independence** - Works with in-memory, Redis, Hazelcast, or any backend
@@ -89,8 +89,8 @@ boolean allowed = checkIpLimit(ctx) && checkServiceLimit(ctx);
 
 ```xml
 <dependency>
-    <groupId>org.openfluxgate</groupId>
-    <artifactId>openfluxgate-core</artifactId>
+    <groupId>org.fluxgate</groupId>
+    <artifactId>fluxgate-core</artifactId>
     <version>0.0.1-SNAPSHOT</version>
 </dependency>
 ```
@@ -99,13 +99,13 @@ boolean allowed = checkIpLimit(ctx) && checkServiceLimit(ctx);
 
 ```java
 
-import org.openfluxgate.core.ratelimiter.impl.bucket4j.Bucket4jRateLimiter;
-import org.openfluxgate.core.config.*;
-import org.openfluxgate.core.context.RequestContext;
-import org.openfluxgate.core.key.*;
-import org.openfluxgate.core.ratelimiter.RateLimitResult;
-import org.openfluxgate.core.ratelimiter.RateLimitRuleSet;
-import org.openfluxgate.core.ratelimiter.RateLimiter;
+import org.fluxgate.core.ratelimiter.impl.bucket4j.Bucket4jRateLimiter;
+import org.fluxgate.core.config.*;
+import org.fluxgate.core.context.RequestContext;
+import org.fluxgate.core.key.*;
+import org.fluxgate.core.ratelimiter.RateLimitResult;
+import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
+import org.fluxgate.core.ratelimiter.RateLimiter;
 
 import java.time.Duration;
 import java.util.List;
@@ -171,7 +171,7 @@ if(result.
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   OpenFluxGate Core                         │
+│                   FluxGate Core                         │
 │  ┌──────────────┐  ┌──────────────┐  ┌─────────────────┐  │
 │  │ RateLimiter  │  │  RuleSet     │  │  KeyResolver    │  │
 │  │ (Interface)  │→ │  (Config)    │→ │  (Strategy)     │  │
@@ -389,9 +389,9 @@ boolean allowed = checkGlobalLimit(ctx) && checkIpLimit(ctx);
 
 ---
 
-## 🛠️ Extending OpenFluxGate
+## 🛠️ Extending FluxGate
 
-OpenFluxGate Core is designed to be extended for custom implementations.
+FluxGate Core is designed to be extended for custom implementations.
 
 ### Create Custom RateLimiter Implementations
 
@@ -507,8 +507,8 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ```bash
 # Clone repository
-git clone https://github.com/openfluxgate/openfluxgate-core.git
-cd openfluxgate-core
+git clone https://github.com/fluxgate/fluxgate-core.git
+cd fluxgate-core
 
 # Build project
 ./mvnw clean install
@@ -538,15 +538,15 @@ This project is licensed under the **Apache License 2.0** - see the [LICENSE](LI
 ## 📞 Contact
 
 - **Author**: Jaeseong Ro
-- **GitHub**: [openfluxgate/openfluxgate-core](https://github.com/openfluxgate/openfluxgate-core)
-- **Issues**: [GitHub Issues](https://github.com/openfluxgate/openfluxgate-core/issues)
+- **GitHub**: [fluxgate/fluxgate-core](https://github.com/fluxgate/fluxgate-core)
+- **Issues**: [GitHub Issues](https://github.com/fluxgate/fluxgate-core/issues)
 
 ---
 
 <div align="center">
 
-**[Documentation](#-quick-start)** • **[Examples](src/test/java/org/openfluxgate/core/FeatureDemoTest.java)** • **[Extend Guide](docs/HOW_TO_EXTEND_RATELIMITER.md)** • **[Contributing](#-contributing)** • **[License](#-license)**
+**[Documentation](#-quick-start)** • **[Examples](src/test/java/org/fluxgate/core/FeatureDemoTest.java)** • **[Extend Guide](docs/HOW_TO_EXTEND_RATELIMITER.md)** • **[Contributing](#-contributing)** • **[License](#-license)**
 
-Made with ❤️ by the OpenFluxGate team
+Made with ❤️ by the FluxGate team
 
 </div>
