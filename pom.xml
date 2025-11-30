@@ -19,6 +19,8 @@
     <!-- Modules -->
     <modules>
         <module>fluxgate-core</module>
+        <module>fluxgate-mongo-adapter</module>
+        <module>fluxgate-testkit</module>
     </modules>
 
     <!-- Java 21 -->
@@ -54,9 +56,9 @@
     </developers>
 
     <scm>
-        <url>https://github.com/fluxgate/fluxgate-core</url>
-        <connection>scm:git:git://github.com/fluxgate/fluxgate-core.git</connection>
-        <developerConnection>scm:git:ssh://github.com:fluxgate/fluxgate-core.git</developerConnection>
+        <url>https://github.com/openfluxgate/fluxgate</url>
+        <connection>scm:git:git://github.com/openfluxgate/fluxgate.git</connection>
+        <developerConnection>scm:git:ssh://github.com:openfluxgate/fluxgate.git</developerConnection>
         <tag>HEAD</tag>
     </scm>
 
