@@ -1,0 +1,31 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: fluxgate-sample-redis
+
+# FluxGate Configuration - Data-plane (Redis + Filter)
+fluxgate:
+  mongo:
+    enabled: false  # No MongoDB in data-plane
+  redis:
+    enabled: true
+    uri: redis://localhost:6379
+  ratelimit:
+    enabled: true
+    filter-enabled: true
+    default-rule-set-id: api-limits
+    include-patterns:
+      - /api/**
+    exclude-patterns:
+      - /actuator/**
+      - /health
+    client-ip-header: X-Forwarded-For
+    trust-client-ip-header: true
+    include-headers: true
+
+logging:
+  level:
+    org.fluxgate: DEBUG
+    org.fluxgate.sample: DEBUG

@@ -1,0 +1,24 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: fluxgate-sample-mongo
+
+# FluxGate Configuration - Control-plane (MongoDB only)
+fluxgate:
+  mongo:
+    enabled: true
+    uri: mongodb://${MONGO_USER:fluxgate}:${MONGO_PASSWORD:fluxgate123}@localhost:27017/fluxgate?authSource=admin
+    database: fluxgate
+    rule-collection: rate_limit_rules
+    event-collection: rate_limit_events
+  redis:
+    enabled: false
+  ratelimit:
+    filter-enabled: false  # No rate limiting in control-plane
+
+logging:
+  level:
+    org.fluxgate: DEBUG
+    org.fluxgate.sample: DEBUG

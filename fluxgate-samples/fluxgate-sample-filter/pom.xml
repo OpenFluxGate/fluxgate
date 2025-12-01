@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.fluxgate</groupId>
+        <artifactId>fluxgate-samples</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>fluxgate-sample-filter</artifactId>
+    <name>FluxGate Sample - Filter (Auto Rate Limiting)</name>
+    <description>
+        Sample demonstrating automatic rate limiting using FluxgateRateLimitFilter.
+        All HTTP requests are automatically rate-limited via HTTP API calls.
+    </description>
+
+    <dependencies>
+        <!-- FluxGate Spring Boot Starter -->
+        <dependency>
+            <groupId>org.fluxgate</groupId>
+            <artifactId>fluxgate-spring-boot-starter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- FluxGate Redis Rate Limiter - Only needed for RedisRateLimitHandler mode -->
+        <!-- Uncomment this if using RedisRateLimitHandler instead of HttpRateLimitHandler -->
+        <!--
+        <dependency>
+            <groupId>org.fluxgate</groupId>
+            <artifactId>fluxgate-redis-ratelimiter</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        -->
+
+        <!-- Spring Boot Web -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- OpenAPI / Swagger -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

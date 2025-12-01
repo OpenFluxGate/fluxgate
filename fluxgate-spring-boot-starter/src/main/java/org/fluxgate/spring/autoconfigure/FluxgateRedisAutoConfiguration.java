@@ -3,6 +3,7 @@ package org.fluxgate.spring.autoconfigure;
 import org.fluxgate.core.ratelimiter.RateLimiter;
 import org.fluxgate.redis.RedisRateLimiter;
 import org.fluxgate.redis.config.RedisRateLimiterConfig;
+import org.fluxgate.redis.store.RedisRuleSetStore;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.slf4j.Logger;
@@ -91,6 +92,19 @@ public class FluxgateRedisAutoConfiguration {
     public RedisTokenBucketStore fluxgateTokenBucketStore(RedisRateLimiterConfig fluxgateRedisConfig) {
         log.info("Creating FluxGate RedisTokenBucketStore");
         return fluxgateRedisConfig.getTokenBucketStore();
+    }
+
+    /**
+     * Creates the RedisRuleSetStore for storing RuleSet configurations in Redis.
+     * <p>
+     * This allows applications to store and retrieve rate limiting rules from Redis,
+     * enabling dynamic rule management across distributed nodes.
+     */
+    @Bean(name = "fluxgateRuleSetStore")
+    @ConditionalOnMissingBean(RedisRuleSetStore.class)
+    public RedisRuleSetStore fluxgateRuleSetStore(RedisRateLimiterConfig fluxgateRedisConfig) {
+        log.info("Creating FluxGate RedisRuleSetStore");
+        return fluxgateRedisConfig.getRuleSetStore();
     }
 
     /**

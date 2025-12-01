@@ -300,8 +300,8 @@ class MongoRuleSetProviderIntegrationTest {
         // when
         repository.upsert(ruleDoc);
 
-        // then
-        List<RateLimitRuleDocument> found = repository.findByRuleSetId("test-set");
+        // then - use domain object API
+        List<RateLimitRule> found = repository.findByRuleSetId("test-set");
         assertEquals(1, found.size());
         assertEquals("new-rule", found.get(0).getId());
     }
@@ -337,8 +337,8 @@ class MongoRuleSetProviderIntegrationTest {
         );
         repository.upsert(updatedRule);
 
-        // then
-        List<RateLimitRuleDocument> found = repository.findByRuleSetId("update-set");
+        // then - use domain object API
+        List<RateLimitRule> found = repository.findByRuleSetId("update-set");
         assertEquals(1, found.size(), "Should still have only 1 rule");
         assertEquals("Updated Name", found.get(0).getName());
         assertEquals(LimitScope.PER_IP, found.get(0).getScope());

@@ -23,6 +23,7 @@
         <module>fluxgate-redis-ratelimiter</module>
         <module>fluxgate-spring-boot-starter</module>
         <module>fluxgate-testkit</module>
+        <module>fluxgate-samples</module>
     </modules>
 
     <!-- Java 21 -->
