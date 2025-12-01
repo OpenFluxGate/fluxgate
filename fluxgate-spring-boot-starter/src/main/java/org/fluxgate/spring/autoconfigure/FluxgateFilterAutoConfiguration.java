@@ -13,6 +13,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplicat
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Role;
 import org.springframework.core.annotation.AnnotationUtils;
@@ -104,7 +105,10 @@ public class FluxgateFilterAutoConfiguration {
                 new FilterRegistrationBean<>(filter);
 
         registration.setName("fluxgateRateLimitFilter");
-        registration.setOrder(1);
+
+        // Set filter order from annotation
+        int filterOrder = annotation != null ? annotation.filterOrder() : 1;
+        registration.setOrder(filterOrder);
 
         // Set URL patterns from annotation
         String[] includePatterns = annotation != null ? annotation.includePatterns() : new String[0];
@@ -114,7 +118,7 @@ public class FluxgateFilterAutoConfiguration {
             registration.addUrlPatterns("/*");
         }
 
-        log.info("Registered FluxgateRateLimitFilter with order: 1");
+        log.info("Registered FluxgateRateLimitFilter with order: {}", filterOrder);
 
         return registration;
     }
@@ -148,9 +152,9 @@ public class FluxgateFilterAutoConfiguration {
         if (handlerClass != FluxgateRateLimitHandler.class) {
             try {
                 return context.getBean(handlerClass);
-            } catch (Exception e) {
-                log.warn("Could not find handler bean of type {}, falling back to available handler",
-                        handlerClass.getSimpleName());
+            } catch (NoSuchBeanDefinitionException e) {
+                log.warn("Handler bean of type {} not found, falling back to available handler: {}",
+                        handlerClass.getSimpleName(), e.getMessage());
             }
         }
 
