@@ -1,0 +1,3 @@
+org.fluxgate.spring.autoconfigure.FluxgateMongoAutoConfiguration
+org.fluxgate.spring.autoconfigure.FluxgateRedisAutoConfiguration
+org.fluxgate.spring.autoconfigure.FluxgateFilterAutoConfiguration
