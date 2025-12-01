@@ -6,7 +6,6 @@ import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import org.fluxgate.redis.script.LuaScriptLoader;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
-import org.fluxgate.redis.store.TokenBucketStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,12 +14,18 @@ import java.time.Duration;
 import java.util.Objects;
 
 /**
- * Configuration for Redis-based rate limiter.
+ * Production configuration for Redis-based rate limiter.
  * <p>
  * This class handles:
  * - Redis connection setup
- * - Lua script loading
+ * - Loading production Lua scripts with all critical fixes
  * - TokenBucketStore initialization
+ * <p>
+ * Production features:
+ * - Uses Redis TIME (no clock drift across distributed nodes)
+ * - Integer arithmetic only (no precision loss)
+ * - Read-only on rejection (fair rate limiting)
+ * - TTL safety margin + max cap
  */
 public final class RedisRateLimiterConfig implements AutoCloseable {
 
@@ -29,7 +34,7 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
     private final RedisClient redisClient;
     private final StatefulRedisConnection<String, String> connection;
     private final RedisCommands<String, String> syncCommands;
-    private final TokenBucketStore tokenBucketStore;
+    private final RedisTokenBucketStore tokenBucketStore;
 
     /**
      * Create a new RedisRateLimiterConfig with the given Redis URI.
@@ -55,26 +60,29 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
         // Create Redis client
         this.redisClient = RedisClient.create(redisUri);
 
-        // Configure client options (optional, customize as needed)
+        // Configure client options
         this.redisClient.setDefaultTimeout(Duration.ofSeconds(5));
 
         // Open connection
         this.connection = redisClient.connect();
         this.syncCommands = connection.sync();
 
-        // Load Lua scripts into Redis
+        // Load production Lua scripts into Redis
         LuaScriptLoader.loadScripts(syncCommands);
 
-        // Create token bucket store
+        // Create production token bucket store
         this.tokenBucketStore = new RedisTokenBucketStore(syncCommands);
 
         log.info("Redis RateLimiter initialized successfully");
+        log.info("Production features enabled:");
+        log.info("  - Uses Redis TIME (no clock drift)");
+        log.info("  - Integer arithmetic only (no precision loss)");
+        log.info("  - Read-only on rejection (fair rate limiting)");
+        log.info("  - TTL safety margin + max cap");
     }
 
     /**
      * Create a configuration with an existing RedisClient.
-     * <p>
-     * Useful if you already have a RedisClient configured elsewhere.
      *
      * @param redisClient Existing RedisClient instance
      * @throws IOException if Lua scripts cannot be loaded
@@ -94,16 +102,14 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
     }
 
     /**
-     * Get the TokenBucketStore for use in RedisRateLimiter.
+     * Get the production TokenBucketStore for use in RedisRateLimiter.
      */
-    public TokenBucketStore getTokenBucketStore() {
+    public RedisTokenBucketStore getTokenBucketStore() {
         return tokenBucketStore;
     }
 
     /**
      * Get the synchronous Redis commands interface.
-     * <p>
-     * Exposed for advanced use cases.
      */
     public RedisCommands<String, String> getSyncCommands() {
         return syncCommands;
@@ -111,8 +117,6 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
 
     /**
      * Get the Redis connection.
-     * <p>
-     * Exposed for advanced use cases.
      */
     public StatefulRedisConnection<String, String> getConnection() {
         return connection;

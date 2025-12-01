@@ -9,7 +9,7 @@ import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.ratelimiter.RateLimiter;
 import org.fluxgate.redis.store.BucketState;
-import org.fluxgate.redis.store.TokenBucketStore;
+import org.fluxgate.redis.store.RedisTokenBucketStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,15 +17,25 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Redis-backed distributed rate limiter implementation.
+ * Production-ready Redis-backed distributed rate limiter implementation.
+ * <p>
+ * KEY IMPROVEMENTS:
+ * 1. Uses Redis TIME (not System.nanoTime()) - eliminates clock drift across distributed nodes
+ * 2. Integer arithmetic only (no floating point) - eliminates precision loss
+ * 3. Doesn't update state on rejection - prevents unfair rate limiting
+ * 4. Returns reset time - for HTTP X-RateLimit-Reset header
+ * 5. TTL safety margin + max cap - prevents premature expiration and runaway TTLs
  * <p>
  * This implementation:
  * - Stores token buckets in Redis
- * - Uses Lua scripts for atomic refill + consume operations
- * - Supports multi-band rate limiting
+ * - Uses production Lua scripts for atomic refill + consume operations
+ * - Supports multi-band rate limiting (e.g., 10/sec AND 100/min AND 1000/hour)
  * - Automatically expires buckets using Redis TTL
  * <p>
- * Thread-safe and suitable for distributed environments.
+ * Thread-safe and suitable for distributed environments with multiple API gateway nodes.
+ *
+ * @see RedisTokenBucketStore
+ * @see org.fluxgate.redis.script.LuaScriptLoader
  */
 public class RedisRateLimiter implements RateLimiter {
 
@@ -33,14 +43,14 @@ public class RedisRateLimiter implements RateLimiter {
 
     private static final String KEY_PREFIX = "fluxgate";
 
-    private final TokenBucketStore tokenBucketStore;
+    private final RedisTokenBucketStore tokenBucketStore;
 
     /**
-     * Create a new RedisRateLimiter with the given token bucket store.
+     * Create a new RedisRateLimiter with the given production token bucket store.
      *
      * @param tokenBucketStore Redis-backed token bucket store
      */
-    public RedisRateLimiter(TokenBucketStore tokenBucketStore) {
+    public RedisRateLimiter(RedisTokenBucketStore tokenBucketStore) {
         this.tokenBucketStore = Objects.requireNonNull(
                 tokenBucketStore, "tokenBucketStore must not be null");
     }
@@ -68,12 +78,22 @@ public class RedisRateLimiter implements RateLimiter {
             return RateLimitResult.allowedWithoutRule();
         }
 
-        // Check each rule
-        // For multi-band rules, we check each band independently
-        // If ANY band rejects, the entire request is rejected
+        // ========================================================================
+        // Multi-Band Rate Limiting
+        // ========================================================================
+        // For rules with multiple bands (e.g., 10/sec AND 100/min):
+        // - Check each band independently
+        // - If ANY band rejects, the entire request is rejected
+        // - All bands must allow for the request to succeed
+        //
+        // NOTE: This is a simplified version. For production, consider using
+        // an atomic multi-band Lua script to prevent race conditions between bands.
+        // ========================================================================
+
         RateLimitRule matchedRule = null;
         long minRemainingTokens = Long.MAX_VALUE;
         long maxNanosToWait = 0;
+        long resetTimeMillis = 0;
         boolean anyRejected = false;
 
         for (RateLimitRule rule : rules) {
@@ -96,6 +116,9 @@ public class RedisRateLimiter implements RateLimiter {
                 // Track minimum remaining tokens across all bands
                 minRemainingTokens = Math.min(minRemainingTokens, state.remainingTokens());
 
+                // Track reset time (use latest)
+                resetTimeMillis = Math.max(resetTimeMillis, state.resetTimeMillis());
+
                 if (!state.consumed()) {
                     // This band rejected the request
                     anyRejected = true;
@@ -108,20 +131,29 @@ public class RedisRateLimiter implements RateLimiter {
         // Build result
         RateLimitResult result;
         if (anyRejected) {
-            // At least one band rejected
+            // At least one band rejected - entire request is rejected
             result = RateLimitResult.rejected(
                     logicalKey,
                     matchedRule,
                     maxNanosToWait
             );
+
+            log.debug("Rate limit REJECTED for key {}: matched rule {}, wait {} ns",
+                    logicalKey.value(), matchedRule != null ? matchedRule.getId() : "unknown", maxNanosToWait);
         } else {
-            // All bands allowed
+            // All bands allowed - request is allowed
+            // Use first rule if no matched rule was set
+            matchedRule = matchedRule != null ? matchedRule : rules.get(0);
+
             result = RateLimitResult.allowed(
                     logicalKey,
-                    matchedRule != null ? matchedRule : rules.get(0),
+                    matchedRule,
                     minRemainingTokens,
-                    0L
+                    0L  // No wait time since allowed
             );
+
+            log.debug("Rate limit ALLOWED for key {}: matched rule {}, {} tokens remaining",
+                    logicalKey.value(), matchedRule.getId(), minRemainingTokens);
         }
 
         // Record metrics if configured
@@ -137,6 +169,8 @@ public class RedisRateLimiter implements RateLimiter {
      * Build the Redis key for a token bucket.
      * <p>
      * Format: fluxgate:{ruleSetId}:{ruleId}:{keyValue}:{bandLabel}
+     * <p>
+     * Example: fluxgate:api-limits:per-ip-rule:192.168.1.100:100-per-minute
      *
      * @param ruleSetId ID of the rule set
      * @param ruleId ID of the rule

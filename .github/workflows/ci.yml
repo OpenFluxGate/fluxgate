@@ -1,0 +1,128 @@
+name: Java CI with Maven
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    # =========================================================================
+    # Services: MongoDB and Redis for integration tests
+    # =========================================================================
+    services:
+      # MongoDB service
+      mongo:
+        image: mongo:7
+        env:
+          MONGO_INITDB_ROOT_USERNAME: fluxgate
+          MONGO_INITDB_ROOT_PASSWORD: fluxgate123
+          MONGO_INITDB_DATABASE: fluxgate
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ping:1})' --quiet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --health-start-period 30s
+
+      # Redis service
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    # =========================================================================
+    # Environment variables for integration tests
+    # =========================================================================
+    env:
+      # MongoDB connection string
+      # Note: In GitHub Actions services, use 'localhost' since ports are mapped to the host
+      FLUXGATE_MONGO_URI: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
+      FLUXGATE_MONGO_DB: fluxgate
+
+      # Redis connection string
+      FLUXGATE_REDIS_URI: redis://localhost:6379
+
+    steps:
+      # =========================================================================
+      # Setup
+      # =========================================================================
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      # =========================================================================
+      # Verify services are ready (optional extra check)
+      # =========================================================================
+      - name: Wait for MongoDB to be ready
+        run: |
+          echo "Waiting for MongoDB..."
+          for i in {1..30}; do
+            if mongosh "$FLUXGATE_MONGO_URI" --eval "db.runCommand({ping:1})" --quiet 2>/dev/null; then
+              echo "MongoDB is ready!"
+              break
+            fi
+            echo "Attempt $i: MongoDB not ready yet, waiting..."
+            sleep 2
+          done
+
+      - name: Wait for Redis to be ready
+        run: |
+          echo "Waiting for Redis..."
+          for i in {1..30}; do
+            if redis-cli -h localhost -p 6379 ping 2>/dev/null | grep -q PONG; then
+              echo "Redis is ready!"
+              break
+            fi
+            echo "Attempt $i: Redis not ready yet, waiting..."
+            sleep 2
+          done
+
+      # =========================================================================
+      # Build and Test
+      # =========================================================================
+      - name: Build with Maven (skip tests first)
+        run: mvn -B clean compile -DskipTests
+
+      - name: Run unit tests
+        run: mvn -B test -DexcludeGroups=integration
+
+      - name: Run integration tests
+        run: mvn -B test -pl fluxgate-testkit -am
+        env:
+          # Explicitly pass environment variables to Maven
+          FLUXGATE_MONGO_URI: ${{ env.FLUXGATE_MONGO_URI }}
+          FLUXGATE_MONGO_DB: ${{ env.FLUXGATE_MONGO_DB }}
+          FLUXGATE_REDIS_URI: ${{ env.FLUXGATE_REDIS_URI }}
+
+      - name: Package (verify)
+        run: mvn -B package -DskipTests
+
+      # =========================================================================
+      # Upload test results (optional but recommended)
+      # =========================================================================
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            **/target/surefire-reports/*.xml
+            **/target/failsafe-reports/*.xml
+          retention-days: 7
