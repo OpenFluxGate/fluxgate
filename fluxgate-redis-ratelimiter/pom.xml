@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
@@ -11,32 +12,35 @@
         <version>0.0.1-SNAPSHOT</version>
     </parent>
 
-    <artifactId>fluxgate-testkit</artifactId>
+    <artifactId>fluxgate-redis-ratelimiter</artifactId>
     <packaging>jar</packaging>
 
-    <name>FluxGate Testkit</name>
-    <description>Testkit for FluxGate distributed rate limiting</description>
+    <name>FluxGate Redis RateLimiter</name>
+    <description>Redis-backed distributed rate limiter implementation for FluxGate</description>
+
+    <properties>
+        <lettuce.version>6.4.0.RELEASE</lettuce.version>
+    </properties>
 
     <dependencies>
-        <!-- core -->
+        <!-- FluxGate Core -->
         <dependency>
             <groupId>org.fluxgate</groupId>
             <artifactId>fluxgate-core</artifactId>
             <version>${project.version}</version>
         </dependency>
 
-        <!-- mongo-adapter -->
+        <!-- Lettuce (Redis client) -->
         <dependency>
-            <groupId>org.fluxgate</groupId>
-            <artifactId>fluxgate-mongo-adapter</artifactId>
-            <version>${project.version}</version>
+            <groupId>io.lettuce</groupId>
+            <artifactId>lettuce-core</artifactId>
+            <version>${lettuce.version}</version>
         </dependency>
 
-        <!-- redis-ratelimiter -->
+        <!-- SLF4J API -->
         <dependency>
-            <groupId>org.fluxgate</groupId>
-            <artifactId>fluxgate-redis-ratelimiter</artifactId>
-            <version>${project.version}</version>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
         </dependency>
 
         <!-- Test dependencies -->
@@ -55,7 +59,6 @@
 
     <build>
         <plugins>
-            <!-- Inherit plugin configurations from parent -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -79,11 +82,6 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-deploy-plugin</artifactId>
             </plugin>
         </plugins>
     </build>
