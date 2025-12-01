@@ -98,4 +98,14 @@ public @interface EnableFluxgateFilter {
      * @return Exclude patterns
      */
     String[] excludePatterns() default {};
+
+    /**
+     * Filter order (lower values have higher priority).
+     * <p>
+     * Default is 1, which runs early in the filter chain.
+     * Set to {@code Integer.MIN_VALUE + 100} for highest priority.
+     *
+     * @return Filter order
+     */
+    int filterOrder() default 1;
 }

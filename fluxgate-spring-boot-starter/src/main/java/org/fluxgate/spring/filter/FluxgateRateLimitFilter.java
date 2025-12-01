@@ -9,6 +9,7 @@ import org.fluxgate.core.handler.FluxgateRateLimitHandler;
 import org.fluxgate.core.handler.RateLimitResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -179,7 +180,7 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
         long retryAfterSeconds = (result.getRetryAfterMillis() + 999) / 1000;
         response.setHeader(HEADER_RETRY_AFTER, String.valueOf(retryAfterSeconds));
 
-        response.setStatus(429); // Too Many Requests
+        response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
         response.setContentType("application/json");
         response.getWriter().write(String.format(
                 "{\"error\":\"Rate limit exceeded\",\"retryAfter\":%d}",
