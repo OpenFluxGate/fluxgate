@@ -128,8 +128,9 @@ class RedisTokenBucketStoreTest {
         store.tryConsume(bucketKey, band, 1);
 
         // then: key should have TTL set
+        // TTL includes 10% safety margin (60 * 1.1 = 66 seconds)
         Long ttl = redisCommands.ttl(bucketKey);
         assertThat(ttl).isGreaterThan(0);
-        assertThat(ttl).isLessThanOrEqualTo(60);
+        assertThat(ttl).isLessThanOrEqualTo(66); // 60 seconds + 10% safety margin
     }
 }

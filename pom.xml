@@ -21,6 +21,7 @@
         <module>fluxgate-core</module>
         <module>fluxgate-mongo-adapter</module>
         <module>fluxgate-redis-ratelimiter</module>
+        <module>fluxgate-spring-boot-starter</module>
         <module>fluxgate-testkit</module>
     </modules>
 
