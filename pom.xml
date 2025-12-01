@@ -20,6 +20,7 @@
     <modules>
         <module>fluxgate-core</module>
         <module>fluxgate-mongo-adapter</module>
+        <module>fluxgate-redis-ratelimiter</module>
         <module>fluxgate-testkit</module>
     </modules>
 
