@@ -1,131 +1,167 @@
 package org.fluxgate.spring.autoconfigure;
 
-import org.fluxgate.core.spi.RateLimitRuleSetProvider;
-import org.fluxgate.core.ratelimiter.RateLimiter;
+import org.fluxgate.core.handler.FluxgateRateLimitHandler;
+import org.fluxgate.spring.annotation.EnableFluxgateFilter;
 import org.fluxgate.spring.filter.FluxgateRateLimitFilter;
-import org.fluxgate.spring.properties.FluxgateProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Role;
+import org.springframework.core.annotation.AnnotationUtils;
+import org.springframework.util.StringUtils;
+
+import java.util.Map;
 
 /**
- * Auto-configuration for FluxGate HTTP Filter.
+ * Configuration for FluxGate HTTP Filter.
  * <p>
- * This configuration is enabled only when:
+ * This configuration is enabled when {@link EnableFluxgateFilter} annotation is used.
+ * <p>
+ * The filter reads configuration from the annotation:
  * <ul>
- *   <li>{@code fluxgate.ratelimit.filter-enabled=true}</li>
- *   <li>A {@link RateLimiter} bean exists (typically from Redis auto-config)</li>
- *   <li>Running in a web application context</li>
+ *   <li>{@code handler} - The handler class for rate limiting</li>
+ *   <li>{@code ruleSetId} - Default rule set ID</li>
+ *   <li>{@code includePatterns} - URL patterns to include</li>
+ *   <li>{@code excludePatterns} - URL patterns to exclude</li>
  * </ul>
  * <p>
- * Creates beans for:
- * <ul>
- *   <li>{@link FluxgateRateLimitFilter} - The rate limiting filter</li>
- *   <li>{@link FilterRegistrationBean} - Servlet filter registration</li>
- * </ul>
- * <p>
- * This configuration does NOT require MongoDB directly.
- * It only requires a RateLimiter bean and optionally a RuleSetProvider.
- * <p>
- * The RuleSetProvider can come from:
- * <ul>
- *   <li>MongoDB auto-config (if enabled)</li>
- *   <li>Custom bean provided by the application</li>
- *   <li>Or be null (filter will log warning and allow requests)</li>
- * </ul>
+ * Example usage:
+ * <pre>
+ * {@code @SpringBootApplication}
+ * {@code @EnableFluxgateFilter(handler = MyHandler.class, ruleSetId = "api-limits")}
+ * public class MyApplication {
+ *     public static void main(String[] args) {
+ *         SpringApplication.run(MyApplication.class, args);
+ *     }
+ * }
+ * </pre>
  *
- * @see FluxgateMongoAutoConfiguration
- * @see FluxgateRedisAutoConfiguration
+ * @see EnableFluxgateFilter
  */
-@AutoConfiguration(after = {FluxgateRedisAutoConfiguration.class, FluxgateMongoAutoConfiguration.class})
-@ConditionalOnProperty(prefix = "fluxgate.ratelimit", name = "filter-enabled", havingValue = "true")
+@Configuration
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @ConditionalOnClass(name = "jakarta.servlet.Filter")
-@ConditionalOnBean(RateLimiter.class)
-@EnableConfigurationProperties(FluxgateProperties.class)
+@Role(BeanDefinition.ROLE_INFRASTRUCTURE)
 public class FluxgateFilterAutoConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(FluxgateFilterAutoConfiguration.class);
 
-    private final FluxgateProperties properties;
-
-    public FluxgateFilterAutoConfiguration(FluxgateProperties properties) {
-        this.properties = properties;
-    }
-
     /**
      * Creates the FluxgateRateLimitFilter.
      * <p>
-     * The filter requires:
-     * <ul>
-     *   <li>RateLimiter - Required (typically RedisRateLimiter)</li>
-     *   <li>RateLimitRuleSetProvider - Optional (can be null)</li>
-     * </ul>
-     * <p>
-     * If no RuleSetProvider is available, the filter will log warnings
-     * and allow requests through (fail-open behavior).
+     * Reads configuration from {@link EnableFluxgateFilter} annotation.
      */
     @Bean
     @ConditionalOnMissingBean(FluxgateRateLimitFilter.class)
     public FluxgateRateLimitFilter fluxgateRateLimitFilter(
-            RateLimiter rateLimiter,
-            ObjectProvider<RateLimitRuleSetProvider> ruleSetProviderProvider) {
+            ApplicationContext applicationContext,
+            ObjectProvider<FluxgateRateLimitHandler> handlerProvider) {
 
-        RateLimitRuleSetProvider ruleSetProvider = ruleSetProviderProvider.getIfAvailable();
-
-        if (ruleSetProvider == null) {
-            log.warn("No RateLimitRuleSetProvider bean found. " +
-                    "Rate limiting will be skipped unless a provider is configured.");
-            log.warn("To fix this, either:");
-            log.warn("  1. Enable MongoDB: fluxgate.mongo.enabled=true");
-            log.warn("  2. Provide a custom RateLimitRuleSetProvider bean");
-        } else {
-            log.info("FluxgateRateLimitFilter using RuleSetProvider: {}",
-                    ruleSetProvider.getClass().getSimpleName());
+        // Find the annotation
+        EnableFluxgateFilter annotation = findEnableFluxgateFilterAnnotation(applicationContext);
+        if (annotation == null) {
+            log.warn("@EnableFluxgateFilter annotation not found, using defaults");
+            FluxgateRateLimitHandler handler = handlerProvider.getIfAvailable(
+                    () -> FluxgateRateLimitHandler.ALLOW_ALL);
+            return new FluxgateRateLimitFilter(handler, "", new String[0], new String[0]);
         }
 
+        // Get handler
+        FluxgateRateLimitHandler handler = resolveHandler(applicationContext, handlerProvider, annotation);
+
+        // Get configuration from annotation
+        String ruleSetId = annotation.ruleSetId();
+        String[] includePatterns = annotation.includePatterns();
+        String[] excludePatterns = annotation.excludePatterns();
+
         log.info("Creating FluxgateRateLimitFilter");
-        return new FluxgateRateLimitFilter(
-                rateLimiter,
-                ruleSetProvider,
-                properties.getRatelimit());
+        log.info("  Handler: {}", handler.getClass().getSimpleName());
+        log.info("  Rule set ID: {}", StringUtils.hasText(ruleSetId) ? ruleSetId : "(not set)");
+
+        return new FluxgateRateLimitFilter(handler, ruleSetId, includePatterns, excludePatterns);
     }
 
     /**
      * Registers the FluxgateRateLimitFilter with the servlet container.
-     * <p>
-     * Configuration:
-     * <ul>
-     *   <li>Order: Configurable via {@code fluxgate.ratelimit.filter-order}</li>
-     *   <li>URL patterns: Configurable via {@code fluxgate.ratelimit.include-patterns}</li>
-     * </ul>
      */
     @Bean
     @ConditionalOnMissingBean(name = "fluxgateRateLimitFilterRegistration")
     public FilterRegistrationBean<FluxgateRateLimitFilter> fluxgateRateLimitFilterRegistration(
-            FluxgateRateLimitFilter filter) {
+            FluxgateRateLimitFilter filter,
+            ApplicationContext applicationContext) {
+
+        EnableFluxgateFilter annotation = findEnableFluxgateFilterAnnotation(applicationContext);
 
         FilterRegistrationBean<FluxgateRateLimitFilter> registration =
                 new FilterRegistrationBean<>(filter);
 
         registration.setName("fluxgateRateLimitFilter");
-        registration.setOrder(properties.getRatelimit().getFilterOrder());
-        registration.addUrlPatterns(properties.getRatelimit().getIncludePatterns());
+        registration.setOrder(1);
 
-        log.info("Registered FluxgateRateLimitFilter with order: {}",
-                properties.getRatelimit().getFilterOrder());
-        log.info("URL patterns: {}",
-                String.join(", ", properties.getRatelimit().getIncludePatterns()));
+        // Set URL patterns from annotation
+        String[] includePatterns = annotation != null ? annotation.includePatterns() : new String[0];
+        if (includePatterns.length > 0) {
+            registration.addUrlPatterns(includePatterns);
+        } else {
+            registration.addUrlPatterns("/*");
+        }
+
+        log.info("Registered FluxgateRateLimitFilter with order: 1");
 
         return registration;
+    }
+
+    /**
+     * Finds the @EnableFluxgateFilter annotation in the application context.
+     */
+    private EnableFluxgateFilter findEnableFluxgateFilterAnnotation(ApplicationContext context) {
+        Map<String, Object> beans = context.getBeansWithAnnotation(EnableFluxgateFilter.class);
+        for (Object bean : beans.values()) {
+            EnableFluxgateFilter annotation = AnnotationUtils.findAnnotation(
+                    bean.getClass(), EnableFluxgateFilter.class);
+            if (annotation != null) {
+                return annotation;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolves the handler from annotation or context.
+     */
+    private FluxgateRateLimitHandler resolveHandler(
+            ApplicationContext context,
+            ObjectProvider<FluxgateRateLimitHandler> handlerProvider,
+            EnableFluxgateFilter annotation) {
+
+        Class<? extends FluxgateRateLimitHandler> handlerClass = annotation.handler();
+
+        // If handler class is specified and not the interface itself
+        if (handlerClass != FluxgateRateLimitHandler.class) {
+            try {
+                return context.getBean(handlerClass);
+            } catch (Exception e) {
+                log.warn("Could not find handler bean of type {}, falling back to available handler",
+                        handlerClass.getSimpleName());
+            }
+        }
+
+        // Fall back to any available handler
+        FluxgateRateLimitHandler handler = handlerProvider.getIfAvailable();
+        if (handler != null) {
+            return handler;
+        }
+
+        // Final fallback
+        log.warn("No FluxgateRateLimitHandler found, using ALLOW_ALL handler");
+        return FluxgateRateLimitHandler.ALLOW_ALL;
     }
 }

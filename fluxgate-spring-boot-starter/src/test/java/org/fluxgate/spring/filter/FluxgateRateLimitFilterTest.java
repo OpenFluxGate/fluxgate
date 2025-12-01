@@ -3,15 +3,9 @@ package org.fluxgate.spring.filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.fluxgate.core.config.RateLimitBand;
-import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
-import org.fluxgate.core.key.RateLimitKey;
-import org.fluxgate.core.ratelimiter.RateLimitResult;
-import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
-import org.fluxgate.core.ratelimiter.RateLimiter;
-import org.fluxgate.core.spi.RateLimitRuleSetProvider;
-import org.fluxgate.spring.properties.FluxgateProperties;
+import org.fluxgate.core.handler.FluxgateRateLimitHandler;
+import org.fluxgate.core.handler.RateLimitResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,13 +17,9 @@ import org.mockito.quality.Strictness;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.time.Duration;
-import java.util.List;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -48,10 +38,7 @@ import static org.mockito.Mockito.*;
 class FluxgateRateLimitFilterTest {
 
     @Mock
-    private RateLimiter rateLimiter;
-
-    @Mock
-    private RateLimitRuleSetProvider ruleSetProvider;
+    private FluxgateRateLimitHandler handler;
 
     @Mock
     private HttpServletRequest request;
@@ -62,29 +49,17 @@ class FluxgateRateLimitFilterTest {
     @Mock
     private FilterChain filterChain;
 
-    @Mock
-    private RateLimitRuleSet ruleSet;
-
-    @Mock
-    private RateLimitRule matchedRule;
-
-    private FluxgateProperties.RateLimitProperties rateLimitProperties;
     private FluxgateRateLimitFilter filter;
-    private RateLimitKey testKey;
+    private static final String RULE_SET_ID = "test-rules";
 
     @BeforeEach
     void setUp() {
-        rateLimitProperties = new FluxgateProperties.RateLimitProperties();
-        rateLimitProperties.setDefaultRuleSetId("test-rules");
-        // Use /** to match all paths including multi-segment ones
-        rateLimitProperties.setIncludePatterns(new String[]{"/**"});
-        rateLimitProperties.setExcludePatterns(new String[]{});
-        rateLimitProperties.setIncludeHeaders(true);
-        rateLimitProperties.setTrustClientIpHeader(true);
-        rateLimitProperties.setClientIpHeader("X-Forwarded-For");
-
-        filter = new FluxgateRateLimitFilter(rateLimiter, ruleSetProvider, rateLimitProperties);
-        testKey = RateLimitKey.of("192.168.1.100");
+        filter = new FluxgateRateLimitFilter(
+                handler,
+                RULE_SET_ID,
+                new String[]{"/**"},
+                new String[]{}
+        );
     }
 
     @Test
@@ -93,13 +68,9 @@ class FluxgateRateLimitFilterTest {
         when(request.getRequestURI()).thenReturn("/api/users");
         when(request.getMethod()).thenReturn("GET");
         when(request.getRemoteAddr()).thenReturn("192.168.1.100");
-        when(ruleSetProvider.findById("test-rules")).thenReturn(Optional.of(ruleSet));
 
-        RateLimitBand band = RateLimitBand.builder(Duration.ofMinutes(1), 100).build();
-        when(matchedRule.getBands()).thenReturn(List.of(band));
-
-        RateLimitResult allowedResult = RateLimitResult.allowed(testKey, matchedRule, 50, 0);
-        when(rateLimiter.tryConsume(any(RequestContext.class), eq(ruleSet), eq(1L)))
+        RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+        when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
                 .thenReturn(allowedResult);
 
         // When
@@ -107,9 +78,7 @@ class FluxgateRateLimitFilterTest {
 
         // Then
         verify(filterChain).doFilter(request, response);
-        verify(response).setHeader("X-RateLimit-Limit", "100");
         verify(response).setHeader("X-RateLimit-Remaining", "50");
-        verify(response).setHeader(eq("X-RateLimit-Reset"), any());
     }
 
     @Test
@@ -118,20 +87,15 @@ class FluxgateRateLimitFilterTest {
         when(request.getRequestURI()).thenReturn("/api/users");
         when(request.getMethod()).thenReturn("POST");
         when(request.getRemoteAddr()).thenReturn("192.168.1.100");
-        when(ruleSetProvider.findById("test-rules")).thenReturn(Optional.of(ruleSet));
 
         StringWriter stringWriter = new StringWriter();
         PrintWriter printWriter = new PrintWriter(stringWriter);
         when(response.getWriter()).thenReturn(printWriter);
 
-        // Set up matchedRule for headers
-        RateLimitBand band = RateLimitBand.builder(Duration.ofMinutes(1), 100).build();
-        when(matchedRule.getBands()).thenReturn(List.of(band));
-
-        // Wait for 30 seconds (30 billion nanoseconds)
-        long nanosToWait = 30_000_000_000L;
-        RateLimitResult rejectedResult = RateLimitResult.rejected(testKey, matchedRule, nanosToWait);
-        when(rateLimiter.tryConsume(any(RequestContext.class), eq(ruleSet), eq(1L)))
+        // Wait for 30 seconds (30000 milliseconds)
+        long millisToWait = 30_000L;
+        RateLimitResponse rejectedResult = RateLimitResponse.rejected(millisToWait);
+        when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
                 .thenReturn(rejectedResult);
 
         // When
@@ -151,8 +115,12 @@ class FluxgateRateLimitFilterTest {
     @Test
     void shouldSkipExcludedPaths() throws Exception {
         // Given
-        rateLimitProperties.setExcludePatterns(new String[]{"/health", "/actuator/**"});
-        filter = new FluxgateRateLimitFilter(rateLimiter, ruleSetProvider, rateLimitProperties);
+        filter = new FluxgateRateLimitFilter(
+                handler,
+                RULE_SET_ID,
+                new String[]{"/**"},
+                new String[]{"/health", "/actuator/**"}
+        );
 
         when(request.getRequestURI()).thenReturn("/health");
 
@@ -161,14 +129,18 @@ class FluxgateRateLimitFilterTest {
 
         // Then
         verify(filterChain).doFilter(request, response);
-        verify(rateLimiter, never()).tryConsume(any(), any(), anyLong());
+        verify(handler, never()).tryConsume(any(), any());
     }
 
     @Test
     void shouldSkipExcludedPathsWithWildcard() throws Exception {
         // Given
-        rateLimitProperties.setExcludePatterns(new String[]{"/actuator/**"});
-        filter = new FluxgateRateLimitFilter(rateLimiter, ruleSetProvider, rateLimitProperties);
+        filter = new FluxgateRateLimitFilter(
+                handler,
+                RULE_SET_ID,
+                new String[]{"/**"},
+                new String[]{"/actuator/**"}
+        );
 
         when(request.getRequestURI()).thenReturn("/actuator/health");
 
@@ -177,14 +149,18 @@ class FluxgateRateLimitFilterTest {
 
         // Then
         verify(filterChain).doFilter(request, response);
-        verify(rateLimiter, never()).tryConsume(any(), any(), anyLong());
+        verify(handler, never()).tryConsume(any(), any());
     }
 
     @Test
     void shouldSkipNonIncludedPaths() throws Exception {
         // Given
-        rateLimitProperties.setIncludePatterns(new String[]{"/api/**"});
-        filter = new FluxgateRateLimitFilter(rateLimiter, ruleSetProvider, rateLimitProperties);
+        filter = new FluxgateRateLimitFilter(
+                handler,
+                RULE_SET_ID,
+                new String[]{"/api/**"},
+                new String[]{}
+        );
 
         when(request.getRequestURI()).thenReturn("/public/index.html");
 
@@ -193,7 +169,7 @@ class FluxgateRateLimitFilterTest {
 
         // Then
         verify(filterChain).doFilter(request, response);
-        verify(rateLimiter, never()).tryConsume(any(), any(), anyLong());
+        verify(handler, never()).tryConsume(any(), any());
     }
 
     @Test
@@ -202,14 +178,9 @@ class FluxgateRateLimitFilterTest {
         when(request.getRequestURI()).thenReturn("/api/users");
         when(request.getMethod()).thenReturn("GET");
         when(request.getHeader("X-Forwarded-For")).thenReturn("203.0.113.50, 70.41.3.18, 150.172.238.178");
-        when(ruleSetProvider.findById("test-rules")).thenReturn(Optional.of(ruleSet));
 
-        RateLimitKey forwardedKey = RateLimitKey.of("203.0.113.50");
-        RateLimitBand band = RateLimitBand.builder(Duration.ofMinutes(1), 100).build();
-        when(matchedRule.getBands()).thenReturn(List.of(band));
-
-        RateLimitResult allowedResult = RateLimitResult.allowed(forwardedKey, matchedRule, 50, 0);
-        when(rateLimiter.tryConsume(any(RequestContext.class), eq(ruleSet), eq(1L)))
+        RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+        when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
                 .thenReturn(allowedResult);
 
         // When
@@ -217,7 +188,7 @@ class FluxgateRateLimitFilterTest {
 
         // Then
         ArgumentCaptor<RequestContext> contextCaptor = ArgumentCaptor.forClass(RequestContext.class);
-        verify(rateLimiter).tryConsume(contextCaptor.capture(), eq(ruleSet), eq(1L));
+        verify(handler).tryConsume(contextCaptor.capture(), eq(RULE_SET_ID));
 
         RequestContext capturedContext = contextCaptor.getValue();
         assertThat(capturedContext.getClientIp()).isEqualTo("203.0.113.50");
@@ -226,20 +197,12 @@ class FluxgateRateLimitFilterTest {
     @Test
     void shouldFallbackToRemoteAddrWhenNoForwardedHeader() throws Exception {
         // Given
-        rateLimitProperties.setTrustClientIpHeader(false);
-        filter = new FluxgateRateLimitFilter(rateLimiter, ruleSetProvider, rateLimitProperties);
-
         when(request.getRequestURI()).thenReturn("/api/users");
         when(request.getMethod()).thenReturn("GET");
         when(request.getRemoteAddr()).thenReturn("10.0.0.1");
-        when(ruleSetProvider.findById("test-rules")).thenReturn(Optional.of(ruleSet));
 
-        RateLimitKey remoteKey = RateLimitKey.of("10.0.0.1");
-        RateLimitBand band = RateLimitBand.builder(Duration.ofMinutes(1), 100).build();
-        when(matchedRule.getBands()).thenReturn(List.of(band));
-
-        RateLimitResult allowedResult = RateLimitResult.allowed(remoteKey, matchedRule, 50, 0);
-        when(rateLimiter.tryConsume(any(RequestContext.class), eq(ruleSet), eq(1L)))
+        RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+        when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
                 .thenReturn(allowedResult);
 
         // When
@@ -247,7 +210,7 @@ class FluxgateRateLimitFilterTest {
 
         // Then
         ArgumentCaptor<RequestContext> contextCaptor = ArgumentCaptor.forClass(RequestContext.class);
-        verify(rateLimiter).tryConsume(contextCaptor.capture(), eq(ruleSet), eq(1L));
+        verify(handler).tryConsume(contextCaptor.capture(), eq(RULE_SET_ID));
 
         RequestContext capturedContext = contextCaptor.getValue();
         assertThat(capturedContext.getClientIp()).isEqualTo("10.0.0.1");
@@ -256,8 +219,12 @@ class FluxgateRateLimitFilterTest {
     @Test
     void shouldSkipWhenNoRuleSetId() throws Exception {
         // Given
-        rateLimitProperties.setDefaultRuleSetId(null);
-        filter = new FluxgateRateLimitFilter(rateLimiter, ruleSetProvider, rateLimitProperties);
+        filter = new FluxgateRateLimitFilter(
+                handler,
+                null,  // No rule set ID
+                new String[]{"/**"},
+                new String[]{}
+        );
 
         when(request.getRequestURI()).thenReturn("/api/users");
 
@@ -266,31 +233,16 @@ class FluxgateRateLimitFilterTest {
 
         // Then
         verify(filterChain).doFilter(request, response);
-        verify(rateLimiter, never()).tryConsume(any(), any(), anyLong());
+        verify(handler, never()).tryConsume(any(), any());
     }
 
     @Test
-    void shouldSkipWhenRuleSetNotFound() throws Exception {
-        // Given
-        when(request.getRequestURI()).thenReturn("/api/users");
-        when(ruleSetProvider.findById("test-rules")).thenReturn(Optional.empty());
-
-        // When
-        filter.doFilterInternal(request, response, filterChain);
-
-        // Then
-        verify(filterChain).doFilter(request, response);
-        verify(rateLimiter, never()).tryConsume(any(), any(), anyLong());
-    }
-
-    @Test
-    void shouldFailOpenOnRateLimiterException() throws Exception {
+    void shouldFailOpenOnHandlerException() throws Exception {
         // Given
         when(request.getRequestURI()).thenReturn("/api/users");
         when(request.getMethod()).thenReturn("GET");
         when(request.getRemoteAddr()).thenReturn("192.168.1.100");
-        when(ruleSetProvider.findById("test-rules")).thenReturn(Optional.of(ruleSet));
-        when(rateLimiter.tryConsume(any(RequestContext.class), eq(ruleSet), eq(1L)))
+        when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
                 .thenThrow(new RuntimeException("Redis connection failed"));
 
         // When
@@ -301,61 +253,6 @@ class FluxgateRateLimitFilterTest {
     }
 
     @Test
-    void shouldNotAddHeadersWhenDisabled() throws Exception {
-        // Given
-        rateLimitProperties.setIncludeHeaders(false);
-        filter = new FluxgateRateLimitFilter(rateLimiter, ruleSetProvider, rateLimitProperties);
-
-        when(request.getRequestURI()).thenReturn("/api/users");
-        when(request.getMethod()).thenReturn("GET");
-        when(request.getRemoteAddr()).thenReturn("192.168.1.100");
-        when(ruleSetProvider.findById("test-rules")).thenReturn(Optional.of(ruleSet));
-
-        RateLimitResult allowedResult = RateLimitResult.allowed(testKey, matchedRule, 50, 0);
-        when(rateLimiter.tryConsume(any(RequestContext.class), eq(ruleSet), eq(1L)))
-                .thenReturn(allowedResult);
-
-        // When
-        filter.doFilterInternal(request, response, filterChain);
-
-        // Then
-        verify(filterChain).doFilter(request, response);
-        verify(response, never()).setHeader(eq("X-RateLimit-Limit"), any());
-        verify(response, never()).setHeader(eq("X-RateLimit-Remaining"), any());
-        verify(response, never()).setHeader(eq("X-RateLimit-Reset"), any());
-    }
-
-    @Test
-    void shouldUseCustomIpHeader() throws Exception {
-        // Given
-        rateLimitProperties.setClientIpHeader("X-Real-IP");
-        filter = new FluxgateRateLimitFilter(rateLimiter, ruleSetProvider, rateLimitProperties);
-
-        when(request.getRequestURI()).thenReturn("/api/users");
-        when(request.getMethod()).thenReturn("GET");
-        when(request.getHeader("X-Real-IP")).thenReturn("8.8.8.8");
-        when(ruleSetProvider.findById("test-rules")).thenReturn(Optional.of(ruleSet));
-
-        RateLimitKey customKey = RateLimitKey.of("8.8.8.8");
-        RateLimitBand band = RateLimitBand.builder(Duration.ofMinutes(1), 100).build();
-        when(matchedRule.getBands()).thenReturn(List.of(band));
-
-        RateLimitResult allowedResult = RateLimitResult.allowed(customKey, matchedRule, 50, 0);
-        when(rateLimiter.tryConsume(any(RequestContext.class), eq(ruleSet), eq(1L)))
-                .thenReturn(allowedResult);
-
-        // When
-        filter.doFilterInternal(request, response, filterChain);
-
-        // Then
-        ArgumentCaptor<RequestContext> contextCaptor = ArgumentCaptor.forClass(RequestContext.class);
-        verify(rateLimiter).tryConsume(contextCaptor.capture(), eq(ruleSet), eq(1L));
-
-        RequestContext capturedContext = contextCaptor.getValue();
-        assertThat(capturedContext.getClientIp()).isEqualTo("8.8.8.8");
-    }
-
-    @Test
     void shouldExtractUserIdAndApiKeyFromHeaders() throws Exception {
         // Given
         when(request.getRequestURI()).thenReturn("/api/users");
@@ -363,13 +260,9 @@ class FluxgateRateLimitFilterTest {
         when(request.getRemoteAddr()).thenReturn("192.168.1.100");
         when(request.getHeader("X-User-Id")).thenReturn("user-12345");
         when(request.getHeader("X-API-Key")).thenReturn("api-key-abc");
-        when(ruleSetProvider.findById("test-rules")).thenReturn(Optional.of(ruleSet));
 
-        RateLimitBand band = RateLimitBand.builder(Duration.ofMinutes(1), 100).build();
-        when(matchedRule.getBands()).thenReturn(List.of(band));
-
-        RateLimitResult allowedResult = RateLimitResult.allowed(testKey, matchedRule, 50, 0);
-        when(rateLimiter.tryConsume(any(RequestContext.class), eq(ruleSet), eq(1L)))
+        RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+        when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
                 .thenReturn(allowedResult);
 
         // When
@@ -377,7 +270,7 @@ class FluxgateRateLimitFilterTest {
 
         // Then
         ArgumentCaptor<RequestContext> contextCaptor = ArgumentCaptor.forClass(RequestContext.class);
-        verify(rateLimiter).tryConsume(contextCaptor.capture(), eq(ruleSet), eq(1L));
+        verify(handler).tryConsume(contextCaptor.capture(), eq(RULE_SET_ID));
 
         RequestContext capturedContext = contextCaptor.getValue();
         assertThat(capturedContext.getUserId()).isEqualTo("user-12345");
@@ -387,17 +280,23 @@ class FluxgateRateLimitFilterTest {
     }
 
     @Test
-    void shouldWorkWithNullRuleSetProvider() throws Exception {
-        // Given - Create filter with null provider
-        filter = new FluxgateRateLimitFilter(rateLimiter, null, rateLimitProperties);
+    void shouldUseAllowAllHandlerWhenNullHandler() throws Exception {
+        // Given - Create filter with ALLOW_ALL handler
+        filter = new FluxgateRateLimitFilter(
+                FluxgateRateLimitHandler.ALLOW_ALL,
+                RULE_SET_ID,
+                new String[]{"/**"},
+                new String[]{}
+        );
 
         when(request.getRequestURI()).thenReturn("/api/users");
+        when(request.getMethod()).thenReturn("GET");
+        when(request.getRemoteAddr()).thenReturn("192.168.1.100");
 
         // When
         filter.doFilterInternal(request, response, filterChain);
 
-        // Then - Should pass through since no rules can be loaded
+        // Then - Should pass through
         verify(filterChain).doFilter(request, response);
-        verify(rateLimiter, never()).tryConsume(any(), any(), anyLong());
     }
 }

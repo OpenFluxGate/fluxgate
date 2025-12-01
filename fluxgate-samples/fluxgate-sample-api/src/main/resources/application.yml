@@ -1,0 +1,17 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: fluxgate-sample-api
+
+# External service URLs
+fluxgate:
+  services:
+    control-plane-url: http://localhost:8081
+    data-plane-url: http://localhost:8082
+
+logging:
+  level:
+    org.fluxgate: DEBUG
+    org.fluxgate.sample: DEBUG

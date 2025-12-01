@@ -1,0 +1,27 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: fluxgate-sample-filter
+
+# FluxGate Configuration - Automatic Rate Limiting via Filter
+fluxgate:
+  # HTTP API mode (current) - calls external FluxGate API server
+  api:
+    url: http://localhost:8082
+
+  # Redis direct mode (optional) - uncomment to use RedisRateLimitHandler
+  # redis:
+  #   enabled: true
+  #   uri: redis://localhost:6379
+
+# Rate limiting is configured via @EnableFluxgateFilter annotation:
+#   handler = HttpRateLimitHandler.class (or RedisRateLimitHandler.class)
+#   ruleSetId = "api-limits"
+#   includePatterns = {"/api/*"}
+#   excludePatterns = {"/health", "/actuator/*", "/swagger-ui/*", "/v3/api-docs/*"}
+
+logging:
+  level:
+    org.fluxgate: DEBUG

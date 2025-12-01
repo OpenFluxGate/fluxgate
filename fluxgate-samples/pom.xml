@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.fluxgate</groupId>
+        <artifactId>fluxgate</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>fluxgate-samples</artifactId>
+    <packaging>pom</packaging>
+
+    <name>FluxGate Samples</name>
+    <description>Sample applications demonstrating FluxGate usage</description>
+
+    <modules>
+        <module>fluxgate-sample-mongo</module>
+        <module>fluxgate-sample-redis</module>
+        <module>fluxgate-sample-api</module>
+        <module>fluxgate-sample-filter</module>
+    </modules>
+
+    <properties>
+        <spring-boot.version>3.3.5</spring-boot.version>
+        <springdoc.version>2.6.0</springdoc.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- SpringDoc OpenAPI (Swagger) -->
+            <dependency>
+                <groupId>org.springdoc</groupId>
+                <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+                <version>${springdoc.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- Common dependencies for all samples -->
+    <dependencies>
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+        </dependency>
+    </dependencies>
+
+</project>

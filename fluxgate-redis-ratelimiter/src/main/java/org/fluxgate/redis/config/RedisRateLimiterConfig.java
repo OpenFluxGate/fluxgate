@@ -5,6 +5,7 @@ import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import org.fluxgate.redis.script.LuaScriptLoader;
+import org.fluxgate.redis.store.RedisRuleSetStore;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +36,7 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
     private final StatefulRedisConnection<String, String> connection;
     private final RedisCommands<String, String> syncCommands;
     private final RedisTokenBucketStore tokenBucketStore;
+    private final RedisRuleSetStore ruleSetStore;
 
     /**
      * Create a new RedisRateLimiterConfig with the given Redis URI.
@@ -73,6 +75,9 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
         // Create production token bucket store
         this.tokenBucketStore = new RedisTokenBucketStore(syncCommands);
 
+        // Create RuleSet store
+        this.ruleSetStore = new RedisRuleSetStore(syncCommands);
+
         log.info("Redis RateLimiter initialized successfully");
         log.info("Production features enabled:");
         log.info("  - Uses Redis TIME (no clock drift)");
@@ -98,6 +103,9 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
         // Create token bucket store
         this.tokenBucketStore = new RedisTokenBucketStore(syncCommands);
 
+        // Create RuleSet store
+        this.ruleSetStore = new RedisRuleSetStore(syncCommands);
+
         log.info("Redis RateLimiter initialized with existing RedisClient");
     }
 
@@ -106,6 +114,13 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
      */
     public RedisTokenBucketStore getTokenBucketStore() {
         return tokenBucketStore;
+    }
+
+    /**
+     * Get the RuleSet store for storing RuleSet configurations in Redis.
+     */
+    public RedisRuleSetStore getRuleSetStore() {
+        return ruleSetStore;
     }
 
     /**
