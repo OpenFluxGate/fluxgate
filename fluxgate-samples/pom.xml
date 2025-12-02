@@ -23,6 +23,7 @@
         <module>fluxgate-sample-redis</module>
         <module>fluxgate-sample-api</module>
         <module>fluxgate-sample-filter</module>
+        <module>fluxgate-sample-standalone</module>
     </modules>
 
     <properties>

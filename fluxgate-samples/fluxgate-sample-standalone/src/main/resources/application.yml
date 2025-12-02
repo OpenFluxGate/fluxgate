@@ -1,0 +1,42 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: fluxgate-sample-standalone
+
+# FluxGate Configuration
+fluxgate:
+  mongodb:
+    uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
+    database: fluxgate
+  redis:
+    uri: redis://localhost:6379
+
+# Logging
+logging:
+  level:
+    org.fluxgate: DEBUG
+    org.fluxgate.sample.standalone: DEBUG
+
+# Swagger/OpenAPI
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+
+---
+# Docker profile (when running with docker-compose)
+spring:
+  config:
+    activate:
+      on-profile: docker
+
+fluxgate:
+  mongodb:
+    uri: mongodb://fluxgate:fluxgate123@mongodb:27017/fluxgate?authSource=admin
+  redis:
+    uri: redis://redis:6379

@@ -192,6 +192,7 @@ fluxgate:
 
 | Sample | Port | Description |
 |--------|------|-------------|
+| **fluxgate-sample-standalone** | 8085 | Full stack with direct MongoDB + Redis integration |
 | **fluxgate-sample-redis** | 8082 | Rate limit service with Redis backend |
 | **fluxgate-sample-mongo** | 8081 | Rule management with MongoDB |
 | **fluxgate-sample-filter** | 8083 | Client app with auto rate limiting filter |
