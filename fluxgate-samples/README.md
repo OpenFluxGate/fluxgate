@@ -10,6 +10,7 @@ FluxGate is a distributed rate limiting framework for Spring Boot applications. 
 
 | Sample | Port | Description | Prerequisites |
 |--------|------|-------------|---------------|
+| [fluxgate-sample-standalone](./fluxgate-sample-standalone) | 8085 | **Full Stack** - Direct MongoDB + Redis integration with `@EnableFluxgateFilter` | MongoDB, Redis |
 | [fluxgate-sample-filter](./fluxgate-sample-filter) | 8083 | **Recommended** - Automatic rate limiting with `@EnableFluxgateFilter` annotation | Redis |
 | [fluxgate-sample-redis](./fluxgate-sample-redis) | 8082 | Redis-based rate limiting (Data-plane) | Redis |
 | [fluxgate-sample-mongo](./fluxgate-sample-mongo) | 8081 | MongoDB rule management (Control-plane) | MongoDB |
@@ -89,6 +90,14 @@ Use this for:
 - Combined control-plane and data-plane
 - Production-like architecture
 
+### For Standalone Integration: `fluxgate-sample-standalone`
+
+Use this for:
+- Direct MongoDB + Redis integration (no external services)
+- Runtime rule management via REST API
+- Full control over rate limit rules and sync
+- Complete example with all FluxGate features
+
 ## Architecture
 
 ```
@@ -156,14 +165,15 @@ public class MyApplication {
 
 ## Key Features Demonstrated
 
-| Feature | Filter | Redis | Mongo | API |
-|---------|:------:|:-----:|:-----:|:---:|
-| Automatic HTTP Filter | ✅ | ✅ | ❌ | ✅ |
-| Redis Token Bucket | ✅ | ✅ | ❌ | ✅ |
-| MongoDB Rule Storage | ❌ | ❌ | ✅ | ✅ |
-| Dynamic Rule Updates | ✅ | ❌ | ✅ | ✅ |
-| REST Admin API | ✅ | ❌ | ✅ | ✅ |
-| Rate Limit Headers | ✅ | ✅ | ❌ | ✅ |
+| Feature | Standalone | Filter | Redis | Mongo | API |
+|---------|:----------:|:------:|:-----:|:-----:|:---:|
+| Automatic HTTP Filter | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Redis Token Bucket | ✅ | ✅ | ✅ | ❌ | ✅ |
+| MongoDB Rule Storage | ✅ | ❌ | ❌ | ✅ | ✅ |
+| Dynamic Rule Updates | ✅ | ✅ | ❌ | ✅ | ✅ |
+| REST Admin API | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Rate Limit Headers | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Direct DB Connection | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 ## Learn More
 

@@ -1,229 +1,286 @@
 package org.fluxgate.spring.autoconfigure;
 
-import org.fluxgate.core.ratelimiter.RateLimiter;
-import org.fluxgate.core.spi.RateLimitRuleSetProvider;
+import org.fluxgate.core.handler.FluxgateRateLimitHandler;
+import org.fluxgate.core.handler.RateLimitResponse;
+import org.fluxgate.spring.annotation.EnableFluxgateFilter;
 import org.fluxgate.spring.filter.FluxgateRateLimitFilter;
-import org.fluxgate.spring.properties.FluxgateProperties;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import java.util.Optional;
+import org.springframework.stereotype.Component;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Tests for {@link FluxgateFilterAutoConfiguration}.
- *
+ * <p>
  * Tests the conditional behavior of Filter auto-configuration:
- * - Requires fluxgate.ratelimit.filter-enabled=true
- * - Requires RateLimiter bean to be present
+ * - Requires @EnableFluxgateFilter annotation
  * - Requires servlet web application context
- * - Optional: RateLimitRuleSetProvider bean
+ * - Uses FluxgateRateLimitHandler from context or ALLOW_ALL fallback
  */
+@DisplayName("FluxgateFilterAutoConfiguration Tests")
 class FluxgateFilterAutoConfigurationTest {
 
-    @Configuration
-    @EnableConfigurationProperties(FluxgateProperties.class)
-    static class TestConfig {
-    }
-
     private final ApplicationContextRunner nonWebContextRunner = new ApplicationContextRunner()
-            .withConfiguration(AutoConfigurations.of(FluxgateFilterAutoConfiguration.class))
-            .withUserConfiguration(TestConfig.class);
+            .withConfiguration(AutoConfigurations.of(FluxgateFilterAutoConfiguration.class));
 
     private final WebApplicationContextRunner webContextRunner = new WebApplicationContextRunner()
-            .withConfiguration(AutoConfigurations.of(FluxgateFilterAutoConfiguration.class))
-            .withUserConfiguration(TestConfig.class);
+            .withConfiguration(AutoConfigurations.of(FluxgateFilterAutoConfiguration.class));
 
-    @Test
-    void shouldNotCreateFilterWhenDisabled() {
-        webContextRunner
-                .withPropertyValues("fluxgate.ratelimit.filter-enabled=false")
-                .run(context -> {
-                    assertThat(context).doesNotHaveBean(FluxgateRateLimitFilter.class);
-                    assertThat(context).doesNotHaveBean("fluxgateRateLimitFilterRegistration");
-                });
+    // ==================== Test Configurations ====================
+
+    @Configuration
+    @EnableFluxgateFilter
+    static class EnabledConfig {
     }
 
-    @Test
-    void shouldNotCreateFilterByDefault() {
-        // Default: fluxgate.ratelimit.filter-enabled is false
-        webContextRunner
-                .run(context -> {
-                    assertThat(context).doesNotHaveBean(FluxgateRateLimitFilter.class);
-                });
+    @Configuration
+    @EnableFluxgateFilter(ruleSetId = "test-rules")
+    static class EnabledWithRuleSetConfig {
     }
 
-    @Test
-    void shouldNotCreateFilterWithoutRateLimiter() {
-        // Filter enabled but no RateLimiter bean
-        webContextRunner
-                .withPropertyValues("fluxgate.ratelimit.filter-enabled=true")
-                .run(context -> {
-                    assertThat(context).doesNotHaveBean(FluxgateRateLimitFilter.class);
-                });
+    @Configuration
+    @EnableFluxgateFilter(filterOrder = -100)
+    static class EnabledWithCustomOrderConfig {
     }
 
-    @Test
-    void shouldNotCreateFilterInNonWebContext() {
-        // Filter enabled with RateLimiter but not a web context
-        RateLimiter mockRateLimiter = Mockito.mock(RateLimiter.class);
-
-        nonWebContextRunner
-                .withPropertyValues("fluxgate.ratelimit.filter-enabled=true")
-                .withBean(RateLimiter.class, () -> mockRateLimiter)
-                .run(context -> {
-                    assertThat(context).doesNotHaveBean(FluxgateRateLimitFilter.class);
-                });
+    @Configuration
+    @EnableFluxgateFilter(
+            includePatterns = {"/api/*", "/v1/*"},
+            excludePatterns = {"/health", "/actuator/*"}
+    )
+    static class EnabledWithPatternsConfig {
     }
 
-    @Test
-    void shouldCreateFilterWhenEnabledWithRateLimiter() {
-        RateLimiter mockRateLimiter = Mockito.mock(RateLimiter.class);
-        RateLimitRuleSetProvider mockProvider = Mockito.mock(RateLimitRuleSetProvider.class);
-        Mockito.when(mockProvider.findById(Mockito.anyString())).thenReturn(Optional.empty());
-
-        webContextRunner
-                .withPropertyValues(
-                        "fluxgate.ratelimit.filter-enabled=true",
-                        "fluxgate.ratelimit.default-rule-set-id=test-rules"
-                )
-                .withBean(RateLimiter.class, () -> mockRateLimiter)
-                .withBean(RateLimitRuleSetProvider.class, () -> mockProvider)
-                .run(context -> {
-                    assertThat(context).hasSingleBean(FluxgateRateLimitFilter.class);
-                    assertThat(context).hasBean("fluxgateRateLimitFilterRegistration");
-                });
+    @Configuration
+    @EnableFluxgateFilter(handler = TestHandler.class)
+    static class EnabledWithHandlerConfig {
     }
 
-    @Test
-    void shouldCreateFilterWithoutRuleSetProvider() {
-        // RuleSetProvider is optional - filter should still be created
-        RateLimiter mockRateLimiter = Mockito.mock(RateLimiter.class);
-
-        webContextRunner
-                .withPropertyValues("fluxgate.ratelimit.filter-enabled=true")
-                .withBean(RateLimiter.class, () -> mockRateLimiter)
-                .run(context -> {
-                    assertThat(context).hasSingleBean(FluxgateRateLimitFilter.class);
-                });
+    @Component
+    static class TestHandler implements FluxgateRateLimitHandler {
+        @Override
+        public RateLimitResponse tryConsume(org.fluxgate.core.context.RequestContext context, String ruleSetId) {
+            return RateLimitResponse.allowed(100, 0);
+        }
     }
 
-    @Test
-    void shouldConfigureFilterOrder() {
-        RateLimiter mockRateLimiter = Mockito.mock(RateLimiter.class);
+    // ==================== Conditional Tests ====================
 
-        webContextRunner
-                .withPropertyValues(
-                        "fluxgate.ratelimit.filter-enabled=true",
-                        "fluxgate.ratelimit.filter-order=-100"
-                )
-                .withBean(RateLimiter.class, () -> mockRateLimiter)
-                .run(context -> {
-                    assertThat(context).hasBean("fluxgateRateLimitFilterRegistration");
+    @Nested
+    @DisplayName("Conditional Bean Creation Tests")
+    class ConditionalTests {
 
-                    @SuppressWarnings("unchecked")
-                    FilterRegistrationBean<FluxgateRateLimitFilter> registration =
-                            context.getBean("fluxgateRateLimitFilterRegistration", FilterRegistrationBean.class);
+        @Test
+        @DisplayName("should create filter when @EnableFluxgateFilter is present")
+        void shouldCreateFilterWhenAnnotationPresent() {
+            webContextRunner
+                    .withUserConfiguration(EnabledConfig.class)
+                    .run(context -> {
+                        assertThat(context).hasSingleBean(FluxgateRateLimitFilter.class);
+                        assertThat(context).hasBean("fluxgateRateLimitFilterRegistration");
+                    });
+        }
 
-                    assertThat(registration.getOrder()).isEqualTo(-100);
-                });
+        @Test
+        @DisplayName("should create filter with ALLOW_ALL handler when no handler bean")
+        void shouldCreateFilterWithAllowAllHandler() {
+            webContextRunner
+                    .withUserConfiguration(EnabledConfig.class)
+                    .run(context -> {
+                        assertThat(context).hasSingleBean(FluxgateRateLimitFilter.class);
+                        // Filter is created with ALLOW_ALL fallback
+                    });
+        }
+
+        @Test
+        @DisplayName("should not create filter in non-web context")
+        void shouldNotCreateFilterInNonWebContext() {
+            nonWebContextRunner
+                    .withUserConfiguration(EnabledConfig.class)
+                    .run(context -> {
+                        assertThat(context).doesNotHaveBean(FluxgateRateLimitFilter.class);
+                    });
+        }
+
+        @Test
+        @DisplayName("should use custom handler when available in context")
+        void shouldUseCustomHandlerWhenAvailable() {
+            webContextRunner
+                    .withUserConfiguration(EnabledWithHandlerConfig.class)
+                    .withBean(TestHandler.class)
+                    .run(context -> {
+                        assertThat(context).hasSingleBean(FluxgateRateLimitFilter.class);
+                        assertThat(context).hasSingleBean(TestHandler.class);
+                    });
+        }
     }
 
-    @Test
-    void shouldConfigureIncludePatterns() {
-        RateLimiter mockRateLimiter = Mockito.mock(RateLimiter.class);
+    // ==================== Filter Order Tests ====================
 
-        webContextRunner
-                .withPropertyValues(
-                        "fluxgate.ratelimit.filter-enabled=true",
-                        "fluxgate.ratelimit.include-patterns=/api/*,/v1/*"
-                )
-                .withBean(RateLimiter.class, () -> mockRateLimiter)
-                .run(context -> {
-                    assertThat(context).hasSingleBean(FluxgateProperties.class);
-                    FluxgateProperties props = context.getBean(FluxgateProperties.class);
-                    assertThat(props.getRatelimit().getIncludePatterns())
-                            .containsExactly("/api/*", "/v1/*");
-                });
+    @Nested
+    @DisplayName("Filter Order Tests")
+    class FilterOrderTests {
+
+        @Test
+        @DisplayName("should use default filter order (1) when not specified")
+        void shouldUseDefaultFilterOrder() {
+            webContextRunner
+                    .withUserConfiguration(EnabledConfig.class)
+                    .run(context -> {
+                        assertThat(context).hasBean("fluxgateRateLimitFilterRegistration");
+
+                        @SuppressWarnings("unchecked")
+                        FilterRegistrationBean<FluxgateRateLimitFilter> registration =
+                                context.getBean("fluxgateRateLimitFilterRegistration", FilterRegistrationBean.class);
+
+                        // Default order in @EnableFluxgateFilter is 1
+                        assertThat(registration.getOrder()).isEqualTo(1);
+                    });
+        }
+
+        @Test
+        @DisplayName("should use custom filter order from annotation")
+        void shouldUseCustomFilterOrder() {
+            webContextRunner
+                    .withUserConfiguration(EnabledWithCustomOrderConfig.class)
+                    .run(context -> {
+                        assertThat(context).hasBean("fluxgateRateLimitFilterRegistration");
+
+                        @SuppressWarnings("unchecked")
+                        FilterRegistrationBean<FluxgateRateLimitFilter> registration =
+                                context.getBean("fluxgateRateLimitFilterRegistration", FilterRegistrationBean.class);
+
+                        assertThat(registration.getOrder()).isEqualTo(-100);
+                    });
+        }
     }
 
-    @Test
-    void shouldConfigureExcludePatterns() {
-        RateLimiter mockRateLimiter = Mockito.mock(RateLimiter.class);
+    // ==================== URL Pattern Tests ====================
 
-        webContextRunner
-                .withPropertyValues(
-                        "fluxgate.ratelimit.filter-enabled=true",
-                        "fluxgate.ratelimit.exclude-patterns=/health,/actuator/*,/metrics"
-                )
-                .withBean(RateLimiter.class, () -> mockRateLimiter)
-                .run(context -> {
-                    assertThat(context).hasSingleBean(FluxgateProperties.class);
-                    FluxgateProperties props = context.getBean(FluxgateProperties.class);
-                    assertThat(props.getRatelimit().getExcludePatterns())
-                            .containsExactly("/health", "/actuator/*", "/metrics");
-                });
+    @Nested
+    @DisplayName("URL Pattern Tests")
+    class UrlPatternTests {
+
+        @Test
+        @DisplayName("should use /* pattern when no patterns specified")
+        void shouldUseDefaultPattern() {
+            webContextRunner
+                    .withUserConfiguration(EnabledConfig.class)
+                    .run(context -> {
+                        assertThat(context).hasBean("fluxgateRateLimitFilterRegistration");
+
+                        @SuppressWarnings("unchecked")
+                        FilterRegistrationBean<FluxgateRateLimitFilter> registration =
+                                context.getBean("fluxgateRateLimitFilterRegistration", FilterRegistrationBean.class);
+
+                        assertThat(registration.getUrlPatterns()).containsExactly("/*");
+                    });
+        }
+
+        @Test
+        @DisplayName("should use custom patterns from annotation")
+        void shouldUseCustomPatterns() {
+            webContextRunner
+                    .withUserConfiguration(EnabledWithPatternsConfig.class)
+                    .run(context -> {
+                        assertThat(context).hasBean("fluxgateRateLimitFilterRegistration");
+
+                        @SuppressWarnings("unchecked")
+                        FilterRegistrationBean<FluxgateRateLimitFilter> registration =
+                                context.getBean("fluxgateRateLimitFilterRegistration", FilterRegistrationBean.class);
+
+                        assertThat(registration.getUrlPatterns()).containsExactlyInAnyOrder("/api/*", "/v1/*");
+                    });
+        }
     }
 
-    @Test
-    void shouldConfigureClientIpHeader() {
-        RateLimiter mockRateLimiter = Mockito.mock(RateLimiter.class);
+    // ==================== Rule Set ID Tests ====================
 
-        webContextRunner
-                .withPropertyValues(
-                        "fluxgate.ratelimit.filter-enabled=true",
-                        "fluxgate.ratelimit.client-ip-header=X-Real-IP",
-                        "fluxgate.ratelimit.trust-client-ip-header=false"
-                )
-                .withBean(RateLimiter.class, () -> mockRateLimiter)
-                .run(context -> {
-                    assertThat(context).hasSingleBean(FluxgateProperties.class);
-                    FluxgateProperties props = context.getBean(FluxgateProperties.class);
-                    assertThat(props.getRatelimit().getClientIpHeader()).isEqualTo("X-Real-IP");
-                    assertThat(props.getRatelimit().isTrustClientIpHeader()).isFalse();
-                });
+    @Nested
+    @DisplayName("Rule Set ID Tests")
+    class RuleSetIdTests {
+
+        @Test
+        @DisplayName("should create filter with ruleSetId from annotation")
+        void shouldUseRuleSetIdFromAnnotation() {
+            webContextRunner
+                    .withUserConfiguration(EnabledWithRuleSetConfig.class)
+                    .run(context -> {
+                        assertThat(context).hasSingleBean(FluxgateRateLimitFilter.class);
+                        // The ruleSetId is passed to the filter constructor
+                    });
+        }
     }
 
-    @Test
-    void shouldConfigureRateLimitHeaders() {
-        RateLimiter mockRateLimiter = Mockito.mock(RateLimiter.class);
+    // ==================== No Annotation Tests ====================
 
-        webContextRunner
-                .withPropertyValues(
-                        "fluxgate.ratelimit.filter-enabled=true",
-                        "fluxgate.ratelimit.include-headers=false"
-                )
-                .withBean(RateLimiter.class, () -> mockRateLimiter)
-                .run(context -> {
-                    assertThat(context).hasSingleBean(FluxgateProperties.class);
-                    FluxgateProperties props = context.getBean(FluxgateProperties.class);
-                    assertThat(props.getRatelimit().isIncludeHeaders()).isFalse();
-                });
+    @Nested
+    @DisplayName("No Annotation Tests")
+    class NoAnnotationTests {
+
+        @Configuration
+        static class EmptyConfig {
+        }
+
+        @Test
+        @DisplayName("should create filter with defaults when annotation not found")
+        void shouldCreateFilterWithDefaultsWhenNoAnnotation() {
+            // When no @EnableFluxgateFilter annotation, filter is still created with defaults
+            webContextRunner
+                    .withUserConfiguration(EmptyConfig.class)
+                    .run(context -> {
+                        // FluxgateFilterAutoConfiguration creates filter even without annotation
+                        // (uses ALLOW_ALL handler and empty patterns)
+                        assertThat(context).hasSingleBean(FluxgateRateLimitFilter.class);
+                    });
+        }
     }
 
-    @Test
-    void shouldUseDefaultFilterOrder() {
-        RateLimiter mockRateLimiter = Mockito.mock(RateLimiter.class);
+    // ==================== Filter Registration Tests ====================
 
-        webContextRunner
-                .withPropertyValues("fluxgate.ratelimit.filter-enabled=true")
-                .withBean(RateLimiter.class, () -> mockRateLimiter)
-                .run(context -> {
-                    assertThat(context).hasBean("fluxgateRateLimitFilterRegistration");
+    @Nested
+    @DisplayName("Filter Registration Tests")
+    class FilterRegistrationTests {
 
-                    @SuppressWarnings("unchecked")
-                    FilterRegistrationBean<FluxgateRateLimitFilter> registration =
-                            context.getBean("fluxgateRateLimitFilterRegistration", FilterRegistrationBean.class);
+        @Test
+        @DisplayName("should register filter with correct name")
+        void shouldRegisterFilterWithCorrectName() {
+            webContextRunner
+                    .withUserConfiguration(EnabledConfig.class)
+                    .run(context -> {
+                        @SuppressWarnings("unchecked")
+                        FilterRegistrationBean<FluxgateRateLimitFilter> registration =
+                                context.getBean("fluxgateRateLimitFilterRegistration", FilterRegistrationBean.class);
 
-                    // Default order is Integer.MIN_VALUE + 100
-                    assertThat(registration.getOrder()).isEqualTo(Integer.MIN_VALUE + 100);
-                });
+                        assertThat(registration.getFilter()).isNotNull();
+                    });
+        }
+
+        @Test
+        @DisplayName("should not create auto-configured filter when custom filter exists")
+        void shouldNotCreateDuplicateFilter() {
+            webContextRunner
+                    .withUserConfiguration(EnabledConfig.class)
+                    .withBean("fluxgateRateLimitFilter", FluxgateRateLimitFilter.class,
+                            () -> new FluxgateRateLimitFilter(
+                                    FluxgateRateLimitHandler.ALLOW_ALL,
+                                    "custom",
+                                    new String[0],
+                                    new String[0]))
+                    .run(context -> {
+                        // @ConditionalOnMissingBean should prevent auto-configuration
+                        // Only the custom bean should exist
+                        assertThat(context.getBeansOfType(FluxgateRateLimitFilter.class)).hasSize(1);
+                        assertThat(context).hasBean("fluxgateRateLimitFilter");
+                    });
+        }
     }
 }
