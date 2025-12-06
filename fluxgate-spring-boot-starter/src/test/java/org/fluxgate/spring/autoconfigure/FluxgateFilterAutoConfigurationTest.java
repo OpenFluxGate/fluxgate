@@ -186,8 +186,10 @@ class FluxgateFilterAutoConfigurationTest {
         }
 
         @Test
-        @DisplayName("should use custom patterns from annotation")
-        void shouldUseCustomPatterns() {
+        @DisplayName("should always use /* pattern for servlet filter registration")
+        void shouldAlwaysUseWildcardPattern() {
+            // Servlet spec only supports simple wildcard patterns (/*), not Ant patterns (**)
+            // The actual path matching is done inside the filter using AntPathMatcher
             webContextRunner
                     .withUserConfiguration(EnabledWithPatternsConfig.class)
                     .run(context -> {
@@ -197,7 +199,8 @@ class FluxgateFilterAutoConfigurationTest {
                         FilterRegistrationBean<FluxgateRateLimitFilter> registration =
                                 context.getBean("fluxgateRateLimitFilterRegistration", FilterRegistrationBean.class);
 
-                        assertThat(registration.getUrlPatterns()).containsExactlyInAnyOrder("/api/*", "/v1/*");
+                        // Always registered with /* for servlet, filter does internal Ant pattern matching
+                        assertThat(registration.getUrlPatterns()).containsExactly("/*");
                     });
         }
     }

@@ -22,7 +22,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 @EnableFluxgateFilter(
         handler = StandaloneRateLimitHandler.class,
         ruleSetId = "standalone-rules",
-        includePatterns = {"/api/test", "/api/test/**"},
+        includePatterns = {"/api/**"},
         excludePatterns = {"/api/admin/**", "/swagger-ui/**", "/v3/api-docs/**"}
 )
 public class StandaloneApplication {

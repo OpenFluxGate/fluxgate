@@ -17,6 +17,11 @@
     <name>FluxGate Testkit</name>
     <description>Testkit for FluxGate distributed rate limiting</description>
 
+    <properties>
+        <!-- Skip coverage check for testkit -->
+        <jacoco.skip>true</jacoco.skip>
+    </properties>
+
     <dependencies>
         <!-- core -->
         <dependency>
@@ -84,6 +89,15 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-deploy-plugin</artifactId>
+            </plugin>
+
+            <!-- Skip JaCoCo for testkit -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
             </plugin>
         </plugins>
     </build>
