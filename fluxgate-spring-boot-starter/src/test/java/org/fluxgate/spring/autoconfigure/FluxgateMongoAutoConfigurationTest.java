@@ -97,6 +97,11 @@ class FluxgateMongoAutoConfigurationTest {
     @Test
     void shouldHaveCorrectDefaultValues() {
         contextRunner
+                .withPropertyValues(
+                        // Explicitly set default values to isolate from CI environment variables
+                        "fluxgate.mongo.uri=mongodb://localhost:27017/fluxgate",
+                        "fluxgate.mongo.database=fluxgate"
+                )
                 .run(context -> {
                     FluxgateProperties props = context.getBean(FluxgateProperties.class);
 
