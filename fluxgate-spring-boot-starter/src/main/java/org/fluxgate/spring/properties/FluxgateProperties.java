@@ -48,6 +48,18 @@ public class FluxgateProperties {
     @NestedConfigurationProperty
     private RateLimitProperties ratelimit = new RateLimitProperties();
 
+    /**
+     * Metrics configuration.
+     */
+    @NestedConfigurationProperty
+    private MetricsProperties metrics = new MetricsProperties();
+
+    /**
+     * Actuator configuration.
+     */
+    @NestedConfigurationProperty
+    private ActuatorProperties actuator = new ActuatorProperties();
+
     public MongoProperties getMongo() {
         return mongo;
     }
@@ -70,6 +82,22 @@ public class FluxgateProperties {
 
     public void setRatelimit(RateLimitProperties ratelimit) {
         this.ratelimit = ratelimit;
+    }
+
+    public MetricsProperties getMetrics() {
+        return metrics;
+    }
+
+    public void setMetrics(MetricsProperties metrics) {
+        this.metrics = metrics;
+    }
+
+    public ActuatorProperties getActuator() {
+        return actuator;
+    }
+
+    public void setActuator(ActuatorProperties actuator) {
+        this.actuator = actuator;
     }
 
     // =========================================================================
@@ -311,6 +339,80 @@ public class FluxgateProperties {
 
         public void setIncludeHeaders(boolean includeHeaders) {
             this.includeHeaders = includeHeaders;
+        }
+    }
+
+    /**
+     * Metrics configuration for Prometheus/Micrometer integration.
+     */
+    public static class MetricsProperties {
+
+        /**
+         * Enable FluxGate metrics collection.
+         * Requires Micrometer on the classpath.
+         */
+        private boolean enabled = true;
+
+        /**
+         * Include endpoint tag in metrics.
+         * When true, metrics are tagged with the request endpoint.
+         * Disable if you have many unique endpoints to reduce cardinality.
+         */
+        private boolean includeEndpoint = true;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public boolean isIncludeEndpoint() {
+            return includeEndpoint;
+        }
+
+        public void setIncludeEndpoint(boolean includeEndpoint) {
+            this.includeEndpoint = includeEndpoint;
+        }
+    }
+
+    /**
+     * Actuator configuration for health endpoints.
+     */
+    public static class ActuatorProperties {
+
+        /**
+         * Nested health configuration.
+         */
+        private HealthProperties health = new HealthProperties();
+
+        public HealthProperties getHealth() {
+            return health;
+        }
+
+        public void setHealth(HealthProperties health) {
+            this.health = health;
+        }
+
+        /**
+         * Health endpoint configuration.
+         */
+        public static class HealthProperties {
+
+            /**
+             * Enable FluxGate health indicator.
+             * Provides health status at /actuator/health/fluxgate.
+             */
+            private boolean enabled = true;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
         }
     }
 }

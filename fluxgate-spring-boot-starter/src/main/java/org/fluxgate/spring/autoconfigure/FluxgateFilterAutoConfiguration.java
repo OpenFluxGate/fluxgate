@@ -110,13 +110,10 @@ public class FluxgateFilterAutoConfiguration {
         int filterOrder = annotation != null ? annotation.filterOrder() : 1;
         registration.setOrder(filterOrder);
 
-        // Set URL patterns from annotation
-        String[] includePatterns = annotation != null ? annotation.includePatterns() : new String[0];
-        if (includePatterns.length > 0) {
-            registration.addUrlPatterns(includePatterns);
-        } else {
-            registration.addUrlPatterns("/*");
-        }
+        // Always use /* for servlet filter registration
+        // The actual path matching (with Ant patterns like /api/**) is done inside the filter
+        // because Servlet spec only supports simple wildcard patterns (/*), not Ant patterns (**)
+        registration.addUrlPatterns("/*");
 
         log.info("Registered FluxgateRateLimitFilter with order: {}", filterOrder);
 

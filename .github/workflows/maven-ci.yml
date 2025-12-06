@@ -2,12 +2,12 @@ name: Java CI with Maven
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "development/**" ]
   pull_request:
     branches: [ "main" ]
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
 
     services:
@@ -20,7 +20,17 @@ jobs:
         ports:
           - 27017:27017
         options: >-
-          --health-cmd "mongosh --username fluxgate --password fluxgate123 --authenticationDatabase admin --eval 'db.adminCommand(\"ping\")'" 
+          --health-cmd "mongosh --username fluxgate --password fluxgate123 --authenticationDatabase admin --eval 'db.adminCommand(\"ping\")'"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -28,6 +38,7 @@ jobs:
     env:
       FLUXGATE_MONGO_URI: "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin"
       FLUXGATE_MONGO_DB: "fluxgate"
+      FLUXGATE_REDIS_URI: "redis://localhost:6379"
 
     steps:
       - uses: actions/checkout@v4
@@ -39,9 +50,26 @@ jobs:
           distribution: temurin
           cache: maven
 
-      - name: Build & Install (first pass)
+      - name: Build & Install (skip tests first)
         run: mvn -B install -DskipTests
 
-      - name: Run tests
-        run: mvn -B test
+      - name: Run tests with coverage
+        run: mvn -B test jacoco:report
+
+      - name: Check code coverage
+        run: mvn -B jacoco:check
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: '**/target/site/jacoco/jacoco.xml'
+          fail_ci_if_error: false
+          verbose: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: '**/target/surefire-reports/*.xml'
 
