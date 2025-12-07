@@ -124,6 +124,11 @@ class ClusterConnectionIntegrationTest {
 
     System.out.println("Token exhaustion test:");
     System.out.println("  First request: consumed=" + first.consumed());
-    System.out.println("  Second request: consumed=" + second.consumed() + ", wait=" + second.getRetryAfterSeconds() + "s");
+    System.out.println(
+        "  Second request: consumed="
+            + second.consumed()
+            + ", wait="
+            + second.getRetryAfterSeconds()
+            + "s");
   }
 }
