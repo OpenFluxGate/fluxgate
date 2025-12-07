@@ -7,7 +7,7 @@
 
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>

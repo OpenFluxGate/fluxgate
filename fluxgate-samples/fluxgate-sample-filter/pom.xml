@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.fluxgate</groupId>
+        <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate-samples</artifactId>
         <version>0.0.1-SNAPSHOT</version>
     </parent>
@@ -20,7 +20,7 @@
     <dependencies>
         <!-- FluxGate Spring Boot Starter -->
         <dependency>
-            <groupId>org.fluxgate</groupId>
+            <groupId>io.github.openfluxgate</groupId>
             <artifactId>fluxgate-spring-boot-starter</artifactId>
             <version>${project.version}</version>
         </dependency>
@@ -29,7 +29,7 @@
         <!-- Uncomment this if using RedisRateLimitHandler instead of HttpRateLimitHandler -->
         <!--
         <dependency>
-            <groupId>org.fluxgate</groupId>
+            <groupId>io.github.openfluxgate</groupId>
             <artifactId>fluxgate-redis-ratelimiter</artifactId>
             <version>${project.version}</version>
         </dependency>
