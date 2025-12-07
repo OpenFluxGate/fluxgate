@@ -582,7 +582,7 @@ If TTL is `-1` (no expiration), check the Lua script's EXPIRE call.
 
 ## License
 
-Apache License 2.0
+MIT License
 
 ## Support
 
