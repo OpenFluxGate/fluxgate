@@ -202,6 +202,16 @@
                         <publishingServerId>central</publishingServerId>
                         <autoPublish>true</autoPublish>
                         <waitUntil>published</waitUntil>
+                        <deploymentName>fluxgate-${project.version}</deploymentName>
+                        <excludeArtifacts>
+                            <artifact>fluxgate-samples</artifact>
+                            <artifact>fluxgate-sample-mongo</artifact>
+                            <artifact>fluxgate-sample-redis</artifact>
+                            <artifact>fluxgate-sample-api</artifact>
+                            <artifact>fluxgate-sample-filter</artifact>
+                            <artifact>fluxgate-sample-standalone</artifact>
+                            <artifact>fluxgate-testkit</artifact>
+                        </excludeArtifacts>
                     </configuration>
                 </plugin>
 
