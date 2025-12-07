@@ -60,6 +60,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -68,12 +71,13 @@ jobs:
           distribution: temurin
           cache: maven
 
-      - name: Get latest tag version
+      - name: Get version from latest tag
         id: version
         run: |
-          git fetch --tags
+          # Get latest tag (e.g., v0.1.0 or 0.1.0 -> 0.1.0)
           VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
 
       - name: Set version
         run: mvn -B versions:set -DnewVersion=${{ steps.version.outputs.VERSION }} -DgenerateBackupPoms=false
