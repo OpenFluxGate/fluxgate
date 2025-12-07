@@ -31,6 +31,8 @@
         <springdoc.version>2.6.0</springdoc.version>
         <!-- Skip coverage check for samples -->
         <jacoco.skip>true</jacoco.skip>
+        <!-- Skip deployment to Maven Central -->
+        <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
 
     <build>

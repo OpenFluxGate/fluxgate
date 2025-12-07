@@ -20,6 +20,8 @@
     <properties>
         <!-- Skip coverage check for testkit -->
         <jacoco.skip>true</jacoco.skip>
+        <!-- Skip deployment to Maven Central -->
+        <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
 
     <dependencies>
