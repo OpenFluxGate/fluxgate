@@ -11,33 +11,33 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 
 public final class FluxgateMongoConfig {
 
-    private final MongoDatabase database;
-    private final String ruleCollectionName;
-    private final String eventCollectionName;
+  private final MongoDatabase database;
+  private final String ruleCollectionName;
+  private final String eventCollectionName;
 
-    public FluxgateMongoConfig(MongoClient client,
-                               String databaseName,
-                               String ruleCollectionName,
-                               String eventCollectionName) {
-        this.database = client.getDatabase(databaseName);
-        this.ruleCollectionName = ruleCollectionName;
-        this.eventCollectionName = eventCollectionName;
-    }
+  public FluxgateMongoConfig(
+      MongoClient client,
+      String databaseName,
+      String ruleCollectionName,
+      String eventCollectionName) {
+    this.database = client.getDatabase(databaseName);
+    this.ruleCollectionName = ruleCollectionName;
+    this.eventCollectionName = eventCollectionName;
+  }
 
-    public MongoCollection<Document> ruleCollection() {
-        return database.getCollection(ruleCollectionName);
-    }
+  public MongoCollection<Document> ruleCollection() {
+    return database.getCollection(ruleCollectionName);
+  }
 
-    public MongoCollection<Document> eventCollection() {
-        return database.getCollection(eventCollectionName);
-    }
+  public MongoCollection<Document> eventCollection() {
+    return database.getCollection(eventCollectionName);
+  }
 
-    public MongoRateLimitRuleRepository ruleRepository() {
-        return new MongoRateLimitRuleRepository(ruleCollection());
-    }
+  public MongoRateLimitRuleRepository ruleRepository() {
+    return new MongoRateLimitRuleRepository(ruleCollection());
+  }
 
-    public RateLimitRuleSetProvider ruleSetProvider(KeyResolver keyResolver) {
-        return new MongoRuleSetProvider(ruleRepository(), keyResolver);
-    }
-
+  public RateLimitRuleSetProvider ruleSetProvider(KeyResolver keyResolver) {
+    return new MongoRuleSetProvider(ruleRepository(), keyResolver);
+  }
 }

@@ -7,17 +7,13 @@ import org.springframework.web.client.RestClient;
 @Configuration
 public class RestClientConfig {
 
-    @Bean
-    public RestClient controlPlaneClient(ServiceProperties properties) {
-        return RestClient.builder()
-                .baseUrl(properties.getControlPlaneUrl())
-                .build();
-    }
+  @Bean
+  public RestClient controlPlaneClient(ServiceProperties properties) {
+    return RestClient.builder().baseUrl(properties.getControlPlaneUrl()).build();
+  }
 
-    @Bean
-    public RestClient dataPlaneClient(ServiceProperties properties) {
-        return RestClient.builder()
-                .baseUrl(properties.getDataPlaneUrl())
-                .build();
-    }
+  @Bean
+  public RestClient dataPlaneClient(ServiceProperties properties) {
+    return RestClient.builder().baseUrl(properties.getDataPlaneUrl()).build();
+  }
 }

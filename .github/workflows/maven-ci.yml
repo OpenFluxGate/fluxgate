@@ -50,14 +50,14 @@ jobs:
           distribution: temurin
           cache: maven
 
+      - name: Check code style
+        run: mvn -B spotless:check
+
       - name: Build & Install (skip tests first)
         run: mvn -B install -DskipTests
 
       - name: Run tests with coverage
-        run: mvn -B test jacoco:report
-
-      - name: Check code coverage
-        run: mvn -B jacoco:check
+        run: mvn -B verify
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

@@ -17,38 +17,44 @@ import org.springframework.context.annotation.Bean;
 
 /**
  * Auto-configuration for FluxGate Spring Boot Actuator health endpoint.
- * <p>
- * This configuration is activated when:
+ *
+ * <p>This configuration is activated when:
+ *
  * <ul>
- *   <li>Spring Boot Actuator is on the classpath</li>
- *   <li>{@code fluxgate.actuator.health.enabled} is true (default: true)</li>
+ *   <li>Spring Boot Actuator is on the classpath
+ *   <li>{@code fluxgate.actuator.health.enabled} is true (default: true)
  * </ul>
- * <p>
- * Provides a health indicator at {@code /actuator/health/fluxgate} showing:
+ *
+ * <p>Provides a health indicator at {@code /actuator/health/fluxgate} showing:
+ *
  * <ul>
- *   <li>Rate limiting enabled status</li>
- *   <li>MongoDB connection status (if enabled)</li>
- *   <li>Redis connection status (if enabled)</li>
+ *   <li>Rate limiting enabled status
+ *   <li>MongoDB connection status (if enabled)
+ *   <li>Redis connection status (if enabled)
  * </ul>
  *
  * @see FluxgateHealthIndicator
  */
 @AutoConfiguration
 @ConditionalOnClass(HealthIndicator.class)
-@ConditionalOnProperty(name = "fluxgate.actuator.health.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(
+    name = "fluxgate.actuator.health.enabled",
+    havingValue = "true",
+    matchIfMissing = true)
 @EnableConfigurationProperties(FluxgateProperties.class)
 public class FluxgateActuatorAutoConfiguration {
 
-    private static final Logger log = LoggerFactory.getLogger(FluxgateActuatorAutoConfiguration.class);
+  private static final Logger log =
+      LoggerFactory.getLogger(FluxgateActuatorAutoConfiguration.class);
 
-    @Bean
-    @ConditionalOnMissingBean(name = "fluxgateHealthIndicator")
-    public FluxgateHealthIndicator fluxgateHealthIndicator(
-            FluxgateProperties properties,
-            @Autowired(required = false) MongoHealthChecker mongoHealthChecker,
-            @Autowired(required = false) RedisHealthChecker redisHealthChecker) {
+  @Bean
+  @ConditionalOnMissingBean(name = "fluxgateHealthIndicator")
+  public FluxgateHealthIndicator fluxgateHealthIndicator(
+      FluxgateProperties properties,
+      @Autowired(required = false) MongoHealthChecker mongoHealthChecker,
+      @Autowired(required = false) RedisHealthChecker redisHealthChecker) {
 
-        log.info("Configuring FluxGate Actuator health indicator");
-        return new FluxgateHealthIndicator(properties, mongoHealthChecker, redisHealthChecker);
-    }
+    log.info("Configuring FluxGate Actuator health indicator");
+    return new FluxgateHealthIndicator(properties, mongoHealthChecker, redisHealthChecker);
+  }
 }

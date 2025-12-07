@@ -10,13 +10,15 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class OpenApiConfig {
 
-    @Bean
-    public OpenAPI customOpenAPI() {
-        return new OpenAPI()
-                .info(new Info()
-                        .title("FluxGate Filter Sample API")
-                        .version("1.0.0")
-                        .description("""
+  @Bean
+  public OpenAPI customOpenAPI() {
+    return new OpenAPI()
+        .info(
+            new Info()
+                .title("FluxGate Filter Sample API")
+                .version("1.0.0")
+                .description(
+                    """
                                 Sample demonstrating **automatic rate limiting** using FluxgateRateLimitFilter.
 
                                 ## How it works
@@ -42,11 +44,11 @@ public class OpenApiConfig {
                                 - `Retry-After` header with seconds to wait
                                 - `X-RateLimit-Remaining` header with remaining tokens
                                 """)
-                        .contact(new Contact()
-                                .name("FluxGate")
-                                .url("https://github.com/openfluxgate/fluxgate"))
-                        .license(new License()
-                                .name("Apache 2.0")
-                                .url("https://www.apache.org/licenses/LICENSE-2.0")));
-    }
+                .contact(
+                    new Contact().name("FluxGate").url("https://github.com/openfluxgate/fluxgate"))
+                .license(
+                    new License()
+                        .name("Apache 2.0")
+                        .url("https://www.apache.org/licenses/LICENSE-2.0")));
+  }
 }
