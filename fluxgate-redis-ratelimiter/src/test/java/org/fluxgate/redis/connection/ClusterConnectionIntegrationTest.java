@@ -23,8 +23,8 @@ import org.junit.jupiter.api.Test;
  */
 class ClusterConnectionIntegrationTest {
 
-  // 쉼표로 구분된 여러 노드 → 자동으로 Cluster 모드 감지
-  // grokzen/redis-cluster 이미지 사용시 7100-7105 포트
+  // Comma-separated nodes -> automatically detected as Cluster mode
+  // When using grokzen/redis-cluster image, ports 7100-7105
   private static final String CLUSTER_URI =
       "redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102";
 

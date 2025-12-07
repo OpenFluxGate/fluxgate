@@ -75,7 +75,7 @@ public class Bucket4jRateLimiter implements RateLimiter {
   }
 
   private Bucket createBucket(RateLimitRuleSet ruleSet) {
-    var builder = Bucket.builder(); // LocalBucketBuilder 로 추론됨
+    var builder = Bucket.builder(); // inferred as LocalBucketBuilder
 
     List<RateLimitRule> rules = ruleSet.getRules();
     if (rules == null || rules.isEmpty()) {
@@ -92,7 +92,7 @@ public class Bucket4jRateLimiter implements RateLimiter {
       }
     }
 
-    return builder.build(); // 최종적으로 Bucket 반환
+    return builder.build(); // finally returns the Bucket
   }
 
   private Bandwidth toBandwidth(RateLimitBand band) {
