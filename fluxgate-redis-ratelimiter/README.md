@@ -41,7 +41,7 @@ Add to your `pom.xml`:
 
 ```xml
 <dependency>
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
     <version>${fluxgate.version}</version>
 </dependency>

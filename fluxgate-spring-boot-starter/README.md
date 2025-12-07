@@ -20,7 +20,7 @@ Add the starter to your `pom.xml`:
 
 ```xml
 <dependency>
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot-starter</artifactId>
     <version>${fluxgate.version}</version>
 </dependency>
@@ -33,14 +33,14 @@ The starter has optional dependencies. Include only what you need:
 ```xml
 <!-- For MongoDB rule storage -->
 <dependency>
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
     <version>${fluxgate.version}</version>
 </dependency>
 
 <!-- For Redis rate limiting -->
 <dependency>
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
     <version>${fluxgate.version}</version>
 </dependency>

@@ -22,7 +22,7 @@ Add the dependency to your `pom.xml`:
 ```xml
 
 <dependency>
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
     <version>0.0.1-SNAPSHOT</version>
 </dependency>

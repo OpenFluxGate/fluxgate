@@ -88,21 +88,21 @@ English | [한국어](README.ko.md)
 
 ```xml
 <dependency>
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot-starter</artifactId>
     <version>0.0.1-SNAPSHOT</version>
 </dependency>
 
 <!-- For Redis-backed rate limiting -->
 <dependency>
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
     <version>0.0.1-SNAPSHOT</version>
 </dependency>
 
 <!-- For MongoDB rule management (optional) -->
 <dependency>
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
     <version>0.0.1-SNAPSHOT</version>
 </dependency>

@@ -6,7 +6,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.fluxgate</groupId>
+        <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
         <version>0.0.1-SNAPSHOT</version>
     </parent>
@@ -20,26 +20,28 @@
     <properties>
         <!-- Skip coverage check for testkit -->
         <jacoco.skip>true</jacoco.skip>
+        <!-- Skip deployment to Maven Central -->
+        <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
 
     <dependencies>
         <!-- core -->
         <dependency>
-            <groupId>org.fluxgate</groupId>
+            <groupId>io.github.openfluxgate</groupId>
             <artifactId>fluxgate-core</artifactId>
             <version>${project.version}</version>
         </dependency>
 
         <!-- mongo-adapter -->
         <dependency>
-            <groupId>org.fluxgate</groupId>
+            <groupId>io.github.openfluxgate</groupId>
             <artifactId>fluxgate-mongo-adapter</artifactId>
             <version>${project.version}</version>
         </dependency>
 
         <!-- redis-ratelimiter -->
         <dependency>
-            <groupId>org.fluxgate</groupId>
+            <groupId>io.github.openfluxgate</groupId>
             <artifactId>fluxgate-redis-ratelimiter</artifactId>
             <version>${project.version}</version>
         </dependency>

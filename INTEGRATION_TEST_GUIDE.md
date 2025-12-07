@@ -223,7 +223,7 @@ The following dependency was added to `fluxgate-testkit/pom.xml`:
 ```xml
 <!-- redis-ratelimiter -->
 <dependency>
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
     <version>${project.version}</version>
 </dependency>

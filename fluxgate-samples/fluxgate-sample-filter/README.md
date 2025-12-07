@@ -165,7 +165,7 @@ To use direct Redis access instead of HTTP API:
 
 ```xml
 <dependency>
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
     <version>${project.version}</version>
 </dependency>

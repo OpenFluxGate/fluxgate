@@ -96,3 +96,6 @@ replay_pid*
 # Temporary files
 *.tmp
 *.temp
+
+# Secret
+private.key

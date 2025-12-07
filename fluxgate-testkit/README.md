@@ -17,7 +17,7 @@ Add the testkit dependency to your test scope:
 
 ```xml
 <dependency>
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-testkit</artifactId>
     <version>${fluxgate.version}</version>
     <scope>test</scope>

@@ -7,7 +7,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.fluxgate</groupId>
+        <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
         <version>0.0.1-SNAPSHOT</version>
     </parent>
@@ -31,6 +31,8 @@
         <springdoc.version>2.6.0</springdoc.version>
         <!-- Skip coverage check for samples -->
         <jacoco.skip>true</jacoco.skip>
+        <!-- Skip deployment to Maven Central -->
+        <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
 
     <build>
