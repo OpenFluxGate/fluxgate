@@ -8,6 +8,8 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import java.io.IOException;
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.bson.Document;
 import org.fluxgate.adapter.mongo.converter.RateLimitRuleMongoConverter;
@@ -25,6 +27,7 @@ import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.redis.RedisRateLimiter;
 import org.fluxgate.redis.config.RedisRateLimiterConfig;
+import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.junit.jupiter.api.*;
 
 /**
@@ -74,6 +77,7 @@ class MongoRedisRateLimitIntegrationTest {
 
   // Redis components
   private RedisRateLimiterConfig redisConfig;
+  private RedisConnectionProvider connectionProvider;
   private RedisRateLimiter redisRateLimiter;
 
   @BeforeEach
@@ -100,11 +104,12 @@ class MongoRedisRateLimitIntegrationTest {
     // 2. Setup Redis
     System.out.println("Connecting to Redis: " + REDIS_URI);
     redisConfig = new RedisRateLimiterConfig(REDIS_URI);
+    connectionProvider = redisConfig.getConnectionProvider();
     redisRateLimiter = new RedisRateLimiter(redisConfig.getTokenBucketStore());
 
     // Clean Redis state (flush all keys)
     System.out.println("Cleaning Redis database");
-    redisConfig.getSyncCommands().flushdb();
+    connectionProvider.flushdb();
 
     System.out.println("✓ Setup complete\n");
   }
@@ -308,7 +313,7 @@ class MongoRedisRateLimitIntegrationTest {
     redisRateLimiter.tryConsume(context, ruleSet, 1);
 
     // Verify Redis keys exist
-    var keys = redisConfig.getSyncCommands().keys("fluxgate:*");
+    List<String> keys = connectionProvider.keys("fluxgate:*");
     assertNotNull(keys);
     assertFalse(keys.isEmpty(), "Redis should have FluxGate keys");
 
@@ -317,13 +322,13 @@ class MongoRedisRateLimitIntegrationTest {
       System.out.println("    - " + key);
 
       // Check TTL
-      Long ttl = redisConfig.getSyncCommands().ttl(key);
+      Long ttl = connectionProvider.ttl(key);
       assertNotNull(ttl);
       assertTrue(ttl > 0, "Key should have TTL set");
       System.out.println("      TTL: " + ttl + " seconds");
 
       // Check key structure
-      var value = redisConfig.getSyncCommands().hgetall(key);
+      Map<String, String> value = connectionProvider.hgetall(key);
       System.out.println("      Fields: " + value.keySet());
       assertTrue(value.containsKey("tokens"), "Key should have 'tokens' field");
       assertTrue(

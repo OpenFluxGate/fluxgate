@@ -35,6 +35,24 @@ jobs:
           --health-timeout=5s
           --health-retries=5
 
+      redis-cluster:
+        image: grokzen/redis-cluster:7.0.10
+        env:
+          IP: "0.0.0.0"
+          INITIAL_PORT: 7100
+        ports:
+          - 7100:7100
+          - 7101:7101
+          - 7102:7102
+          - 7103:7103
+          - 7104:7104
+          - 7105:7105
+        options: >-
+          --health-cmd "redis-cli -p 7100 cluster info | grep cluster_state:ok"
+          --health-interval=10s
+          --health-timeout=10s
+          --health-retries=10
+
     env:
       FLUXGATE_MONGO_URI: "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin"
       FLUXGATE_MONGO_DB: "fluxgate"

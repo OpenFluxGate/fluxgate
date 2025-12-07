@@ -152,7 +152,17 @@ public class FluxgateProperties {
     }
   }
 
-  /** Redis-specific configuration. */
+  /**
+   * Redis-specific configuration.
+   *
+   * <p>Supports both Standalone and Cluster modes:
+   *
+   * <ul>
+   *   <li>Standalone: Single URI (e.g., redis://localhost:6379)
+   *   <li>Cluster: Comma-separated URIs (e.g., redis://node1:6379,redis://node2:6379)
+   *   <li>Explicit mode: Set mode property to "standalone" or "cluster"
+   * </ul>
+   */
   public static class RedisProperties {
 
     /**
@@ -161,9 +171,32 @@ public class FluxgateProperties {
     private boolean enabled = false;
 
     /**
-     * Redis connection URI. Example: redis://localhost:6379 or redis://:password@localhost:6379/0
+     * Redis connection mode. Options: "standalone" (default), "cluster", or "auto" (auto-detect).
+     *
+     * <p>When set to "auto" (default), the mode is detected from the URI:
+     *
+     * <ul>
+     *   <li>Single URI → Standalone
+     *   <li>Comma-separated URIs → Cluster
+     * </ul>
+     */
+    private String mode = "auto";
+
+    /**
+     * Redis connection URI for standalone mode, or comma-separated URIs for cluster mode.
+     *
+     * <p>Examples:
+     *
+     * <ul>
+     *   <li>Standalone: redis://localhost:6379
+     *   <li>Standalone with auth: redis://:password@localhost:6379/0
+     *   <li>Cluster: redis://node1:6379,redis://node2:6379,redis://node3:6379
+     * </ul>
      */
     private String uri = "redis://localhost:6379";
+
+    /** Connection timeout in milliseconds. Default: 5000 (5 seconds). */
+    private long timeoutMs = 5000;
 
     public boolean isEnabled() {
       return enabled;
@@ -173,12 +206,53 @@ public class FluxgateProperties {
       this.enabled = enabled;
     }
 
+    public String getMode() {
+      return mode;
+    }
+
+    public void setMode(String mode) {
+      this.mode = mode;
+    }
+
     public String getUri() {
       return uri;
     }
 
     public void setUri(String uri) {
       this.uri = uri;
+    }
+
+    public long getTimeoutMs() {
+      return timeoutMs;
+    }
+
+    public void setTimeoutMs(long timeoutMs) {
+      this.timeoutMs = timeoutMs;
+    }
+
+    /**
+     * Determine the effective Redis mode based on configuration.
+     *
+     * @return "standalone" or "cluster"
+     */
+    public String getEffectiveMode() {
+      if ("cluster".equalsIgnoreCase(mode)) {
+        return "cluster";
+      } else if ("standalone".equalsIgnoreCase(mode)) {
+        return "standalone";
+      } else {
+        // Auto-detect from URI
+        return (uri != null && uri.contains(",")) ? "cluster" : "standalone";
+      }
+    }
+
+    /**
+     * Check if cluster mode is configured.
+     *
+     * @return true if cluster mode
+     */
+    public boolean isClusterMode() {
+      return "cluster".equals(getEffectiveMode());
     }
   }
 

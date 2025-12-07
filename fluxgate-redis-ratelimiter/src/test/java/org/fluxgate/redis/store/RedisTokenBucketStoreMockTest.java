@@ -5,12 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-import io.lettuce.core.ScriptOutputType;
-import io.lettuce.core.api.sync.RedisCommands;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import org.fluxgate.core.config.RateLimitBand;
+import org.fluxgate.redis.connection.RedisConnectionProvider;
+import org.fluxgate.redis.connection.RedisConnectionProvider.RedisMode;
 import org.fluxgate.redis.script.LuaScripts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,7 +26,7 @@ import org.mockito.quality.Strictness;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class RedisTokenBucketStoreMockTest {
 
-  @Mock private RedisCommands<String, String> redisCommands;
+  @Mock private RedisConnectionProvider connectionProvider;
 
   private RedisTokenBucketStore store;
 
@@ -36,7 +36,10 @@ class RedisTokenBucketStoreMockTest {
     LuaScripts.setTokenBucketConsumeSha("test-sha-123");
     LuaScripts.setTokenBucketConsumeScript("test-script");
 
-    store = new RedisTokenBucketStore(redisCommands);
+    // Mock connection provider mode
+    when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
+
+    store = new RedisTokenBucketStore(connectionProvider);
   }
 
   @AfterEach
@@ -46,10 +49,10 @@ class RedisTokenBucketStoreMockTest {
   }
 
   @Test
-  void shouldThrowWhenRedisCommandsIsNull() {
+  void shouldThrowWhenConnectionProviderIsNull() {
     assertThatThrownBy(() -> new RedisTokenBucketStore(null))
         .isInstanceOf(NullPointerException.class)
-        .hasMessageContaining("redisCommands must not be null");
+        .hasMessageContaining("connectionProvider must not be null");
   }
 
   @Test
@@ -57,7 +60,7 @@ class RedisTokenBucketStoreMockTest {
     LuaScripts.setTokenBucketConsumeSha(null);
     LuaScripts.setTokenBucketConsumeScript(null);
 
-    assertThatThrownBy(() -> new RedisTokenBucketStore(redisCommands))
+    assertThatThrownBy(() -> new RedisTokenBucketStore(connectionProvider))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Lua scripts not loaded");
   }
@@ -70,8 +73,8 @@ class RedisTokenBucketStoreMockTest {
     // Lua script returns: [consumed, remaining, nanosToWait, resetTimeMillis]
     List<Long> scriptResult = Arrays.asList(1L, 95L, 0L, System.currentTimeMillis() + 60000);
     doReturn(scriptResult)
-        .when(redisCommands)
-        .evalsha(anyString(), eq(ScriptOutputType.MULTI), any(String[].class), any(String[].class));
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
 
     // when
     BucketState result = store.tryConsume("test-key", band, 5);
@@ -90,8 +93,8 @@ class RedisTokenBucketStoreMockTest {
     // Lua script returns rejection
     List<Long> scriptResult = Arrays.asList(0L, 0L, 5_000_000_000L, System.currentTimeMillis());
     doReturn(scriptResult)
-        .when(redisCommands)
-        .evalsha(anyString(), eq(ScriptOutputType.MULTI), any(String[].class), any(String[].class));
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
 
     // when
     BucketState result = store.tryConsume("test-key", band, 5);
@@ -139,8 +142,8 @@ class RedisTokenBucketStoreMockTest {
     // Invalid result (wrong size)
     List<Long> invalidResult = Arrays.asList(1L, 2L);
     doReturn(invalidResult)
-        .when(redisCommands)
-        .evalsha(anyString(), eq(ScriptOutputType.MULTI), any(String[].class), any(String[].class));
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
 
     // when/then
     assertThatThrownBy(() -> store.tryConsume("key", band, 1))
@@ -154,8 +157,8 @@ class RedisTokenBucketStoreMockTest {
     RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
 
     doReturn(null)
-        .when(redisCommands)
-        .evalsha(anyString(), eq(ScriptOutputType.MULTI), any(String[].class), any(String[].class));
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
 
     // when/then
     assertThatThrownBy(() -> store.tryConsume("key", band, 1))
@@ -170,17 +173,16 @@ class RedisTokenBucketStoreMockTest {
 
     List<Long> scriptResult = Arrays.asList(1L, 99L, 0L, System.currentTimeMillis());
     doReturn(scriptResult)
-        .when(redisCommands)
-        .evalsha(anyString(), eq(ScriptOutputType.MULTI), any(String[].class), any(String[].class));
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
 
     // when
     store.tryConsume("my-bucket-key", band, 1);
 
     // then
-    verify(redisCommands)
+    verify(connectionProvider)
         .evalsha(
             eq("test-sha-123"),
-            eq(ScriptOutputType.MULTI),
             eq(new String[] {"my-bucket-key"}),
             eq(new String[] {"100", String.valueOf(Duration.ofSeconds(60).toNanos()), "1"}));
   }
@@ -189,5 +191,20 @@ class RedisTokenBucketStoreMockTest {
   void shouldCloseWithoutError() {
     // when/then - should not throw
     store.close();
+  }
+
+  @Test
+  void shouldReturnCorrectMode() {
+    // given
+    when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
+
+    // then
+    assertThat(store.getMode()).isEqualTo(RedisMode.STANDALONE);
+
+    // given cluster mode
+    when(connectionProvider.getMode()).thenReturn(RedisMode.CLUSTER);
+
+    // then
+    assertThat(store.getMode()).isEqualTo(RedisMode.CLUSTER);
   }
 }
