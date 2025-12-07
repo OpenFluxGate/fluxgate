@@ -1,0 +1,109 @@
+name: Release to Maven Central
+
+on:
+  push:
+    branches:
+      - 'release/*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+
+    services:
+      mongo:
+        image: mongo:7.0
+        env:
+          MONGO_INITDB_ROOT_USERNAME: fluxgate
+          MONGO_INITDB_ROOT_PASSWORD: fluxgate123
+          MONGO_INITDB_DATABASE: fluxgate
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --username fluxgate --password fluxgate123 --authenticationDatabase admin --eval 'db.adminCommand(\"ping\")'"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis-cluster:
+        image: grokzen/redis-cluster:7.0.10
+        env:
+          IP: "0.0.0.0"
+          INITIAL_PORT: 7100
+        ports:
+          - 7100:7100
+          - 7101:7101
+          - 7102:7102
+          - 7103:7103
+          - 7104:7104
+          - 7105:7105
+        options: >-
+          --health-cmd "redis-cli -p 7100 cluster info | grep cluster_state:ok"
+          --health-interval=10s
+          --health-timeout=10s
+          --health-retries=10
+
+    env:
+      FLUXGATE_MONGO_URI: "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin"
+      FLUXGATE_MONGO_DB: "fluxgate"
+      FLUXGATE_REDIS_URI: "redis://localhost:6379"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - name: Get latest tag version
+        id: version
+        run: |
+          git fetch --tags
+          VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Set version
+        run: mvn -B versions:set -DnewVersion=${{ steps.version.outputs.VERSION }} -DgenerateBackupPoms=false
+
+      - name: Build and test
+        run: mvn -B verify
+
+      - name: Import GPG key
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Publish to Maven Central
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          mvn -B deploy -Prelease -DskipTests \
+            -Dgpg.passphrase=${{ secrets.GPG_PASSPHRASE }} \
+            -s .github/settings.xml
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: ${{ steps.version.outputs.VERSION }}
+          generate_release_notes: true
+          files: |
+            fluxgate-core/target/*.jar
+            fluxgate-redis-ratelimiter/target/*.jar
+            fluxgate-mongo-adapter/target/*.jar
+            fluxgate-spring-boot-starter/target/*.jar
