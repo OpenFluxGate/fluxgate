@@ -13,20 +13,22 @@ import org.springframework.context.annotation.Bean;
 
 /**
  * Auto-configuration for FluxGate Prometheus/Micrometer metrics.
- * <p>
- * This configuration is activated when:
+ *
+ * <p>This configuration is activated when:
+ *
  * <ul>
- *   <li>Micrometer is on the classpath</li>
- *   <li>A MeterRegistry bean exists</li>
- *   <li>{@code fluxgate.metrics.enabled} is true (default: true)</li>
+ *   <li>Micrometer is on the classpath
+ *   <li>A MeterRegistry bean exists
+ *   <li>{@code fluxgate.metrics.enabled} is true (default: true)
  * </ul>
- * <p>
- * Provides metrics for:
+ *
+ * <p>Provides metrics for:
+ *
  * <ul>
- *   <li>Total requests processed</li>
- *   <li>Allowed vs rejected requests</li>
- *   <li>Request processing duration</li>
- *   <li>Remaining tokens per bucket</li>
+ *   <li>Total requests processed
+ *   <li>Allowed vs rejected requests
+ *   <li>Request processing duration
+ *   <li>Remaining tokens per bucket
  * </ul>
  *
  * @see FluxgateMetrics
@@ -34,15 +36,18 @@ import org.springframework.context.annotation.Bean;
 @AutoConfiguration
 @ConditionalOnClass(MeterRegistry.class)
 @ConditionalOnBean(MeterRegistry.class)
-@ConditionalOnProperty(name = "fluxgate.metrics.enabled", havingValue = "true", matchIfMissing = true)
+@ConditionalOnProperty(
+    name = "fluxgate.metrics.enabled",
+    havingValue = "true",
+    matchIfMissing = true)
 public class FluxgateMetricsAutoConfiguration {
 
-    private static final Logger log = LoggerFactory.getLogger(FluxgateMetricsAutoConfiguration.class);
+  private static final Logger log = LoggerFactory.getLogger(FluxgateMetricsAutoConfiguration.class);
 
-    @Bean
-    @ConditionalOnMissingBean
-    public FluxgateMetrics fluxgateMetrics(MeterRegistry meterRegistry) {
-        log.info("Configuring FluxGate Prometheus metrics");
-        return new FluxgateMetrics(meterRegistry);
-    }
+  @Bean
+  @ConditionalOnMissingBean
+  public FluxgateMetrics fluxgateMetrics(MeterRegistry meterRegistry) {
+    log.info("Configuring FluxGate Prometheus metrics");
+    return new FluxgateMetrics(meterRegistry);
+  }
 }
