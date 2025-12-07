@@ -476,7 +476,7 @@ public class AuditRateLimitListener implements RateLimitDecisionListener {
 
 ## 🗺️ Roadmap
 
-### v0.1.0 (Current)
+### v0.1.1 (Current)
 - ✅ In-memory Bucket4j implementation
 - ✅ Multi-band time windows
 - ✅ Flexible key resolution strategies
