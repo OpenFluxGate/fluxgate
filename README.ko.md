@@ -90,21 +90,21 @@
 ```xml
 
 <dependency>
-    <groupId>org.fluxgate</groupId>
+    <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot-starter</artifactId>
     <version>0.0.1-SNAPSHOT</version>
 </dependency>
 
         <!-- Redis 기반 Rate Limiting -->
 <dependency>
-<groupId>org.fluxgate</groupId>
+<groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-redis-ratelimiter</artifactId>
 <version>0.0.1-SNAPSHOT</version>
 </dependency>
 
         <!-- MongoDB 규칙 관리 (선택사항) -->
 <dependency>
-<groupId>org.fluxgate</groupId>
+<groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-mongo-adapter</artifactId>
 <version>0.0.1-SNAPSHOT</version>
 </dependency>
