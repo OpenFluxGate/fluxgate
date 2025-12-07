@@ -2,17 +2,17 @@ package org.fluxgate.redis;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.lettuce.core.api.sync.RedisCommands;
 import java.io.IOException;
 import java.time.Duration;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.redis.config.RedisRateLimiterConfig;
+import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.fluxgate.redis.store.BucketState;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
 import org.junit.jupiter.api.*;
 
 /**
- * Unit tests for RedisTokenBucketStore using local Redis.
+ * Integration tests for RedisTokenBucketStore using local Redis.
  *
  * <p>Requires local Redis running on localhost:6379 Start Redis: docker run -d -p 6379:6379
  * redis:7-alpine
@@ -26,13 +26,13 @@ class RedisTokenBucketStoreTest {
 
   private static RedisRateLimiterConfig config;
   private static RedisTokenBucketStore store;
-  private static RedisCommands<String, String> redisCommands;
+  private static RedisConnectionProvider connectionProvider;
 
   @BeforeAll
   static void setUp() throws IOException {
     config = new RedisRateLimiterConfig(REDIS_URI);
-    store = new RedisTokenBucketStore(config.getSyncCommands());
-    redisCommands = config.getSyncCommands();
+    store = config.getTokenBucketStore();
+    connectionProvider = config.getConnectionProvider();
   }
 
   @AfterAll
@@ -45,7 +45,7 @@ class RedisTokenBucketStoreTest {
   @BeforeEach
   void cleanRedis() {
     // Clear Redis before each test
-    // redisCommands.flushdb();
+    // connectionProvider.del("test:bucket:*");
   }
 
   @Test
@@ -118,7 +118,7 @@ class RedisTokenBucketStoreTest {
 
     // then: key should have TTL set
     // TTL includes 10% safety margin (60 * 1.1 = 66 seconds)
-    Long ttl = redisCommands.ttl(bucketKey);
+    Long ttl = connectionProvider.ttl(bucketKey);
     assertThat(ttl).isGreaterThan(0);
     assertThat(ttl).isLessThanOrEqualTo(66); // 60 seconds + 10% safety margin
   }

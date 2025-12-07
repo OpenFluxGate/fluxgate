@@ -6,32 +6,37 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
-import io.lettuce.core.api.sync.RedisCommands;
 import java.util.*;
+import org.fluxgate.redis.connection.RedisConnectionProvider;
+import org.fluxgate.redis.connection.RedisConnectionProvider.RedisMode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 /** Unit tests for {@link RedisRuleSetStore}. */
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class RedisRuleSetStoreTest {
 
-  @Mock private RedisCommands<String, String> redisCommands;
+  @Mock private RedisConnectionProvider connectionProvider;
 
   private RedisRuleSetStore store;
 
   @BeforeEach
   void setUp() {
-    store = new RedisRuleSetStore(redisCommands);
+    when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
+    store = new RedisRuleSetStore(connectionProvider);
   }
 
   @Test
-  void shouldThrowWhenCommandsIsNull() {
+  void shouldThrowWhenConnectionProviderIsNull() {
     assertThatThrownBy(() -> new RedisRuleSetStore(null))
         .isInstanceOf(NullPointerException.class)
-        .hasMessageContaining("commands must not be null");
+        .hasMessageContaining("connectionProvider must not be null");
   }
 
   @Test
@@ -40,8 +45,8 @@ class RedisRuleSetStoreTest {
 
     store.save(data);
 
-    verify(redisCommands).hset(eq("fluxgate:ruleset:test-rule"), any(Map.class));
-    verify(redisCommands).sadd("fluxgate:rulesets", "test-rule");
+    verify(connectionProvider).hset(eq("fluxgate:ruleset:test-rule"), any(Map.class));
+    verify(connectionProvider).sadd("fluxgate:rulesets", "test-rule");
   }
 
   @Test
@@ -50,7 +55,7 @@ class RedisRuleSetStoreTest {
 
     store.save(data);
 
-    verify(redisCommands).hset(eq("fluxgate:ruleset:test-rule"), any(Map.class));
+    verify(connectionProvider).hset(eq("fluxgate:ruleset:test-rule"), any(Map.class));
   }
 
   @Test
@@ -78,7 +83,7 @@ class RedisRuleSetStoreTest {
     hash.put("keyStrategyId", "clientIp");
     hash.put("createdAt", "1234567890");
 
-    when(redisCommands.hgetall("fluxgate:ruleset:test-rule")).thenReturn(hash);
+    when(connectionProvider.hgetall("fluxgate:ruleset:test-rule")).thenReturn(hash);
 
     Optional<RuleSetData> result = store.findById("test-rule");
 
@@ -92,7 +97,7 @@ class RedisRuleSetStoreTest {
 
   @Test
   void shouldReturnEmptyWhenNotFound() {
-    when(redisCommands.hgetall("fluxgate:ruleset:missing")).thenReturn(Collections.emptyMap());
+    when(connectionProvider.hgetall("fluxgate:ruleset:missing")).thenReturn(Collections.emptyMap());
 
     Optional<RuleSetData> result = store.findById("missing");
 
@@ -101,7 +106,7 @@ class RedisRuleSetStoreTest {
 
   @Test
   void shouldReturnEmptyWhenHashIsNull() {
-    when(redisCommands.hgetall("fluxgate:ruleset:missing")).thenReturn(null);
+    when(connectionProvider.hgetall("fluxgate:ruleset:missing")).thenReturn(null);
 
     Optional<RuleSetData> result = store.findById("missing");
 
@@ -113,7 +118,7 @@ class RedisRuleSetStoreTest {
     Map<String, String> hash = new HashMap<>();
     hash.put("ruleSetId", "test-rule");
 
-    when(redisCommands.hgetall("fluxgate:ruleset:test-rule")).thenReturn(hash);
+    when(connectionProvider.hgetall("fluxgate:ruleset:test-rule")).thenReturn(hash);
 
     Optional<RuleSetData> result = store.findById("test-rule");
 
@@ -133,18 +138,18 @@ class RedisRuleSetStoreTest {
 
   @Test
   void shouldDeleteExistingRuleSet() {
-    when(redisCommands.del("fluxgate:ruleset:test-rule")).thenReturn(1L);
+    when(connectionProvider.del("fluxgate:ruleset:test-rule")).thenReturn(1L);
 
     boolean result = store.delete("test-rule");
 
     assertThat(result).isTrue();
-    verify(redisCommands).del("fluxgate:ruleset:test-rule");
-    verify(redisCommands).srem("fluxgate:rulesets", "test-rule");
+    verify(connectionProvider).del("fluxgate:ruleset:test-rule");
+    verify(connectionProvider).srem("fluxgate:rulesets", "test-rule");
   }
 
   @Test
   void shouldReturnFalseWhenDeletingNonExistent() {
-    when(redisCommands.del("fluxgate:ruleset:missing")).thenReturn(0L);
+    when(connectionProvider.del("fluxgate:ruleset:missing")).thenReturn(0L);
 
     boolean result = store.delete("missing");
 
@@ -161,7 +166,7 @@ class RedisRuleSetStoreTest {
   @Test
   void shouldListAllIds() {
     Set<String> ids = new HashSet<>(Arrays.asList("rule1", "rule2", "rule3"));
-    when(redisCommands.smembers("fluxgate:rulesets")).thenReturn(ids);
+    when(connectionProvider.smembers("fluxgate:rulesets")).thenReturn(ids);
 
     List<String> result = store.listAllIds();
 
@@ -170,7 +175,7 @@ class RedisRuleSetStoreTest {
 
   @Test
   void shouldReturnEmptyListWhenNoIds() {
-    when(redisCommands.smembers("fluxgate:rulesets")).thenReturn(null);
+    when(connectionProvider.smembers("fluxgate:rulesets")).thenReturn(null);
 
     List<String> result = store.listAllIds();
 
@@ -180,7 +185,7 @@ class RedisRuleSetStoreTest {
   @Test
   void shouldFindAll() {
     Set<String> ids = new HashSet<>(Arrays.asList("rule1", "rule2"));
-    when(redisCommands.smembers("fluxgate:rulesets")).thenReturn(ids);
+    when(connectionProvider.smembers("fluxgate:rulesets")).thenReturn(ids);
 
     Map<String, String> hash1 = new HashMap<>();
     hash1.put("ruleSetId", "rule1");
@@ -192,8 +197,8 @@ class RedisRuleSetStoreTest {
     hash2.put("capacity", "200");
     hash2.put("windowSeconds", "120");
 
-    when(redisCommands.hgetall("fluxgate:ruleset:rule1")).thenReturn(hash1);
-    when(redisCommands.hgetall("fluxgate:ruleset:rule2")).thenReturn(hash2);
+    when(connectionProvider.hgetall("fluxgate:ruleset:rule1")).thenReturn(hash1);
+    when(connectionProvider.hgetall("fluxgate:ruleset:rule2")).thenReturn(hash2);
 
     List<RuleSetData> result = store.findAll();
 
@@ -202,8 +207,8 @@ class RedisRuleSetStoreTest {
 
   @Test
   void shouldCheckExists() {
-    when(redisCommands.exists("fluxgate:ruleset:test-rule")).thenReturn(1L);
-    when(redisCommands.exists("fluxgate:ruleset:missing")).thenReturn(0L);
+    when(connectionProvider.exists("fluxgate:ruleset:test-rule")).thenReturn(true);
+    when(connectionProvider.exists("fluxgate:ruleset:missing")).thenReturn(false);
 
     assertThat(store.exists("test-rule")).isTrue();
     assertThat(store.exists("missing")).isFalse();
@@ -212,12 +217,21 @@ class RedisRuleSetStoreTest {
   @Test
   void shouldClearAll() {
     Set<String> ids = new HashSet<>(Arrays.asList("rule1", "rule2"));
-    when(redisCommands.smembers("fluxgate:rulesets")).thenReturn(ids);
+    when(connectionProvider.smembers("fluxgate:rulesets")).thenReturn(ids);
 
     store.clearAll();
 
-    verify(redisCommands).del("fluxgate:ruleset:rule1");
-    verify(redisCommands).del("fluxgate:ruleset:rule2");
-    verify(redisCommands).del("fluxgate:rulesets");
+    verify(connectionProvider).del("fluxgate:ruleset:rule1");
+    verify(connectionProvider).del("fluxgate:ruleset:rule2");
+    verify(connectionProvider).del("fluxgate:rulesets");
+  }
+
+  @Test
+  void shouldReturnCorrectMode() {
+    when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
+    assertThat(store.getMode()).isEqualTo(RedisMode.STANDALONE);
+
+    when(connectionProvider.getMode()).thenReturn(RedisMode.CLUSTER);
+    assertThat(store.getMode()).isEqualTo(RedisMode.CLUSTER);
   }
 }

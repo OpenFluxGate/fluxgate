@@ -32,6 +32,7 @@ import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.redis.RedisRateLimiter;
 import org.fluxgate.redis.config.RedisRateLimiterConfig;
+import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -85,6 +86,7 @@ class MongoRedisRateLimitIntegrationTest {
 
   // Redis
   private RedisRateLimiterConfig redisConfig;
+  private RedisConnectionProvider connectionProvider;
   private RedisRateLimiter redisRateLimiter;
 
   // ========================================================================
@@ -121,11 +123,12 @@ class MongoRedisRateLimitIntegrationTest {
     // 2. Connect to Redis
     System.out.println("\n[Redis] Connecting to: " + REDIS_URI);
     redisConfig = new RedisRateLimiterConfig(REDIS_URI);
+    connectionProvider = redisConfig.getConnectionProvider();
     redisRateLimiter = new RedisRateLimiter(redisConfig.getTokenBucketStore());
 
     // Clean state: flush Redis DB
     System.out.println("[Redis] Flushing database");
-    redisConfig.getSyncCommands().flushdb();
+    connectionProvider.flushdb();
 
     System.out.println("[Redis] Connected successfully");
 

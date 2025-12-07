@@ -11,7 +11,15 @@ fluxgate:
     enabled: false  # No MongoDB in data-plane
   redis:
     enabled: true
+    # Standalone mode (default)
     uri: redis://localhost:6379
+    # mode: auto  # auto-detect from URI (default)
+    # timeout-ms: 5000  # connection timeout in milliseconds
+
+    # For Redis Cluster, use comma-separated URIs:
+    # uri: redis://node1:6379,redis://node2:6379,redis://node3:6379
+    # Or explicitly set mode:
+    # mode: cluster
   ratelimit:
     enabled: true
     filter-enabled: true

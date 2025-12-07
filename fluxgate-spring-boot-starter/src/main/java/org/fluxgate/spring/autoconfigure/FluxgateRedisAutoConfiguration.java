@@ -1,9 +1,11 @@
 package org.fluxgate.spring.autoconfigure;
 
 import java.io.IOException;
+import java.time.Duration;
 import org.fluxgate.core.ratelimiter.RateLimiter;
 import org.fluxgate.redis.RedisRateLimiter;
 import org.fluxgate.redis.config.RedisRateLimiterConfig;
+import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.fluxgate.redis.store.RedisRuleSetStore;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
 import org.fluxgate.spring.properties.FluxgateProperties;
@@ -34,6 +36,13 @@ import org.springframework.context.annotation.Bean;
  *   <li>{@link RedisRateLimiter} - Rate limiter implementation
  * </ul>
  *
+ * <p>Supports both Standalone and Cluster Redis deployments:
+ *
+ * <ul>
+ *   <li>Standalone: Single URI (e.g., redis://localhost:6379)
+ *   <li>Cluster: Comma-separated URIs or explicit mode setting
+ * </ul>
+ *
  * <p>This configuration does NOT require MongoDB. It can run independently for data-plane
  * deployments.
  *
@@ -58,7 +67,7 @@ public class FluxgateRedisAutoConfiguration {
    * Creates the RedisRateLimiterConfig which manages:
    *
    * <ul>
-   *   <li>Redis client connection
+   *   <li>Redis client connection (Standalone or Cluster)
    *   <li>Lua script loading
    *   <li>Token bucket store initialization
    * </ul>
@@ -71,18 +80,43 @@ public class FluxgateRedisAutoConfiguration {
    *   <li>Read-only on rejection (fair rate limiting)
    *   <li>TTL with safety margin
    * </ul>
+   *
+   * <p>Cluster support:
+   *
+   * <ul>
+   *   <li>Auto-detection from URI (comma-separated = cluster)
+   *   <li>Explicit mode via fluxgate.redis.mode property
+   *   <li>Automatic script distribution to all cluster nodes
+   * </ul>
    */
   @Bean(name = "fluxgateRedisConfig", destroyMethod = "close")
   @ConditionalOnMissingBean(RedisRateLimiterConfig.class)
   public RedisRateLimiterConfig fluxgateRedisConfig() throws IOException {
-    String uri = properties.getRedis().getUri();
-    log.info("Creating FluxGate RedisRateLimiterConfig with URI: {}", maskUri(uri));
+    FluxgateProperties.RedisProperties redisProps = properties.getRedis();
+    String uri = redisProps.getUri();
+    String effectiveMode = redisProps.getEffectiveMode();
+    Duration timeout = Duration.ofMillis(redisProps.getTimeoutMs());
+
+    log.info("Creating FluxGate RedisRateLimiterConfig");
+    log.info("  URI: {}", maskUri(uri));
+    log.info("  Mode: {} (configured: {})", effectiveMode, redisProps.getMode());
+    log.info("  Timeout: {}ms", redisProps.getTimeoutMs());
+
+    RedisRateLimiterConfig config = new RedisRateLimiterConfig(uri, timeout);
+
+    log.info("Redis connection established successfully");
+    log.info("  Effective mode: {}", config.getMode());
     log.info("Production features enabled:");
     log.info("  - Uses Redis TIME (no clock drift)");
     log.info("  - Integer arithmetic only (no precision loss)");
     log.info("  - Read-only on rejection (fair rate limiting)");
     log.info("  - TTL safety margin + max cap");
-    return new RedisRateLimiterConfig(uri);
+
+    if (config.getMode() == RedisConnectionProvider.RedisMode.CLUSTER) {
+      log.info("  - Cluster mode: Automatic routing and script distribution");
+    }
+
+    return config;
   }
 
   /**
@@ -94,7 +128,7 @@ public class FluxgateRedisAutoConfiguration {
   @ConditionalOnMissingBean(RedisTokenBucketStore.class)
   public RedisTokenBucketStore fluxgateTokenBucketStore(
       RedisRateLimiterConfig fluxgateRedisConfig) {
-    log.info("Creating FluxGate RedisTokenBucketStore");
+    log.info("Creating FluxGate RedisTokenBucketStore (mode: {})", fluxgateRedisConfig.getMode());
     return fluxgateRedisConfig.getTokenBucketStore();
   }
 
@@ -107,7 +141,7 @@ public class FluxgateRedisAutoConfiguration {
   @Bean(name = "fluxgateRuleSetStore")
   @ConditionalOnMissingBean(RedisRuleSetStore.class)
   public RedisRuleSetStore fluxgateRuleSetStore(RedisRateLimiterConfig fluxgateRedisConfig) {
-    log.info("Creating FluxGate RedisRuleSetStore");
+    log.info("Creating FluxGate RedisRuleSetStore (mode: {})", fluxgateRedisConfig.getMode());
     return fluxgateRedisConfig.getRuleSetStore();
   }
 

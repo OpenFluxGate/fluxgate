@@ -1,7 +1,7 @@
 package org.fluxgate.redis.store;
 
-import io.lettuce.core.api.sync.RedisCommands;
 import java.util.*;
+import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -10,6 +10,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Stores RuleSet data as Redis Hashes for efficient retrieval. Key format:
  * fluxgate:ruleset:{ruleSetId}
+ *
+ * <p>Supports both Standalone and Cluster Redis deployments via {@link RedisConnectionProvider}.
  */
 public class RedisRuleSetStore {
 
@@ -18,13 +20,23 @@ public class RedisRuleSetStore {
   private static final String KEY_PREFIX = "fluxgate:ruleset:";
   private static final String INDEX_KEY = "fluxgate:rulesets";
 
-  private final RedisCommands<String, String> commands;
+  private final RedisConnectionProvider connectionProvider;
 
-  public RedisRuleSetStore(RedisCommands<String, String> commands) {
-    this.commands = Objects.requireNonNull(commands, "commands must not be null");
+  /**
+   * Creates a new RedisRuleSetStore with the given connection provider.
+   *
+   * @param connectionProvider the Redis connection provider (standalone or cluster)
+   */
+  public RedisRuleSetStore(RedisConnectionProvider connectionProvider) {
+    this.connectionProvider =
+        Objects.requireNonNull(connectionProvider, "connectionProvider must not be null");
   }
 
-  /** Save a RuleSet to Redis. */
+  /**
+   * Save a RuleSet to Redis.
+   *
+   * @param ruleSetData the rule set data to save
+   */
   public void save(RuleSetData ruleSetData) {
     Objects.requireNonNull(ruleSetData, "ruleSetData must not be null");
     Objects.requireNonNull(ruleSetData.getRuleSetId(), "ruleSetId must not be null");
@@ -40,20 +52,25 @@ public class RedisRuleSetStore {
         ruleSetData.getKeyStrategyId() != null ? ruleSetData.getKeyStrategyId() : "clientIp");
     hash.put("createdAt", String.valueOf(ruleSetData.getCreatedAt()));
 
-    commands.hset(key, hash);
+    connectionProvider.hset(key, hash);
 
     // Add to index set
-    commands.sadd(INDEX_KEY, ruleSetData.getRuleSetId());
+    connectionProvider.sadd(INDEX_KEY, ruleSetData.getRuleSetId());
 
     log.info("Saved RuleSet to Redis: {}", ruleSetData);
   }
 
-  /** Find a RuleSet by ID. */
+  /**
+   * Find a RuleSet by ID.
+   *
+   * @param ruleSetId the rule set ID to find
+   * @return the rule set data if found
+   */
   public Optional<RuleSetData> findById(String ruleSetId) {
     Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
 
     String key = KEY_PREFIX + ruleSetId;
-    Map<String, String> hash = commands.hgetall(key);
+    Map<String, String> hash = connectionProvider.hgetall(key);
 
     if (hash == null || hash.isEmpty()) {
       log.debug("RuleSet not found in Redis: {}", ruleSetId);
@@ -71,13 +88,18 @@ public class RedisRuleSetStore {
     return Optional.of(data);
   }
 
-  /** Delete a RuleSet by ID. */
+  /**
+   * Delete a RuleSet by ID.
+   *
+   * @param ruleSetId the rule set ID to delete
+   * @return true if deleted, false if not found
+   */
   public boolean delete(String ruleSetId) {
     Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
 
     String key = KEY_PREFIX + ruleSetId;
-    long deleted = commands.del(key);
-    commands.srem(INDEX_KEY, ruleSetId);
+    long deleted = connectionProvider.del(key);
+    connectionProvider.srem(INDEX_KEY, ruleSetId);
 
     if (deleted > 0) {
       log.info("Deleted RuleSet from Redis: {}", ruleSetId);
@@ -86,13 +108,21 @@ public class RedisRuleSetStore {
     return false;
   }
 
-  /** List all RuleSet IDs. */
+  /**
+   * List all RuleSet IDs.
+   *
+   * @return list of all rule set IDs
+   */
   public List<String> listAllIds() {
-    Set<String> ids = commands.smembers(INDEX_KEY);
+    Set<String> ids = connectionProvider.smembers(INDEX_KEY);
     return ids != null ? new ArrayList<>(ids) : Collections.emptyList();
   }
 
-  /** Find all RuleSets. */
+  /**
+   * Find all RuleSets.
+   *
+   * @return list of all rule set data
+   */
   public List<RuleSetData> findAll() {
     List<String> ids = listAllIds();
     List<RuleSetData> result = new ArrayList<>();
@@ -104,19 +134,33 @@ public class RedisRuleSetStore {
     return result;
   }
 
-  /** Check if a RuleSet exists. */
+  /**
+   * Check if a RuleSet exists.
+   *
+   * @param ruleSetId the rule set ID to check
+   * @return true if exists
+   */
   public boolean exists(String ruleSetId) {
     String key = KEY_PREFIX + ruleSetId;
-    return commands.exists(key) > 0;
+    return connectionProvider.exists(key);
   }
 
   /** Clear all RuleSets (use with caution!). */
   public void clearAll() {
     List<String> ids = listAllIds();
     for (String id : ids) {
-      commands.del(KEY_PREFIX + id);
+      connectionProvider.del(KEY_PREFIX + id);
     }
-    commands.del(INDEX_KEY);
+    connectionProvider.del(INDEX_KEY);
     log.info("Cleared all RuleSets from Redis");
+  }
+
+  /**
+   * Gets the Redis connection mode.
+   *
+   * @return STANDALONE or CLUSTER
+   */
+  public RedisConnectionProvider.RedisMode getMode() {
+    return connectionProvider.getMode();
   }
 }

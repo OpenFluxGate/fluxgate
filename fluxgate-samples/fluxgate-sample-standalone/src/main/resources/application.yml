@@ -11,7 +11,8 @@ fluxgate:
     uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
   redis:
-    uri: redis://localhost:6379
+    uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
+    #uri: redis://localhost:6379
 
 # Logging
 logging:
@@ -39,4 +40,5 @@ fluxgate:
   mongodb:
     uri: mongodb://fluxgate:fluxgate123@mongodb:27017/fluxgate?authSource=admin
   redis:
-    uri: redis://redis:6379
+    uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
+    #uri: redis://redis:6379
