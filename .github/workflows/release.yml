@@ -77,7 +77,7 @@ jobs:
       - name: Get version from latest tag
         id: version
         run: |
-          # Get latest tag (e.g., v0.1.0 or 0.1.0 -> 0.1.0)
+          # Get latest tag (e.g., v0.1.1 or 0.1.1 -> 0.1.1)
           VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
