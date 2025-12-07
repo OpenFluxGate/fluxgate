@@ -17,9 +17,10 @@ import org.junit.jupiter.api.Test;
 /**
  * Integration test for Redis Cluster connection.
  *
- * <p>Requires Redis Cluster running on localhost:7001,7002,7003
+ * <p>Requires Redis Cluster running on localhost:7100-7105
  *
- * <p>Start cluster: docker-compose -f redis-cluster-docker-compose.yml up -d
+ * <p>Start cluster locally: docker run -d -p 7100-7105:7100-7105 -e IP=0.0.0.0
+ * grokzen/redis-cluster:7.0.10
  */
 class ClusterConnectionIntegrationTest {
 
