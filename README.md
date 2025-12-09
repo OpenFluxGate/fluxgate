@@ -90,21 +90,21 @@ English | [한국어](README.ko.md)
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot-starter</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.1.3</version>
 </dependency>
 
 <!-- For Redis-backed rate limiting -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.1.3</version>
 </dependency>
 
 <!-- For MongoDB rule management (optional) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.1.3</version>
 </dependency>
 ```
 
@@ -224,13 +224,40 @@ curl http://localhost:8083/api/hello
 |----------|---------|-------------|
 | `fluxgate.redis.enabled` | `false` | Enable Redis rate limiter |
 | `fluxgate.redis.uri` | `redis://localhost:6379` | Redis connection URI |
+| `fluxgate.redis.mode` | `auto` | Redis mode: `standalone`, `cluster`, or `auto` (auto-detect) |
 | `fluxgate.mongo.enabled` | `false` | Enable MongoDB adapter |
-| `fluxgate.mongo.uri` | - | MongoDB connection URI |
+| `fluxgate.mongo.uri` | `mongodb://localhost:27017/fluxgate` | MongoDB connection URI |
+| `fluxgate.mongo.database` | `fluxgate` | MongoDB database name |
+| `fluxgate.mongo.rule-collection` | `rate_limit_rules` | Collection name for rate limit rules |
+| `fluxgate.mongo.event-collection` | - | Collection name for events (optional) |
+| `fluxgate.mongo.ddl-auto` | `validate` | DDL mode: `validate` or `create` |
 | `fluxgate.ratelimit.filter-enabled` | `false` | Enable rate limit filter |
 | `fluxgate.ratelimit.default-rule-set-id` | `default` | Default rule set ID |
 | `fluxgate.ratelimit.include-patterns` | `[/api/*]` | URL patterns to rate limit |
 | `fluxgate.ratelimit.exclude-patterns` | `[]` | URL patterns to exclude |
 | `fluxgate.api.url` | - | External rate limit API URL |
+
+### MongoDB DDL Auto Mode
+
+The `fluxgate.mongo.ddl-auto` property controls how FluxGate handles MongoDB collections:
+
+| Mode | Description |
+|------|-------------|
+| `validate` | (Default) Validates that collections exist. Throws an error if missing. |
+| `create` | Automatically creates collections if they don't exist. |
+
+**Example configuration:**
+
+```yaml
+fluxgate:
+  mongo:
+    enabled: true
+    uri: mongodb://localhost:27017/fluxgate
+    database: fluxgate
+    rule-collection: my_rate_limit_rules    # Custom collection name
+    event-collection: my_rate_limit_events  # Optional: enable event logging
+    ddl-auto: create                        # Auto-create collections
+```
 
 ### Rate Limit Rule Configuration
 
