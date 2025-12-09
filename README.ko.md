@@ -91,21 +91,21 @@
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot-starter</artifactId>
-    <version>0.1.3</version>
+    <version>0.1.4</version>
 </dependency>
 
 <!-- For Redis-backed rate limiting -->
 <dependency>
 <groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-redis-ratelimiter</artifactId>
-<version>0.1.3</version>
+<version>0.1.4</version>
 </dependency>
 
 <!-- For MongoDB rule management (optional) -->
 <dependency>
 <groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-mongo-adapter</artifactId>
-<version>0.1.3</version>
+<version>0.1.4</version>
 </dependency>
 ```
 
