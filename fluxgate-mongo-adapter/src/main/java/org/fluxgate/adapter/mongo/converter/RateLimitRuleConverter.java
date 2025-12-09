@@ -35,6 +35,11 @@ public final class RateLimitRuleConverter {
       }
     }
 
+    // Convert attributes (pass through as-is)
+    if (doc.getAttributes() != null && !doc.getAttributes().isEmpty()) {
+      builder.attributes(doc.getAttributes());
+    }
+
     return builder.build();
   }
 
@@ -57,7 +62,8 @@ public final class RateLimitRuleConverter {
         rule.getKeyStrategyId(),
         rule.getOnLimitExceedPolicy(),
         bandDocs,
-        rule.getRuleSetIdOrNull() != null ? rule.getRuleSetIdOrNull() : "default");
+        rule.getRuleSetIdOrNull() != null ? rule.getRuleSetIdOrNull() : "default",
+        rule.getAttributes());
   }
 
   /** Convert a band document to a core band. */

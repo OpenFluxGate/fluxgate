@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Objects;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.handler.FluxgateRateLimitHandler;
 import org.fluxgate.core.handler.RateLimitResponse;
@@ -63,8 +64,8 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
       String ruleSetId,
       String[] includePatterns,
       String[] excludePatterns) {
-    this.handler = handler;
-    this.ruleSetId = ruleSetId;
+    this.handler = Objects.requireNonNull(handler, "handler must not be null");
+    this.ruleSetId = Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
     this.includePatterns = includePatterns != null ? includePatterns : new String[0];
     this.excludePatterns = excludePatterns != null ? excludePatterns : new String[0];
 

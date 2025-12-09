@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import org.slf4j.Logger;
@@ -42,7 +43,7 @@ public class FluxgateMetrics {
   private final ConcurrentMap<String, Timer> requestTimers = new ConcurrentHashMap<>();
 
   public FluxgateMetrics(MeterRegistry registry) {
-    this.registry = registry;
+    this.registry = Objects.requireNonNull(registry, "registry must not be null");
     log.info("FluxGate metrics initialized with registry: {}", registry.getClass().getSimpleName());
   }
 

@@ -36,16 +36,10 @@ class RateLimitKeyTest {
     }
 
     @Test
-    @DisplayName("of() should allow null key value")
-    void of_shouldAllowNullKeyValue() {
-      // Records allow null values by default
-      // given / when
-      RateLimitKey key = RateLimitKey.of(null);
-
-      // then
-      assertNotNull(key);
-      assertNull(key.key());
-      assertNull(key.value());
+    @DisplayName("of() should throw NullPointerException for null key value")
+    void of_shouldThrowNullPointerExceptionForNullKeyValue() {
+      // given / when / then
+      assertThrows(NullPointerException.class, () -> RateLimitKey.of(null));
     }
 
     @Test
@@ -143,16 +137,10 @@ class RateLimitKeyTest {
     }
 
     @Test
-    @DisplayName("equals should handle null key values")
-    void equals_shouldHandleNullKeyValues() {
-      // given
-      RateLimitKey key1 = RateLimitKey.of(null);
-      RateLimitKey key2 = RateLimitKey.of(null);
-      RateLimitKey key3 = RateLimitKey.of("not-null");
-
-      // when / then
-      assertEquals(key1, key2);
-      assertNotEquals(key1, key3);
+    @DisplayName("constructor should throw NullPointerException for null key values")
+    void constructor_shouldThrowNullPointerExceptionForNullKeyValues() {
+      // given / when / then
+      assertThrows(NullPointerException.class, () -> new RateLimitKey(null));
     }
   }
 
@@ -225,17 +213,17 @@ class RateLimitKeyTest {
     }
 
     @Test
-    @DisplayName("toString should handle null key")
-    void toString_shouldHandleNullKey() {
+    @DisplayName("toString should handle empty string key")
+    void toString_shouldHandleEmptyStringKey() {
       // given
-      RateLimitKey key = RateLimitKey.of(null);
+      RateLimitKey key = RateLimitKey.of("");
 
       // when
       String result = key.toString();
 
       // then
       assertNotNull(result);
-      assertTrue(result.contains("null"));
+      assertTrue(result.contains("RateLimitKey"));
     }
   }
 

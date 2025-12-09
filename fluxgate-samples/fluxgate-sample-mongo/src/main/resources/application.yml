@@ -12,7 +12,10 @@ fluxgate:
     uri: mongodb://${MONGO_USER:fluxgate}:${MONGO_PASSWORD:fluxgate123}@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
     rule-collection: rate_limit_rules
+    # Optional: Enable event logging (comment out to disable)
     event-collection: rate_limit_events
+    # DDL auto mode: validate (default) or create
+    ddl-auto: create
   redis:
     enabled: false
   ratelimit:

@@ -51,6 +51,7 @@ public class AdminController {
     log.info("Creating default ruleset: {}", DEFAULT_RULESET_ID);
 
     // Create a rule: 10 requests per minute per IP
+    // Using custom attributes to store metadata (e.g., tier, team, external references)
     RateLimitRule rule =
         RateLimitRule.builder("rate-limit-rule-1")
             .name("Standard Rate Limit")
@@ -60,6 +61,12 @@ public class AdminController {
             .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
             .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).label("per-minute").build())
             .ruleSetId(DEFAULT_RULESET_ID)
+            // Custom attributes for user-defined metadata
+            // These are stored in MongoDB and can be queried:
+            // db.rate_limit_rules.find({"attributes.tier": "standard"})
+            .attribute("tier", "standard")
+            .attribute("team", "platform")
+            .attribute("description", "Default rate limit for API endpoints")
             .build();
 
     // Save rule to MongoDB via repository
@@ -71,6 +78,7 @@ public class AdminController {
     response.put("ruleSetId", DEFAULT_RULESET_ID);
     response.put("ruleId", rule.getId());
     response.put("limit", "10 requests per minute per IP");
+    response.put("attributes", rule.getAttributes());
     response.put("createdAt", Instant.now().toString());
 
     return ResponseEntity.ok(response);
@@ -99,21 +107,28 @@ public class AdminController {
         "rules",
         ruleSet.getRules().stream()
             .map(
-                rule ->
-                    Map.of(
-                        "id", rule.getId(),
-                        "name", rule.getName(),
-                        "enabled", rule.isEnabled(),
-                        "scope", rule.getScope().name(),
-                        "bands",
-                            rule.getBands().stream()
-                                .map(
-                                    band ->
-                                        Map.of(
-                                            "label", band.getLabel(),
-                                            "capacity", band.getCapacity(),
-                                            "windowSeconds", band.getWindow().toSeconds()))
-                                .toList()))
+                rule -> {
+                  Map<String, Object> ruleMap = new HashMap<>();
+                  ruleMap.put("id", rule.getId());
+                  ruleMap.put("name", rule.getName());
+                  ruleMap.put("enabled", rule.isEnabled());
+                  ruleMap.put("scope", rule.getScope().name());
+                  ruleMap.put(
+                      "bands",
+                      rule.getBands().stream()
+                          .map(
+                              band ->
+                                  Map.of(
+                                      "label", band.getLabel(),
+                                      "capacity", band.getCapacity(),
+                                      "windowSeconds", band.getWindow().toSeconds()))
+                          .toList());
+                  // Include custom attributes if present
+                  if (!rule.getAttributes().isEmpty()) {
+                    ruleMap.put("attributes", rule.getAttributes());
+                  }
+                  return ruleMap;
+                })
             .toList());
 
     return ResponseEntity.ok(response);

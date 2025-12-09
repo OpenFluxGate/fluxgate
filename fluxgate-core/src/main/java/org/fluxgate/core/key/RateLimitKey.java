@@ -4,6 +4,10 @@ import java.util.Objects;
 
 public record RateLimitKey(String key) {
 
+  public RateLimitKey {
+    Objects.requireNonNull(key, "key must not be null");
+  }
+
   public static RateLimitKey of(String key) {
     return new RateLimitKey(key);
   }

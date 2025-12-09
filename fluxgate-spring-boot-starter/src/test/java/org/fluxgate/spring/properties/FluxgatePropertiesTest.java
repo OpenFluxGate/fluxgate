@@ -20,7 +20,10 @@ class FluxgatePropertiesTest {
     assertThat(properties.getMongo().getUri()).isEqualTo("mongodb://localhost:27017/fluxgate");
     assertThat(properties.getMongo().getDatabase()).isEqualTo("fluxgate");
     assertThat(properties.getMongo().getRuleCollection()).isEqualTo("rate_limit_rules");
-    assertThat(properties.getMongo().getEventCollection()).isEqualTo("rate_limit_events");
+    assertThat(properties.getMongo().getEventCollection()).isNull(); // Optional, null by default
+    assertThat(properties.getMongo().hasEventCollection()).isFalse();
+    assertThat(properties.getMongo().getDdlAuto())
+        .isEqualTo(FluxgateProperties.DdlAuto.VALIDATE); // Default is VALIDATE
 
     // Redis defaults
     assertThat(properties.getRedis().isEnabled()).isFalse();

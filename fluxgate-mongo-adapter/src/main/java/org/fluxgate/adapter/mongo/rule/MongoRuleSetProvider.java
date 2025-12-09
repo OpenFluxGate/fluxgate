@@ -1,6 +1,7 @@
 package org.fluxgate.adapter.mongo.rule;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.key.KeyResolver;
@@ -20,8 +21,8 @@ public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
   private final KeyResolver keyResolver;
 
   public MongoRuleSetProvider(RateLimitRuleRepository ruleRepository, KeyResolver keyResolver) {
-    this.ruleRepository = ruleRepository;
-    this.keyResolver = keyResolver;
+    this.ruleRepository = Objects.requireNonNull(ruleRepository, "ruleRepository must not be null");
+    this.keyResolver = Objects.requireNonNull(keyResolver, "keyResolver must not be null");
   }
 
   @Override

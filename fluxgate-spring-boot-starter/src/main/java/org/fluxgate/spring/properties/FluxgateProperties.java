@@ -108,8 +108,21 @@ public class FluxgateProperties {
     /** Collection name for rate limit rules. */
     private String ruleCollection = "rate_limit_rules";
 
-    /** Collection name for rate limit events/metrics. */
-    private String eventCollection = "rate_limit_events";
+    /**
+     * Collection name for rate limit events/metrics. Optional - if not set, event recording is
+     * disabled.
+     */
+    private String eventCollection;
+
+    /**
+     * DDL auto mode for MongoDB collections.
+     *
+     * <ul>
+     *   <li>VALIDATE - Only validate that collections exist (default)
+     *   <li>CREATE - Create collections and indexes if they don't exist
+     * </ul>
+     */
+    private DdlAuto ddlAuto = DdlAuto.VALIDATE;
 
     public boolean isEnabled() {
       return enabled;
@@ -150,6 +163,27 @@ public class FluxgateProperties {
     public void setEventCollection(String eventCollection) {
       this.eventCollection = eventCollection;
     }
+
+    public DdlAuto getDdlAuto() {
+      return ddlAuto;
+    }
+
+    public void setDdlAuto(DdlAuto ddlAuto) {
+      this.ddlAuto = ddlAuto;
+    }
+
+    /** Check if event collection is configured. */
+    public boolean hasEventCollection() {
+      return eventCollection != null && !eventCollection.trim().isEmpty();
+    }
+  }
+
+  /** DDL auto mode for MongoDB collections. */
+  public enum DdlAuto {
+    /** Only validate that collections exist. Throws error if missing. */
+    VALIDATE,
+    /** Create collections and indexes if they don't exist. */
+    CREATE
   }
 
   /**

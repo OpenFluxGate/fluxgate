@@ -6,6 +6,7 @@ import com.mongodb.client.model.ReplaceOptions;
 import com.mongodb.client.result.DeleteResult;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import org.bson.Document;
 import org.fluxgate.adapter.mongo.converter.RateLimitRuleConverter;
@@ -24,7 +25,7 @@ public class MongoRateLimitRuleRepository implements RateLimitRuleRepository {
   private final MongoCollection<Document> collection;
 
   public MongoRateLimitRuleRepository(MongoCollection<Document> collection) {
-    this.collection = collection;
+    this.collection = Objects.requireNonNull(collection, "collection must not be null");
   }
 
   @Override

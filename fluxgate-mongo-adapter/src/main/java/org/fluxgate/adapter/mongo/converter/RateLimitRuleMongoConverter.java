@@ -2,7 +2,10 @@ package org.fluxgate.adapter.mongo.converter;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.bson.Document;
 import org.fluxgate.adapter.mongo.model.RateLimitBandDocument;
 import org.fluxgate.adapter.mongo.model.RateLimitRuleDocument;
@@ -31,7 +34,8 @@ public final class RateLimitRuleMongoConverter {
         rule.getKeyStrategyId(),
         rule.getOnLimitExceedPolicy(),
         bandDocs,
-        rule.getRuleSetIdOrNull());
+        rule.getRuleSetIdOrNull(),
+        rule.getAttributes());
   }
 
   public static RateLimitRule toDomain(RateLimitRuleDocument doc) {
@@ -47,6 +51,12 @@ public final class RateLimitRuleMongoConverter {
     for (RateLimitBandDocument bandDoc : doc.getBands()) {
       builder.addBand(toDomain(bandDoc));
     }
+
+    // Convert attributes
+    if (doc.getAttributes() != null && !doc.getAttributes().isEmpty()) {
+      builder.attributes(doc.getAttributes());
+    }
+
     return builder.build();
   }
 
@@ -67,23 +77,55 @@ public final class RateLimitRuleMongoConverter {
 
   /* ========= DTO ↔ Bson(Document) ========= */
 
+  /**
+   * Converts a RateLimitRuleDocument to a BSON Document for MongoDB storage.
+   *
+   * <p>The attributes field is stored as a nested document, allowing MongoDB queries like:
+   *
+   * <pre>{@code
+   * // Find all rules with tier="premium"
+   * db.rate_limit_rules.find({"attributes.tier": "premium"})
+   *
+   * // Find all rules owned by the billing team
+   * db.rate_limit_rules.find({"attributes.team": "billing"})
+   * }</pre>
+   *
+   * @param doc the document to convert
+   * @return the BSON document
+   */
   public static Document toBson(RateLimitRuleDocument doc) {
     List<Document> bandDocs = new ArrayList<>();
     for (RateLimitBandDocument band : doc.getBands()) {
       bandDocs.add(toBson(band));
     }
 
-    return new Document()
-        .append("id", doc.getId())
-        .append("name", doc.getName())
-        .append("enabled", doc.isEnabled())
-        .append("scope", doc.getScope().name())
-        .append("keyStrategyId", doc.getKeyStrategyId())
-        .append("onLimitExceedPolicy", doc.getOnLimitExceedPolicy().name())
-        .append("ruleSetId", doc.getRuleSetId())
-        .append("bands", bandDocs);
+    Document bson =
+        new Document()
+            .append("id", doc.getId())
+            .append("name", doc.getName())
+            .append("enabled", doc.isEnabled())
+            .append("scope", doc.getScope().name())
+            .append("keyStrategyId", doc.getKeyStrategyId())
+            .append("onLimitExceedPolicy", doc.getOnLimitExceedPolicy().name())
+            .append("ruleSetId", doc.getRuleSetId())
+            .append("bands", bandDocs);
+
+    // Only include attributes if non-empty (avoids storing empty objects in MongoDB)
+    if (doc.getAttributes() != null && !doc.getAttributes().isEmpty()) {
+      bson.append("attributes", new Document(doc.getAttributes()));
+    }
+
+    return bson;
   }
 
+  /**
+   * Converts a BSON Document from MongoDB to a RateLimitRuleDocument.
+   *
+   * <p>Handles missing or null attributes gracefully by returning an empty map.
+   *
+   * @param doc the BSON document from MongoDB
+   * @return the converted RateLimitRuleDocument
+   */
   public static RateLimitRuleDocument fromBson(Document doc) {
     String id = doc.getString("id");
     String name = doc.getString("name");
@@ -102,8 +144,28 @@ public final class RateLimitRuleMongoConverter {
       }
     }
 
+    // Parse attributes from nested document (may be null if not present)
+    Map<String, Object> attributes = parseAttributes(doc.get("attributes", Document.class));
+
     return new RateLimitRuleDocument(
-        id, name, enabled, scope, keyStrategyId, policy, bands, ruleSetId);
+        id, name, enabled, scope, keyStrategyId, policy, bands, ruleSetId, attributes);
+  }
+
+  /**
+   * Parses attributes from a BSON Document to a Map.
+   *
+   * <p>MongoDB stores nested documents as Document objects. This method converts them to a plain
+   * Map for easier use in the application layer.
+   *
+   * @param attrDoc the attributes document (may be null)
+   * @return a Map of attributes (empty if input is null)
+   */
+  private static Map<String, Object> parseAttributes(Document attrDoc) {
+    if (attrDoc == null || attrDoc.isEmpty()) {
+      return Collections.emptyMap();
+    }
+    // Create a new HashMap to decouple from BSON Document
+    return new HashMap<>(attrDoc);
   }
 
   private static Document toBson(RateLimitBandDocument doc) {

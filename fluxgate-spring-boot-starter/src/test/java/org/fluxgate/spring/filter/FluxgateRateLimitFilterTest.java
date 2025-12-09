@@ -1,6 +1,7 @@
 package org.fluxgate.spring.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -193,23 +194,17 @@ class FluxgateRateLimitFilterTest {
   }
 
   @Test
-  void shouldSkipWhenNoRuleSetId() throws Exception {
-    // Given
-    filter =
-        new FluxgateRateLimitFilter(
-            handler,
-            null, // No rule set ID
-            new String[] {"/**"},
-            new String[] {});
-
-    when(request.getRequestURI()).thenReturn("/api/users");
-
-    // When
-    filter.doFilterInternal(request, response, filterChain);
-
-    // Then
-    verify(filterChain).doFilter(request, response);
-    verify(handler, never()).tryConsume(any(), any());
+  void shouldThrowExceptionWhenRuleSetIdIsNull() {
+    // Given / When / Then
+    assertThatThrownBy(
+            () ->
+                new FluxgateRateLimitFilter(
+                    handler,
+                    null, // null ruleSetId should throw
+                    new String[] {"/**"},
+                    new String[] {}))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessageContaining("ruleSetId must not be null");
   }
 
   @Test

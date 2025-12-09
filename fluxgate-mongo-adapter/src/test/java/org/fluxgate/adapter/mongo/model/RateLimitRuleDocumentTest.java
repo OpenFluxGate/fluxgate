@@ -3,6 +3,7 @@ package org.fluxgate.adapter.mongo.model;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.List;
+import java.util.Map;
 import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.junit.jupiter.api.DisplayName;
@@ -29,7 +30,7 @@ class RateLimitRuleDocumentTest {
   class ConstructorTests {
 
     @Test
-    @DisplayName("should create document with all fields")
+    @DisplayName("should create document with all fields (without attributes)")
     void constructor_shouldCreateDocumentWithAllFields() {
       // given
       String id = "rule-1";
@@ -55,6 +56,7 @@ class RateLimitRuleDocumentTest {
       assertEquals(onLimitExceedPolicy, document.getOnLimitExceedPolicy());
       assertEquals(1, document.getBands().size());
       assertEquals(ruleSetId, document.getRuleSetId());
+      assertTrue(document.getAttributes().isEmpty());
     }
 
     @Test
@@ -81,6 +83,30 @@ class RateLimitRuleDocumentTest {
 
       // then
       assertEquals(3, document.getBands().size());
+    }
+
+    @Test
+    @DisplayName("should create document with attributes")
+    void constructor_shouldCreateDocumentWithAttributes() {
+      // given
+      Map<String, Object> attributes = Map.of("tier", "premium", "team", "billing");
+
+      // when
+      RateLimitRuleDocument document =
+          new RateLimitRuleDocument(
+              "rule-1",
+              "Premium Rule",
+              true,
+              LimitScope.PER_IP,
+              "ip",
+              OnLimitExceedPolicy.REJECT_REQUEST,
+              List.of(createBandDocument(60, 100)),
+              "default",
+              attributes);
+
+      // then
+      assertEquals("premium", document.getAttributes().get("tier"));
+      assertEquals("billing", document.getAttributes().get("team"));
     }
 
     @Test
@@ -301,6 +327,39 @@ class RateLimitRuleDocumentTest {
 
       // when / then
       assertEquals(OnLimitExceedPolicy.WAIT_FOR_REFILL, document.getOnLimitExceedPolicy());
+    }
+
+    @Test
+    @DisplayName("getAttributes should return empty map when using constructor without attributes")
+    void getAttributes_shouldReturnEmptyMapWhenNoAttributes() {
+      // given
+      RateLimitRuleDocument document = createDefaultDocument("test-id");
+
+      // when / then
+      assertNotNull(document.getAttributes());
+      assertTrue(document.getAttributes().isEmpty());
+    }
+
+    @Test
+    @DisplayName("getAttributes should return correct values")
+    void getAttributes_shouldReturnCorrectValues() {
+      // given
+      Map<String, Object> attributes = Map.of("tier", "premium", "limit", 1000);
+      RateLimitRuleDocument document =
+          new RateLimitRuleDocument(
+              "id",
+              "name",
+              true,
+              LimitScope.PER_IP,
+              "ip",
+              OnLimitExceedPolicy.REJECT_REQUEST,
+              List.of(createBandDocument(60, 100)),
+              "default",
+              attributes);
+
+      // when / then
+      assertEquals("premium", document.getAttributes().get("tier"));
+      assertEquals(1000, document.getAttributes().get("limit"));
     }
   }
 

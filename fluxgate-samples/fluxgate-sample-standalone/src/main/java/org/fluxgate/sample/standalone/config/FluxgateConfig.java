@@ -7,10 +7,12 @@ import com.mongodb.client.MongoDatabase;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import org.bson.Document;
+import org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder;
 import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
 import org.fluxgate.adapter.mongo.rule.MongoRuleSetProvider;
 import org.fluxgate.core.key.KeyResolver;
 import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.spi.RateLimitRuleRepository;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.fluxgate.redis.RedisRateLimiter;
@@ -18,7 +20,9 @@ import org.fluxgate.redis.config.RedisRateLimiterConfig;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -39,6 +43,12 @@ public class FluxgateConfig {
 
   @Value("${fluxgate.mongodb.database:fluxgate}")
   private String mongoDatabase;
+
+  @Value("${fluxgate.mongodb.rule-collection:rate_limit_rules}")
+  private String ruleCollection;
+
+  @Value("${fluxgate.mongodb.event-collection:#{null}}")
+  private String eventCollection;
 
   @Value("${fluxgate.redis.uri:redis://localhost:6379}")
   private String redisUri;
@@ -61,14 +71,41 @@ public class FluxgateConfig {
 
   @Bean
   public MongoCollection<Document> rateLimitRulesCollection(MongoDatabase database) {
-    return database.getCollection("rate_limit_rules");
+    log.info("Using rule collection: {}", ruleCollection);
+    return database.getCollection(ruleCollection);
+  }
+
+  /**
+   * Creates the event collection for rate limit event logging.
+   *
+   * <p>Only created when fluxgate.mongodb.event-collection is configured.
+   */
+  @Bean
+  @ConditionalOnProperty("fluxgate.mongodb.event-collection")
+  public MongoCollection<Document> rateLimitEventsCollection(MongoDatabase database) {
+    log.info("Using event collection: {}", eventCollection);
+    return database.getCollection(eventCollection);
+  }
+
+  /**
+   * Creates the RateLimitMetricsRecorder for logging rate limit events to MongoDB.
+   *
+   * <p>Only created when event-collection is configured. This recorder stores all rate limit
+   * decisions (allowed/denied) to MongoDB for auditing and analytics purposes.
+   */
+  @Bean
+  @ConditionalOnProperty("fluxgate.mongodb.event-collection")
+  public RateLimitMetricsRecorder rateLimitMetricsRecorder(
+      @Qualifier("rateLimitEventsCollection") MongoCollection<Document> eventsCollection) {
+    log.info("Creating MongoRateLimitMetricsRecorder for event logging");
+    return new MongoRateLimitMetricsRecorder(eventsCollection);
   }
 
   @Bean
   public RateLimitRuleRepository ruleRepository(
-      MongoCollection<Document> rateLimitRulesCollection) {
+      @Qualifier("rateLimitRulesCollection") MongoCollection<Document> rulesCollection) {
     log.info("Creating MongoDB RuleRepository");
-    return new MongoRateLimitRuleRepository(rateLimitRulesCollection);
+    return new MongoRateLimitRuleRepository(rulesCollection);
   }
 
   @Bean

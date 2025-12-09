@@ -28,7 +28,7 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.junit.jupiter.api.*;
 
 /**
- * Integration test verifying: - A "PER_IP, 100 req/min" rule set stored in MongoDB - Requests #1 ~
+ * Integration test verifying: - A "PER_IP, 100 req/5s" rule set stored in MongoDB - Requests #1 ~
  * #100 are allowed - Request #101 is rejected - Metrics are recorded into MongoDB
  *
  * <p>This test uses a simple in-memory RateLimiter implementation so that only the Mongo adapter +
@@ -52,8 +52,8 @@ class MongoRateLimitIntegrationTest {
   private static final String RULE_COLLECTION = "rate_limit_rules";
   private static final String METRIC_COLLECTION = "rate_limit_events";
 
-  private static final String RULE_SET_ID = "mongo-per-ip-1m-100";
-  private static final String RULE_ID = "rule-per-ip-1m-100";
+  private static final String RULE_SET_ID = "mongo-per-ip-5s-100";
+  private static final String RULE_ID = "rule-per-ip-5s-100";
 
   private MongoClient client;
   private MongoDatabase database;
@@ -96,7 +96,7 @@ class MongoRateLimitIntegrationTest {
   }
 
   @Test
-  @DisplayName("Given a PER_IP 1-minute 100 req rule, allow 100 requests and reject the 101st")
+  @DisplayName("Given a PER_IP 5-second 100 req rule, allow 100 requests and reject the 101st")
   void mongoRateLimitTest() {
     System.out.println("> Loading ruleSetId = " + RULE_SET_ID);
 
@@ -139,7 +139,7 @@ class MongoRateLimitIntegrationTest {
   }
 
   @Test
-  @DisplayName("After one minute window, the same IP should be allowed again")
+  @DisplayName("After 5-second window, the same IP should be allowed again")
   void mongoRateLimitWindowResetTest() throws InterruptedException {
     System.out.println("> Loading ruleSetId = " + RULE_SET_ID + " (window reset test)");
 
@@ -202,14 +202,14 @@ class MongoRateLimitIntegrationTest {
   private void insertRuleSetDocument() {
     Document band =
         new Document()
-            .append("windowSeconds", 60L)
+            .append("windowSeconds", 5L)
             .append("capacity", 100L)
-            .append("label", "100-per-minute");
+            .append("label", "100-per-5-seconds");
 
     Document rule =
         new Document()
             .append("id", RULE_ID)
-            .append("name", "Per IP 100 req per minute")
+            .append("name", "Per IP 100 req per 5 seconds")
             .append("enabled", true)
             .append("scope", LimitScope.PER_IP.name())
             .append("keyStrategyId", "ip")

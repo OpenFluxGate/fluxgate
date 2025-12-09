@@ -66,7 +66,12 @@ class KeyResolverTest {
   @DisplayName("IP-based Resolver Tests")
   class IpBasedResolverTests {
 
-    private final KeyResolver ipResolver = context -> RateLimitKey.of(context.getClientIp());
+    // Safe resolver that handles null client IP with a fallback
+    private final KeyResolver ipResolver =
+        context -> {
+          String ip = context.getClientIp();
+          return RateLimitKey.of(ip != null ? ip : "unknown");
+        };
 
     @Test
     @DisplayName("should resolve IPv4 address")
@@ -96,8 +101,8 @@ class KeyResolverTest {
     }
 
     @Test
-    @DisplayName("should handle null client IP")
-    void resolve_shouldHandleNullClientIp() {
+    @DisplayName("should use fallback when client IP is null")
+    void resolve_shouldUseFallbackWhenClientIpIsNull() {
       // given
       RequestContext context = RequestContext.builder().endpoint("/api/test").build();
 
@@ -105,7 +110,7 @@ class KeyResolverTest {
       RateLimitKey key = ipResolver.resolve(context);
 
       // then
-      assertNull(key.value());
+      assertEquals("unknown", key.value());
     }
   }
 
@@ -115,7 +120,12 @@ class KeyResolverTest {
   @DisplayName("User-based Resolver Tests")
   class UserBasedResolverTests {
 
-    private final KeyResolver userResolver = context -> RateLimitKey.of(context.getUserId());
+    // Safe resolver that handles null user ID with a fallback
+    private final KeyResolver userResolver =
+        context -> {
+          String userId = context.getUserId();
+          return RateLimitKey.of(userId != null ? userId : "anonymous");
+        };
 
     @Test
     @DisplayName("should resolve user ID")
@@ -131,8 +141,8 @@ class KeyResolverTest {
     }
 
     @Test
-    @DisplayName("should handle null user ID")
-    void resolve_shouldHandleNullUserId() {
+    @DisplayName("should use fallback when user ID is null")
+    void resolve_shouldUseFallbackWhenUserIdIsNull() {
       // given
       RequestContext context = RequestContext.builder().clientIp("10.0.0.1").build();
 
@@ -140,7 +150,7 @@ class KeyResolverTest {
       RateLimitKey key = userResolver.resolve(context);
 
       // then
-      assertNull(key.value());
+      assertEquals("anonymous", key.value());
     }
   }
 
@@ -251,7 +261,7 @@ class KeyResolverTest {
       KeyResolver tenantResolver =
           context -> {
             Object tenantId = context.getAttributes().get("tenantId");
-            return RateLimitKey.of(tenantId != null ? tenantId.toString() : null);
+            return RateLimitKey.of(tenantId != null ? tenantId.toString() : "default-tenant");
           };
 
       RequestContext context = RequestContext.builder().attribute("tenantId", "tenant-xyz").build();

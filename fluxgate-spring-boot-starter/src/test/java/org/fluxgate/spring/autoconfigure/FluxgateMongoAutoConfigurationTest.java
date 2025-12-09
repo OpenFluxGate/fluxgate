@@ -3,6 +3,9 @@ package org.fluxgate.spring.autoconfigure;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.fluxgate.spring.properties.FluxgateProperties;
+import org.fluxgate.spring.properties.FluxgateProperties.DdlAuto;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -50,15 +53,15 @@ class FluxgateMongoAutoConfigurationTest {
 
   @Test
   void shouldBindMongoProperties() {
+    // Don't enable mongo (would try to connect and validate collections)
     contextRunner
         .withPropertyValues(
-            "fluxgate.mongo.enabled=true",
+            "fluxgate.mongo.enabled=false",
             "fluxgate.mongo.uri=mongodb://localhost:27017/testdb",
             "fluxgate.mongo.database=testdb")
         .run(
             context -> {
               FluxgateProperties props = context.getBean(FluxgateProperties.class);
-              assertThat(props.getMongo().isEnabled()).isTrue();
               assertThat(props.getMongo().getUri()).isEqualTo("mongodb://localhost:27017/testdb");
               assertThat(props.getMongo().getDatabase()).isEqualTo("testdb");
             });
@@ -76,6 +79,7 @@ class FluxgateMongoAutoConfigurationTest {
               FluxgateProperties props = context.getBean(FluxgateProperties.class);
               assertThat(props.getMongo().getRuleCollection()).isEqualTo("custom_rules");
               assertThat(props.getMongo().getEventCollection()).isEqualTo("custom_events");
+              assertThat(props.getMongo().hasEventCollection()).isTrue();
             });
   }
 
@@ -111,7 +115,116 @@ class FluxgateMongoAutoConfigurationTest {
               assertThat(props.getMongo().getUri()).isEqualTo("mongodb://localhost:27017/fluxgate");
               assertThat(props.getMongo().getDatabase()).isEqualTo("fluxgate");
               assertThat(props.getMongo().getRuleCollection()).isEqualTo("rate_limit_rules");
-              assertThat(props.getMongo().getEventCollection()).isEqualTo("rate_limit_events");
+              assertThat(props.getMongo().getEventCollection()).isNull();
+              assertThat(props.getMongo().getDdlAuto()).isEqualTo(DdlAuto.VALIDATE);
             });
+  }
+
+  // ==================== DDL Auto Tests ====================
+
+  @Nested
+  @DisplayName("DDL Auto Tests")
+  class DdlAutoTests {
+
+    @Test
+    @DisplayName("should default to VALIDATE mode")
+    void shouldDefaultToValidateMode() {
+      contextRunner.run(
+          context -> {
+            FluxgateProperties props = context.getBean(FluxgateProperties.class);
+            assertThat(props.getMongo().getDdlAuto()).isEqualTo(DdlAuto.VALIDATE);
+          });
+    }
+
+    @Test
+    @DisplayName("should bind ddl-auto=validate")
+    void shouldBindDdlAutoValidate() {
+      contextRunner
+          .withPropertyValues("fluxgate.mongo.ddl-auto=validate")
+          .run(
+              context -> {
+                FluxgateProperties props = context.getBean(FluxgateProperties.class);
+                assertThat(props.getMongo().getDdlAuto()).isEqualTo(DdlAuto.VALIDATE);
+              });
+    }
+
+    @Test
+    @DisplayName("should bind ddl-auto=create")
+    void shouldBindDdlAutoCreate() {
+      contextRunner
+          .withPropertyValues("fluxgate.mongo.ddl-auto=create")
+          .run(
+              context -> {
+                FluxgateProperties props = context.getBean(FluxgateProperties.class);
+                assertThat(props.getMongo().getDdlAuto()).isEqualTo(DdlAuto.CREATE);
+              });
+    }
+
+    @Test
+    @DisplayName("should bind ddl-auto=CREATE (uppercase)")
+    void shouldBindDdlAutoCreateUppercase() {
+      contextRunner
+          .withPropertyValues("fluxgate.mongo.ddl-auto=CREATE")
+          .run(
+              context -> {
+                FluxgateProperties props = context.getBean(FluxgateProperties.class);
+                assertThat(props.getMongo().getDdlAuto()).isEqualTo(DdlAuto.CREATE);
+              });
+    }
+  }
+
+  // ==================== Event Collection Optional Tests ====================
+
+  @Nested
+  @DisplayName("Event Collection Optional Tests")
+  class EventCollectionOptionalTests {
+
+    @Test
+    @DisplayName("should have null event-collection by default")
+    void shouldHaveNullEventCollectionByDefault() {
+      contextRunner.run(
+          context -> {
+            FluxgateProperties props = context.getBean(FluxgateProperties.class);
+            assertThat(props.getMongo().getEventCollection()).isNull();
+            assertThat(props.getMongo().hasEventCollection()).isFalse();
+          });
+    }
+
+    @Test
+    @DisplayName("should bind event-collection when configured")
+    void shouldBindEventCollectionWhenConfigured() {
+      contextRunner
+          .withPropertyValues("fluxgate.mongo.event-collection=my_events")
+          .run(
+              context -> {
+                FluxgateProperties props = context.getBean(FluxgateProperties.class);
+                assertThat(props.getMongo().getEventCollection()).isEqualTo("my_events");
+                assertThat(props.getMongo().hasEventCollection()).isTrue();
+              });
+    }
+
+    @Test
+    @DisplayName("should report hasEventCollection=false for empty string")
+    void shouldReportHasEventCollectionFalseForEmptyString() {
+      contextRunner
+          .withPropertyValues("fluxgate.mongo.event-collection=")
+          .run(
+              context -> {
+                FluxgateProperties props = context.getBean(FluxgateProperties.class);
+                assertThat(props.getMongo().hasEventCollection()).isFalse();
+              });
+    }
+
+    @Test
+    @DisplayName("should report hasEventCollection=false for whitespace")
+    void shouldReportHasEventCollectionFalseForWhitespace() {
+      contextRunner
+          .withPropertyValues("fluxgate.mongo.event-collection=   ")
+          .run(
+              context -> {
+                FluxgateProperties props = context.getBean(FluxgateProperties.class);
+                assertThat(props.getMongo().hasEventCollection()).isFalse();
+              });
+    }
   }
 }

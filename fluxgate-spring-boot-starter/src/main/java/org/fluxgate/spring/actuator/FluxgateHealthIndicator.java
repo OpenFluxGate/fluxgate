@@ -1,5 +1,6 @@
 package org.fluxgate.spring.actuator;
 
+import java.util.Objects;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,9 +32,9 @@ public class FluxgateHealthIndicator implements HealthIndicator {
       FluxgateProperties properties,
       MongoHealthChecker mongoHealthChecker,
       RedisHealthChecker redisHealthChecker) {
-    this.properties = properties;
-    this.mongoHealthChecker = mongoHealthChecker;
-    this.redisHealthChecker = redisHealthChecker;
+    this.properties = Objects.requireNonNull(properties, "properties must not be null");
+    this.mongoHealthChecker = mongoHealthChecker; // nullable - optional checker
+    this.redisHealthChecker = redisHealthChecker; // nullable - optional checker
   }
 
   @Override

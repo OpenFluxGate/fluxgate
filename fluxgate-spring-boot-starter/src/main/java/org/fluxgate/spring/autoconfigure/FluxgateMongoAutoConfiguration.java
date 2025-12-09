@@ -90,6 +90,14 @@ public class FluxgateMongoAutoConfiguration {
   @ConditionalOnMissingBean(name = "fluxgateRuleCollection")
   public MongoCollection<Document> fluxgateRuleCollection(MongoDatabase fluxgateMongoDatabase) {
     String collectionName = properties.getMongo().getRuleCollection();
+    FluxgateProperties.DdlAuto ddlAuto = properties.getMongo().getDdlAuto();
+
+    if (ddlAuto == FluxgateProperties.DdlAuto.CREATE) {
+      createCollectionIfNotExists(fluxgateMongoDatabase, collectionName);
+    } else {
+      validateCollectionExists(fluxgateMongoDatabase, collectionName);
+    }
+
     log.info("Using FluxGate rule collection: {}", collectionName);
     return fluxgateMongoDatabase.getCollection(collectionName);
   }
@@ -132,12 +140,21 @@ public class FluxgateMongoAutoConfiguration {
   /**
    * Creates the event collection for rate limit event logging.
    *
-   * <p>Uses the collection name from {@code fluxgate.mongo.event-collection}.
+   * <p>Only created when {@code fluxgate.mongo.event-collection} is configured.
    */
   @Bean(name = "fluxgateEventCollection")
   @ConditionalOnMissingBean(name = "fluxgateEventCollection")
+  @ConditionalOnProperty(prefix = "fluxgate.mongo", name = "event-collection")
   public MongoCollection<Document> fluxgateEventCollection(MongoDatabase fluxgateMongoDatabase) {
     String collectionName = properties.getMongo().getEventCollection();
+    FluxgateProperties.DdlAuto ddlAuto = properties.getMongo().getDdlAuto();
+
+    if (ddlAuto == FluxgateProperties.DdlAuto.CREATE) {
+      createCollectionIfNotExists(fluxgateMongoDatabase, collectionName);
+    } else {
+      validateCollectionExists(fluxgateMongoDatabase, collectionName);
+    }
+
     log.info("Using FluxGate event collection: {}", collectionName);
     return fluxgateMongoDatabase.getCollection(collectionName);
   }
@@ -145,11 +162,11 @@ public class FluxgateMongoAutoConfiguration {
   /**
    * Creates the RateLimitMetricsRecorder for logging rate limit events to MongoDB.
    *
-   * <p>This recorder stores all rate limit decisions (allowed/denied) to MongoDB for auditing and
-   * analytics purposes.
+   * <p>Only created when event-collection is configured.
    */
   @Bean
   @ConditionalOnMissingBean(RateLimitMetricsRecorder.class)
+  @ConditionalOnProperty(prefix = "fluxgate.mongo", name = "event-collection")
   public RateLimitMetricsRecorder rateLimitMetricsRecorder(
       @Qualifier("fluxgateEventCollection") MongoCollection<Document> fluxgateEventCollection) {
     log.info("Creating MongoRateLimitMetricsRecorder for event logging");
@@ -163,5 +180,36 @@ public class FluxgateMongoAutoConfiguration {
     }
     // Simple masking: hide password
     return uri.replaceAll("://([^:]+):([^@]+)@", "://$1:****@");
+  }
+
+  /** Creates collection if it doesn't exist (ddl-auto: create). */
+  private void createCollectionIfNotExists(MongoDatabase database, String collectionName) {
+    boolean exists = collectionExists(database, collectionName);
+    if (!exists) {
+      log.info("Creating MongoDB collection: {}", collectionName);
+      database.createCollection(collectionName);
+    }
+  }
+
+  /** Validates that collection exists (ddl-auto: validate). */
+  private void validateCollectionExists(MongoDatabase database, String collectionName) {
+    boolean exists = collectionExists(database, collectionName);
+    if (!exists) {
+      throw new IllegalStateException(
+          String.format(
+              "MongoDB collection '%s' does not exist. "
+                  + "Create it manually or set fluxgate.mongo.ddl-auto=create",
+              collectionName));
+    }
+  }
+
+  /** Check if a collection exists in the database. */
+  private boolean collectionExists(MongoDatabase database, String collectionName) {
+    for (String name : database.listCollectionNames()) {
+      if (name.equals(collectionName)) {
+        return true;
+      }
+    }
+    return false;
   }
 }

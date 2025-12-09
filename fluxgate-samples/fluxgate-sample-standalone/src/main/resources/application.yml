@@ -10,6 +10,11 @@ fluxgate:
   mongodb:
     uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
+    rule-collection: rate_limit_rules
+    # Optional: Enable event logging by setting event-collection
+    event-collection: rate_limit_events
+    # DDL auto mode: validate (default) or create
+    ddl-auto: validate
   redis:
     uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
     #uri: redis://localhost:6379
@@ -39,6 +44,8 @@ spring:
 fluxgate:
   mongodb:
     uri: mongodb://fluxgate:fluxgate123@mongodb:27017/fluxgate?authSource=admin
+    rule-collection: rate_limit_rules
+    event-collection: rate_limit_events
   redis:
     uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
     #uri: redis://redis:6379
