@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -435,6 +436,154 @@ class RateLimitRuleTest {
                 .build();
         assertEquals(policy, rule.getOnLimitExceedPolicy());
       }
+    }
+  }
+
+  // ==================== Attributes Tests ====================
+
+  @Nested
+  @DisplayName("Attributes Tests")
+  class AttributesTests {
+
+    @Test
+    @DisplayName("should have empty attributes by default")
+    void build_shouldHaveEmptyAttributesByDefault() {
+      // given / when
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-1").addBand(createBand(Duration.ofMinutes(1), 100)).build();
+
+      // then
+      assertTrue(rule.getAttributes().isEmpty());
+    }
+
+    @Test
+    @DisplayName("should set attributes using Map")
+    void build_shouldSetAttributesUsingMap() {
+      // given
+      Map<String, Object> attrs = Map.of("tier", "premium", "priority", 1);
+
+      // when
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-1")
+              .addBand(createBand(Duration.ofMinutes(1), 100))
+              .attributes(attrs)
+              .build();
+
+      // then
+      assertEquals(2, rule.getAttributes().size());
+      assertEquals("premium", rule.getAttributes().get("tier"));
+      assertEquals(1, rule.getAttributes().get("priority"));
+    }
+
+    @Test
+    @DisplayName("should set single attribute")
+    void build_shouldSetSingleAttribute() {
+      // given / when
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-1")
+              .addBand(createBand(Duration.ofMinutes(1), 100))
+              .attribute("team", "billing")
+              .build();
+
+      // then
+      assertEquals(1, rule.getAttributes().size());
+      assertEquals("billing", rule.getAttributes().get("team"));
+    }
+
+    @Test
+    @DisplayName("should set multiple attributes individually")
+    void build_shouldSetMultipleAttributesIndividually() {
+      // given / when
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-1")
+              .addBand(createBand(Duration.ofMinutes(1), 100))
+              .attribute("tier", "standard")
+              .attribute("team", "api")
+              .attribute("version", 2)
+              .build();
+
+      // then
+      assertEquals(3, rule.getAttributes().size());
+      assertEquals("standard", rule.getAttributes().get("tier"));
+      assertEquals("api", rule.getAttributes().get("team"));
+      assertEquals(2, rule.getAttributes().get("version"));
+    }
+
+    @Test
+    @DisplayName("getAttribute should return value for existing key")
+    void getAttribute_shouldReturnValueForExistingKey() {
+      // given
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-1")
+              .addBand(createBand(Duration.ofMinutes(1), 100))
+              .attribute("tier", "premium")
+              .build();
+
+      // when / then
+      assertEquals("premium", rule.getAttribute("tier"));
+    }
+
+    @Test
+    @DisplayName("getAttribute should return null for non-existing key")
+    void getAttribute_shouldReturnNullForNonExistingKey() {
+      // given
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-1")
+              .addBand(createBand(Duration.ofMinutes(1), 100))
+              .attribute("tier", "premium")
+              .build();
+
+      // when / then
+      assertNull(rule.getAttribute("nonExistent"));
+    }
+
+    @Test
+    @DisplayName("getAttribute with type should return typed value")
+    void getAttribute_withType_shouldReturnTypedValue() {
+      // given
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-1")
+              .addBand(createBand(Duration.ofMinutes(1), 100))
+              .attribute("maxRetries", 5)
+              .attribute("enabled", true)
+              .attribute("ratio", 0.75)
+              .build();
+
+      // when / then
+      assertEquals(Integer.valueOf(5), rule.getAttribute("maxRetries", Integer.class));
+      assertEquals(Boolean.TRUE, rule.getAttribute("enabled", Boolean.class));
+      assertEquals(Double.valueOf(0.75), rule.getAttribute("ratio", Double.class));
+    }
+
+    @Test
+    @DisplayName("getAttribute with type should return null for non-existing key")
+    void getAttribute_withType_shouldReturnNullForNonExistingKey() {
+      // given
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-1")
+              .addBand(createBand(Duration.ofMinutes(1), 100))
+              .attribute("tier", "premium")
+              .build();
+
+      // when / then
+      assertNull(rule.getAttribute("nonExistent", String.class));
+    }
+
+    @Test
+    @DisplayName("getAttributes should return unmodifiable map")
+    void getAttributes_shouldReturnUnmodifiableMap() {
+      // given
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-1")
+              .addBand(createBand(Duration.ofMinutes(1), 100))
+              .attribute("tier", "premium")
+              .build();
+
+      // when
+      Map<String, Object> attrs = rule.getAttributes();
+
+      // then
+      assertThrows(UnsupportedOperationException.class, () -> attrs.put("new", "value"));
     }
   }
 }

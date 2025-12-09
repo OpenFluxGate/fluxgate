@@ -150,6 +150,20 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
             </plugin>
+
+            <!-- JaCoCo with exclusions for auto-configuration classes that require external services -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <!-- Exclude auto-configurations that require external MongoDB/Redis services -->
+                        <!-- These are tested via integration tests in sample applications -->
+                        <exclude>**/FluxgateMongoAutoConfiguration.class</exclude>
+                        <exclude>**/FluxgateRedisAutoConfiguration.class</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 

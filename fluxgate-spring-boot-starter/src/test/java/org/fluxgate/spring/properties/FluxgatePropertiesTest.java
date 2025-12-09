@@ -66,9 +66,72 @@ class FluxgatePropertiesTest {
 
     redis.setEnabled(true);
     redis.setUri("redis://redis.internal:6379");
+    redis.setMode("standalone");
+    redis.setTimeoutMs(10000);
 
     assertThat(redis.isEnabled()).isTrue();
     assertThat(redis.getUri()).isEqualTo("redis://redis.internal:6379");
+    assertThat(redis.getMode()).isEqualTo("standalone");
+    assertThat(redis.getTimeoutMs()).isEqualTo(10000);
+  }
+
+  @Test
+  void redisProperties_getEffectiveMode_shouldReturnClusterWhenModeIsCluster() {
+    FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
+    redis.setMode("cluster");
+    assertThat(redis.getEffectiveMode()).isEqualTo("cluster");
+    assertThat(redis.isClusterMode()).isTrue();
+  }
+
+  @Test
+  void redisProperties_getEffectiveMode_shouldReturnClusterWhenModeIsClusterUppercase() {
+    FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
+    redis.setMode("CLUSTER");
+    assertThat(redis.getEffectiveMode()).isEqualTo("cluster");
+    assertThat(redis.isClusterMode()).isTrue();
+  }
+
+  @Test
+  void redisProperties_getEffectiveMode_shouldReturnStandaloneWhenModeIsStandalone() {
+    FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
+    redis.setMode("standalone");
+    assertThat(redis.getEffectiveMode()).isEqualTo("standalone");
+    assertThat(redis.isClusterMode()).isFalse();
+  }
+
+  @Test
+  void redisProperties_getEffectiveMode_shouldReturnStandaloneWhenModeIsStandaloneUppercase() {
+    FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
+    redis.setMode("STANDALONE");
+    assertThat(redis.getEffectiveMode()).isEqualTo("standalone");
+    assertThat(redis.isClusterMode()).isFalse();
+  }
+
+  @Test
+  void redisProperties_getEffectiveMode_shouldAutoDetectClusterFromCommaUri() {
+    FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
+    redis.setMode("auto");
+    redis.setUri("redis://node1:6379,redis://node2:6379,redis://node3:6379");
+    assertThat(redis.getEffectiveMode()).isEqualTo("cluster");
+    assertThat(redis.isClusterMode()).isTrue();
+  }
+
+  @Test
+  void redisProperties_getEffectiveMode_shouldAutoDetectStandaloneFromSingleUri() {
+    FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
+    redis.setMode("auto");
+    redis.setUri("redis://localhost:6379");
+    assertThat(redis.getEffectiveMode()).isEqualTo("standalone");
+    assertThat(redis.isClusterMode()).isFalse();
+  }
+
+  @Test
+  void redisProperties_getEffectiveMode_shouldReturnStandaloneWhenUriIsNull() {
+    FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
+    redis.setMode("auto");
+    redis.setUri(null);
+    assertThat(redis.getEffectiveMode()).isEqualTo("standalone");
+    assertThat(redis.isClusterMode()).isFalse();
   }
 
   @Test
@@ -95,6 +158,75 @@ class FluxgatePropertiesTest {
     assertThat(rateLimit.getClientIpHeader()).isEqualTo("X-Real-IP");
     assertThat(rateLimit.isTrustClientIpHeader()).isFalse();
     assertThat(rateLimit.isIncludeHeaders()).isFalse();
+  }
+
+  @Test
+  void shouldSetMetricsProperties() {
+    FluxgateProperties properties = new FluxgateProperties();
+    FluxgateProperties.MetricsProperties metrics = properties.getMetrics();
+
+    // Test defaults
+    assertThat(metrics.isEnabled()).isTrue();
+    assertThat(metrics.isIncludeEndpoint()).isTrue();
+
+    // Test setters
+    metrics.setEnabled(false);
+    metrics.setIncludeEndpoint(false);
+
+    assertThat(metrics.isEnabled()).isFalse();
+    assertThat(metrics.isIncludeEndpoint()).isFalse();
+  }
+
+  @Test
+  void shouldSetActuatorProperties() {
+    FluxgateProperties properties = new FluxgateProperties();
+    FluxgateProperties.ActuatorProperties actuator = properties.getActuator();
+
+    // Test defaults
+    assertThat(actuator.getHealth()).isNotNull();
+    assertThat(actuator.getHealth().isEnabled()).isTrue();
+
+    // Test setters
+    FluxgateProperties.ActuatorProperties.HealthProperties health =
+        new FluxgateProperties.ActuatorProperties.HealthProperties();
+    health.setEnabled(false);
+    actuator.setHealth(health);
+
+    assertThat(actuator.getHealth().isEnabled()).isFalse();
+  }
+
+  @Test
+  void shouldSetNestedPropertiesDirectly() {
+    FluxgateProperties properties = new FluxgateProperties();
+
+    // Test setMongo
+    FluxgateProperties.MongoProperties mongo = new FluxgateProperties.MongoProperties();
+    mongo.setEnabled(true);
+    properties.setMongo(mongo);
+    assertThat(properties.getMongo().isEnabled()).isTrue();
+
+    // Test setRedis
+    FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
+    redis.setEnabled(true);
+    properties.setRedis(redis);
+    assertThat(properties.getRedis().isEnabled()).isTrue();
+
+    // Test setRatelimit
+    FluxgateProperties.RateLimitProperties ratelimit = new FluxgateProperties.RateLimitProperties();
+    ratelimit.setEnabled(false);
+    properties.setRatelimit(ratelimit);
+    assertThat(properties.getRatelimit().isEnabled()).isFalse();
+
+    // Test setMetrics
+    FluxgateProperties.MetricsProperties metrics = new FluxgateProperties.MetricsProperties();
+    metrics.setEnabled(false);
+    properties.setMetrics(metrics);
+    assertThat(properties.getMetrics().isEnabled()).isFalse();
+
+    // Test setActuator
+    FluxgateProperties.ActuatorProperties actuator = new FluxgateProperties.ActuatorProperties();
+    properties.setActuator(actuator);
+    assertThat(properties.getActuator()).isNotNull();
   }
 
   /** Integration test for Spring Boot property binding. */
