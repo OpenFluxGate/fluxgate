@@ -7,7 +7,9 @@ spring:
 
 # FluxGate Configuration
 fluxgate:
-  mongodb:
+  # MongoDB configuration (uses FluxgateMongoAutoConfiguration)
+  mongo:
+    enabled: true
     uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
     rule-collection: rate_limit_rules
@@ -15,6 +17,7 @@ fluxgate:
     event-collection: rate_limit_events
     # DDL auto mode: validate (default) or create
     ddl-auto: validate
+  # Redis configuration (uses FluxgateConfig)
   redis:
     uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
     #uri: redis://localhost:6379
@@ -42,10 +45,12 @@ spring:
       on-profile: docker
 
 fluxgate:
-  mongodb:
+  mongo:
+    enabled: true
     uri: mongodb://fluxgate:fluxgate123@mongodb:27017/fluxgate?authSource=admin
     rule-collection: rate_limit_rules
     event-collection: rate_limit_events
+    ddl-auto: create
   redis:
     uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
     #uri: redis://redis:6379

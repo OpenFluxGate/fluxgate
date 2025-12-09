@@ -205,7 +205,8 @@ public class FluxgateMongoAutoConfiguration {
 
   /** Check if a collection exists in the database. */
   private boolean collectionExists(MongoDatabase database, String collectionName) {
-    for (String name : database.listCollectionNames()) {
+    // Use into() to force immediate execution of the query
+    for (String name : database.listCollectionNames().into(new java.util.ArrayList<>())) {
       if (name.equals(collectionName)) {
         return true;
       }

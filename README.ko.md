@@ -88,25 +88,24 @@
 ### 1. 의존성 추가
 
 ```xml
-
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot-starter</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.1.4</version>
 </dependency>
 
-        <!-- Redis 기반 Rate Limiting -->
+<!-- For Redis-backed rate limiting -->
 <dependency>
 <groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-redis-ratelimiter</artifactId>
-<version>0.0.1-SNAPSHOT</version>
+<version>0.1.4</version>
 </dependency>
 
-        <!-- MongoDB 규칙 관리 (선택사항) -->
+<!-- For MongoDB rule management (optional) -->
 <dependency>
 <groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-mongo-adapter</artifactId>
-<version>0.0.1-SNAPSHOT</version>
+<version>0.1.4</version>
 </dependency>
 ```
 
@@ -223,17 +222,44 @@ curl http://localhost:8083/api/hello
 
 ### FluxGate 속성
 
-| 속성                                       | 기본값                      | 설명                     |
-|------------------------------------------|--------------------------|------------------------|
-| `fluxgate.redis.enabled`                 | `false`                  | Redis Rate Limiter 활성화 |
-| `fluxgate.redis.uri`                     | `redis://localhost:6379` | Redis 연결 URI           |
-| `fluxgate.mongo.enabled`                 | `false`                  | MongoDB 어댑터 활성화        |
-| `fluxgate.mongo.uri`                     | -                        | MongoDB 연결 URI         |
-| `fluxgate.ratelimit.filter-enabled`      | `false`                  | Rate Limit 필터 활성화      |
-| `fluxgate.ratelimit.default-rule-set-id` | `default`                | 기본 규칙 세트 ID            |
-| `fluxgate.ratelimit.include-patterns`    | `[/api/*]`               | Rate Limit을 적용할 URL 패턴 |
-| `fluxgate.ratelimit.exclude-patterns`    | `[]`                     | 제외할 URL 패턴             |
-| `fluxgate.api.url`                       | -                        | 외부 Rate Limit API URL  |
+| 속성                                       | 기본값                                    | 설명                                         |
+|------------------------------------------|----------------------------------------|--------------------------------------------|
+| `fluxgate.redis.enabled`                 | `false`                                | Redis Rate Limiter 활성화                     |
+| `fluxgate.redis.uri`                     | `redis://localhost:6379`               | Redis 연결 URI                               |
+| `fluxgate.redis.mode`                    | `auto`                                 | Redis 모드: `standalone`, `cluster`, `auto` |
+| `fluxgate.mongo.enabled`                 | `false`                                | MongoDB 어댑터 활성화                            |
+| `fluxgate.mongo.uri`                     | `mongodb://localhost:27017/fluxgate`   | MongoDB 연결 URI                             |
+| `fluxgate.mongo.database`                | `fluxgate`                             | MongoDB 데이터베이스 이름                          |
+| `fluxgate.mongo.rule-collection`         | `rate_limit_rules`                     | Rate Limit 규칙 컬렉션 이름                       |
+| `fluxgate.mongo.event-collection`        | -                                      | 이벤트 컬렉션 이름 (선택사항)                          |
+| `fluxgate.mongo.ddl-auto`                | `validate`                             | DDL 모드: `validate` 또는 `create`             |
+| `fluxgate.ratelimit.filter-enabled`      | `false`                                | Rate Limit 필터 활성화                          |
+| `fluxgate.ratelimit.default-rule-set-id` | `default`                              | 기본 규칙 세트 ID                                |
+| `fluxgate.ratelimit.include-patterns`    | `[/api/*]`                             | Rate Limit을 적용할 URL 패턴                     |
+| `fluxgate.ratelimit.exclude-patterns`    | `[]`                                   | 제외할 URL 패턴                                 |
+| `fluxgate.api.url`                       | -                                      | 외부 Rate Limit API URL                      |
+
+### MongoDB DDL Auto 모드
+
+`fluxgate.mongo.ddl-auto` 속성은 FluxGate가 MongoDB 컬렉션을 처리하는 방식을 제어합니다:
+
+| 모드         | 설명                                      |
+|------------|----------------------------------------|
+| `validate` | (기본값) 컬렉션이 존재하는지 검증합니다. 없으면 에러를 발생시킵니다. |
+| `create`   | 컬렉션이 없으면 자동으로 생성합니다.                    |
+
+**설정 예시:**
+
+```yaml
+fluxgate:
+  mongo:
+    enabled: true
+    uri: mongodb://localhost:27017/fluxgate
+    database: fluxgate
+    rule-collection: my_rate_limit_rules    # 사용자 정의 컬렉션 이름
+    event-collection: my_rate_limit_events  # 선택사항: 이벤트 로깅 활성화
+    ddl-auto: create                        # 컬렉션 자동 생성
+```
 
 ### Rate Limit 규칙 설정
 
