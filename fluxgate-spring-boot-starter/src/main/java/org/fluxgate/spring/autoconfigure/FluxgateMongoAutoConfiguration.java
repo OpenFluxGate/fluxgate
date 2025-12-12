@@ -4,6 +4,7 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+
 import org.bson.Document;
 import org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder;
 import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
@@ -16,6 +17,7 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -128,13 +130,34 @@ public class FluxgateMongoAutoConfiguration {
     return context -> new RateLimitKey(context.getClientIp());
   }
 
-  /** Creates the MongoRuleSetProvider for loading rule sets from MongoDB. */
+  /**
+   * Creates the MongoRuleSetProvider for loading rule sets from MongoDB.
+   *
+   * <p>Uses lazy initialization via ObjectProvider to ensure the metricsRecorder
+   * (which may be a CompositeMetricsRecorder) is fully initialized before being injected.
+   *
+   * <p>Available metrics recorder implementations:
+   * <ul>
+   *   <li>{@code MicrometerMetricsRecorder} - Created when fluxgate.metrics.enabled=true</li>
+   *   <li>{@code MongoRateLimitMetricsRecorder} - Created when event-collection is configured</li>
+   *   <li>{@code CompositeMetricsRecorder} - Wraps multiple recorders when both are enabled</li>
+   * </ul>
+   *
+   * @param repository the rule repository for fetching rate limit rules
+   * @param fluxgateKeyResolver the key resolver for generating rate limit keys
+   * @param metricsRecorderProvider lazy provider for composite metrics recorder
+   * @return configured MongoRuleSetProvider instance
+   */
   @Bean
   @ConditionalOnMissingBean(RateLimitRuleSetProvider.class)
   public RateLimitRuleSetProvider mongoRuleSetProvider(
-      RateLimitRuleRepository repository, KeyResolver fluxgateKeyResolver) {
-    log.info("Creating MongoRuleSetProvider");
-    return new MongoRuleSetProvider(repository, fluxgateKeyResolver);
+      RateLimitRuleRepository repository,
+      KeyResolver fluxgateKeyResolver,
+      ObjectProvider<RateLimitMetricsRecorder> metricsRecorderProvider) {
+    // Use a wrapper that lazily retrieves the recorder at runtime
+    // This ensures CompositeMetricsRecorder is available even if created later
+    log.info("Creating MongoRuleSetProvider with lazy metrics recorder injection");
+    return new LazyMetricsMongoRuleSetProvider(repository, fluxgateKeyResolver, metricsRecorderProvider);
   }
 
   /**
@@ -160,16 +183,20 @@ public class FluxgateMongoAutoConfiguration {
   }
 
   /**
-   * Creates the RateLimitMetricsRecorder for logging rate limit events to MongoDB.
+   * Creates the MongoRateLimitMetricsRecorder for logging rate limit events to MongoDB.
    *
-   * <p>Only created when event-collection is configured.
+   * <p>Only created when event-collection is configured. This bean is named explicitly
+   * to allow multiple RateLimitMetricsRecorder implementations to coexist.
+   * The CompositeMetricsRecorder will collect all available recorders.
+   *
+   * @param fluxgateEventCollection the MongoDB collection for storing events
+   * @return configured MongoRateLimitMetricsRecorder
    */
-  @Bean
-  @ConditionalOnMissingBean(RateLimitMetricsRecorder.class)
+  @Bean(name = "mongoMetricsRecorder")
   @ConditionalOnProperty(prefix = "fluxgate.mongo", name = "event-collection")
-  public RateLimitMetricsRecorder rateLimitMetricsRecorder(
+  public MongoRateLimitMetricsRecorder mongoMetricsRecorder(
       @Qualifier("fluxgateEventCollection") MongoCollection<Document> fluxgateEventCollection) {
-    log.info("Creating MongoRateLimitMetricsRecorder for event logging");
+    log.info("Creating MongoRateLimitMetricsRecorder for MongoDB event logging");
     return new MongoRateLimitMetricsRecorder(fluxgateEventCollection);
   }
 

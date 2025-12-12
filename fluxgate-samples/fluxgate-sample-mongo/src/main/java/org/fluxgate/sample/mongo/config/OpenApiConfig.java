@@ -17,7 +17,7 @@ public class OpenApiConfig {
             new Info()
                 .title("FluxGate Sample - MongoDB Control Plane")
                 .description("Control-plane API for managing rate limit rules in MongoDB")
-                .version("0.0.1-SNAPSHOT")
+                .version("0.1.4")
                 .contact(
                     new Contact().name("FluxGate").url("https://github.com/OpenFluxGate/fluxgate"))
                 .license(

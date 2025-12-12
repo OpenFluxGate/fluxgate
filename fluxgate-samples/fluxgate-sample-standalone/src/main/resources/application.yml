@@ -21,12 +21,25 @@ fluxgate:
   redis:
     uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
     #uri: redis://localhost:6379
+  # Metrics enable for Prometheus
+  metrics:
+    enabled: true
 
-# Logging
 logging:
   level:
     org.fluxgate: DEBUG
     org.fluxgate.sample.standalone: DEBUG
+    root: info
+
+# Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics,conditions
+  endpoint:
+    prometheus:
+      enabled: true
 
 # Swagger/OpenAPI
 springdoc:

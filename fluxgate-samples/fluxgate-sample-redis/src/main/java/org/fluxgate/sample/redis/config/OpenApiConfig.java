@@ -18,7 +18,7 @@ public class OpenApiConfig {
                 .title("FluxGate Sample - Redis Data Plane")
                 .description(
                     "Data-plane API with Redis-backed rate limiting. Uses config-based rules (no MongoDB required).")
-                .version("0.0.1-SNAPSHOT")
+                .version("0.1.4")
                 .contact(
                     new Contact().name("FluxGate").url("https://github.com/OpenFluxGate/fluxgate"))
                 .license(
