@@ -51,7 +51,8 @@ class LazyMetricsMongoRuleSetProviderTest {
   @Test
   void shouldThrowWhenKeyResolverIsNull() {
     assertThatThrownBy(
-            () -> new LazyMetricsMongoRuleSetProvider(ruleRepository, null, metricsRecorderProvider))
+            () ->
+                new LazyMetricsMongoRuleSetProvider(ruleRepository, null, metricsRecorderProvider))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("keyResolver must not be null");
   }

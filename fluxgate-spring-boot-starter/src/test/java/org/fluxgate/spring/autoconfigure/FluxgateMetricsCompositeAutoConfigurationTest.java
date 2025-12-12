@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import org.fluxgate.core.metrics.CompositeMetricsRecorder;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
-import org.fluxgate.spring.metrics.MicrometerMetricsRecorder;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
