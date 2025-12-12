@@ -1,7 +1,6 @@
 package org.fluxgate.spring.autoconfigure;
 
 import io.micrometer.core.instrument.MeterRegistry;
-
 import org.fluxgate.spring.metrics.MicrometerMetricsRecorder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,9 +53,8 @@ public class FluxgateMetricsAutoConfiguration {
   /**
    * Creates the MicrometerMetricsRecorder for Prometheus metrics.
    *
-   * <p>This bean is named explicitly to allow multiple RateLimitMetricsRecorder
-   * implementations to coexist. The CompositeMetricsRecorder will collect all
-   * available recorders.
+   * <p>This bean is named explicitly to allow multiple RateLimitMetricsRecorder implementations to
+   * coexist. The CompositeMetricsRecorder will collect all available recorders.
    *
    * @param meterRegistry the Micrometer registry
    * @return configured MicrometerMetricsRecorder

@@ -3,7 +3,6 @@ package org.fluxgate.adapter.mongo.rule;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.key.KeyResolver;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
@@ -17,12 +16,13 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
  * <p>Uses {@link RateLimitRuleRepository} interface, allowing for different storage implementations
  * (MongoDB, JDBC, etc.).
  *
- * <p>Optionally supports {@link RateLimitMetricsRecorder} for metrics collection.
- * If a metricsRecorder is provided, it will be attached to each RuleSet and called
- * after every rate limit check. Supported implementations:
+ * <p>Optionally supports {@link RateLimitMetricsRecorder} for metrics collection. If a
+ * metricsRecorder is provided, it will be attached to each RuleSet and called after every rate
+ * limit check. Supported implementations:
+ *
  * <ul>
- *   <li>{@code MicrometerMetricsRecorder} - Prometheus/Grafana metrics (recommended)</li>
- *   <li>{@code MongoRateLimitMetricsRecorder} - MongoDB event logging (for audit)</li>
+ *   <li>{@code MicrometerMetricsRecorder} - Prometheus/Grafana metrics (recommended)
+ *   <li>{@code MongoRateLimitMetricsRecorder} - MongoDB event logging (for audit)
  * </ul>
  */
 public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
@@ -31,8 +31,8 @@ public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
   private final KeyResolver keyResolver;
 
   /**
-   * Optional metrics recorder for collecting rate limit metrics.
-   * If null, no metrics will be recorded.
+   * Optional metrics recorder for collecting rate limit metrics. If null, no metrics will be
+   * recorded.
    */
   private final RateLimitMetricsRecorder metricsRecorder;
 
@@ -70,9 +70,8 @@ public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
       return Optional.empty();
     }
 
-    RateLimitRuleSet.Builder builder = RateLimitRuleSet.builder(ruleSetId)
-        .keyResolver(keyResolver)
-        .rules(rules);
+    RateLimitRuleSet.Builder builder =
+        RateLimitRuleSet.builder(ruleSetId).keyResolver(keyResolver).rules(rules);
 
     // Attach metrics recorder if available
     if (metricsRecorder != null) {

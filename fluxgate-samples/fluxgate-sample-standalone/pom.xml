@@ -6,20 +6,16 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.5</version>
-        <relativePath/>
+        <groupId>io.github.openfluxgate</groupId>
+        <artifactId>fluxgate-samples</artifactId>
+        <version>0.1.4</version>
     </parent>
 
-    <groupId>io.github.openfluxgate</groupId>
-    <artifactId>fluxgate-sample</artifactId>
-    <version>0.1.4</version>
+    <artifactId>fluxgate-sample-standalone</artifactId>
     <packaging>jar</packaging>
 
     <properties>
         <java.version>17</java.version>
-        <fluxgate.version>0.1.4</fluxgate.version>
     </properties>
 
     <dependencies>
@@ -43,22 +39,22 @@
         <dependency>
             <groupId>io.github.openfluxgate</groupId>
             <artifactId>fluxgate-core</artifactId>
-            <version>${fluxgate.version}</version>
+            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>io.github.openfluxgate</groupId>
             <artifactId>fluxgate-spring-boot-starter</artifactId>
-            <version>${fluxgate.version}</version>
+            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>io.github.openfluxgate</groupId>
             <artifactId>fluxgate-mongo-adapter</artifactId>
-            <version>${fluxgate.version}</version>
+            <version>${project.version}</version>
         </dependency>
         <dependency>
             <groupId>io.github.openfluxgate</groupId>
             <artifactId>fluxgate-redis-ratelimiter</artifactId>
-            <version>${fluxgate.version}</version>
+            <version>${project.version}</version>
         </dependency>
 
         <dependency>
