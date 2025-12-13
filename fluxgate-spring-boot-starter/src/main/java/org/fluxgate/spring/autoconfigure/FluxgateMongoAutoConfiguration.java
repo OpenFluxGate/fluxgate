@@ -6,6 +6,7 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import org.bson.Document;
 import org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder;
+import org.fluxgate.adapter.mongo.health.MongoHealthCheckerImpl;
 import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
 import org.fluxgate.adapter.mongo.rule.MongoRuleSetProvider;
 import org.fluxgate.core.key.KeyResolver;
@@ -13,6 +14,8 @@ import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.spi.RateLimitRuleRepository;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
+import org.fluxgate.spring.actuator.FluxgateHealthIndicator.HealthStatus;
+import org.fluxgate.spring.actuator.FluxgateHealthIndicator.MongoHealthChecker;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -199,6 +202,38 @@ public class FluxgateMongoAutoConfiguration {
       @Qualifier("fluxgateEventCollection") MongoCollection<Document> fluxgateEventCollection) {
     log.info("Creating MongoRateLimitMetricsRecorder for MongoDB event logging");
     return new MongoRateLimitMetricsRecorder(fluxgateEventCollection);
+  }
+
+  /**
+   * Creates the MongoHealthChecker for health endpoint integration.
+   *
+   * <p>Provides detailed health information including:
+   *
+   * <ul>
+   *   <li>Connection status and latency
+   *   <li>Database name and MongoDB version
+   *   <li>Connection pool status
+   *   <li>Replica set info (if applicable)
+   * </ul>
+   *
+   * @param fluxgateMongoDatabase the MongoDB database
+   * @return MongoHealthChecker for actuator health endpoint
+   */
+  @Bean
+  @ConditionalOnMissingBean(MongoHealthChecker.class)
+  public MongoHealthChecker mongoHealthChecker(MongoDatabase fluxgateMongoDatabase) {
+    log.info("Creating FluxGate MongoHealthChecker");
+    MongoHealthCheckerImpl impl = new MongoHealthCheckerImpl(fluxgateMongoDatabase);
+
+    // Adapt MongoHealthCheckerImpl to MongoHealthChecker interface
+    return () -> {
+      MongoHealthCheckerImpl.HealthCheckResult result = impl.check();
+      if (result.isHealthy()) {
+        return HealthStatus.up(result.message(), result.details());
+      } else {
+        return HealthStatus.down(result.message(), result.details());
+      }
+    };
   }
 
   /** Masks sensitive parts of the URI for logging. */

@@ -6,8 +6,11 @@ import org.fluxgate.core.ratelimiter.RateLimiter;
 import org.fluxgate.redis.RedisRateLimiter;
 import org.fluxgate.redis.config.RedisRateLimiterConfig;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
+import org.fluxgate.redis.health.RedisHealthCheckerImpl;
 import org.fluxgate.redis.store.RedisRuleSetStore;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
+import org.fluxgate.spring.actuator.FluxgateHealthIndicator.HealthStatus;
+import org.fluxgate.spring.actuator.FluxgateHealthIndicator.RedisHealthChecker;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -155,6 +158,38 @@ public class FluxgateRedisAutoConfiguration {
   public RateLimiter redisRateLimiter(RedisTokenBucketStore fluxgateTokenBucketStore) {
     log.info("Creating FluxGate RedisRateLimiter");
     return new RedisRateLimiter(fluxgateTokenBucketStore);
+  }
+
+  /**
+   * Creates the RedisHealthChecker for health endpoint integration.
+   *
+   * <p>Provides detailed health information including:
+   *
+   * <ul>
+   *   <li>Connection status and latency
+   *   <li>Redis mode (standalone/cluster)
+   *   <li>Cluster state and node count (for cluster mode)
+   * </ul>
+   *
+   * @param fluxgateRedisConfig the Redis configuration
+   * @return RedisHealthChecker for actuator health endpoint
+   */
+  @Bean
+  @ConditionalOnMissingBean(RedisHealthChecker.class)
+  public RedisHealthChecker redisHealthChecker(RedisRateLimiterConfig fluxgateRedisConfig) {
+    log.info("Creating FluxGate RedisHealthChecker");
+    RedisHealthCheckerImpl impl =
+        new RedisHealthCheckerImpl(fluxgateRedisConfig.getConnectionProvider());
+
+    // Adapt RedisHealthCheckerImpl to RedisHealthChecker interface
+    return () -> {
+      RedisHealthCheckerImpl.HealthCheckResult result = impl.check();
+      if (result.isHealthy()) {
+        return HealthStatus.up(result.message(), result.details());
+      } else {
+        return HealthStatus.down(result.message(), result.details());
+      }
+    };
   }
 
   /** Masks sensitive parts of the URI for logging. */
