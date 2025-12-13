@@ -19,6 +19,8 @@ English | [한국어](README.ko.md)
 - **Production-Safe Design** - Uses Redis server time (no clock drift), integer arithmetic only
 - **HTTP API Mode** - Centralized rate limiting service via REST API
 - **Pluggable Architecture** - Easy to extend with custom handlers and stores
+- **Structured Logging** - JSON logging with correlation IDs for ELK/Splunk integration
+- **Prometheus Metrics** - Built-in Micrometer integration for monitoring and alerting
 
 ## Architecture
 
@@ -236,6 +238,7 @@ curl http://localhost:8083/api/hello
 | `fluxgate.ratelimit.include-patterns` | `[/api/*]` | URL patterns to rate limit |
 | `fluxgate.ratelimit.exclude-patterns` | `[]` | URL patterns to exclude |
 | `fluxgate.api.url` | - | External rate limit API URL |
+| `fluxgate.metrics.enabled` | `true` | Enable Prometheus/Micrometer metrics |
 
 ### MongoDB DDL Auto Mode
 
@@ -274,6 +277,75 @@ RateLimitRule rule = RateLimitRule.builder("api-rule")
         .label("100-per-minute")
         .build())
     .build();
+```
+
+## Observability
+
+FluxGate provides comprehensive observability features out of the box.
+
+### Structured Logging
+
+FluxGate outputs JSON-formatted logs with correlation IDs for easy integration with log aggregation systems like ELK Stack or Splunk.
+
+```json
+{
+  "timestamp": "2025-01-15T10:30:45.123Z",
+  "level": "INFO",
+  "logger": "org.fluxgate.spring.filter.FluxgateRateLimitFilter",
+  "message": "Request completed",
+  "fluxgate.rule_set": "api-limits",
+  "fluxgate.rule_id": "rate-limit-rule-1",
+  "fluxgate.allowed": true,
+  "fluxgate.remaining_tokens": 9,
+  "fluxgate.client_ip": "192.168.1.100",
+  "correlation_id": "abc123-def456"
+}
+```
+
+Enable structured logging by including `logback-spring.xml` in your application:
+
+```xml
+<include resource="org/fluxgate/spring/logback-spring.xml"/>
+```
+
+### Prometheus Metrics
+
+FluxGate automatically exposes Micrometer-based metrics when `spring-boot-starter-actuator` is on the classpath.
+
+**Available Metrics:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `fluxgate_requests_total` | Counter | Total rate limit requests by endpoint, method, and rule_set |
+| `fluxgate_tokens_remaining` | Gauge | Remaining tokens in the bucket |
+
+**Example Prometheus output:**
+
+```
+# HELP fluxgate_requests_total FluxGate rate limit counter
+# TYPE fluxgate_requests_total counter
+fluxgate_requests_total{endpoint="/api/test",method="GET",rule_set="api-limits"} 42.0
+
+# HELP fluxgate_tokens_remaining
+# TYPE fluxgate_tokens_remaining gauge
+fluxgate_tokens_remaining{endpoint="/api/test",rule_set="api-limits"} 8.0
+```
+
+**Configuration:**
+
+```yaml
+fluxgate:
+  metrics:
+    enabled: true  # default: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    prometheus:
+      enabled: true
 ```
 
 ## Building from Source
@@ -315,8 +387,9 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## Roadmap
 
 - [ ] Sliding window rate limiting algorithm
-- [ ] Prometheus metrics integration
-- [ ] Redis Cluster support
+- [x] Prometheus metrics integration
+- [x] Redis Cluster support
+- [x] Structured JSON logging with correlation IDs
 - [ ] gRPC API support
 - [ ] Rate limit quota management UI
 - [ ] Circuit breaker integration
