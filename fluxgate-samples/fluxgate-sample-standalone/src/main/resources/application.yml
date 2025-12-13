@@ -22,6 +22,21 @@ fluxgate:
     uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
     #uri: redis://localhost:6379
 
+  # Resilience configuration
+  resilience:
+    retry:
+      enabled: true
+      max-attempts: 3
+      initial-backoff: 100ms
+      multiplier: 2.0
+      max-backoff: 2s
+    circuit-breaker:
+      enabled: false  # Enable if you want circuit breaker protection
+      failure-threshold: 5
+      wait-duration-in-open-state: 30s
+      permitted-calls-in-half-open-state: 3
+      fallback: FAIL_OPEN
+
 # Logging
 logging:
   level:
@@ -54,3 +69,13 @@ fluxgate:
   redis:
     uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
     #uri: redis://redis:6379
+  resilience:
+    retry:
+      enabled: true
+      max-attempts: 5
+      initial-backoff: 200ms
+    circuit-breaker:
+      enabled: true
+      failure-threshold: 5
+      wait-duration-in-open-state: 30s
+      fallback: FAIL_OPEN
