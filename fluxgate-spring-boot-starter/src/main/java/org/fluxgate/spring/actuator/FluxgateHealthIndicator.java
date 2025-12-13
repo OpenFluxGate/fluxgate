@@ -57,6 +57,8 @@ public class FluxgateHealthIndicator implements HealthIndicator {
 
         builder.withDetail("mongo.status", mongoStatus.status());
         builder.withDetail("mongo.message", mongoStatus.message());
+        // Add detailed information if available
+        mongoStatus.details().forEach((key, value) -> builder.withDetail("mongo." + key, value));
 
         if (!mongoStatus.isHealthy()) {
           hasIssues = true;
@@ -81,6 +83,8 @@ public class FluxgateHealthIndicator implements HealthIndicator {
 
         builder.withDetail("redis.status", redisStatus.status());
         builder.withDetail("redis.message", redisStatus.message());
+        // Add detailed information if available
+        redisStatus.details().forEach((key, value) -> builder.withDetail("redis." + key, value));
 
         if (!redisStatus.isHealthy()) {
           hasIssues = true;
@@ -115,19 +119,32 @@ public class FluxgateHealthIndicator implements HealthIndicator {
     HealthStatus check();
   }
 
-  /** Health status result. */
-  public record HealthStatus(String status, String message, boolean isHealthy) {
+  /** Health status result with optional details. */
+  public record HealthStatus(
+      String status, String message, boolean isHealthy, java.util.Map<String, Object> details) {
+
+    public HealthStatus(String status, String message, boolean isHealthy) {
+      this(status, message, isHealthy, java.util.Collections.emptyMap());
+    }
 
     public static HealthStatus up(String message) {
-      return new HealthStatus("UP", message, true);
+      return new HealthStatus("UP", message, true, java.util.Collections.emptyMap());
+    }
+
+    public static HealthStatus up(String message, java.util.Map<String, Object> details) {
+      return new HealthStatus("UP", message, true, details);
     }
 
     public static HealthStatus down(String message) {
-      return new HealthStatus("DOWN", message, false);
+      return new HealthStatus("DOWN", message, false, java.util.Collections.emptyMap());
+    }
+
+    public static HealthStatus down(String message, java.util.Map<String, Object> details) {
+      return new HealthStatus("DOWN", message, false, details);
     }
 
     public static HealthStatus unknown(String message) {
-      return new HealthStatus("UNKNOWN", message, false);
+      return new HealthStatus("UNKNOWN", message, false, java.util.Collections.emptyMap());
     }
   }
 }
