@@ -18,7 +18,7 @@ public class OpenApiConfig {
                 .title("FluxGate Sample - API Gateway")
                 .description(
                     "API Gateway that proxies requests to Control-plane (MongoDB, port 8081) and Data-plane (Redis, port 8082) services")
-                .version("0.0.1-SNAPSHOT")
+                .version("0.1.4")
                 .contact(
                     new Contact().name("FluxGate").url("https://github.com/OpenFluxGate/fluxgate"))
                 .license(

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- NOTICE -->
+<!--
+    File logging requires a pre-created log directory
+    Log files are written relative to the application root (user.dir).
+    Logback does not create missing directories automatically.
+
+    If the log directory does not exist at startup, file-based logging will be silently skipped.
+
+    Please ensure the log directory is created before running the application.
+-->
+
+<configuration>
+
+    <!-- project root -->
+    <property name="PROJECT_ROOT" value="${user.dir}"/>
+
+    <!-- log path -->
+    <property name="LOG_PATH" value="${PROJECT_ROOT}/log"/>
+
+    <!-- console -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- json file -->
+    <appender name="JSON_FILE" class="ch.qos.logback.core.FileAppender">
+        <file>${LOG_PATH}/fluxgate.log</file>
+        <append>true</append>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"service":"fluxgate-sample","component":"rate-limiter"}</customFields>
+        </encoder>
+    </appender>
+
+    <!-- TCP to Logstash (ELK) -->
+    <appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+        <destination>localhost:5044</destination>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <customFields>{"service":"fluxgate-sample","component":"rate-limiter"}</customFields>
+        </encoder>
+    </appender>
+
+    <logger name="org.fluxgate.spring.filter.FluxgateRateLimitFilter"
+            level="DEBUG"
+            additivity="false">
+        <appender-ref ref="JSON_FILE"/>
+        <appender-ref ref="LOGSTASH"/>
+    </logger>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+</configuration>
