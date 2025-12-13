@@ -5,7 +5,11 @@ package org.fluxgate.redis.connection;
  *
  * <p>This exception wraps underlying connection errors from Lettuce and provides a consistent
  * exception type for both standalone and cluster modes.
+ *
+ * @deprecated Use {@link org.fluxgate.core.exception.RedisConnectionException} instead. This class
+ *     will be removed in a future release.
  */
+@Deprecated(since = "0.2.0", forRemoval = true)
 public class RedisConnectionException extends RuntimeException {
 
   /**
