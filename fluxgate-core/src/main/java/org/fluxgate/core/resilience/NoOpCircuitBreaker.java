@@ -7,56 +7,55 @@ import java.util.function.Supplier;
  *
  * <p>This implementation executes actions directly without any circuit breaker logic. It is useful
  * when circuit breaker functionality is disabled.
- *
  */
 public class NoOpCircuitBreaker implements CircuitBreaker {
 
-    private static final NoOpCircuitBreaker INSTANCE = new NoOpCircuitBreaker();
+  private static final NoOpCircuitBreaker INSTANCE = new NoOpCircuitBreaker();
 
-    private final CircuitBreakerConfig config = CircuitBreakerConfig.disabled();
+  private final CircuitBreakerConfig config = CircuitBreakerConfig.disabled();
 
-    private NoOpCircuitBreaker() {}
+  private NoOpCircuitBreaker() {}
 
-    /**
-     * Returns the singleton instance.
-     *
-     * @return the NoOpCircuitBreaker instance
-     */
-    public static NoOpCircuitBreaker getInstance() {
-        return INSTANCE;
+  /**
+   * Returns the singleton instance.
+   *
+   * @return the NoOpCircuitBreaker instance
+   */
+  public static NoOpCircuitBreaker getInstance() {
+    return INSTANCE;
+  }
+
+  @Override
+  public <T> T execute(Supplier<T> action) {
+    return action.get();
+  }
+
+  @Override
+  public <T> T execute(String operationName, Supplier<T> action) {
+    return action.get();
+  }
+
+  @Override
+  public <T> T executeWithFallback(Supplier<T> action, Supplier<T> fallback) {
+    try {
+      return action.get();
+    } catch (Exception e) {
+      return fallback.get();
     }
+  }
 
-    @Override
-    public <T> T execute(Supplier<T> action) {
-        return action.get();
-    }
+  @Override
+  public State getState() {
+    return State.CLOSED;
+  }
 
-    @Override
-    public <T> T execute(String operationName, Supplier<T> action) {
-        return action.get();
-    }
+  @Override
+  public CircuitBreakerConfig getConfig() {
+    return config;
+  }
 
-    @Override
-    public <T> T executeWithFallback(Supplier<T> action, Supplier<T> fallback) {
-        try {
-            return action.get();
-        } catch (Exception e) {
-            return fallback.get();
-        }
-    }
-
-    @Override
-    public State getState() {
-        return State.CLOSED;
-    }
-
-    @Override
-    public CircuitBreakerConfig getConfig() {
-        return config;
-    }
-
-    @Override
-    public void reset() {
-        // No-op
-    }
+  @Override
+  public void reset() {
+    // No-op
+  }
 }
