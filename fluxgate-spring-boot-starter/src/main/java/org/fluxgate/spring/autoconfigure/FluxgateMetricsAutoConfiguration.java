@@ -1,13 +1,14 @@
 package org.fluxgate.spring.autoconfigure;
 
 import io.micrometer.core.instrument.MeterRegistry;
-import org.fluxgate.spring.metrics.FluxgateMetrics;
+import org.fluxgate.spring.metrics.MicrometerMetricsRecorder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.actuate.autoconfigure.metrics.CompositeMeterRegistryAutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 
@@ -31,9 +32,14 @@ import org.springframework.context.annotation.Bean;
  *   <li>Remaining tokens per bucket
  * </ul>
  *
- * @see FluxgateMetrics
+ * <p>This recorder is automatically combined with other recorders (like
+ * MongoRateLimitMetricsRecorder) via {@link FluxgateMetricsCompositeAutoConfiguration}.
+ *
+ * @see MicrometerMetricsRecorder
+ * @see FluxgateMetricsCompositeAutoConfiguration
  */
 @AutoConfiguration
+@AutoConfigureAfter(CompositeMeterRegistryAutoConfiguration.class)
 @ConditionalOnClass(MeterRegistry.class)
 @ConditionalOnBean(MeterRegistry.class)
 @ConditionalOnProperty(
@@ -44,10 +50,18 @@ public class FluxgateMetricsAutoConfiguration {
 
   private static final Logger log = LoggerFactory.getLogger(FluxgateMetricsAutoConfiguration.class);
 
-  @Bean
-  @ConditionalOnMissingBean
-  public FluxgateMetrics fluxgateMetrics(MeterRegistry meterRegistry) {
-    log.info("Configuring FluxGate Prometheus metrics");
-    return new FluxgateMetrics(meterRegistry);
+  /**
+   * Creates the MicrometerMetricsRecorder for Prometheus metrics.
+   *
+   * <p>This bean is named explicitly to allow multiple RateLimitMetricsRecorder implementations to
+   * coexist. The CompositeMetricsRecorder will collect all available recorders.
+   *
+   * @param meterRegistry the Micrometer registry
+   * @return configured MicrometerMetricsRecorder
+   */
+  @Bean(name = "micrometerMetricsRecorder")
+  public MicrometerMetricsRecorder micrometerMetricsRecorder(MeterRegistry meterRegistry) {
+    log.info("Creating MicrometerMetricsRecorder for Prometheus metrics");
+    return new MicrometerMetricsRecorder(meterRegistry);
   }
 }

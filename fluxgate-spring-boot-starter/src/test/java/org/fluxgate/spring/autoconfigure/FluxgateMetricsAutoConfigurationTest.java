@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.fluxgate.spring.metrics.FluxgateMetrics;
+import org.fluxgate.spring.metrics.MicrometerMetricsRecorder;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -31,29 +31,29 @@ class FluxgateMetricsAutoConfigurationTest {
           .withUserConfiguration(TestConfig.class);
 
   @Test
-  void shouldCreateFluxgateMetricsByDefault() {
+  void shouldCreateMicrometerMetricsRecorderByDefault() {
     contextRunner.run(
         context -> {
-          assertThat(context).hasSingleBean(FluxgateMetrics.class);
+          assertThat(context).hasSingleBean(MicrometerMetricsRecorder.class);
         });
   }
 
   @Test
-  void shouldNotCreateFluxgateMetricsWhenDisabled() {
+  void shouldNotCreateMicrometerMetricsRecorderWhenDisabled() {
     contextRunner
         .withPropertyValues("fluxgate.metrics.enabled=false")
         .run(
             context -> {
-              assertThat(context).doesNotHaveBean(FluxgateMetrics.class);
+              assertThat(context).doesNotHaveBean(MicrometerMetricsRecorder.class);
             });
   }
 
   @Test
-  void shouldCreateFluxgateMetricsWithMeterRegistry() {
+  void shouldCreateMicrometerMetricsRecorderWithMeterRegistry() {
     contextRunner.run(
         context -> {
-          FluxgateMetrics metrics = context.getBean(FluxgateMetrics.class);
-          assertThat(metrics).isNotNull();
+          MicrometerMetricsRecorder recorder = context.getBean(MicrometerMetricsRecorder.class);
+          assertThat(recorder).isNotNull();
         });
   }
 }
