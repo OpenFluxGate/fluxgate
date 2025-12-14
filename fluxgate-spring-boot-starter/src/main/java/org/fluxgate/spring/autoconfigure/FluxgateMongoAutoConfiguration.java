@@ -151,8 +151,8 @@ public class FluxgateMongoAutoConfiguration {
    * @param metricsRecorderProvider lazy provider for composite metrics recorder
    * @return configured MongoRuleSetProvider instance
    */
-  @Bean
-  @ConditionalOnMissingBean(RateLimitRuleSetProvider.class)
+  @Bean(name = "delegateRuleSetProvider")
+  @ConditionalOnMissingBean(name = "delegateRuleSetProvider")
   public RateLimitRuleSetProvider mongoRuleSetProvider(
       RateLimitRuleRepository repository,
       KeyResolver fluxgateKeyResolver,

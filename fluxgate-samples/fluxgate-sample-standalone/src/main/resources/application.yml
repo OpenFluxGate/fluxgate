@@ -19,11 +19,19 @@ fluxgate:
     ddl-auto: validate
   # Redis configuration (uses FluxgateConfig)
   redis:
+    enabled: true
     uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
     #uri: redis://localhost:6379
   # Metrics enable for Prometheus
   metrics:
     enabled: true
+
+  # Hot reload configuration
+  reload:
+    enabled: true
+    strategy: PUBSUB  # Use Redis Pub/Sub for real-time updates
+    pubsub:
+      channel: fluxgate:rule-reload  # Must match Admin API channel
 
 logging:
   level:
