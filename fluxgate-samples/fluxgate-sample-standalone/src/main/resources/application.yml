@@ -26,6 +26,14 @@ fluxgate:
   metrics:
     enabled: true
 
+  # Rate limiting behavior configuration
+  ratelimit:
+    enabled: true
+    # Behavior when no matching rule is found: ALLOW (default) or DENY
+    # DENY: Strict mode - reject requests if no rule exists (fail-closed)
+    # ALLOW: Permissive mode - allow requests if no rule exists
+    missing-rule-behavior: ALLOW
+
   # Hot reload configuration
   reload:
     enabled: true

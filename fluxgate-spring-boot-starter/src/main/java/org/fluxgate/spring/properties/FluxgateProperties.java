@@ -317,6 +317,19 @@ public class FluxgateProperties {
     private String defaultRuleSetId;
 
     /**
+     * Behavior when no matching rule set is found.
+     *
+     * <ul>
+     *   <li>ALLOW - Allow the request (default, permissive mode)
+     *   <li>DENY - Deny the request (strict mode, fail-closed)
+     * </ul>
+     *
+     * <p>In production environments with strict security requirements, consider setting this to
+     * DENY to ensure all requests are rate-limited.
+     */
+    private MissingRuleBehavior missingRuleBehavior = MissingRuleBehavior.ALLOW;
+
+    /**
      * Filter order (lower = higher priority). Default is high priority to run before other filters.
      */
     private int filterOrder = Integer.MIN_VALUE + 100;
@@ -410,6 +423,31 @@ public class FluxgateProperties {
     public void setIncludeHeaders(boolean includeHeaders) {
       this.includeHeaders = includeHeaders;
     }
+
+    public MissingRuleBehavior getMissingRuleBehavior() {
+      return missingRuleBehavior;
+    }
+
+    public void setMissingRuleBehavior(MissingRuleBehavior missingRuleBehavior) {
+      this.missingRuleBehavior = missingRuleBehavior;
+    }
+
+    /**
+     * Check if requests should be denied when no rule is found.
+     *
+     * @return true if missing rules should result in denial
+     */
+    public boolean isDenyWhenRuleMissing() {
+      return missingRuleBehavior == MissingRuleBehavior.DENY;
+    }
+  }
+
+  /** Behavior when no matching rate limit rule is found. */
+  public enum MissingRuleBehavior {
+    /** Allow the request to proceed (permissive mode). */
+    ALLOW,
+    /** Deny the request (strict mode, fail-closed). */
+    DENY
   }
 
   /** Metrics configuration for Prometheus/Micrometer integration. */

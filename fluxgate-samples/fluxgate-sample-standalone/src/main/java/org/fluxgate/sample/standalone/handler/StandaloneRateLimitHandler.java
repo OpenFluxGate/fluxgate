@@ -8,6 +8,7 @@ import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.fluxgate.redis.RedisRateLimiter;
+import org.fluxgate.spring.properties.FluxgateProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -17,6 +18,14 @@ import org.springframework.stereotype.Component;
  *
  * <p>This handler: 1. Looks up rules from MongoDB via RateLimitRuleSetProvider 2. Applies rate
  * limiting via Redis using RedisRateLimiter 3. Returns rate limit response to the filter
+ *
+ * <p>The behavior when no rule is found can be configured via:
+ *
+ * <pre>
+ * fluxgate:
+ *   ratelimit:
+ *     missing-rule-behavior: ALLOW  # or DENY
+ * </pre>
  */
 @Component
 public class StandaloneRateLimitHandler implements FluxgateRateLimitHandler {
@@ -25,12 +34,17 @@ public class StandaloneRateLimitHandler implements FluxgateRateLimitHandler {
 
   private final RateLimitRuleSetProvider ruleSetProvider;
   private final RedisRateLimiter rateLimiter;
+  private final boolean denyWhenRuleMissing;
 
   public StandaloneRateLimitHandler(
-      RateLimitRuleSetProvider ruleSetProvider, RedisRateLimiter rateLimiter) {
+      RateLimitRuleSetProvider ruleSetProvider,
+      RedisRateLimiter rateLimiter,
+      FluxgateProperties properties) {
     this.ruleSetProvider = ruleSetProvider;
     this.rateLimiter = rateLimiter;
-    log.info("StandaloneRateLimitHandler initialized");
+    this.denyWhenRuleMissing = properties.getRatelimit().isDenyWhenRuleMissing();
+    log.info(
+        "StandaloneRateLimitHandler initialized (denyWhenRuleMissing={})", denyWhenRuleMissing);
   }
 
   @Override
@@ -41,8 +55,13 @@ public class StandaloneRateLimitHandler implements FluxgateRateLimitHandler {
     // Look up the ruleset from MongoDB
     Optional<RateLimitRuleSet> ruleSetOpt = ruleSetProvider.findById(ruleSetId);
     if (ruleSetOpt.isEmpty()) {
-      log.warn("RuleSet not found: {}, allowing request", ruleSetId);
-      return RateLimitResponse.allowed(-1, 0);
+      if (denyWhenRuleMissing) {
+        log.warn("RuleSet not found: {}, denying request (missing-rule-behavior=DENY)", ruleSetId);
+        return RateLimitResponse.rejected(0);
+      } else {
+        log.warn("RuleSet not found: {}, allowing request (missing-rule-behavior=ALLOW)", ruleSetId);
+        return RateLimitResponse.allowed(-1, 0);
+      }
     }
 
     RateLimitRuleSet ruleSet = ruleSetOpt.get();
