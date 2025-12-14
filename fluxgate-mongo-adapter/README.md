@@ -24,7 +24,7 @@ Add the dependency to your `pom.xml`:
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.1.4</version>
 </dependency>
 
         <!-- MongoDB Driver -->

@@ -9,7 +9,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.0.1-SNAPSHOT</version>
+        <version>0.1.4</version>
     </parent>
 
     <artifactId>fluxgate-spring-boot-starter</artifactId>
@@ -83,11 +83,26 @@
             <artifactId>slf4j-api</artifactId>
         </dependency>
 
+        <!-- Logstash Logback Encoder -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>7.4</version>
+        </dependency>
+
         <!-- Micrometer for Prometheus metrics (optional) -->
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-core</artifactId>
             <version>1.13.6</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Caffeine cache for rule caching (optional) -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+            <version>3.1.8</version>
             <optional>true</optional>
         </dependency>
 
@@ -161,6 +176,16 @@
                         <!-- These are tested via integration tests in sample applications -->
                         <exclude>**/FluxgateMongoAutoConfiguration.class</exclude>
                         <exclude>**/FluxgateRedisAutoConfiguration.class</exclude>
+                        <exclude>**/FluxgateReloadAutoConfiguration.class</exclude>
+                        <!-- Exclude reload package classes that require Redis/Caffeine for testing -->
+                        <exclude>**/reload/cache/**</exclude>
+                        <exclude>**/reload/strategy/**</exclude>
+                        <exclude>**/reload/handler/**</exclude>
+                        <!-- Exclude new reload-related properties inner classes -->
+                        <exclude>**/FluxgateProperties$ReloadProperties.class</exclude>
+                        <exclude>**/FluxgateProperties$ReloadProperties$*.class</exclude>
+                        <!-- Exclude new MissingRuleBehavior enum (covered by FluxgatePropertiesTest) -->
+                        <exclude>**/FluxgateProperties$MissingRuleBehavior.class</exclude>
                     </excludes>
                 </configuration>
             </plugin>
