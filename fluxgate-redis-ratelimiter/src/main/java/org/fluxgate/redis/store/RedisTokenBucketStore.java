@@ -143,8 +143,8 @@ public class RedisTokenBucketStore {
   /**
    * Deletes all token buckets matching the given ruleSetId pattern.
    *
-   * <p>This is used when rules are changed to reset rate limit state. The pattern matches keys like:
-   * {@code fluxgate:{ruleSetId}:*}
+   * <p>This is used when rules are changed to reset rate limit state. The pattern matches keys
+   * like: {@code fluxgate:{ruleSetId}:*}
    *
    * <p>Warning: Uses KEYS command which can be slow on large databases. Consider using SCAN in
    * high-traffic production environments.

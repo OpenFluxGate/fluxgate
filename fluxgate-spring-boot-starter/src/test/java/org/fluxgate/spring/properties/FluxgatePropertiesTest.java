@@ -205,9 +205,10 @@ class FluxgatePropertiesTest {
         FluxgateProperties.MissingRuleBehavior.values();
 
     assertThat(values).hasSize(2);
-    assertThat(values).contains(
-        FluxgateProperties.MissingRuleBehavior.ALLOW,
-        FluxgateProperties.MissingRuleBehavior.DENY);
+    assertThat(values)
+        .contains(
+            FluxgateProperties.MissingRuleBehavior.ALLOW,
+            FluxgateProperties.MissingRuleBehavior.DENY);
   }
 
   @Test

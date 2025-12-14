@@ -59,7 +59,8 @@ public class StandaloneRateLimitHandler implements FluxgateRateLimitHandler {
         log.warn("RuleSet not found: {}, denying request (missing-rule-behavior=DENY)", ruleSetId);
         return RateLimitResponse.rejected(0);
       } else {
-        log.warn("RuleSet not found: {}, allowing request (missing-rule-behavior=ALLOW)", ruleSetId);
+        log.warn(
+            "RuleSet not found: {}, allowing request (missing-rule-behavior=ALLOW)", ruleSetId);
         return RateLimitResponse.allowed(-1, 0);
       }
     }
