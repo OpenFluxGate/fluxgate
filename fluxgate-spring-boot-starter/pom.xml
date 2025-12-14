@@ -180,9 +180,12 @@
                         <!-- Exclude reload package classes that require Redis/Caffeine for testing -->
                         <exclude>**/reload/cache/**</exclude>
                         <exclude>**/reload/strategy/**</exclude>
+                        <exclude>**/reload/handler/**</exclude>
                         <!-- Exclude new reload-related properties inner classes -->
                         <exclude>**/FluxgateProperties$ReloadProperties.class</exclude>
                         <exclude>**/FluxgateProperties$ReloadProperties$*.class</exclude>
+                        <!-- Exclude new MissingRuleBehavior enum (covered by FluxgatePropertiesTest) -->
+                        <exclude>**/FluxgateProperties$MissingRuleBehavior.class</exclude>
                     </excludes>
                 </configuration>
             </plugin>

@@ -161,6 +161,64 @@ class FluxgatePropertiesTest {
   }
 
   @Test
+  void shouldHaveDefaultMissingRuleBehavior() {
+    FluxgateProperties properties = new FluxgateProperties();
+    FluxgateProperties.RateLimitProperties rateLimit = properties.getRatelimit();
+
+    // Default should be ALLOW
+    assertThat(rateLimit.getMissingRuleBehavior())
+        .isEqualTo(FluxgateProperties.MissingRuleBehavior.ALLOW);
+    assertThat(rateLimit.isDenyWhenRuleMissing()).isFalse();
+  }
+
+  @Test
+  void shouldSetMissingRuleBehaviorToDeny() {
+    FluxgateProperties properties = new FluxgateProperties();
+    FluxgateProperties.RateLimitProperties rateLimit = properties.getRatelimit();
+
+    rateLimit.setMissingRuleBehavior(FluxgateProperties.MissingRuleBehavior.DENY);
+
+    assertThat(rateLimit.getMissingRuleBehavior())
+        .isEqualTo(FluxgateProperties.MissingRuleBehavior.DENY);
+    assertThat(rateLimit.isDenyWhenRuleMissing()).isTrue();
+  }
+
+  @Test
+  void shouldSetMissingRuleBehaviorToAllow() {
+    FluxgateProperties properties = new FluxgateProperties();
+    FluxgateProperties.RateLimitProperties rateLimit = properties.getRatelimit();
+
+    // First set to DENY
+    rateLimit.setMissingRuleBehavior(FluxgateProperties.MissingRuleBehavior.DENY);
+    assertThat(rateLimit.isDenyWhenRuleMissing()).isTrue();
+
+    // Then set back to ALLOW
+    rateLimit.setMissingRuleBehavior(FluxgateProperties.MissingRuleBehavior.ALLOW);
+    assertThat(rateLimit.getMissingRuleBehavior())
+        .isEqualTo(FluxgateProperties.MissingRuleBehavior.ALLOW);
+    assertThat(rateLimit.isDenyWhenRuleMissing()).isFalse();
+  }
+
+  @Test
+  void missingRuleBehaviorEnumShouldHaveCorrectValues() {
+    FluxgateProperties.MissingRuleBehavior[] values =
+        FluxgateProperties.MissingRuleBehavior.values();
+
+    assertThat(values).hasSize(2);
+    assertThat(values).contains(
+        FluxgateProperties.MissingRuleBehavior.ALLOW,
+        FluxgateProperties.MissingRuleBehavior.DENY);
+  }
+
+  @Test
+  void missingRuleBehaviorEnumValueOf() {
+    assertThat(FluxgateProperties.MissingRuleBehavior.valueOf("ALLOW"))
+        .isEqualTo(FluxgateProperties.MissingRuleBehavior.ALLOW);
+    assertThat(FluxgateProperties.MissingRuleBehavior.valueOf("DENY"))
+        .isEqualTo(FluxgateProperties.MissingRuleBehavior.DENY);
+  }
+
+  @Test
   void shouldSetMetricsProperties() {
     FluxgateProperties properties = new FluxgateProperties();
     FluxgateProperties.MetricsProperties metrics = properties.getMetrics();
