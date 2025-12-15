@@ -4,6 +4,7 @@
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build](https://github.com/OpenFluxGate/fluxgate/actions/workflows/maven-ci.yml/badge.svg)](https://github.com/OpenFluxGate/fluxgate/actions)
+[![Admin UI](https://img.shields.io/badge/Admin%20UI-FluxGate%20Studio-orange.svg)](https://github.com/OpenFluxGate/fluxgate-studio)
 
 [English](README.md) | 한국어
 
@@ -93,21 +94,21 @@
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot-starter</artifactId>
-    <version>0.1.4</version>
+    <version>0.2.0</version>
 </dependency>
 
 <!-- For Redis-backed rate limiting -->
 <dependency>
 <groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-redis-ratelimiter</artifactId>
-<version>0.1.4</version>
+<version>0.2.0</version>
 </dependency>
 
 <!-- For MongoDB rule management (optional) -->
 <dependency>
 <groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-mongo-adapter</artifactId>
-<version>0.1.4</version>
+<version>0.2.0</version>
 </dependency>
 ```
 
@@ -386,6 +387,12 @@ cd fluxgate
 4. 브랜치에 푸시 (`git push origin feature/amazing-feature`)
 5. Pull Request 열기
 
+## 관련 프로젝트
+
+| 프로젝트 | 설명 |
+|---------|-------------|
+| [FluxGate Studio](https://github.com/OpenFluxGate/fluxgate-studio) | Rate Limit 규칙 관리를 위한 웹 기반 어드민 UI |
+
 ## 로드맵
 
 - [ ] 슬라이딩 윈도우 Rate Limiting 알고리즘
@@ -393,7 +400,7 @@ cd fluxgate
 - [x] Redis Cluster 지원
 - [x] 상관관계 ID가 포함된 구조화된 JSON 로깅
 - [ ] gRPC API 지원
-- [ ] Rate Limit 할당량 관리 UI
+- [x] Rate Limit 할당량 관리 UI ([FluxGate Studio](https://github.com/OpenFluxGate/fluxgate-studio))
 - [ ] Circuit Breaker 통합
 
 ## 라이선스
