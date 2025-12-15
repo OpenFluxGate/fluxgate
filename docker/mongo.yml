@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: fluxgate-mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: fluxgate
+      MONGO_INITDB_ROOT_PASSWORD: fluxgate123
+      MONGO_INITDB_DATABASE: fluxgate
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:
