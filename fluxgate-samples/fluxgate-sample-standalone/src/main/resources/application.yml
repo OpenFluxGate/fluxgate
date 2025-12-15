@@ -19,6 +19,7 @@ fluxgate:
     ddl-auto: validate
   # Redis configuration (uses FluxgateConfig)
   redis:
+    enabled: true
     uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
     #uri: redis://localhost:6379
   # Metrics enable for Prometheus
@@ -41,6 +42,21 @@ fluxgate:
       fallback: FAIL_OPEN
 
 # Logging
+  # Rate limiting behavior configuration
+  ratelimit:
+    enabled: true
+    # Behavior when no matching rule is found: ALLOW (default) or DENY
+    # DENY: Strict mode - reject requests if no rule exists (fail-closed)
+    # ALLOW: Permissive mode - allow requests if no rule exists
+    missing-rule-behavior: ALLOW
+
+  # Hot reload configuration
+  reload:
+    enabled: true
+    strategy: PUBSUB  # Use Redis Pub/Sub for real-time updates
+    pubsub:
+      channel: fluxgate:rule-reload  # Must match Admin API channel
+
 logging:
   level:
     org.fluxgate: DEBUG
