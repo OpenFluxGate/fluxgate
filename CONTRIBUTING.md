@@ -1,6 +1,7 @@
 # Contributing to FluxGate
 
-Thank you for your interest in contributing to FluxGate! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to FluxGate! This document provides guidelines and instructions for
+contributing.
 
 ## Table of Contents
 
@@ -51,12 +52,25 @@ git remote add upstream https://github.com/OpenFluxGate/fluxgate.git
 
 ### 1. Start Infrastructure
 
+We provide Docker Compose files for local development in the `docker/` directory:
+
+| File                          | Description                                                          |
+|-------------------------------|----------------------------------------------------------------------|
+| `docker/full.yml`             | All services (Redis, MongoDB, ELK) - **Recommended for development** |
+| `docker/redis-standalone.yml` | Redis standalone only                                                |
+| `docker/redis-cluster.yml`    | Redis cluster (3 nodes)                                              |
+| `docker/mongo.yml`            | MongoDB only                                                         |
+| `docker/elk.yml`              | Elasticsearch, Logstash, Kibana                                      |
+
 ```bash
-# Start Redis and MongoDB
-docker-compose up -d
+# Start all services (recommended)
+docker compose -f docker/full.yml up -d
 
 # Verify services are running
-docker-compose ps
+docker compose -f docker/full.yml ps
+
+# Stop services
+docker compose -f docker/full.yml down
 ```
 
 ### 2. Build the Project
@@ -72,14 +86,14 @@ docker-compose ps
 ### 3. Run Tests
 
 ```bash
-# Run all tests
+# Run all tests and verify (required before PR)
+./mvnw clean verify
+
+# Run tests only
 ./mvnw test
 
 # Run tests for specific module
 ./mvnw test -pl fluxgate-core
-
-# Run integration tests
-./mvnw verify -pl fluxgate-testkit
 ```
 
 ### 4. IDE Setup
@@ -131,6 +145,7 @@ Follow the [Conventional Commits](https://www.conventionalcommits.org/) specific
 ```
 
 **Types:**
+
 - `feat`: New feature
 - `fix`: Bug fix
 - `docs`: Documentation changes
@@ -217,6 +232,7 @@ org.fluxgate
 - Use `@Tag` for test categorization
 
 ```java
+
 @Test
 @DisplayName("Should reject request when rate limit exceeded")
 void shouldRejectWhenRateLimitExceeded() {
@@ -243,21 +259,33 @@ void shouldRejectWhenRateLimitExceeded() {
 
 ### Before Submitting
 
-1. **Update your branch**:
+1. **Start infrastructure** (if not running):
+   ```bash
+   docker compose -f docker/full.yml up -d
+   ```
+
+2. **Update your branch**:
    ```bash
    git fetch upstream
    git rebase upstream/main
    ```
 
-2. **Run all tests**:
+3. **Apply code formatting**:
+   ```bash
+   ./mvnw spotless:apply
+   ```
+
+4. **Run all tests and verify**:
    ```bash
    ./mvnw clean verify
    ```
 
-3. **Check code style**:
-   ```bash
-   ./mvnw checkstyle:check
-   ```
+   This command runs:
+    - Code compilation
+    - Unit tests
+    - Integration tests
+    - Code coverage checks (JaCoCo)
+    - Code formatting checks (Spotless)
 
 ### Creating a Pull Request
 
@@ -269,10 +297,10 @@ void shouldRejectWhenRateLimitExceeded() {
 2. Open a Pull Request on GitHub
 
 3. Fill in the PR template with:
-   - Clear description of changes
-   - Related issue numbers
-   - Testing performed
-   - Screenshots (if UI changes)
+    - Clear description of changes
+    - Related issue numbers
+    - Testing performed
+    - Screenshots (if UI changes)
 
 ### PR Checklist
 
@@ -311,13 +339,13 @@ void shouldRejectWhenRateLimitExceeded() {
 
 ## Getting Help
 
-- **Questions**: Open a [GitHub Discussion](https://github.com/OpenFluxGate/fluxgate/discussions)
-- **Bugs**: Open a [GitHub Issue](https://github.com/OpenFluxGate/fluxgate/issues)
+- **Questions/Bugs**: Open a [GitHub Issue](https://github.com/OpenFluxGate/fluxgate/issues)
 - **Security**: Email security@openfluxgate.org (do not open public issues)
 
 ## Recognition
 
 Contributors are recognized in:
+
 - Release notes
 - GitHub contributors list
 - Project documentation
