@@ -140,6 +140,60 @@ public class RedisTokenBucketStore {
     return connectionProvider.getMode();
   }
 
+  /**
+   * Deletes all token buckets matching the given ruleSetId pattern.
+   *
+   * <p>This is used when rules are changed to reset rate limit state. The pattern matches keys
+   * like: {@code fluxgate:{ruleSetId}:*}
+   *
+   * <p>Warning: Uses KEYS command which can be slow on large databases. Consider using SCAN in
+   * high-traffic production environments.
+   *
+   * @param ruleSetId the rule set ID to match
+   * @return the number of buckets deleted
+   */
+  public long deleteBucketsByRuleSetId(String ruleSetId) {
+    Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
+
+    String pattern = "fluxgate:" + ruleSetId + ":*";
+    log.debug("Deleting token buckets matching pattern: {}", pattern);
+
+    java.util.List<String> keys = connectionProvider.keys(pattern);
+    if (keys.isEmpty()) {
+      log.debug("No token buckets found for ruleSetId: {}", ruleSetId);
+      return 0;
+    }
+
+    long deleted = connectionProvider.del(keys.toArray(new String[0]));
+    log.info("Deleted {} token buckets for ruleSetId: {}", deleted, ruleSetId);
+    return deleted;
+  }
+
+  /**
+   * Deletes all token buckets (full reset).
+   *
+   * <p>This is used when a full reload is triggered to reset all rate limit state. The pattern
+   * matches all FluxGate keys: {@code fluxgate:*}
+   *
+   * <p>Warning: Uses KEYS command which can be slow on large databases.
+   *
+   * @return the number of buckets deleted
+   */
+  public long deleteAllBuckets() {
+    String pattern = "fluxgate:*";
+    log.debug("Deleting all token buckets matching pattern: {}", pattern);
+
+    java.util.List<String> keys = connectionProvider.keys(pattern);
+    if (keys.isEmpty()) {
+      log.debug("No token buckets found");
+      return 0;
+    }
+
+    long deleted = connectionProvider.del(keys.toArray(new String[0]));
+    log.info("Deleted {} token buckets (full reset)", deleted);
+    return deleted;
+  }
+
   /** Closes the store. Note: The connection provider is managed externally. */
   public void close() {
     // Connection provider is managed externally, so nothing to do here
