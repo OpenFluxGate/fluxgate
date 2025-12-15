@@ -374,8 +374,8 @@ cd fluxgate
 - [Redis Rate Limiter](fluxgate-redis-ratelimiter/README.md) - Redis를 사용한 분산 Rate Limiting
 - [MongoDB Adapter](fluxgate-mongo-adapter/README.md) - 동적 규칙 관리
 - [Spring Boot Starter](fluxgate-spring-boot-starter/README.md) - 자동 설정 가이드
-- [통합 테스트](INTEGRATION_TEST_GUIDE.md) - 테스트 가이드
 - [FluxGate 확장](HOW_TO_EXTEND_RATELIMITER.md) - 커스텀 구현
+- [기여 가이드](CONTRIBUTING.ko.md) - 기여 가이드
 
 ## 기여하기
 
