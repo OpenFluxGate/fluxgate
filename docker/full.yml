@@ -1,0 +1,96 @@
+version: "3.8"
+
+# Full FluxGate Development Environment
+# Includes: MongoDB, Redis (standalone), ELK Stack
+#
+# Usage:
+#   docker-compose -f docker/full.yml up -d
+#   docker-compose -f docker/full.yml down
+#
+# Services:
+#   - MongoDB:       localhost:27017 (user: fluxgate, password: fluxgate123)
+#   - Redis:         localhost:6379
+#   - Elasticsearch: localhost:9200
+#   - Kibana:        localhost:5601
+#   - Logstash:      localhost:5044 (TCP input), localhost:9600 (monitoring)
+
+services:
+  # ============================================
+  # MongoDB - Rule Storage
+  # ============================================
+  mongo:
+    image: mongo:7.0
+    container_name: fluxgate-mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: fluxgate
+      MONGO_INITDB_ROOT_PASSWORD: fluxgate123
+      MONGO_INITDB_DATABASE: fluxgate
+    volumes:
+      - mongo-data:/data/db
+
+  # ============================================
+  # Redis Standalone - Rate Limiting
+  # ============================================
+  redis:
+    image: redis:7.2-alpine
+    container_name: fluxgate-redis
+    ports:
+      - "6379:6379"
+
+  # ============================================
+  # ELK Stack - Logging & Monitoring
+  # ============================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.2
+    container_name: elk-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    ports:
+      - "9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.2
+    container_name: elk-kibana
+    depends_on:
+      - elasticsearch
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.12.2
+    container_name: elk-logstash
+    depends_on:
+      - elasticsearch
+    ports:
+      - "5044:5044"   # TCP input
+      - "9600:9600"   # Logstash monitoring API
+    environment:
+      - XPACK_MONITORING_ENABLED=false
+      - PIPELINE_WORKERS=1
+    command: >
+      logstash -e '
+        input {
+          tcp {
+            port => 5044
+            codec => json_lines
+          }
+        }
+        output {
+          elasticsearch {
+            hosts => ["http://elasticsearch:9200"]
+            index => "fluxgate-logs-%{+YYYY.MM.dd}"
+          }
+        }
+      '
+
+volumes:
+  mongo-data:
+  es-data:

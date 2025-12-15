@@ -91,7 +91,7 @@ boolean allowed = checkIpLimit(ctx) && checkServiceLimit(ctx);
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-core</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.1.4</version>
 </dependency>
 ```
 

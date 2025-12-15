@@ -9,7 +9,7 @@
 
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.2.0</version>
     <packaging>pom</packaging>
 
     <name>FluxGate</name>
@@ -22,6 +22,7 @@
         <module>fluxgate-mongo-adapter</module>
         <module>fluxgate-redis-ratelimiter</module>
         <module>fluxgate-spring-boot-starter</module>
+        <module>fluxgate-control-support</module>
         <module>fluxgate-testkit</module>
         <module>fluxgate-samples</module>
     </modules>
