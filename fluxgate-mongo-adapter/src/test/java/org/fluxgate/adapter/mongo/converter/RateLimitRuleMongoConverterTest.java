@@ -309,4 +309,256 @@ class RateLimitRuleMongoConverterTest {
       assertEquals(scope, convertedRule.getScope(), "Scope " + scope + " should be preserved");
     }
   }
+
+  @Test
+  @DisplayName("Should handle attributes in Domain to DTO conversion")
+  void toDto_shouldPreserveAttributes() {
+    // given
+    RateLimitRule rule =
+        RateLimitRule.builder("attrs-rule")
+            .name("Attributes Rule")
+            .enabled(true)
+            .scope(LimitScope.PER_IP)
+            .keyStrategyId("ip")
+            .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+            .addBand(RateLimitBand.builder(Duration.ofSeconds(1), 100).label("test").build())
+            .ruleSetId("attrs-ruleset")
+            .attribute("tier", "premium")
+            .attribute("team", "billing")
+            .build();
+
+    // when
+    RateLimitRuleDocument dto = RateLimitRuleMongoConverter.toDto(rule);
+
+    // then
+    assertEquals("premium", dto.getAttributes().get("tier"));
+    assertEquals("billing", dto.getAttributes().get("team"));
+  }
+
+  @Test
+  @DisplayName("Should handle attributes in DTO to Domain conversion")
+  void toDomain_shouldPreserveAttributes() {
+    // given
+    RateLimitBandDocument bandDto = new RateLimitBandDocument(1L, 100L, "test");
+    RateLimitRuleDocument dto =
+        new RateLimitRuleDocument(
+            "attrs-rule",
+            "Attributes Rule",
+            true,
+            LimitScope.PER_IP,
+            "ip",
+            OnLimitExceedPolicy.REJECT_REQUEST,
+            List.of(bandDto),
+            "attrs-ruleset",
+            Map.of("customField", "customValue", "priority", 1));
+
+    // when
+    RateLimitRule rule = RateLimitRuleMongoConverter.toDomain(dto);
+
+    // then
+    assertEquals("customValue", rule.getAttribute("customField"));
+    assertEquals(1, rule.getAttribute("priority"));
+  }
+
+  @Test
+  @DisplayName("Should handle empty attributes in toDomain")
+  void toDomain_shouldHandleEmptyAttributes() {
+    // given
+    RateLimitBandDocument bandDto = new RateLimitBandDocument(1L, 100L, "test");
+    RateLimitRuleDocument dto =
+        new RateLimitRuleDocument(
+            "empty-attrs-rule",
+            "Empty Attributes Rule",
+            true,
+            LimitScope.PER_IP,
+            "ip",
+            OnLimitExceedPolicy.REJECT_REQUEST,
+            List.of(bandDto),
+            "empty-attrs-ruleset",
+            Map.of()); // empty attributes
+
+    // when
+    RateLimitRule rule = RateLimitRuleMongoConverter.toDomain(dto);
+
+    // then
+    assertNotNull(rule.getAttributes());
+  }
+
+  @Test
+  @DisplayName("Should handle null attributes in toDomain")
+  void toDomain_shouldHandleNullAttributes() {
+    // given
+    RateLimitBandDocument bandDto = new RateLimitBandDocument(1L, 100L, "test");
+    RateLimitRuleDocument dto =
+        new RateLimitRuleDocument(
+            "null-attrs-rule",
+            "Null Attributes Rule",
+            true,
+            LimitScope.PER_IP,
+            "ip",
+            OnLimitExceedPolicy.REJECT_REQUEST,
+            List.of(bandDto),
+            "null-attrs-ruleset",
+            null); // null attributes
+
+    // when
+    RateLimitRule rule = RateLimitRuleMongoConverter.toDomain(dto);
+
+    // then
+    assertNotNull(rule);
+  }
+
+  @Test
+  @DisplayName("Should include attributes in BSON conversion")
+  void toBson_shouldIncludeAttributes() {
+    // given
+    RateLimitBandDocument bandDto = new RateLimitBandDocument(1L, 100L, "test");
+    RateLimitRuleDocument dto =
+        new RateLimitRuleDocument(
+            "bson-attrs-rule",
+            "BSON Attributes Rule",
+            true,
+            LimitScope.PER_IP,
+            "ip",
+            OnLimitExceedPolicy.REJECT_REQUEST,
+            List.of(bandDto),
+            "bson-attrs-ruleset",
+            Map.of("region", "us-east-1"));
+
+    // when
+    Document bson = RateLimitRuleMongoConverter.toBson(dto);
+
+    // then
+    Document attrs = bson.get("attributes", Document.class);
+    assertNotNull(attrs);
+    assertEquals("us-east-1", attrs.getString("region"));
+  }
+
+  @Test
+  @DisplayName("Should not include attributes in BSON when empty")
+  void toBson_shouldNotIncludeEmptyAttributes() {
+    // given
+    RateLimitBandDocument bandDto = new RateLimitBandDocument(1L, 100L, "test");
+    RateLimitRuleDocument dto =
+        new RateLimitRuleDocument(
+            "no-attrs-rule",
+            "No Attributes Rule",
+            true,
+            LimitScope.PER_IP,
+            "ip",
+            OnLimitExceedPolicy.REJECT_REQUEST,
+            List.of(bandDto),
+            "no-attrs-ruleset",
+            Map.of()); // empty
+
+    // when
+    Document bson = RateLimitRuleMongoConverter.toBson(dto);
+
+    // then
+    assertFalse(bson.containsKey("attributes"), "Empty attributes should not be in BSON");
+  }
+
+  @Test
+  @DisplayName("Should parse attributes from BSON")
+  void fromBson_shouldParseAttributes() {
+    // given
+    Document bandBson =
+        new Document().append("windowSeconds", 1L).append("capacity", 100L).append("label", "test");
+
+    Document attrsBson = new Document().append("env", "production").append("version", 2);
+
+    Document bson =
+        new Document()
+            .append("id", "parse-attrs-rule")
+            .append("name", "Parse Attributes Rule")
+            .append("enabled", true)
+            .append("scope", "PER_IP")
+            .append("keyStrategyId", "ip")
+            .append("onLimitExceedPolicy", "REJECT_REQUEST")
+            .append("ruleSetId", "parse-attrs-ruleset")
+            .append("bands", List.of(bandBson))
+            .append("attributes", attrsBson);
+
+    // when
+    RateLimitRuleDocument dto = RateLimitRuleMongoConverter.fromBson(bson);
+
+    // then
+    assertEquals("production", dto.getAttributes().get("env"));
+    assertEquals(2, dto.getAttributes().get("version"));
+  }
+
+  @Test
+  @DisplayName("Should handle missing attributes in BSON")
+  void fromBson_shouldHandleMissingAttributes() {
+    // given
+    Document bandBson =
+        new Document().append("windowSeconds", 1L).append("capacity", 100L).append("label", "test");
+
+    Document bson =
+        new Document()
+            .append("id", "missing-attrs-rule")
+            .append("name", "Missing Attributes Rule")
+            .append("enabled", true)
+            .append("scope", "PER_IP")
+            .append("keyStrategyId", "ip")
+            .append("onLimitExceedPolicy", "REJECT_REQUEST")
+            .append("ruleSetId", "missing-attrs-ruleset")
+            .append("bands", List.of(bandBson));
+    // No attributes field
+
+    // when
+    RateLimitRuleDocument dto = RateLimitRuleMongoConverter.fromBson(bson);
+
+    // then
+    assertNotNull(dto.getAttributes());
+    assertTrue(dto.getAttributes().isEmpty());
+  }
+
+  @Test
+  @DisplayName("Should handle null bands in fromBson")
+  void fromBson_shouldHandleNullBands() {
+    // given
+    Document bson =
+        new Document()
+            .append("id", "null-bands-rule")
+            .append("name", "Null Bands Rule")
+            .append("enabled", true)
+            .append("scope", "PER_IP")
+            .append("keyStrategyId", "ip")
+            .append("onLimitExceedPolicy", "REJECT_REQUEST")
+            .append("ruleSetId", "null-bands-ruleset")
+            .append("bands", null); // null bands
+
+    // when
+    RateLimitRuleDocument dto = RateLimitRuleMongoConverter.fromBson(bson);
+
+    // then
+    assertNotNull(dto);
+    assertTrue(dto.getBands().isEmpty());
+  }
+
+  @Test
+  @DisplayName("Should use default enabled value when missing in BSON")
+  void fromBson_shouldUseDefaultEnabledWhenMissing() {
+    // given
+    Document bandBson =
+        new Document().append("windowSeconds", 1L).append("capacity", 100L).append("label", "test");
+
+    Document bson =
+        new Document()
+            .append("id", "default-enabled-rule")
+            .append("name", "Default Enabled Rule")
+            // no "enabled" field
+            .append("scope", "PER_IP")
+            .append("keyStrategyId", "ip")
+            .append("onLimitExceedPolicy", "REJECT_REQUEST")
+            .append("ruleSetId", "default-enabled-ruleset")
+            .append("bands", List.of(bandBson));
+
+    // when
+    RateLimitRuleDocument dto = RateLimitRuleMongoConverter.fromBson(bson);
+
+    // then
+    assertTrue(dto.isEnabled(), "Default enabled value should be true");
+  }
 }

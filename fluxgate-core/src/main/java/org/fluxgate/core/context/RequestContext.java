@@ -7,6 +7,15 @@ import java.util.Map;
 /**
  * Represents contextual information about the incoming request. This allows custom KeyResolvers and
  * strategies to determine which rate-limit bucket should be used.
+ *
+ * <p>Contains request metadata for rate limiting decisions and event tracking:
+ *
+ * <ul>
+ *   <li>Client identification: IP, userId, apiKey
+ *   <li>Request info: endpoint, method
+ *   <li>HTTP headers: collected in headers map
+ *   <li>Custom attributes: extensible key-value pairs
+ * </ul>
  */
 public final class RequestContext {
 
@@ -16,6 +25,10 @@ public final class RequestContext {
   private final String endpoint;
   private final String method;
 
+  /** HTTP request headers (e.g., User-Agent, Referer, X-Request-Id). */
+  private final Map<String, String> headers;
+
+  /** Custom attributes for user-defined metadata. */
   private final Map<String, Object> attributes;
 
   private RequestContext(Builder builder) {
@@ -24,6 +37,7 @@ public final class RequestContext {
     this.apiKey = builder.apiKey;
     this.endpoint = builder.endpoint;
     this.method = builder.method;
+    this.headers = Collections.unmodifiableMap(new HashMap<>(builder.headers));
     this.attributes = Collections.unmodifiableMap(new HashMap<>(builder.attributes));
   }
 
@@ -47,8 +61,42 @@ public final class RequestContext {
     return method;
   }
 
+  /**
+   * Returns all HTTP headers collected from the request.
+   *
+   * @return unmodifiable map of header names to values
+   */
+  public Map<String, String> getHeaders() {
+    return headers;
+  }
+
+  /**
+   * Returns a specific HTTP header value.
+   *
+   * @param name the header name (case-sensitive as stored)
+   * @return the header value, or null if not present
+   */
+  public String getHeader(String name) {
+    return headers.get(name);
+  }
+
+  /**
+   * Returns custom attributes for user-defined metadata.
+   *
+   * @return unmodifiable map of attributes
+   */
   public Map<String, Object> getAttributes() {
     return attributes;
+  }
+
+  /**
+   * Returns a specific attribute value.
+   *
+   * @param key the attribute key
+   * @return the attribute value, or null if not present
+   */
+  public Object getAttribute(String key) {
+    return attributes.get(key);
   }
 
   public static Builder builder() {
@@ -61,8 +109,12 @@ public final class RequestContext {
     private String apiKey;
     private String endpoint;
     private String method;
-
+    private final Map<String, String> headers = new HashMap<>();
     private final Map<String, Object> attributes = new HashMap<>();
+
+    // =========================================================================
+    // Setters
+    // =========================================================================
 
     public Builder clientIp(String clientIp) {
       this.clientIp = clientIp;
@@ -89,9 +141,110 @@ public final class RequestContext {
       return this;
     }
 
+    /**
+     * Adds a single HTTP header.
+     *
+     * @param name the header name
+     * @param value the header value (null values are ignored)
+     * @return this builder
+     */
+    public Builder header(String name, String value) {
+      if (value != null) {
+        this.headers.put(name, value);
+      }
+      return this;
+    }
+
+    /**
+     * Adds multiple HTTP headers at once.
+     *
+     * @param headers map of header names to values (null values are ignored)
+     * @return this builder
+     */
+    public Builder headers(Map<String, String> headers) {
+      if (headers != null) {
+        headers.forEach(
+            (k, v) -> {
+              if (v != null) {
+                this.headers.put(k, v);
+              }
+            });
+      }
+      return this;
+    }
+
+    /**
+     * Adds a custom attribute.
+     *
+     * @param key the attribute key
+     * @param value the attribute value
+     * @return this builder
+     */
     public Builder attribute(String key, Object value) {
       this.attributes.put(key, value);
       return this;
+    }
+
+    /**
+     * Adds multiple custom attributes at once.
+     *
+     * @param attributes map of attribute keys to values
+     * @return this builder
+     */
+    public Builder attributes(Map<String, Object> attributes) {
+      if (attributes != null) {
+        this.attributes.putAll(attributes);
+      }
+      return this;
+    }
+
+    // =========================================================================
+    // Getters - for use in RequestContextCustomizer
+    // =========================================================================
+
+    /** Returns the current clientIp value. */
+    public String getClientIp() {
+      return clientIp;
+    }
+
+    /** Returns the current userId value. */
+    public String getUserId() {
+      return userId;
+    }
+
+    /** Returns the current apiKey value. */
+    public String getApiKey() {
+      return apiKey;
+    }
+
+    /** Returns the current endpoint value. */
+    public String getEndpoint() {
+      return endpoint;
+    }
+
+    /** Returns the current method value. */
+    public String getMethod() {
+      return method;
+    }
+
+    /** Returns the current headers map (modifiable). */
+    public Map<String, String> getHeaders() {
+      return headers;
+    }
+
+    /** Returns a specific header value. */
+    public String getHeader(String name) {
+      return headers.get(name);
+    }
+
+    /** Returns the current attributes map (modifiable). */
+    public Map<String, Object> getAttributes() {
+      return attributes;
+    }
+
+    /** Returns a specific attribute value. */
+    public Object getAttribute(String key) {
+      return attributes.get(key);
     }
 
     public RequestContext build() {

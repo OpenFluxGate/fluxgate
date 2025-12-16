@@ -20,6 +20,7 @@ import org.fluxgate.redis.config.RedisRateLimiterConfig;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -116,8 +117,14 @@ public class FluxgateConfig {
 
   @Bean
   public RateLimitRuleSetProvider ruleSetProvider(
-      RateLimitRuleRepository ruleRepository, KeyResolver keyResolver) {
-    log.info("Creating MongoDB RuleSetProvider");
+      RateLimitRuleRepository ruleRepository,
+      KeyResolver keyResolver,
+      @Autowired(required = false) RateLimitMetricsRecorder metricsRecorder) {
+    if (metricsRecorder != null) {
+      log.info("Creating MongoDB RuleSetProvider with metrics recording enabled");
+      return new MongoRuleSetProvider(ruleRepository, keyResolver, metricsRecorder);
+    }
+    log.info("Creating MongoDB RuleSetProvider without metrics recording");
     return new MongoRuleSetProvider(ruleRepository, keyResolver);
   }
 

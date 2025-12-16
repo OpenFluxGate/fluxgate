@@ -16,6 +16,9 @@ English | [한국어](README.ko.md)
 - **Dynamic Rule Management** - Store and update rules in MongoDB without restart
 - **Spring Boot Auto-Configuration** - Zero-config setup with sensible defaults
 - **Flexible Key Strategies** - Rate limit by IP, User ID, API Key, or custom keys
+- **WAIT_FOR_REFILL Policy** - Wait for token refill instead of immediate rejection
+- **RequestContext Customization** - Override client IP, add custom attributes before rate limiting
+- **Multiple Filters Support** - Configure multiple filters with different priorities via Java Config
 - **Production-Safe Design** - Uses Redis server time (no clock drift), integer arithmetic only
 - **HTTP API Mode** - Centralized rate limiting service via REST API
 - **Pluggable Architecture** - Easy to extend with custom handlers and stores
@@ -226,10 +229,14 @@ curl http://localhost:8083/api/hello
 | `fluxgate.redis.uri` | `redis://localhost:6379` | Redis connection URI |
 | `fluxgate.mongo.enabled` | `false` | Enable MongoDB adapter |
 | `fluxgate.mongo.uri` | - | MongoDB connection URI |
+| `fluxgate.mongo.event-collection` | - | MongoDB collection for event logging |
 | `fluxgate.ratelimit.filter-enabled` | `false` | Enable rate limit filter |
 | `fluxgate.ratelimit.default-rule-set-id` | `default` | Default rule set ID |
 | `fluxgate.ratelimit.include-patterns` | `[/api/*]` | URL patterns to rate limit |
 | `fluxgate.ratelimit.exclude-patterns` | `[]` | URL patterns to exclude |
+| `fluxgate.ratelimit.wait-for-refill.enabled` | `false` | Enable WAIT_FOR_REFILL policy |
+| `fluxgate.ratelimit.wait-for-refill.max-wait-time-ms` | `5000` | Max wait time in milliseconds |
+| `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits` | `100` | Max concurrent waiting requests |
 | `fluxgate.api.url` | - | External rate limit API URL |
 
 ### Rate Limit Rule Configuration
@@ -239,14 +246,35 @@ RateLimitRule rule = RateLimitRule.builder("api-rule")
     .name("API Rate Limit")
     .enabled(true)
     .scope(LimitScope.PER_IP)
-    .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+    .keyStrategyId("clientIp")
+    .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)  // or WAIT_FOR_REFILL
     .addBand(RateLimitBand.builder(Duration.ofSeconds(1), 10)
         .label("10-per-second")
         .build())
     .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100)
         .label("100-per-minute")
         .build())
+    .ruleSetId("api-limits")
+    .attribute("tier", "standard")  // Custom attributes for tracking
     .build();
+```
+
+### RequestContext Customization
+
+```java
+@Bean
+public RequestContextCustomizer requestContextCustomizer() {
+    return (builder, request) -> {
+        // Override client IP from Cloudflare header
+        String cfIp = request.getHeader("CF-Connecting-IP");
+        if (cfIp != null) {
+            builder.clientIp(cfIp);
+        }
+        // Add tenant info for multi-tenant rate limiting
+        builder.attribute("tenantId", request.getHeader("X-Tenant-Id"));
+        return builder;
+    };
+}
 ```
 
 ## Building from Source

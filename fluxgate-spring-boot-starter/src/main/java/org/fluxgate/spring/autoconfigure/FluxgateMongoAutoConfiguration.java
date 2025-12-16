@@ -16,6 +16,7 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -128,12 +129,23 @@ public class FluxgateMongoAutoConfiguration {
     return context -> new RateLimitKey(context.getClientIp());
   }
 
-  /** Creates the MongoRuleSetProvider for loading rule sets from MongoDB. */
+  /**
+   * Creates the MongoRuleSetProvider for loading rule sets from MongoDB.
+   *
+   * <p>If a {@link RateLimitMetricsRecorder} bean is available (created when event-collection is
+   * configured), it will be injected to enable event logging.
+   */
   @Bean
   @ConditionalOnMissingBean(RateLimitRuleSetProvider.class)
   public RateLimitRuleSetProvider mongoRuleSetProvider(
-      RateLimitRuleRepository repository, KeyResolver fluxgateKeyResolver) {
-    log.info("Creating MongoRuleSetProvider");
+      RateLimitRuleRepository repository,
+      KeyResolver fluxgateKeyResolver,
+      @Autowired(required = false) RateLimitMetricsRecorder metricsRecorder) {
+    if (metricsRecorder != null) {
+      log.info("Creating MongoRuleSetProvider with metrics recording enabled");
+      return new MongoRuleSetProvider(repository, fluxgateKeyResolver, metricsRecorder);
+    }
+    log.info("Creating MongoRuleSetProvider without metrics recording");
     return new MongoRuleSetProvider(repository, fluxgateKeyResolver);
   }
 

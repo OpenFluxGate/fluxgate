@@ -2,6 +2,7 @@ package org.fluxgate.core.context;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -324,6 +325,271 @@ class RequestContextTest {
       // then
       assertEquals("acme-corp", context.getAttributes().get("tenantId"));
       assertEquals("premium", context.getAttributes().get("subscriptionTier"));
+    }
+  }
+
+  // ==================== Headers Tests ====================
+
+  @Nested
+  @DisplayName("Headers Tests")
+  class HeadersTests {
+
+    @Test
+    @DisplayName("should add single header")
+    void header_shouldAddSingleHeader() {
+      // given / when
+      RequestContext context = RequestContext.builder().header("User-Agent", "Mozilla/5.0").build();
+
+      // then
+      assertEquals("Mozilla/5.0", context.getHeader("User-Agent"));
+      assertEquals(1, context.getHeaders().size());
+    }
+
+    @Test
+    @DisplayName("should add multiple headers")
+    void header_shouldAddMultipleHeaders() {
+      // given / when
+      RequestContext context =
+          RequestContext.builder()
+              .header("User-Agent", "Mozilla/5.0")
+              .header("Accept", "application/json")
+              .header("X-Request-Id", "req-123")
+              .build();
+
+      // then
+      assertEquals(3, context.getHeaders().size());
+      assertEquals("Mozilla/5.0", context.getHeader("User-Agent"));
+      assertEquals("application/json", context.getHeader("Accept"));
+      assertEquals("req-123", context.getHeader("X-Request-Id"));
+    }
+
+    @Test
+    @DisplayName("should add headers from map")
+    void headers_shouldAddHeadersFromMap() {
+      // given
+      Map<String, String> headerMap = new HashMap<>();
+      headerMap.put("User-Agent", "TestAgent");
+      headerMap.put("Accept-Language", "en-US");
+
+      // when
+      RequestContext context = RequestContext.builder().headers(headerMap).build();
+
+      // then
+      assertEquals(2, context.getHeaders().size());
+      assertEquals("TestAgent", context.getHeader("User-Agent"));
+      assertEquals("en-US", context.getHeader("Accept-Language"));
+    }
+
+    @Test
+    @DisplayName("should ignore null header values")
+    void header_shouldIgnoreNullValues() {
+      // given / when
+      RequestContext context =
+          RequestContext.builder()
+              .header("User-Agent", "Mozilla/5.0")
+              .header("X-Null-Header", null)
+              .build();
+
+      // then
+      assertEquals(1, context.getHeaders().size());
+      assertNull(context.getHeader("X-Null-Header"));
+    }
+
+    @Test
+    @DisplayName("should ignore null values in headers map")
+    void headers_shouldIgnoreNullValuesInMap() {
+      // given
+      Map<String, String> headerMap = new HashMap<>();
+      headerMap.put("User-Agent", "TestAgent");
+      headerMap.put("X-Null", null);
+
+      // when
+      RequestContext context = RequestContext.builder().headers(headerMap).build();
+
+      // then
+      assertEquals(1, context.getHeaders().size());
+      assertEquals("TestAgent", context.getHeader("User-Agent"));
+    }
+
+    @Test
+    @DisplayName("should handle null headers map")
+    void headers_shouldHandleNullMap() {
+      // given / when
+      RequestContext context = RequestContext.builder().headers(null).build();
+
+      // then
+      assertNotNull(context.getHeaders());
+      assertTrue(context.getHeaders().isEmpty());
+    }
+
+    @Test
+    @DisplayName("should return null for non-existent header")
+    void getHeader_shouldReturnNullForNonExistentHeader() {
+      // given
+      RequestContext context = RequestContext.builder().build();
+
+      // then
+      assertNull(context.getHeader("Non-Existent"));
+    }
+
+    @Test
+    @DisplayName("headers map should be unmodifiable")
+    void getHeaders_shouldReturnUnmodifiableMap() {
+      // given
+      RequestContext context = RequestContext.builder().header("Test", "value").build();
+
+      // when / then
+      assertThrows(
+          UnsupportedOperationException.class, () -> context.getHeaders().put("New", "value"));
+    }
+  }
+
+  // ==================== Builder Getters Tests ====================
+
+  @Nested
+  @DisplayName("Builder Getters Tests")
+  class BuilderGettersTests {
+
+    @Test
+    @DisplayName("builder should provide getter for clientIp")
+    void builder_shouldProvideGetterForClientIp() {
+      // given
+      RequestContext.Builder builder = RequestContext.builder().clientIp("192.168.1.1");
+
+      // then
+      assertEquals("192.168.1.1", builder.getClientIp());
+    }
+
+    @Test
+    @DisplayName("builder should provide getter for userId")
+    void builder_shouldProvideGetterForUserId() {
+      // given
+      RequestContext.Builder builder = RequestContext.builder().userId("user-123");
+
+      // then
+      assertEquals("user-123", builder.getUserId());
+    }
+
+    @Test
+    @DisplayName("builder should provide getter for apiKey")
+    void builder_shouldProvideGetterForApiKey() {
+      // given
+      RequestContext.Builder builder = RequestContext.builder().apiKey("api-key-xyz");
+
+      // then
+      assertEquals("api-key-xyz", builder.getApiKey());
+    }
+
+    @Test
+    @DisplayName("builder should provide getter for endpoint")
+    void builder_shouldProvideGetterForEndpoint() {
+      // given
+      RequestContext.Builder builder = RequestContext.builder().endpoint("/api/test");
+
+      // then
+      assertEquals("/api/test", builder.getEndpoint());
+    }
+
+    @Test
+    @DisplayName("builder should provide getter for method")
+    void builder_shouldProvideGetterForMethod() {
+      // given
+      RequestContext.Builder builder = RequestContext.builder().method("POST");
+
+      // then
+      assertEquals("POST", builder.getMethod());
+    }
+
+    @Test
+    @DisplayName("builder should provide getter for headers")
+    void builder_shouldProvideGetterForHeaders() {
+      // given
+      RequestContext.Builder builder =
+          RequestContext.builder()
+              .header("User-Agent", "Mozilla/5.0")
+              .header("Accept", "application/json");
+
+      // then
+      assertEquals(2, builder.getHeaders().size());
+      assertEquals("Mozilla/5.0", builder.getHeader("User-Agent"));
+      assertEquals("application/json", builder.getHeader("Accept"));
+    }
+
+    @Test
+    @DisplayName("builder should provide getter for attributes")
+    void builder_shouldProvideGetterForAttributes() {
+      // given
+      RequestContext.Builder builder =
+          RequestContext.builder().attribute("tenantId", "tenant-123").attribute("region", "us");
+
+      // then
+      assertEquals(2, builder.getAttributes().size());
+      assertEquals("tenant-123", builder.getAttribute("tenantId"));
+      assertEquals("us", builder.getAttribute("region"));
+    }
+
+    @Test
+    @DisplayName("builder headers map should be modifiable")
+    void builder_headersShouldBeModifiable() {
+      // given
+      RequestContext.Builder builder = RequestContext.builder().header("Test", "value");
+
+      // when - modify through getter
+      builder.getHeaders().put("New", "newValue");
+      builder.getHeaders().remove("Test");
+
+      // then
+      RequestContext context = builder.build();
+      assertEquals("newValue", context.getHeader("New"));
+      assertNull(context.getHeader("Test"));
+    }
+
+    @Test
+    @DisplayName("builder attributes map should be modifiable")
+    void builder_attributesShouldBeModifiable() {
+      // given
+      RequestContext.Builder builder = RequestContext.builder().attribute("key", "value");
+
+      // when - modify through getter
+      builder.getAttributes().put("new", "newValue");
+      builder.getAttributes().remove("key");
+
+      // then
+      RequestContext context = builder.build();
+      assertEquals("newValue", context.getAttribute("new"));
+      assertNull(context.getAttribute("key"));
+    }
+  }
+
+  // ==================== getAttribute Tests ====================
+
+  @Nested
+  @DisplayName("getAttribute Tests")
+  class GetAttributeTests {
+
+    @Test
+    @DisplayName("getAttribute should return correct value")
+    void getAttribute_shouldReturnCorrectValue() {
+      // given
+      RequestContext context =
+          RequestContext.builder()
+              .attribute("stringAttr", "value")
+              .attribute("intAttr", 42)
+              .build();
+
+      // then
+      assertEquals("value", context.getAttribute("stringAttr"));
+      assertEquals(42, context.getAttribute("intAttr"));
+    }
+
+    @Test
+    @DisplayName("getAttribute should return null for non-existent key")
+    void getAttribute_shouldReturnNullForNonExistentKey() {
+      // given
+      RequestContext context = RequestContext.builder().build();
+
+      // then
+      assertNull(context.getAttribute("non-existent"));
     }
   }
 

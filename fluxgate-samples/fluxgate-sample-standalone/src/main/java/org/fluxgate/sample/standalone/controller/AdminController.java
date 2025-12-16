@@ -22,9 +22,15 @@ import org.springframework.web.bind.annotation.*;
 /**
  * Admin API for managing rate limit rules.
  *
- * <p>Endpoints: - POST /api/admin/ruleset - Create/update the default ruleset (10 requests/minute)
- * - POST /api/admin/sync - Sync rules (just confirms setup is ready) - GET /api/admin/ruleset - Get
- * current ruleset
+ * <p>This controller provides APIs to create different rule sets:
+ *
+ * <ul>
+ *   <li>POST /api/admin/rules/standalone - Create rule for /api/test (10 req/min)
+ *   <li>POST /api/admin/rules/multi-filter - Create 2 rules for /api/test/multi-filter (5 req/sec +
+ *       20 req/min)
+ *   <li>POST /api/admin/rules/all - Create all rules at once
+ *   <li>GET /api/admin/rules/{ruleSetId} - Get rules for a specific rule set
+ * </ul>
  */
 @RestController
 @RequestMapping("/api/admin")
@@ -32,7 +38,10 @@ import org.springframework.web.bind.annotation.*;
 public class AdminController {
 
   private static final Logger log = LoggerFactory.getLogger(AdminController.class);
-  private static final String DEFAULT_RULESET_ID = "standalone-rules";
+
+  // Rule Set IDs
+  private static final String STANDALONE_RULESET_ID = "standalone-rules";
+  private static final String MULTI_FILTER_RULESET_ID = "multi-filter-rules";
 
   private final RateLimitRuleSetProvider ruleSetProvider;
   private final RateLimitRuleRepository ruleRepository;
@@ -43,65 +52,144 @@ public class AdminController {
     this.ruleRepository = ruleRepository;
   }
 
-  @PostMapping("/ruleset")
+  /**
+   * Create rule for /api/test endpoint.
+   *
+   * <p>Creates 1 rule: 10 requests per minute per IP
+   */
+  @PostMapping("/rules/standalone")
   @Operation(
-      summary = "Create default ruleset",
-      description = "Creates a rate limit ruleset with 10 requests per minute limit")
-  public ResponseEntity<Map<String, Object>> createRuleSet() {
-    log.info("Creating default ruleset: {}", DEFAULT_RULESET_ID);
+      summary = "Create standalone rule",
+      description =
+          "Creates a rate limit rule for /api/test endpoint. "
+              + "Limit: 10 requests per minute per IP. "
+              + "RuleSet: standalone-rules")
+  public ResponseEntity<Map<String, Object>> createStandaloneRule() {
+    log.info("Creating standalone rule for /api/test");
 
-    // Create a rule: 10 requests per minute per IP
-    // Using custom attributes to store metadata (e.g., tier, team, external references)
     RateLimitRule rule =
-        RateLimitRule.builder("rate-limit-rule-1")
-            .name("Standard Rate Limit")
+        RateLimitRule.builder("standalone-10-per-minute")
+            .name("Standalone API - 10 req/min")
             .enabled(true)
             .scope(LimitScope.PER_IP)
             .keyStrategyId("ip")
             .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
             .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).label("per-minute").build())
-            .ruleSetId(DEFAULT_RULESET_ID)
-            // Custom attributes for user-defined metadata
-            // These are stored in MongoDB and can be queried:
-            // db.rate_limit_rules.find({"attributes.tier": "standard"})
-            .attribute("tier", "standard")
-            .attribute("team", "platform")
-            .attribute("description", "Default rate limit for API endpoints")
+            .ruleSetId(STANDALONE_RULESET_ID)
+            .attribute("endpoint", "/api/test")
+            .attribute("description", "Standard rate limit for test API")
             .build();
 
-    // Save rule to MongoDB via repository
     ruleRepository.save(rule);
-    log.info("Rule saved to MongoDB: {}", rule.getId());
+    log.info("Standalone rule saved: {}", rule.getId());
 
     Map<String, Object> response = new HashMap<>();
     response.put("success", true);
-    response.put("ruleSetId", DEFAULT_RULESET_ID);
+    response.put("ruleSetId", STANDALONE_RULESET_ID);
     response.put("ruleId", rule.getId());
+    response.put("endpoint", "/api/test");
     response.put("limit", "10 requests per minute per IP");
-    response.put("attributes", rule.getAttributes());
     response.put("createdAt", Instant.now().toString());
 
     return ResponseEntity.ok(response);
   }
 
-  @GetMapping("/ruleset")
+  /**
+   * Create rules for /api/test/multi-filter endpoint.
+   *
+   * <p>Creates 2 rules:
+   *
+   * <ul>
+   *   <li>Rule 1: 10 requests per minute
+   *   <li>Rule 2: 20 requests per minute
+   * </ul>
+   *
+   * <p>Both rules apply - request is rejected if ANY rule is exceeded.
+   */
+  @PostMapping("/rules/multi-filter")
   @Operation(
-      summary = "Get current ruleset",
-      description = "Retrieves the current rate limit ruleset from MongoDB")
-  public ResponseEntity<Map<String, Object>> getRuleSet() {
-    Optional<RateLimitRuleSet> ruleSetOpt = ruleSetProvider.findById(DEFAULT_RULESET_ID);
+      summary = "Create multi-filter rules",
+      description =
+          "Creates 2 rate limit rules for /api/test/multi-filter endpoint. "
+              + "Rule 1: 10 requests per minute. "
+              + "Rule 2: 20 requests per minute. "
+              + "RuleSet: multi-filter-rules")
+  public ResponseEntity<Map<String, Object>> createMultiFilterRules() {
+    log.info("Creating multi-filter rules for /api/test/multi-filter");
+
+    // Rule 1: 10 requests per minute
+    RateLimitRule rule1 =
+        RateLimitRule.builder("multi-filter-10-per-minute")
+            .name("Multi-Filter API - Rule 1 (10 req/min)")
+            .enabled(true)
+            .scope(LimitScope.PER_IP)
+            .keyStrategyId("ip")
+            .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+            .addBand(
+                RateLimitBand.builder(Duration.ofMinutes(1), 10).label("rule1-per-minute").build())
+            .ruleSetId(MULTI_FILTER_RULESET_ID)
+            .attribute("endpoint", "/api/test/multi-filter")
+            .attribute("ruleNumber", "1")
+            .attribute("description", "First rate limit rule - 10 requests per minute")
+            .build();
+
+    // Rule 2: 20 requests per minute
+    RateLimitRule rule2 =
+        RateLimitRule.builder("multi-filter-20-per-minute")
+            .name("Multi-Filter API - Rule 2 (20 req/min)")
+            .enabled(true)
+            .scope(LimitScope.PER_IP)
+            .keyStrategyId("ip")
+            .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+            .addBand(
+                RateLimitBand.builder(Duration.ofMinutes(1), 20).label("rule2-per-minute").build())
+            .ruleSetId(MULTI_FILTER_RULESET_ID)
+            .attribute("endpoint", "/api/test/multi-filter")
+            .attribute("ruleNumber", "2")
+            .attribute("description", "Second rate limit rule - 20 requests per minute")
+            .build();
+
+    ruleRepository.save(rule1);
+    ruleRepository.save(rule2);
+    log.info("Multi-filter rules saved: {}, {}", rule1.getId(), rule2.getId());
+
+    Map<String, Object> response = new HashMap<>();
+    response.put("success", true);
+    response.put("ruleSetId", MULTI_FILTER_RULESET_ID);
+    response.put("endpoint", "/api/test/multi-filter");
+    response.put(
+        "rules",
+        Map.of(
+            "rule1",
+            Map.of("ruleId", rule1.getId(), "limit", "10 requests per minute"),
+            "rule2",
+            Map.of("ruleId", rule2.getId(), "limit", "20 requests per minute")));
+    response.put("note", "Both rules apply - request rejected if ANY rule exceeded");
+    response.put("createdAt", Instant.now().toString());
+
+    return ResponseEntity.ok(response);
+  }
+
+  /** Get rules for a specific rule set. */
+  @GetMapping("/rules/{ruleSetId}")
+  @Operation(
+      summary = "Get rules by rule set ID",
+      description = "Retrieves all rules for a specific rule set from MongoDB")
+  public ResponseEntity<Map<String, Object>> getRuleSet(@PathVariable String ruleSetId) {
+    Optional<RateLimitRuleSet> ruleSetOpt = ruleSetProvider.findById(ruleSetId);
 
     Map<String, Object> response = new HashMap<>();
     if (ruleSetOpt.isEmpty()) {
       response.put("exists", false);
-      response.put("message", "RuleSet not found. Call POST /api/admin/ruleset to create it.");
+      response.put("ruleSetId", ruleSetId);
+      response.put(
+          "message", "RuleSet not found. Create rules first using POST /api/admin/rules/*");
       return ResponseEntity.ok(response);
     }
 
     RateLimitRuleSet ruleSet = ruleSetOpt.get();
     response.put("exists", true);
-    response.put("id", ruleSet.getId());
-    response.put("description", ruleSet.getDescription());
+    response.put("ruleSetId", ruleSet.getId());
     response.put("rulesCount", ruleSet.getRules().size());
     response.put(
         "rules",
@@ -123,7 +211,6 @@ public class AdminController {
                                       "capacity", band.getCapacity(),
                                       "windowSeconds", band.getWindow().toSeconds()))
                           .toList());
-                  // Include custom attributes if present
                   if (!rule.getAttributes().isEmpty()) {
                     ruleMap.put("attributes", rule.getAttributes());
                   }
@@ -131,43 +218,6 @@ public class AdminController {
                 })
             .toList());
 
-    return ResponseEntity.ok(response);
-  }
-
-  @PostMapping("/sync")
-  @Operation(
-      summary = "Sync rules to Redis",
-      description = "Confirms that rules are synced and ready for rate limiting")
-  public ResponseEntity<Map<String, Object>> syncRules() {
-    log.info("Syncing rules to Redis...");
-
-    Optional<RateLimitRuleSet> ruleSetOpt = ruleSetProvider.findById(DEFAULT_RULESET_ID);
-
-    Map<String, Object> response = new HashMap<>();
-    if (ruleSetOpt.isEmpty()) {
-      response.put("success", false);
-      response.put("message", "RuleSet not found. Call POST /api/admin/ruleset first.");
-      return ResponseEntity.badRequest().body(response);
-    }
-
-    RateLimitRuleSet ruleSet = ruleSetOpt.get();
-
-    // In a real application, you might want to:
-    // 1. Pre-load rules into a cache
-    // 2. Initialize Redis token buckets
-    // 3. Warm up connections
-
-    response.put("success", true);
-    response.put("ruleSetId", ruleSet.getId());
-    response.put("rulesCount", ruleSet.getRules().size());
-    response.put("status", "synced");
-    response.put(
-        "message",
-        "Rules are ready for rate limiting. "
-            + "Rate limiter will use Redis for token bucket operations.");
-    response.put("syncedAt", Instant.now().toString());
-
-    log.info("Rules synced successfully: {} rules", ruleSet.getRules().size());
     return ResponseEntity.ok(response);
   }
 }

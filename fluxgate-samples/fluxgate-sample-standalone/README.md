@@ -5,9 +5,10 @@ A complete standalone application demonstrating FluxGate with direct MongoDB and
 ## Overview
 
 This sample showcases:
-- Direct MongoDB connection for rule storage (no external control-plane)
-- Direct Redis connection for rate limiting (no external data-plane)
-- `@EnableFluxgateFilter` for automatic HTTP filter integration
+- Direct MongoDB connection for rule storage
+- Direct Redis connection for rate limiting
+- **Multiple rate limit filters with different rule sets**
+- **RequestContext customization** for IP override and attribute injection
 - Runtime rule management via REST API
 
 ## Prerequisites
@@ -31,7 +32,6 @@ docker run -d --name redis -p 6379:6379 redis:latest
 ## Running the Application
 
 ```bash
-# From the project root directory
 ./mvnw spring-boot:run -pl fluxgate-samples/fluxgate-sample-standalone
 ```
 
@@ -39,35 +39,55 @@ The application starts on port **8085**.
 
 ## API Endpoints
 
+### Rule Management APIs
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/admin/ruleset` | Create rate limit ruleset (10 req/min) |
-| GET | `/api/admin/ruleset` | Get current ruleset configuration |
-| POST | `/api/admin/sync` | Sync rules to Redis |
-| GET | `/api/test` | Rate-limited test endpoint |
+| POST | `/api/admin/rules/standalone` | Create rule for /api/test (10 req/min) |
+| POST | `/api/admin/rules/multi-filter` | Create 2 rules for /api/test/multi-filter |
+| POST | `/api/admin/rules/all` | Create all rules at once |
+| GET | `/api/admin/rules/{ruleSetId}` | Get rules by rule set ID |
 
-## Usage Example
+### Test Endpoints
 
-### Step 1: Create Rate Limit Rules
+| Method | Endpoint | RuleSet | Limits |
+|--------|----------|---------|--------|
+| GET | `/api/test` | standalone-rules | 10 req/min (1 rule) |
+| GET | `/api/test/multi-filter` | multi-filter-rules | 10 req/min + 20 req/min (2 rules) |
+| GET | `/api/test/info` | - | Shows configuration |
+
+## Quick Start
+
+### Step 1: Create All Rules
 
 ```bash
-curl -X POST http://localhost:8085/api/admin/ruleset
+curl -X POST http://localhost:8085/api/admin/rules/all | jq
 ```
 
 Response:
 ```json
 {
   "success": true,
-  "ruleSetId": "standalone-rules",
-  "ruleId": "rate-limit-rule-1",
-  "limit": "10 requests per minute per IP"
+  "ruleSets": {
+    "standalone-rules": {
+      "endpoint": "/api/test",
+      "rules": 1,
+      "limit": "10 req/min"
+    },
+    "multi-filter-rules": {
+      "endpoint": "/api/test/multi-filter",
+      "rules": 2,
+      "limits": "10 req/min + 20 req/min"
+    }
+  },
+  "totalRules": 3
 }
 ```
 
-### Step 2: Test Rate Limiting
+### Step 2: Test Standalone Endpoint (10 req/min)
 
 ```bash
-# Send 12 requests
+# Send 12 requests - first 10 succeed, last 2 get 429
 for i in {1..12}; do
   echo -n "Request $i: "
   curl -s -o /dev/null -w "%{http_code}" http://localhost:8085/api/test
@@ -75,49 +95,104 @@ for i in {1..12}; do
 done
 ```
 
-Expected output:
+Expected:
 ```
-Request 1: 200
-Request 2: 200
-...
-Request 10: 200
-Request 11: 429
-Request 12: 429
+Request 1-10: 200
+Request 11-12: 429
 ```
 
-### Step 3: Check Current Rules
+### Step 3: Test Multi-Filter Endpoint (10 req/min + 20 req/min)
 
 ```bash
-curl http://localhost:8085/api/admin/ruleset | jq
+# Send 12 requests - rule1 (10 req/min) will trigger first
+for i in {1..12}; do
+  echo -n "Request $i: "
+  curl -s -o /dev/null -w "%{http_code}" http://localhost:8085/api/test/multi-filter
+  echo ""
+done
+```
+
+Expected (rule1 triggers at 11th request):
+```
+Request 1-10: 200
+Request 11-12: 429
+```
+
+Note: Both rules apply. Since rule1 (10 req/min) is stricter than rule2 (20 req/min), rule1 triggers first.
+
+### Step 4: Check Configuration
+
+```bash
+curl http://localhost:8085/api/test/info | jq
 ```
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                 Standalone Application (8085)                   │
+│                 Servlet Filter Chain                            │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │              @EnableFluxgateFilter                       │   │
-│  │  ┌───────────────────────────────────────────────────┐  │   │
-│  │  │         FluxgateRateLimitFilter                   │  │   │
-│  │  │                    │                               │  │   │
-│  │  │         StandaloneRateLimitHandler                │  │   │
-│  │  └───────────────────────────────────────────────────┘  │   │
-│  └─────────────────────────────────────────────────────────┘   │
+│  Order=1  multiFilterApiFilter                                  │
+│           └─ /api/test/multi-filter/** → "multi-filter-rules"   │
+│              (2 rules: 10 req/min + 20 req/min)                 │
 │                          │                                      │
-│            ┌─────────────┴─────────────┐                       │
-│            │                           │                        │
-│            ▼                           ▼                        │
-│  ┌──────────────────┐       ┌──────────────────┐               │
-│  │     MongoDB      │       │      Redis       │               │
-│  │  (Rule Storage)  │       │ (Token Bucket)   │               │
-│  │                  │       │                  │               │
-│  │  rate_limit_rules│       │  Lua Scripts     │               │
-│  └──────────────────┘       └──────────────────┘               │
+│  Order=2  apiFilter      ▼                                      │
+│           └─ /api/test/** → "standalone-rules"                  │
+│              (1 rule: 10 req/min)                               │
+│              ⚠️  excludes: /api/test/multi-filter/**            │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+### Important: Excluding Overlapping URL Patterns
+
+When using multiple filters with overlapping URL patterns, you **MUST** exclude the more specific pattern from the broader filter to prevent double rate limiting.
+
+```java
+// apiFilter covers /api/test/** but MUST exclude /api/test/multi-filter/**
+new String[] {"/api/test/**"},              // includePatterns
+new String[] {"/api/test/multi-filter/**"}, // excludePatterns - REQUIRED!
+```
+
+**Without exclusion**, a request to `/api/test/multi-filter` would be rate-limited by BOTH filters:
+
+1. `multiFilterApiFilter` (order=1) → applies `multi-filter-rules` (2 rules)
+2. `apiFilter` (order=2) → applies `standalone-rules` (1 rule) - **UNINTENDED!**
+
+This would result in **3 rules** being applied instead of the intended **2 rules**.
+
+## Rule Configuration
+
+| Rule Set | Rule ID | Limit | Endpoint |
+|----------|---------|-------|----------|
+| standalone-rules | standalone-10-per-minute | 10 req/min | /api/test |
+| multi-filter-rules | multi-filter-10-per-minute | 10 req/min | /api/test/multi-filter |
+| multi-filter-rules | multi-filter-20-per-minute | 20 req/min | /api/test/multi-filter |
+
+## RequestContext Customization
+
+Customize request context before rate limiting:
+
+```java
+@Bean
+public RequestContextCustomizer requestContextCustomizer() {
+    return (builder, request) -> {
+        // Override client IP from proxy header
+        String realIp = request.getHeader("X-Real-IP");
+        if (realIp != null) {
+            builder.clientIp(realIp);
+        }
+
+        // Add custom attributes
+        builder.attribute("tenantId", request.getHeader("X-Tenant-Id"));
+
+        // Remove sensitive headers before logging
+        builder.getHeaders().remove("Authorization");
+
+        return builder;
+    };
+}
 ```
 
 ## Configuration
@@ -132,81 +207,20 @@ fluxgate:
   mongodb:
     uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
+    event-collection: rate_limit_events
+    ddl-auto: create
   redis:
     uri: redis://localhost:6379
 ```
 
-### Docker Profile
-
-For Docker Compose environments:
-
-```yaml
-spring:
-  config:
-    activate:
-      on-profile: docker
-
-fluxgate:
-  mongodb:
-    uri: mongodb://fluxgate:fluxgate123@mongodb:27017/fluxgate?authSource=admin
-  redis:
-    uri: redis://redis:6379
-```
-
-## Key Components
-
-### StandaloneApplication.java
-
-```java
-@SpringBootApplication
-@EnableFluxgateFilter(
-    handler = StandaloneRateLimitHandler.class,
-    ruleSetId = "standalone-rules",
-    includePatterns = {"/api/test", "/api/test/**"},
-    excludePatterns = {"/api/admin/**", "/swagger-ui/**", "/v3/api-docs/**"}
-)
-public class StandaloneApplication {
-    public static void main(String[] args) {
-        SpringApplication.run(StandaloneApplication.class, args);
-    }
-}
-```
-
-### StandaloneRateLimitHandler.java
-
-Custom handler that:
-1. Looks up rules from MongoDB via `RateLimitRuleSetProvider`
-2. Applies rate limiting via Redis using `RedisRateLimiter`
-3. Returns rate limit response to the filter
-
-### FluxgateConfig.java
-
-Configuration beans for:
-- MongoDB client and collection
-- Redis connection and token bucket store
-- Rule repository and provider
-- Key resolver (IP-based)
-
 ## Swagger UI
 
-Access the API documentation at:
 ```
 http://localhost:8085/swagger-ui.html
 ```
-
-## Differences from Other Samples
-
-| Feature | Standalone | Filter | Redis | Mongo |
-|---------|:----------:|:------:|:-----:|:-----:|
-| Direct MongoDB | ✅ | ❌ | ❌ | ✅ |
-| Direct Redis | ✅ | ❌ | ✅ | ❌ |
-| HTTP Filter | ✅ | ✅ | ✅ | ❌ |
-| Rule Management API | ✅ | ❌ | ❌ | ✅ |
-| Self-contained | ✅ | ❌ | ❌ | ❌ |
 
 ## Learn More
 
 - [FluxGate Samples Overview](../README.md)
 - [FluxGate Core](../../fluxgate-core/README.md)
 - [Redis Rate Limiter](../../fluxgate-redis-ratelimiter/README.md)
-- [MongoDB Adapter](../../fluxgate-mongo-adapter/README.md)

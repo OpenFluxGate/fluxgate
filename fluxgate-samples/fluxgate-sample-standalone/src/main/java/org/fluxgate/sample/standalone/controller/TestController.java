@@ -17,10 +17,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Test API that is rate-limited by @EnableFluxgateFilter.
+ * Test API demonstrating multiple rate limit filters.
  *
- * <p>This endpoint is limited to 10 requests per minute per IP address. The rate limit is enforced
- * by the FluxgateRateLimitFilter.
+ * <p>Endpoints:
+ *
+ * <ul>
+ *   <li>/api/test - Uses "standalone-rules" (10 req/min)
+ *   <li>/api/test/multi-filter - Uses "multi-filter-rules" (5 req/sec + 20 req/min)
+ * </ul>
  */
 @RestController
 @RequestMapping("/api/test")
@@ -28,50 +32,116 @@ import org.springframework.web.bind.annotation.RestController;
 public class TestController {
 
   private static final Logger log = LoggerFactory.getLogger(TestController.class);
-  private final AtomicLong requestCounter = new AtomicLong(0);
+  private final AtomicLong standaloneCounter = new AtomicLong(0);
+  private final AtomicLong multiFilterCounter = new AtomicLong(0);
 
+  /**
+   * Standard test endpoint.
+   *
+   * <p>Rate limit: 10 requests per minute per IP (standalone-rules)
+   */
   @GetMapping
   @Operation(
-      summary = "Rate-limited test endpoint",
+      summary = "Standard rate-limited endpoint",
       description =
-          "This endpoint is rate-limited to 10 requests per minute per IP. "
-              + "Make sure to call POST /api/admin/ruleset first to set up the rules.")
+          "Rate-limited to 10 requests per minute per IP. "
+              + "Uses 'standalone-rules' rule set. "
+              + "Call POST /api/admin/rules/standalone first to create rules.")
   @ApiResponses({
     @ApiResponse(responseCode = "200", description = "Request allowed"),
     @ApiResponse(responseCode = "429", description = "Rate limit exceeded")
   })
   public ResponseEntity<Map<String, Object>> test(HttpServletRequest request) {
-    long count = requestCounter.incrementAndGet();
+    long count = standaloneCounter.incrementAndGet();
     String clientIp = getClientIp(request);
 
-    log.info("Test API called - Request #{} from IP: {}", count, clientIp);
+    log.info("[standalone] Request #{} from IP: {}", count, clientIp);
 
     Map<String, Object> response = new HashMap<>();
     response.put("success", true);
-    response.put("message", "Request successful!");
+    response.put("endpoint", "/api/test");
+    response.put("ruleSetId", "standalone-rules");
+    response.put("limit", "10 req/min");
     response.put("requestNumber", count);
     response.put("clientIp", clientIp);
     response.put("timestamp", Instant.now().toString());
-    response.put("note", "This endpoint is rate-limited to 10 requests per minute per IP.");
 
     return ResponseEntity.ok(response);
   }
 
+  /**
+   * Multi-filter test endpoint.
+   *
+   * <p>Rate limits (both rules apply - rejected if ANY rule exceeded):
+   *
+   * <ul>
+   *   <li>Rule 1: 10 requests per minute
+   *   <li>Rule 2: 20 requests per minute
+   * </ul>
+   */
+  @GetMapping("/multi-filter")
+  @Operation(
+      summary = "Multi-rule rate-limited endpoint",
+      description =
+          "Rate-limited by 2 rules: 10 req/min (rule1) + 20 req/min (rule2). "
+              + "Both rules apply - rejected if ANY rule exceeded. "
+              + "Uses 'multi-filter-rules' rule set. "
+              + "Call POST /api/admin/rules/multi-filter first to create rules.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Request allowed"),
+    @ApiResponse(responseCode = "429", description = "Rate limit exceeded")
+  })
+  public ResponseEntity<Map<String, Object>> multiFilterTest(HttpServletRequest request) {
+    long count = multiFilterCounter.incrementAndGet();
+    String clientIp = getClientIp(request);
+
+    log.info("[multi-filter] Request #{} from IP: {}", count, clientIp);
+
+    Map<String, Object> response = new HashMap<>();
+    response.put("success", true);
+    response.put("endpoint", "/api/test/multi-filter");
+    response.put("ruleSetId", "multi-filter-rules");
+    response.put("limits", Map.of("rule1", "10 req/min", "rule2", "20 req/min"));
+    response.put("note", "Both rules apply - rejected if ANY rule exceeded");
+    response.put("requestNumber", count);
+    response.put("clientIp", clientIp);
+    response.put("timestamp", Instant.now().toString());
+
+    return ResponseEntity.ok(response);
+  }
+
+  /** Get rate limit configuration info. */
   @GetMapping("/info")
   @Operation(
       summary = "Get rate limit info",
-      description = "Returns information about the rate limiting configuration")
+      description = "Returns information about all rate limiting configurations")
   public ResponseEntity<Map<String, Object>> info() {
     Map<String, Object> response = new HashMap<>();
-    response.put("endpoint", "/api/test");
     response.put(
-        "rateLimit",
+        "endpoints",
         Map.of(
-            "requests", 10,
-            "window", "1 minute",
-            "scope", "per IP address"));
-    response.put("totalRequestsReceived", requestCounter.get());
-    response.put("note", "Rate limit headers (X-RateLimit-*) are included in responses");
+            "/api/test",
+            Map.of(
+                "ruleSetId",
+                "standalone-rules",
+                "limit",
+                "10 req/min",
+                "requests",
+                standaloneCounter.get()),
+            "/api/test/multi-filter",
+            Map.of(
+                "ruleSetId",
+                "multi-filter-rules",
+                "limits",
+                Map.of("rule1", "10 req/min", "rule2", "20 req/min"),
+                "requests",
+                multiFilterCounter.get())));
+    response.put(
+        "setup",
+        Map.of(
+            "standalone", "POST /api/admin/rules/standalone",
+            "multiFilter", "POST /api/admin/rules/multi-filter",
+            "all", "POST /api/admin/rules/all"));
 
     return ResponseEntity.ok(response);
   }
