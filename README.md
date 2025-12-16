@@ -16,7 +16,11 @@ English | [한국어](README.ko.md)
 - **Multi-Band Support** - Multiple rate limit tiers (e.g., 100/sec + 1000/min + 10000/hour)
 - **Dynamic Rule Management** - Store and update rules in MongoDB without restart
 - **Spring Boot Auto-Configuration** - Zero-config setup with sensible defaults
-- **Flexible Key Strategies** - Rate limit by IP, User ID, API Key, or custom keys
+- **LimitScope-based Key Resolution** - Rate limit by IP, User ID, API Key, or custom composite keys
+- **Composite Key Support** - Combine multiple identifiers (e.g., IP + User ID) for fine-grained control
+- **WAIT_FOR_REFILL Policy** - Wait for token refill instead of immediate rejection
+- **RequestContext Customization** - Override client IP, add custom attributes before rate limiting
+- **Multiple Filters Support** - Configure multiple filters with different priorities via Java Config
 - **Production-Safe Design** - Uses Redis server time (no clock drift), integer arithmetic only
 - **HTTP API Mode** - Centralized rate limiting service via REST API
 - **Pluggable Architecture** - Easy to extend with custom handlers and stores
@@ -93,21 +97,21 @@ English | [한국어](README.ko.md)
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot-starter</artifactId>
-    <version>0.2.0</version>
+    <version>0.3.0</version>
 </dependency>
 
 <!-- For Redis-backed rate limiting -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
-    <version>0.2.0</version>
+    <version>0.3.0</version>
 </dependency>
 
 <!-- For MongoDB rule management (optional) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
-    <version>0.2.0</version>
+    <version>0.3.0</version>
 </dependency>
 ```
 
@@ -238,6 +242,9 @@ curl http://localhost:8083/api/hello
 | `fluxgate.ratelimit.default-rule-set-id` | `default` | Default rule set ID |
 | `fluxgate.ratelimit.include-patterns` | `[/api/*]` | URL patterns to rate limit |
 | `fluxgate.ratelimit.exclude-patterns` | `[]` | URL patterns to exclude |
+| `fluxgate.ratelimit.wait-for-refill.enabled` | `false` | Enable WAIT_FOR_REFILL policy |
+| `fluxgate.ratelimit.wait-for-refill.max-wait-time-ms` | `5000` | Max wait time in milliseconds |
+| `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits` | `100` | Max concurrent waiting requests |
 | `fluxgate.api.url` | - | External rate limit API URL |
 | `fluxgate.metrics.enabled` | `true` | Enable Prometheus/Micrometer metrics |
 
@@ -269,15 +276,87 @@ fluxgate:
 RateLimitRule rule = RateLimitRule.builder("api-rule")
     .name("API Rate Limit")
     .enabled(true)
-    .scope(LimitScope.PER_IP)
-    .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+    .scope(LimitScope.PER_IP)  // GLOBAL, PER_IP, PER_USER, PER_API_KEY, or CUSTOM
+    .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)  // or WAIT_FOR_REFILL
     .addBand(RateLimitBand.builder(Duration.ofSeconds(1), 10)
         .label("10-per-second")
         .build())
     .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100)
         .label("100-per-minute")
         .build())
+    .ruleSetId("api-limits")
+    .attribute("tier", "standard")  // Custom attributes for tracking
     .build();
+```
+
+### LimitScope Options
+
+| LimitScope | Key Source | Description |
+|------------|------------|-------------|
+| `GLOBAL` | `"global"` | Single bucket for all requests |
+| `PER_IP` | `RequestContext.clientIp` | One bucket per IP address |
+| `PER_USER` | `RequestContext.userId` | One bucket per user (set via header) |
+| `PER_API_KEY` | `RequestContext.apiKey` | One bucket per API key |
+| `CUSTOM` | `attributes.get(keyStrategyId)` | Custom key from RequestContext attributes |
+
+### Composite Key Example (IP + User)
+
+For fine-grained rate limiting by IP and User combination:
+
+```java
+// Rule with CUSTOM scope
+RateLimitRule rule = RateLimitRule.builder("composite-rule")
+    .name("IP+User Rate Limit")
+    .scope(LimitScope.CUSTOM)
+    .keyStrategyId("ipUser")  // Looks up context.attributes.get("ipUser")
+    .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).build())
+    .build();
+
+// RequestContextCustomizer builds the composite key
+@Bean
+public RequestContextCustomizer requestContextCustomizer() {
+    return (builder, request) -> {
+        String userId = request.getHeader("X-User-Id");
+        String clientIp = request.getRemoteAddr();
+
+        // Build composite key: "192.168.1.100:user-123"
+        String compositeKey = userId != null ? clientIp + ":" + userId : clientIp;
+        builder.attribute("ipUser", compositeKey);
+
+        return builder;
+    };
+}
+```
+
+### RequestContext Customization
+
+```java
+@Bean
+public RequestContextCustomizer requestContextCustomizer() {
+    return (builder, request) -> {
+        // Set userId for PER_USER scope
+        String userId = request.getHeader("X-User-Id");
+        if (userId != null) {
+            builder.userId(userId);
+        }
+
+        // Set apiKey for PER_API_KEY scope
+        String apiKey = request.getHeader("X-API-Key");
+        if (apiKey != null) {
+            builder.apiKey(apiKey);
+        }
+
+        // Override client IP from Cloudflare header
+        String cfIp = request.getHeader("CF-Connecting-IP");
+        if (cfIp != null) {
+            builder.clientIp(cfIp);
+        }
+
+        // Add tenant info for CUSTOM scope with keyStrategyId="tenantId"
+        builder.attribute("tenantId", request.getHeader("X-Tenant-Id"));
+        return builder;
+    };
+}
 ```
 
 ## Observability

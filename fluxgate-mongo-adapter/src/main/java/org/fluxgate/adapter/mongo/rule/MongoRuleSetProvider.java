@@ -39,8 +39,8 @@ public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
   /**
    * Creates a MongoRuleSetProvider without metrics recording.
    *
-   * @param ruleRepository repository for rate limit rules
-   * @param keyResolver resolver for generating rate limit keys
+   * @param ruleRepository repository for fetching rate limit rules
+   * @param keyResolver resolver for generating rate limit keys from request context
    */
   public MongoRuleSetProvider(RateLimitRuleRepository ruleRepository, KeyResolver keyResolver) {
     this(ruleRepository, keyResolver, null);
@@ -49,9 +49,9 @@ public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
   /**
    * Creates a MongoRuleSetProvider with optional metrics recording.
    *
-   * @param ruleRepository repository for rate limit rules
-   * @param keyResolver resolver for generating rate limit keys
-   * @param metricsRecorder optional recorder for metrics (null to disable)
+   * @param ruleRepository repository for fetching rate limit rules
+   * @param keyResolver resolver for generating rate limit keys from request context
+   * @param metricsRecorder optional recorder for logging rate limit events (can be null)
    */
   public MongoRuleSetProvider(
       RateLimitRuleRepository ruleRepository,

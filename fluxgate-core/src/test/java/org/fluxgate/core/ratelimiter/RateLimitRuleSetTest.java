@@ -35,7 +35,7 @@ class RateLimitRuleSetTest {
   }
 
   private KeyResolver createKeyResolver() {
-    return context -> RateLimitKey.of(context.getClientIp());
+    return (context, rule) -> RateLimitKey.of(context.getClientIp());
   }
 
   private RateLimitMetricsRecorder createMetricsRecorder() {
@@ -308,19 +308,17 @@ class RateLimitRuleSetTest {
     void keyResolver_shouldResolveKeyFromContext() {
       // given
       String clientIp = "10.0.0.1";
-      KeyResolver resolver = context -> RateLimitKey.of(context.getClientIp());
+      KeyResolver resolver = (context, rule) -> RateLimitKey.of(context.getClientIp());
 
+      RateLimitRule rule = createRule("rule-1");
       RateLimitRuleSet ruleSet =
-          RateLimitRuleSet.builder("test-set")
-              .rules(List.of(createRule("rule-1")))
-              .keyResolver(resolver)
-              .build();
+          RateLimitRuleSet.builder("test-set").rules(List.of(rule)).keyResolver(resolver).build();
 
       RequestContext context =
           RequestContext.builder().clientIp(clientIp).endpoint("/api/test").method("GET").build();
 
       // when
-      RateLimitKey resolvedKey = ruleSet.getKeyResolver().resolve(context);
+      RateLimitKey resolvedKey = ruleSet.getKeyResolver().resolve(context, rule);
 
       // then
       assertEquals(clientIp, resolvedKey.value());
@@ -330,11 +328,12 @@ class RateLimitRuleSetTest {
     @DisplayName("keyResolver should handle different key strategies")
     void keyResolver_shouldHandleDifferentStrategies() {
       // given - API key strategy
-      KeyResolver apiKeyResolver = context -> RateLimitKey.of(context.getApiKey());
+      KeyResolver apiKeyResolver = (context, rule) -> RateLimitKey.of(context.getApiKey());
 
+      RateLimitRule rule = createRule("rule-1");
       RateLimitRuleSet apiKeySet =
           RateLimitRuleSet.builder("api-key-set")
-              .rules(List.of(createRule("rule-1")))
+              .rules(List.of(rule))
               .keyResolver(apiKeyResolver)
               .build();
 
@@ -346,7 +345,7 @@ class RateLimitRuleSetTest {
               .build();
 
       // when
-      RateLimitKey resolvedKey = apiKeySet.getKeyResolver().resolve(context);
+      RateLimitKey resolvedKey = apiKeySet.getKeyResolver().resolve(context, rule);
 
       // then
       assertEquals("my-api-key-123", resolvedKey.value());

@@ -4,6 +4,9 @@ import java.util.Map;
 import org.fluxgate.core.handler.FluxgateRateLimitHandler;
 import org.fluxgate.spring.annotation.EnableFluxgateFilter;
 import org.fluxgate.spring.filter.FluxgateRateLimitFilter;
+import org.fluxgate.spring.filter.RequestContextCustomizer;
+import org.fluxgate.spring.properties.FluxgateProperties;
+import org.fluxgate.spring.properties.FluxgateProperties.WaitForRefillProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.NoSuchBeanDefinitionException;
@@ -12,6 +15,7 @@ import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
@@ -51,6 +55,7 @@ import org.springframework.util.StringUtils;
 @Configuration
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @ConditionalOnClass(name = "jakarta.servlet.Filter")
+@EnableConfigurationProperties(FluxgateProperties.class)
 @Role(BeanDefinition.ROLE_INFRASTRUCTURE)
 public class FluxgateFilterAutoConfiguration {
 
@@ -59,13 +64,15 @@ public class FluxgateFilterAutoConfiguration {
   /**
    * Creates the FluxgateRateLimitFilter.
    *
-   * <p>Reads configuration from {@link EnableFluxgateFilter} annotation.
+   * <p>Reads configuration from {@link EnableFluxgateFilter} annotation and FluxgateProperties.
    */
   @Bean
   @ConditionalOnMissingBean(FluxgateRateLimitFilter.class)
   public FluxgateRateLimitFilter fluxgateRateLimitFilter(
       ApplicationContext applicationContext,
-      ObjectProvider<FluxgateRateLimitHandler> handlerProvider) {
+      ObjectProvider<FluxgateRateLimitHandler> handlerProvider,
+      ObjectProvider<RequestContextCustomizer> customizerProvider,
+      FluxgateProperties properties) {
 
     // Find the annotation
     EnableFluxgateFilter annotation = findEnableFluxgateFilterAnnotation(applicationContext);
@@ -85,11 +92,52 @@ public class FluxgateFilterAutoConfiguration {
     String[] includePatterns = annotation.includePatterns();
     String[] excludePatterns = annotation.excludePatterns();
 
+    // Get WAIT_FOR_REFILL configuration from properties
+    WaitForRefillProperties waitConfig = properties.getRatelimit().getWaitForRefill();
+
+    // Get optional RequestContextCustomizer (can be null)
+    RequestContextCustomizer contextCustomizer = resolveContextCustomizer(customizerProvider);
+
     log.info("Creating FluxgateRateLimitFilter");
     log.info("  Handler: {}", handler.getClass().getSimpleName());
     log.info("  Rule set ID: {}", StringUtils.hasText(ruleSetId) ? ruleSetId : "(not set)");
+    if (contextCustomizer != null) {
+      log.info("  RequestContext customizer: {}", contextCustomizer.getClass().getSimpleName());
+    }
 
-    return new FluxgateRateLimitFilter(handler, ruleSetId, includePatterns, excludePatterns);
+    return new FluxgateRateLimitFilter(
+        handler,
+        ruleSetId,
+        includePatterns,
+        excludePatterns,
+        waitConfig.isEnabled(),
+        waitConfig.getMaxWaitTimeMs(),
+        waitConfig.getMaxConcurrentWaits(),
+        contextCustomizer);
+  }
+
+  /**
+   * Resolves RequestContextCustomizer beans. If multiple customizers are registered, they are
+   * combined in order.
+   */
+  private RequestContextCustomizer resolveContextCustomizer(
+      ObjectProvider<RequestContextCustomizer> customizerProvider) {
+    RequestContextCustomizer[] customizers =
+        customizerProvider.orderedStream().toArray(RequestContextCustomizer[]::new);
+
+    if (customizers.length == 0) {
+      return null;
+    } else if (customizers.length == 1) {
+      return customizers[0];
+    } else {
+      // Combine multiple customizers
+      log.info("Combining {} RequestContextCustomizers", customizers.length);
+      RequestContextCustomizer combined = customizers[0];
+      for (int i = 1; i < customizers.length; i++) {
+        combined = combined.andThen(customizers[i]);
+      }
+      return combined;
+    }
   }
 
   /** Registers the FluxgateRateLimitFilter with the servlet container. */
