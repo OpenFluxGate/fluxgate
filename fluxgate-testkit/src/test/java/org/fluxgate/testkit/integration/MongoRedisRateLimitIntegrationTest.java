@@ -21,8 +21,7 @@ import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
-import org.fluxgate.core.key.KeyResolver;
-import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.key.LimitScopeKeyResolver;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.redis.RedisRateLimiter;
@@ -97,9 +96,8 @@ class MongoRedisRateLimitIntegrationTest {
 
     ruleRepository = new MongoRateLimitRuleRepository(ruleCollection);
 
-    // KeyResolver for PER_IP: extracts client IP from RequestContext
-    KeyResolver ipKeyResolver = context -> new RateLimitKey(context.getClientIp());
-    ruleSetProvider = new MongoRuleSetProvider(ruleRepository, ipKeyResolver);
+    // KeyResolver: uses LimitScopeKeyResolver for scope-based key resolution
+    ruleSetProvider = new MongoRuleSetProvider(ruleRepository, new LimitScopeKeyResolver());
 
     // 2. Setup Redis
     System.out.println("Connecting to Redis: " + REDIS_URI);

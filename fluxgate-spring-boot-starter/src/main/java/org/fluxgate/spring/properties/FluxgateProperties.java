@@ -352,6 +352,10 @@ public class FluxgateProperties {
     /** Enable rate limit response headers. X-RateLimit-Limit, X-RateLimit-Remaining, etc. */
     private boolean includeHeaders = true;
 
+    /** WAIT_FOR_REFILL policy configuration. */
+    @NestedConfigurationProperty
+    private WaitForRefillProperties waitForRefill = new WaitForRefillProperties();
+
     public boolean isEnabled() {
       return enabled;
     }
@@ -440,6 +444,14 @@ public class FluxgateProperties {
     public boolean isDenyWhenRuleMissing() {
       return missingRuleBehavior == MissingRuleBehavior.DENY;
     }
+
+    public WaitForRefillProperties getWaitForRefill() {
+      return waitForRefill;
+    }
+
+    public void setWaitForRefill(WaitForRefillProperties waitForRefill) {
+      this.waitForRefill = waitForRefill;
+    }
   }
 
   /** Behavior when no matching rate limit rule is found. */
@@ -448,6 +460,69 @@ public class FluxgateProperties {
     ALLOW,
     /** Deny the request (strict mode, fail-closed). */
     DENY
+  }
+
+  /**
+   * Configuration for WAIT_FOR_REFILL policy.
+   *
+   * <p>When a rule has OnLimitExceedPolicy.WAIT_FOR_REFILL, the filter will wait for tokens to
+   * become available instead of immediately rejecting the request.
+   *
+   * <p>Example configuration:
+   *
+   * <pre>
+   * fluxgate:
+   *   ratelimit:
+   *     waitForRefill:
+   *       enabled: true
+   *       maxWaitTimeMs: 5000
+   *       maxConcurrentWaits: 100
+   * </pre>
+   */
+  public static class WaitForRefillProperties {
+
+    /**
+     * Enable WAIT_FOR_REFILL behavior. When false, requests exceeding the limit are immediately
+     * rejected even if the rule has WAIT_FOR_REFILL policy.
+     */
+    private boolean enabled = false;
+
+    /**
+     * Maximum time to wait for token refill in milliseconds. If the required wait time exceeds this
+     * value, the request is rejected immediately. Default: 5000ms (5 seconds).
+     */
+    private long maxWaitTimeMs = 5000;
+
+    /**
+     * Maximum number of concurrent waiting requests. Uses a semaphore to limit how many requests
+     * can wait at the same time. This prevents thread pool exhaustion. When exceeded, requests are
+     * rejected immediately. Default: 100.
+     */
+    private int maxConcurrentWaits = 100;
+
+    public boolean isEnabled() {
+      return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+      this.enabled = enabled;
+    }
+
+    public long getMaxWaitTimeMs() {
+      return maxWaitTimeMs;
+    }
+
+    public void setMaxWaitTimeMs(long maxWaitTimeMs) {
+      this.maxWaitTimeMs = maxWaitTimeMs;
+    }
+
+    public int getMaxConcurrentWaits() {
+      return maxConcurrentWaits;
+    }
+
+    public void setMaxConcurrentWaits(int maxConcurrentWaits) {
+      this.maxConcurrentWaits = maxConcurrentWaits;
+    }
   }
 
   /** Metrics configuration for Prometheus/Micrometer integration. */

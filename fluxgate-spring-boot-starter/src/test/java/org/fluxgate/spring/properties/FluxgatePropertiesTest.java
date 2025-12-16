@@ -161,6 +161,34 @@ class FluxgatePropertiesTest {
   }
 
   @Test
+  void shouldSetWaitForRefillProperties() {
+    FluxgateProperties properties = new FluxgateProperties();
+    FluxgateProperties.RateLimitProperties rateLimit = properties.getRatelimit();
+    FluxgateProperties.WaitForRefillProperties waitForRefill = rateLimit.getWaitForRefill();
+
+    // Default values
+    assertThat(waitForRefill.isEnabled()).isFalse();
+    assertThat(waitForRefill.getMaxWaitTimeMs()).isEqualTo(5000);
+    assertThat(waitForRefill.getMaxConcurrentWaits()).isEqualTo(100);
+
+    // Set custom values
+    waitForRefill.setEnabled(true);
+    waitForRefill.setMaxWaitTimeMs(10000);
+    waitForRefill.setMaxConcurrentWaits(50);
+
+    assertThat(waitForRefill.isEnabled()).isTrue();
+    assertThat(waitForRefill.getMaxWaitTimeMs()).isEqualTo(10000);
+    assertThat(waitForRefill.getMaxConcurrentWaits()).isEqualTo(50);
+
+    // Set via parent
+    FluxgateProperties.WaitForRefillProperties newWaitForRefill =
+        new FluxgateProperties.WaitForRefillProperties();
+    newWaitForRefill.setEnabled(false);
+    rateLimit.setWaitForRefill(newWaitForRefill);
+    assertThat(rateLimit.getWaitForRefill().isEnabled()).isFalse();
+  }
+
+  @Test
   void shouldHaveDefaultMissingRuleBehavior() {
     FluxgateProperties properties = new FluxgateProperties();
     FluxgateProperties.RateLimitProperties rateLimit = properties.getRatelimit();
@@ -220,38 +248,89 @@ class FluxgatePropertiesTest {
   }
 
   @Test
+  void shouldSetActuatorProperties() {
+    FluxgateProperties properties = new FluxgateProperties();
+    FluxgateProperties.ActuatorProperties actuator = properties.getActuator();
+    FluxgateProperties.ActuatorProperties.HealthProperties health = actuator.getHealth();
+
+    // Default values
+    assertThat(health.isEnabled()).isTrue();
+
+    // Set custom values
+    health.setEnabled(false);
+    assertThat(health.isEnabled()).isFalse();
+
+    // Set health properties via setter
+    FluxgateProperties.ActuatorProperties.HealthProperties newHealth =
+        new FluxgateProperties.ActuatorProperties.HealthProperties();
+    newHealth.setEnabled(true);
+    actuator.setHealth(newHealth);
+    assertThat(actuator.getHealth().isEnabled()).isTrue();
+  }
+
+  @Test
   void shouldSetMetricsProperties() {
     FluxgateProperties properties = new FluxgateProperties();
     FluxgateProperties.MetricsProperties metrics = properties.getMetrics();
 
-    // Test defaults
+    // Default values
     assertThat(metrics.isEnabled()).isTrue();
     assertThat(metrics.isIncludeEndpoint()).isTrue();
 
-    // Test setters
+    // Set custom values
     metrics.setEnabled(false);
     metrics.setIncludeEndpoint(false);
 
     assertThat(metrics.isEnabled()).isFalse();
     assertThat(metrics.isIncludeEndpoint()).isFalse();
+
+    // Set via parent
+    FluxgateProperties.MetricsProperties newMetrics = new FluxgateProperties.MetricsProperties();
+    newMetrics.setEnabled(true);
+    properties.setMetrics(newMetrics);
+    assertThat(properties.getMetrics().isEnabled()).isTrue();
+
+    // Set actuator via parent
+    FluxgateProperties.ActuatorProperties newActuator = new FluxgateProperties.ActuatorProperties();
+    properties.setActuator(newActuator);
+    assertThat(properties.getActuator()).isNotNull();
   }
 
   @Test
-  void shouldSetActuatorProperties() {
+  void shouldSetRedisClusterProperties() {
     FluxgateProperties properties = new FluxgateProperties();
-    FluxgateProperties.ActuatorProperties actuator = properties.getActuator();
+    FluxgateProperties.RedisProperties redis = properties.getRedis();
 
-    // Test defaults
-    assertThat(actuator.getHealth()).isNotNull();
-    assertThat(actuator.getHealth().isEnabled()).isTrue();
+    // Test mode
+    redis.setMode("cluster");
+    assertThat(redis.getMode()).isEqualTo("cluster");
+    assertThat(redis.getEffectiveMode()).isEqualTo("cluster");
+    assertThat(redis.isClusterMode()).isTrue();
 
-    // Test setters
-    FluxgateProperties.ActuatorProperties.HealthProperties health =
-        new FluxgateProperties.ActuatorProperties.HealthProperties();
-    health.setEnabled(false);
-    actuator.setHealth(health);
+    // Test standalone mode
+    redis.setMode("standalone");
+    assertThat(redis.getEffectiveMode()).isEqualTo("standalone");
+    assertThat(redis.isClusterMode()).isFalse();
 
-    assertThat(actuator.getHealth().isEnabled()).isFalse();
+    // Test auto mode with single URI
+    redis.setMode("auto");
+    redis.setUri("redis://localhost:6379");
+    assertThat(redis.getEffectiveMode()).isEqualTo("standalone");
+
+    // Test auto mode with multiple URIs (comma-separated)
+    redis.setUri("redis://node1:6379,redis://node2:6379");
+    assertThat(redis.getEffectiveMode()).isEqualTo("cluster");
+
+    // Test timeout
+    redis.setTimeoutMs(10000);
+    assertThat(redis.getTimeoutMs()).isEqualTo(10000);
+  }
+
+  @Test
+  void shouldHaveCorrectDdlAutoValues() {
+    // Test all enum values
+    assertThat(FluxgateProperties.DdlAuto.VALIDATE.name()).isEqualTo("VALIDATE");
+    assertThat(FluxgateProperties.DdlAuto.CREATE.name()).isEqualTo("CREATE");
   }
 
   @Test

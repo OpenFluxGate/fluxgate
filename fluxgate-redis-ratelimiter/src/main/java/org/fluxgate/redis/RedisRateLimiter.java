@@ -62,10 +62,6 @@ public class RedisRateLimiter implements RateLimiter {
       throw new IllegalArgumentException("permits must be > 0");
     }
 
-    // Resolve the rate limit key for this request
-    RateLimitKey logicalKey = ruleSet.getKeyResolver().resolve(context);
-    Objects.requireNonNull(logicalKey, "resolved RateLimitKey must not be null");
-
     // Get rules from the rule set
     List<RateLimitRule> rules = ruleSet.getRules();
     if (rules == null || rules.isEmpty()) {
@@ -74,18 +70,20 @@ public class RedisRateLimiter implements RateLimiter {
     }
 
     // ========================================================================
-    // Multi-Band Rate Limiting
+    // Multi-Rule Rate Limiting with Per-Rule Key Resolution
     // ========================================================================
-    // For rules with multiple bands (e.g., 10/sec AND 100/min):
-    // - Check each band independently
-    // - If ANY band rejects, the entire request is rejected
-    // - All bands must allow for the request to succeed
+    // Each rule can have a different LimitScope (PER_IP, PER_USER, PER_API_KEY, etc.)
+    // The KeyResolver resolves the appropriate key based on the rule's scope.
     //
-    // NOTE: This is a simplified version. For production, consider using
-    // an atomic multi-band Lua script to prevent race conditions between bands.
+    // Example:
+    // - Rule 1 (PER_IP): key = "192.168.1.100"
+    // - Rule 2 (PER_USER): key = "user-123"
+    //
+    // Both rules are checked independently, and if ANY rule rejects, the request is rejected.
     // ========================================================================
 
     RateLimitRule matchedRule = null;
+    RateLimitKey matchedKey = null;
     long minRemainingTokens = Long.MAX_VALUE;
     long maxNanosToWait = 0;
     long resetTimeMillis = 0;
@@ -100,6 +98,11 @@ public class RedisRateLimiter implements RateLimiter {
       if (bands == null || bands.isEmpty()) {
         continue;
       }
+
+      // Resolve the rate limit key for THIS rule based on its LimitScope
+      RateLimitKey logicalKey = ruleSet.getKeyResolver().resolve(context, rule);
+      Objects.requireNonNull(
+          logicalKey, "resolved RateLimitKey must not be null for rule: " + rule.getId());
 
       // Check each band in the rule
       for (RateLimitBand band : bands) {
@@ -119,7 +122,13 @@ public class RedisRateLimiter implements RateLimiter {
           anyRejected = true;
           maxNanosToWait = Math.max(maxNanosToWait, state.nanosToWaitForRefill());
           matchedRule = rule; // Track which rule caused the rejection
+          matchedKey = logicalKey;
         }
+      }
+
+      // Track the key for logging (use first rule's key if not rejected)
+      if (matchedKey == null) {
+        matchedKey = logicalKey;
       }
     }
 
@@ -127,11 +136,11 @@ public class RedisRateLimiter implements RateLimiter {
     RateLimitResult result;
     if (anyRejected) {
       // At least one band rejected - entire request is rejected
-      result = RateLimitResult.rejected(logicalKey, matchedRule, maxNanosToWait);
+      result = RateLimitResult.rejected(matchedKey, matchedRule, maxNanosToWait);
 
       log.debug(
           "Rate limit REJECTED for key {}: matched rule {}, wait {} ns",
-          logicalKey.value(),
+          matchedKey != null ? matchedKey.value() : "unknown",
           matchedRule != null ? matchedRule.getId() : "unknown",
           maxNanosToWait);
     } else {
@@ -141,12 +150,12 @@ public class RedisRateLimiter implements RateLimiter {
 
       result =
           RateLimitResult.allowed(
-              logicalKey, matchedRule, minRemainingTokens, 0L // No wait time since allowed
+              matchedKey, matchedRule, minRemainingTokens, 0L // No wait time since allowed
               );
 
       log.debug(
           "Rate limit ALLOWED for key {}: matched rule {}, {} tokens remaining",
-          logicalKey.value(),
+          matchedKey != null ? matchedKey.value() : "unknown",
           matchedRule.getId(),
           minRemainingTokens);
     }

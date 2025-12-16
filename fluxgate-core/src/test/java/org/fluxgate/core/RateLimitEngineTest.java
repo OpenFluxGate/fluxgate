@@ -122,7 +122,7 @@ class RateLimitEngineTest {
     private StubRuleSetProvider(String expectedId) {
       this.expectedId = expectedId;
 
-      KeyResolver keyResolver = context -> RateLimitKey.of("stub");
+      KeyResolver keyResolver = (context, rule) -> RateLimitKey.of("stub");
 
       RateLimitBand dummyBand =
           RateLimitBand.builder(java.time.Duration.ofMinutes(1), 100).label("dummy-band").build();

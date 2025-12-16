@@ -63,7 +63,7 @@ class Bucket4jRateLimiterTest {
   @Test
   void should_allow_within_capacity_and_reject_after() {
     // given
-    KeyResolver keyResolver = ctx -> ipKey(ctx.getClientIp());
+    KeyResolver keyResolver = (ctx, rule) -> ipKey(ctx.getClientIp());
     RateLimitRuleSet ruleSet = createSimpleRuleSet(keyResolver, null);
 
     RequestContext ctx = createRequestContext("127.0.0.1", "user-1");
@@ -88,7 +88,7 @@ class Bucket4jRateLimiterTest {
   @Test
   void differentKeysShouldHaveIndependentBuckets() {
     // given
-    KeyResolver keyResolver = ctx -> ipKey(ctx.getClientIp());
+    KeyResolver keyResolver = (ctx, rule) -> ipKey(ctx.getClientIp());
     RateLimitRuleSet ruleSet = createSimpleRuleSet(keyResolver, null);
 
     RequestContext ip1 = createRequestContext("10.0.0.1", "user-1");
@@ -122,7 +122,7 @@ class Bucket4jRateLimiterTest {
           lastRecorded.set(result);
         };
 
-    KeyResolver keyResolver = ctx -> ipKey(ctx.getClientIp());
+    KeyResolver keyResolver = (ctx, rule) -> ipKey(ctx.getClientIp());
     RateLimitRuleSet ruleSet = createSimpleRuleSet(keyResolver, recorder);
     RequestContext ctx = createRequestContext("192.168.0.10", "user-123");
 

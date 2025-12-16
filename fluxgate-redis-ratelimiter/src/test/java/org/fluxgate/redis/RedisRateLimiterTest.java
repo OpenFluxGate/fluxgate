@@ -10,8 +10,7 @@ import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
-import org.fluxgate.core.key.KeyResolver;
-import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.key.LimitScopeKeyResolver;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.redis.config.RedisRateLimiterConfig;
@@ -124,10 +123,8 @@ class RedisRateLimiterTest {
             .ruleSetId(ruleSetId)
             .build();
 
-    KeyResolver ipKeyResolver = context -> new RateLimitKey(context.getClientIp());
-
     return RateLimitRuleSet.builder(ruleSetId)
-        .keyResolver(ipKeyResolver)
+        .keyResolver(new LimitScopeKeyResolver())
         .rules(List.of(rule))
         .build();
   }

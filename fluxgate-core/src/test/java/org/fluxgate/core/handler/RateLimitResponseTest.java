@@ -2,6 +2,7 @@ package org.fluxgate.core.handler;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -235,6 +236,104 @@ class RateLimitResponseTest {
 
       // then
       assertEquals(-1, response.getRetryAfterMillis());
+    }
+  }
+
+  // ==================== OnLimitExceedPolicy Tests ====================
+
+  @Nested
+  @DisplayName("OnLimitExceedPolicy Tests")
+  class OnLimitExceedPolicyTests {
+
+    @Test
+    @DisplayName("rejected() without policy should default to REJECT_REQUEST")
+    void rejected_shouldDefaultToRejectRequestPolicy() {
+      // given / when
+      RateLimitResponse response = RateLimitResponse.rejected(1000);
+
+      // then
+      assertEquals(OnLimitExceedPolicy.REJECT_REQUEST, response.getOnLimitExceedPolicy());
+    }
+
+    @Test
+    @DisplayName("rejected() with WAIT_FOR_REFILL policy should set policy correctly")
+    void rejected_shouldSetWaitForRefillPolicy() {
+      // given / when
+      RateLimitResponse response =
+          RateLimitResponse.rejected(1000, OnLimitExceedPolicy.WAIT_FOR_REFILL);
+
+      // then
+      assertEquals(OnLimitExceedPolicy.WAIT_FOR_REFILL, response.getOnLimitExceedPolicy());
+    }
+
+    @Test
+    @DisplayName("rejected() with REJECT_REQUEST policy should set policy correctly")
+    void rejected_shouldSetRejectRequestPolicy() {
+      // given / when
+      RateLimitResponse response =
+          RateLimitResponse.rejected(1000, OnLimitExceedPolicy.REJECT_REQUEST);
+
+      // then
+      assertEquals(OnLimitExceedPolicy.REJECT_REQUEST, response.getOnLimitExceedPolicy());
+    }
+
+    @Test
+    @DisplayName("allowed() should have null policy")
+    void allowed_shouldHaveNullPolicy() {
+      // given / when
+      RateLimitResponse response = RateLimitResponse.allowed(100, 0);
+
+      // then
+      assertNull(response.getOnLimitExceedPolicy());
+    }
+  }
+
+  // ==================== shouldWaitForRefill Tests ====================
+
+  @Nested
+  @DisplayName("shouldWaitForRefill Tests")
+  class ShouldWaitForRefillTests {
+
+    @Test
+    @DisplayName("shouldWaitForRefill() should return true for rejected with WAIT_FOR_REFILL")
+    void shouldWaitForRefill_shouldReturnTrueForWaitPolicy() {
+      // given / when
+      RateLimitResponse response =
+          RateLimitResponse.rejected(1000, OnLimitExceedPolicy.WAIT_FOR_REFILL);
+
+      // then
+      assertTrue(response.shouldWaitForRefill());
+    }
+
+    @Test
+    @DisplayName("shouldWaitForRefill() should return false for rejected with REJECT_REQUEST")
+    void shouldWaitForRefill_shouldReturnFalseForRejectPolicy() {
+      // given / when
+      RateLimitResponse response =
+          RateLimitResponse.rejected(1000, OnLimitExceedPolicy.REJECT_REQUEST);
+
+      // then
+      assertFalse(response.shouldWaitForRefill());
+    }
+
+    @Test
+    @DisplayName("shouldWaitForRefill() should return false for allowed response")
+    void shouldWaitForRefill_shouldReturnFalseForAllowedResponse() {
+      // given / when
+      RateLimitResponse response = RateLimitResponse.allowed(100, 0);
+
+      // then
+      assertFalse(response.shouldWaitForRefill());
+    }
+
+    @Test
+    @DisplayName("shouldWaitForRefill() should return false for rejected without policy (null)")
+    void shouldWaitForRefill_shouldReturnFalseForNullPolicy() {
+      // given / when - using the simple rejected() which defaults to REJECT_REQUEST
+      RateLimitResponse response = RateLimitResponse.rejected(1000);
+
+      // then
+      assertFalse(response.shouldWaitForRefill());
     }
   }
 

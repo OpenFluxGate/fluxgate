@@ -17,7 +17,11 @@
 - **다중 대역 지원** - 여러 Rate Limit 계층 지원 (예: 100/초 + 1000/분 + 10000/시간)
 - **동적 규칙 관리** - 재시작 없이 MongoDB에서 규칙 저장 및 업데이트
 - **Spring Boot 자동 설정** - 합리적인 기본값으로 무설정 시작 가능
-- **유연한 키 전략** - IP, 사용자 ID, API 키 또는 커스텀 키로 Rate Limit 적용
+- **LimitScope 기반 키 해석** - IP, 사용자 ID, API 키 또는 복합 키로 Rate Limit 적용
+- **복합 키 지원** - 여러 식별자 조합 (예: IP + 사용자 ID) 으로 세밀한 제어 가능
+- **WAIT_FOR_REFILL 정책** - 즉시 거부 대신 토큰 리필 대기
+- **RequestContext 커스터마이징** - Rate Limiting 전에 클라이언트 IP 재정의, 커스텀 속성 추가
+- **다중 필터 지원** - Java Config를 통해 다양한 우선순위의 여러 필터 구성
 - **프로덕션 안전 설계** - Redis 서버 시간 사용 (클럭 드리프트 없음), 정수 연산만 사용
 - **HTTP API 모드** - REST API를 통한 중앙 집중식 Rate Limiting 서비스
 - **플러그인 아키텍처** - 커스텀 핸들러 및 저장소로 쉽게 확장 가능
@@ -240,6 +244,9 @@ curl http://localhost:8083/api/hello
 | `fluxgate.ratelimit.default-rule-set-id` | `default`                              | 기본 규칙 세트 ID                                |
 | `fluxgate.ratelimit.include-patterns`    | `[/api/*]`                             | Rate Limit을 적용할 URL 패턴                     |
 | `fluxgate.ratelimit.exclude-patterns`    | `[]`                                   | 제외할 URL 패턴                                 |
+| `fluxgate.ratelimit.wait-for-refill.enabled` | `false`                            | WAIT_FOR_REFILL 정책 활성화                     |
+| `fluxgate.ratelimit.wait-for-refill.max-wait-time-ms` | `5000`                   | 최대 대기 시간 (밀리초)                             |
+| `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits` | `100`               | 최대 동시 대기 요청 수                              |
 | `fluxgate.api.url`                       | -                                      | 외부 Rate Limit API URL                      |
 | `fluxgate.metrics.enabled`               | `true`                                 | Prometheus/Micrometer 메트릭 활성화             |
 
@@ -271,15 +278,87 @@ fluxgate:
 RateLimitRule rule = RateLimitRule.builder("api-rule")
         .name("API Rate Limit")
         .enabled(true)
-        .scope(LimitScope.PER_IP)
-        .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+        .scope(LimitScope.PER_IP)  // GLOBAL, PER_IP, PER_USER, PER_API_KEY, CUSTOM
+        .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)  // 또는 WAIT_FOR_REFILL
         .addBand(RateLimitBand.builder(Duration.ofSeconds(1), 10)
                 .label("초당 10회")
                 .build())
         .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100)
                 .label("분당 100회")
                 .build())
+        .ruleSetId("api-limits")
+        .attribute("tier", "standard")  // 추적용 커스텀 속성
         .build();
+```
+
+### LimitScope 옵션
+
+| LimitScope | 키 소스 | 설명 |
+|------------|--------|------|
+| `GLOBAL` | `"global"` | 모든 요청이 단일 버킷 공유 |
+| `PER_IP` | `RequestContext.clientIp` | IP 주소별 버킷 |
+| `PER_USER` | `RequestContext.userId` | 사용자별 버킷 (헤더로 설정) |
+| `PER_API_KEY` | `RequestContext.apiKey` | API 키별 버킷 |
+| `CUSTOM` | `attributes.get(keyStrategyId)` | RequestContext 속성에서 커스텀 키 |
+
+### 복합 키 예제 (IP + 사용자)
+
+IP와 사용자 조합으로 세밀한 Rate Limiting:
+
+```java
+// CUSTOM scope 규칙
+RateLimitRule rule = RateLimitRule.builder("composite-rule")
+    .name("IP+User Rate Limit")
+    .scope(LimitScope.CUSTOM)
+    .keyStrategyId("ipUser")  // context.attributes.get("ipUser") 조회
+    .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).build())
+    .build();
+
+// RequestContextCustomizer로 복합 키 생성
+@Bean
+public RequestContextCustomizer requestContextCustomizer() {
+    return (builder, request) -> {
+        String userId = request.getHeader("X-User-Id");
+        String clientIp = request.getRemoteAddr();
+
+        // 복합 키 생성: "192.168.1.100:user-123"
+        String compositeKey = userId != null ? clientIp + ":" + userId : clientIp;
+        builder.attribute("ipUser", compositeKey);
+
+        return builder;
+    };
+}
+```
+
+### RequestContext 커스터마이징
+
+```java
+@Bean
+public RequestContextCustomizer requestContextCustomizer() {
+    return (builder, request) -> {
+        // PER_USER scope용 userId 설정
+        String userId = request.getHeader("X-User-Id");
+        if (userId != null) {
+            builder.userId(userId);
+        }
+
+        // PER_API_KEY scope용 apiKey 설정
+        String apiKey = request.getHeader("X-API-Key");
+        if (apiKey != null) {
+            builder.apiKey(apiKey);
+        }
+
+        // 프록시 헤더에서 클라이언트 IP 재정의
+        String realIp = request.getHeader("X-Real-IP");
+        if (realIp != null) {
+            builder.clientIp(realIp);
+        }
+
+        // keyStrategyId="tenantId"인 CUSTOM scope용 테넌트 정보
+        builder.attribute("tenantId", request.getHeader("X-Tenant-Id"));
+        return builder;
+    };
+}
 ```
 
 ## 관측성 (Observability)

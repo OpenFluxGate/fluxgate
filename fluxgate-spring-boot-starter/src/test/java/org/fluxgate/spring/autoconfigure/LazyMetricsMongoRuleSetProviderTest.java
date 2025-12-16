@@ -35,7 +35,7 @@ class LazyMetricsMongoRuleSetProviderTest {
 
   @BeforeEach
   void setUp() {
-    keyResolver = context -> new RateLimitKey("test-key");
+    keyResolver = (context, rule) -> new RateLimitKey("test-key");
     provider =
         new LazyMetricsMongoRuleSetProvider(ruleRepository, keyResolver, metricsRecorderProvider);
   }

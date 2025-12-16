@@ -407,6 +407,185 @@ fluxgate:
 
 ---
 
+## Multiple Filters (Java Config)
+
+For advanced use cases, you can configure multiple rate limit filters with different priorities using Java Config:
+
+```java
+@Configuration
+public class MultipleFiltersConfig {
+
+    @Bean
+    @Order(1)  // Higher priority (runs first)
+    public FilterRegistrationBean<FluxgateRateLimitFilter> apiRateLimitFilter(
+            FluxgateRateLimitHandler handler) {
+        FluxgateRateLimitFilter filter = new FluxgateRateLimitFilter(
+            handler,
+            "api-rules",                           // ruleSetId
+            new String[]{"/api/**"},               // includePatterns
+            new String[]{"/api/health"},           // excludePatterns
+            true,                                  // waitForRefillEnabled
+            5000,                                  // maxWaitTimeMs
+            100                                    // maxConcurrentWaits
+        );
+
+        FilterRegistrationBean<FluxgateRateLimitFilter> registration =
+            new FilterRegistrationBean<>(filter);
+        registration.setOrder(1);
+        registration.addUrlPatterns("/api/*");
+        return registration;
+    }
+
+    @Bean
+    @Order(2)  // Lower priority (runs after api filter)
+    public FilterRegistrationBean<FluxgateRateLimitFilter> adminRateLimitFilter(
+            FluxgateRateLimitHandler handler) {
+        FluxgateRateLimitFilter filter = new FluxgateRateLimitFilter(
+            handler,
+            "admin-rules",
+            new String[]{"/admin/**"},
+            new String[]{}
+        );
+
+        FilterRegistrationBean<FluxgateRateLimitFilter> registration =
+            new FilterRegistrationBean<>(filter);
+        registration.setOrder(2);
+        registration.addUrlPatterns("/admin/*");
+        return registration;
+    }
+}
+```
+
+### Filter Order in Spring Filter Chain
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Spring Filter Chain                          │
+├─────────────────────────────────────────────────────────────────┤
+│  Order: Integer.MIN_VALUE                                       │
+│  ├── CharacterEncodingFilter                                    │
+│  ├── FormContentFilter                                          │
+│                                                                 │
+│  Order: Integer.MIN_VALUE + 100  ← FluxgateRateLimitFilter     │
+│                                     (default order)             │
+│                                                                 │
+│  Order: -100                                                    │
+│  ├── RequestContextFilter                                       │
+│                                                                 │
+│  Order: 0 (default)                                             │
+│  ├── SecurityFilterChain (Spring Security)                      │
+│  ├── CorsFilter                                                 │
+│                                                                 │
+│  Order: Ordered.LOWEST_PRECEDENCE                               │
+│  └── Custom Filters                                             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Why high priority?** Rate limiting should run **before** authentication/authorization to:
+- Block malicious requests early (save resources)
+- Defend against DDoS attacks
+- Prevent unnecessary auth processing
+
+---
+
+## WAIT_FOR_REFILL Policy
+
+Instead of immediately rejecting requests when rate limit is exceeded, you can configure the filter to wait for token refill:
+
+```yaml
+fluxgate:
+  ratelimit:
+    filter-enabled: true
+    wait-for-refill:
+      enabled: true          # Enable wait mode
+      max-wait-time-ms: 5000 # Maximum wait time (5 seconds)
+      max-concurrent-waits: 100  # Limit concurrent waiting requests
+```
+
+### How it works
+
+1. When a request exceeds the rate limit with `WAIT_FOR_REFILL` policy
+2. Filter checks if wait time <= `max-wait-time-ms`
+3. Tries to acquire a semaphore permit (prevents thread pool exhaustion)
+4. Sleeps for the required time
+5. Retries the rate limit check
+6. Allows or rejects based on retry result
+
+```java
+// In RateLimitRule configuration
+RateLimitRule rule = RateLimitRule.builder("wait-rule")
+    .name("Wait for Refill Rule")
+    .onLimitExceedPolicy(OnLimitExceedPolicy.WAIT_FOR_REFILL)  // <-- Enable wait
+    // ... other config
+    .build();
+```
+
+---
+
+## RequestContext Customizer
+
+Customize the `RequestContext` before rate limiting evaluation:
+
+```java
+@Configuration
+public class FluxgateCustomConfig {
+
+    @Bean
+    public RequestContextCustomizer requestContextCustomizer() {
+        return (builder, request) -> {
+            // Override client IP from custom header (e.g., Cloudflare)
+            String cfIp = request.getHeader("CF-Connecting-IP");
+            if (cfIp != null) {
+                builder.clientIp(cfIp);
+            }
+
+            // Add custom attributes for rate limiting decisions
+            String tenantId = request.getHeader("X-Tenant-Id");
+            if (tenantId != null) {
+                builder.attribute("tenantId", tenantId);
+            }
+
+            // Remove sensitive headers before logging
+            builder.getHeaders().remove("Authorization");
+            builder.getHeaders().remove("Cookie");
+
+            return builder;
+        };
+    }
+}
+```
+
+### Combining Multiple Customizers
+
+```java
+@Configuration
+public class FluxgateCustomConfig {
+
+    @Bean
+    public RequestContextCustomizer cloudflareIpCustomizer() {
+        return (builder, request) -> {
+            String cfIp = request.getHeader("CF-Connecting-IP");
+            if (cfIp != null) {
+                builder.clientIp(cfIp);
+            }
+            return builder;
+        };
+    }
+
+    @Bean
+    public RequestContextCustomizer tenantCustomizer() {
+        return (builder, request) -> {
+            builder.attribute("tenantId", request.getHeader("X-Tenant-Id"));
+            return builder;
+        };
+    }
+}
+```
+
+Multiple `RequestContextCustomizer` beans are automatically combined in order.
+
+---
+
 ## Custom KeyResolver
 
 Override the default IP-based key resolver:

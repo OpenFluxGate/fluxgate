@@ -45,7 +45,7 @@ class MultiLevelRateLimitTest {
             .addBand(ipBand)
             .build();
 
-    KeyResolver ipResolver = ctx -> RateLimitKey.of("ip:" + ctx.getClientIp());
+    KeyResolver ipResolver = (ctx, r) -> RateLimitKey.of("ip:" + ctx.getClientIp());
 
     RateLimitRuleSet ipRuleSet =
         RateLimitRuleSet.builder("ip-limiter")
@@ -67,7 +67,7 @@ class MultiLevelRateLimitTest {
             .addBand(serviceBand)
             .build();
 
-    KeyResolver serviceResolver = ctx -> RateLimitKey.of("service:" + ctx.getApiKey());
+    KeyResolver serviceResolver = (ctx, r) -> RateLimitKey.of("service:" + ctx.getApiKey());
 
     RateLimitRuleSet serviceRuleSet =
         RateLimitRuleSet.builder("service-limiter")
@@ -140,7 +140,7 @@ class MultiLevelRateLimitTest {
         RateLimitBand.builder(Duration.ofMinutes(1), 5).label("IP-1min-5req").build();
 
     RateLimitRule ipRule = RateLimitRule.builder("ip-limit").addBand(ipBand).build();
-    KeyResolver ipResolver = ctx -> RateLimitKey.of("ip:" + ctx.getClientIp());
+    KeyResolver ipResolver = (ctx, r) -> RateLimitKey.of("ip:" + ctx.getClientIp());
 
     RateLimitRuleSet ipRuleSet =
         RateLimitRuleSet.builder("ip-limiter")
@@ -153,7 +153,7 @@ class MultiLevelRateLimitTest {
         RateLimitBand.builder(Duration.ofMinutes(10), 20).label("Service-10min-20req").build();
 
     RateLimitRule serviceRule = RateLimitRule.builder("service-limit").addBand(serviceBand).build();
-    KeyResolver serviceResolver = ctx -> RateLimitKey.of("service:" + ctx.getApiKey());
+    KeyResolver serviceResolver = (ctx, r) -> RateLimitKey.of("service:" + ctx.getApiKey());
 
     RateLimitRuleSet serviceRuleSet =
         RateLimitRuleSet.builder("service-limiter")
@@ -196,7 +196,7 @@ class MultiLevelRateLimitTest {
         RateLimitBand.builder(Duration.ofMinutes(1), 100).label("IP-1min-100req").build();
 
     RateLimitRule ipRule = RateLimitRule.builder("ip-limit").addBand(ipBand).build();
-    KeyResolver ipResolver = ctx -> RateLimitKey.of("ip:" + ctx.getClientIp());
+    KeyResolver ipResolver = (ctx, r) -> RateLimitKey.of("ip:" + ctx.getClientIp());
 
     RateLimitRuleSet ipRuleSet =
         RateLimitRuleSet.builder("ip-limiter")
@@ -211,7 +211,7 @@ class MultiLevelRateLimitTest {
             .build();
 
     RateLimitRule serviceRule = RateLimitRule.builder("service-limit").addBand(serviceBand).build();
-    KeyResolver serviceResolver = ctx -> RateLimitKey.of("service:" + ctx.getApiKey());
+    KeyResolver serviceResolver = (ctx, r) -> RateLimitKey.of("service:" + ctx.getApiKey());
 
     RateLimitRuleSet serviceRuleSet =
         RateLimitRuleSet.builder("service-limiter")

@@ -451,7 +451,7 @@ class MongoRuleSetProviderIntegrationTest {
   private static class TestKeyResolver implements KeyResolver {
 
     @Override
-    public RateLimitKey resolve(RequestContext context) {
+    public RateLimitKey resolve(RequestContext context, RateLimitRule rule) {
       return new RateLimitKey("test-key");
     }
   }

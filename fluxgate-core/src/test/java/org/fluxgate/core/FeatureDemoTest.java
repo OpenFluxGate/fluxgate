@@ -42,7 +42,7 @@ class FeatureDemoTest {
             .addBand(band)
             .build();
 
-    KeyResolver ipResolver = ctx -> RateLimitKey.of("ip:" + ctx.getClientIp());
+    KeyResolver ipResolver = (ctx, r) -> RateLimitKey.of("ip:" + ctx.getClientIp());
 
     RateLimitRuleSet ruleSet =
         RateLimitRuleSet.builder("ip-limiter")
@@ -83,7 +83,7 @@ class FeatureDemoTest {
             .addBand(band)
             .build();
 
-    KeyResolver apiKeyResolver = ctx -> RateLimitKey.of("apikey:" + ctx.getApiKey());
+    KeyResolver apiKeyResolver = (ctx, r) -> RateLimitKey.of("apikey:" + ctx.getApiKey());
 
     RateLimitRuleSet ruleSet =
         RateLimitRuleSet.builder("apikey-limiter")
@@ -130,7 +130,7 @@ class FeatureDemoTest {
     RateLimitRule rule =
         RateLimitRule.builder("multi-band").addBand(shortBand).addBand(longBand).build();
 
-    KeyResolver resolver = ctx -> RateLimitKey.of("user:" + ctx.getUserId());
+    KeyResolver resolver = (ctx, r) -> RateLimitKey.of("user:" + ctx.getUserId());
 
     RateLimitRuleSet ruleSet =
         RateLimitRuleSet.builder("multi-band-limiter")
@@ -171,7 +171,7 @@ class FeatureDemoTest {
     RateLimitRule rule =
         RateLimitRule.builder("user-limit").scope(LimitScope.PER_USER).addBand(band).build();
 
-    KeyResolver userResolver = ctx -> RateLimitKey.of("user:" + ctx.getUserId());
+    KeyResolver userResolver = (ctx, r) -> RateLimitKey.of("user:" + ctx.getUserId());
 
     RateLimitRuleSet ruleSet =
         RateLimitRuleSet.builder("user-limiter")
@@ -215,7 +215,7 @@ class FeatureDemoTest {
     RateLimitRule rule =
         RateLimitRule.builder("global-limit").scope(LimitScope.GLOBAL).addBand(band).build();
 
-    KeyResolver globalResolver = ctx -> RateLimitKey.of("global");
+    KeyResolver globalResolver = (ctx, r) -> RateLimitKey.of("global");
 
     RateLimitRuleSet ruleSet =
         RateLimitRuleSet.builder("global-limiter")
@@ -277,7 +277,7 @@ class FeatureDemoTest {
 
     RateLimitRule rule = RateLimitRule.builder("metric-test").addBand(band).build();
 
-    KeyResolver resolver = ctx -> RateLimitKey.of("ip:" + ctx.getClientIp());
+    KeyResolver resolver = (ctx, r) -> RateLimitKey.of("ip:" + ctx.getClientIp());
 
     RateLimitRuleSet ruleSet =
         RateLimitRuleSet.builder("metric-limiter")
@@ -312,7 +312,7 @@ class FeatureDemoTest {
 
     // Composite key strategy: region + userId
     KeyResolver customResolver =
-        ctx -> {
+        (ctx, r) -> {
           String region = (String) ctx.getAttributes().get("region");
           String userId = ctx.getUserId();
           return RateLimitKey.of(region + ":" + userId);
@@ -365,7 +365,7 @@ class FeatureDemoTest {
 
     RateLimitRule rule = RateLimitRule.builder("bulk-limit").addBand(band).build();
 
-    KeyResolver resolver = ctx -> RateLimitKey.of("user:" + ctx.getUserId());
+    KeyResolver resolver = (ctx, r) -> RateLimitKey.of("user:" + ctx.getUserId());
 
     RateLimitRuleSet ruleSet =
         RateLimitRuleSet.builder("bulk-limiter").rules(List.of(rule)).keyResolver(resolver).build();
@@ -403,7 +403,7 @@ class FeatureDemoTest {
 
     RateLimitRule rule = RateLimitRule.builder("wait-test").addBand(band).build();
 
-    KeyResolver resolver = ctx -> RateLimitKey.of("test");
+    KeyResolver resolver = (ctx, r) -> RateLimitKey.of("test");
 
     RateLimitRuleSet ruleSet =
         RateLimitRuleSet.builder("wait-limiter").rules(List.of(rule)).keyResolver(resolver).build();
@@ -437,7 +437,7 @@ class FeatureDemoTest {
     RateLimitRule rule =
         RateLimitRule.builder("info-test").name("Information Test Rule").addBand(band).build();
 
-    KeyResolver resolver = ctx -> RateLimitKey.of("test-key");
+    KeyResolver resolver = (ctx, r) -> RateLimitKey.of("test-key");
 
     RateLimitRuleSet ruleSet =
         RateLimitRuleSet.builder("info-limiter").rules(List.of(rule)).keyResolver(resolver).build();
