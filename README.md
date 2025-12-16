@@ -4,6 +4,7 @@
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build](https://github.com/OpenFluxGate/fluxgate/actions/workflows/maven-ci.yml/badge.svg)](https://github.com/OpenFluxGate/fluxgate/actions)
+[![Admin UI](https://img.shields.io/badge/Admin%20UI-FluxGate%20Studio-orange.svg)](https://github.com/OpenFluxGate/fluxgate-studio)
 
 English | [한국어](README.ko.md)
 
@@ -23,6 +24,8 @@ English | [한국어](README.ko.md)
 - **Production-Safe Design** - Uses Redis server time (no clock drift), integer arithmetic only
 - **HTTP API Mode** - Centralized rate limiting service via REST API
 - **Pluggable Architecture** - Easy to extend with custom handlers and stores
+- **Structured Logging** - JSON logging with correlation IDs for ELK/Splunk integration
+- **Prometheus Metrics** - Built-in Micrometer integration for monitoring and alerting
 
 ## Architecture
 
@@ -94,21 +97,21 @@ English | [한국어](README.ko.md)
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot-starter</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.3.0</version>
 </dependency>
 
 <!-- For Redis-backed rate limiting -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.3.0</version>
 </dependency>
 
 <!-- For MongoDB rule management (optional) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.3.0</version>
 </dependency>
 ```
 
@@ -228,9 +231,13 @@ curl http://localhost:8083/api/hello
 |----------|---------|-------------|
 | `fluxgate.redis.enabled` | `false` | Enable Redis rate limiter |
 | `fluxgate.redis.uri` | `redis://localhost:6379` | Redis connection URI |
+| `fluxgate.redis.mode` | `auto` | Redis mode: `standalone`, `cluster`, or `auto` (auto-detect) |
 | `fluxgate.mongo.enabled` | `false` | Enable MongoDB adapter |
-| `fluxgate.mongo.uri` | - | MongoDB connection URI |
-| `fluxgate.mongo.event-collection` | - | MongoDB collection for event logging |
+| `fluxgate.mongo.uri` | `mongodb://localhost:27017/fluxgate` | MongoDB connection URI |
+| `fluxgate.mongo.database` | `fluxgate` | MongoDB database name |
+| `fluxgate.mongo.rule-collection` | `rate_limit_rules` | Collection name for rate limit rules |
+| `fluxgate.mongo.event-collection` | - | Collection name for events (optional) |
+| `fluxgate.mongo.ddl-auto` | `validate` | DDL mode: `validate` or `create` |
 | `fluxgate.ratelimit.filter-enabled` | `false` | Enable rate limit filter |
 | `fluxgate.ratelimit.default-rule-set-id` | `default` | Default rule set ID |
 | `fluxgate.ratelimit.include-patterns` | `[/api/*]` | URL patterns to rate limit |
@@ -239,6 +246,29 @@ curl http://localhost:8083/api/hello
 | `fluxgate.ratelimit.wait-for-refill.max-wait-time-ms` | `5000` | Max wait time in milliseconds |
 | `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits` | `100` | Max concurrent waiting requests |
 | `fluxgate.api.url` | - | External rate limit API URL |
+| `fluxgate.metrics.enabled` | `true` | Enable Prometheus/Micrometer metrics |
+
+### MongoDB DDL Auto Mode
+
+The `fluxgate.mongo.ddl-auto` property controls how FluxGate handles MongoDB collections:
+
+| Mode | Description |
+|------|-------------|
+| `validate` | (Default) Validates that collections exist. Throws an error if missing. |
+| `create` | Automatically creates collections if they don't exist. |
+
+**Example configuration:**
+
+```yaml
+fluxgate:
+  mongo:
+    enabled: true
+    uri: mongodb://localhost:27017/fluxgate
+    database: fluxgate
+    rule-collection: my_rate_limit_rules    # Custom collection name
+    event-collection: my_rate_limit_events  # Optional: enable event logging
+    ddl-auto: create                        # Auto-create collections
+```
 
 ### Rate Limit Rule Configuration
 
@@ -329,6 +359,75 @@ public RequestContextCustomizer requestContextCustomizer() {
 }
 ```
 
+## Observability
+
+FluxGate provides comprehensive observability features out of the box.
+
+### Structured Logging
+
+FluxGate outputs JSON-formatted logs with correlation IDs for easy integration with log aggregation systems like ELK Stack or Splunk.
+
+```json
+{
+  "timestamp": "2025-01-15T10:30:45.123Z",
+  "level": "INFO",
+  "logger": "org.fluxgate.spring.filter.FluxgateRateLimitFilter",
+  "message": "Request completed",
+  "fluxgate.rule_set": "api-limits",
+  "fluxgate.rule_id": "rate-limit-rule-1",
+  "fluxgate.allowed": true,
+  "fluxgate.remaining_tokens": 9,
+  "fluxgate.client_ip": "192.168.1.100",
+  "correlation_id": "abc123-def456"
+}
+```
+
+Enable structured logging by including `logback-spring.xml` in your application:
+
+```xml
+<include resource="org/fluxgate/spring/logback-spring.xml"/>
+```
+
+### Prometheus Metrics
+
+FluxGate automatically exposes Micrometer-based metrics when `spring-boot-starter-actuator` is on the classpath.
+
+**Available Metrics:**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `fluxgate_requests_total` | Counter | Total rate limit requests by endpoint, method, and rule_set |
+| `fluxgate_tokens_remaining` | Gauge | Remaining tokens in the bucket |
+
+**Example Prometheus output:**
+
+```
+# HELP fluxgate_requests_total FluxGate rate limit counter
+# TYPE fluxgate_requests_total counter
+fluxgate_requests_total{endpoint="/api/test",method="GET",rule_set="api-limits"} 42.0
+
+# HELP fluxgate_tokens_remaining
+# TYPE fluxgate_tokens_remaining gauge
+fluxgate_tokens_remaining{endpoint="/api/test",rule_set="api-limits"} 8.0
+```
+
+**Configuration:**
+
+```yaml
+fluxgate:
+  metrics:
+    enabled: true  # default: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    prometheus:
+      enabled: true
+```
+
 ## Building from Source
 
 ```bash
@@ -365,13 +464,20 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
+## Related Projects
+
+| Project | Description |
+|---------|-------------|
+| [FluxGate Studio](https://github.com/OpenFluxGate/fluxgate-studio) | Web-based admin UI for managing rate limit rules |
+
 ## Roadmap
 
 - [ ] Sliding window rate limiting algorithm
-- [ ] Prometheus metrics integration
-- [ ] Redis Cluster support
+- [x] Prometheus metrics integration
+- [x] Redis Cluster support
+- [x] Structured JSON logging with correlation IDs
 - [ ] gRPC API support
-- [ ] Rate limit quota management UI
+- [x] Rate limit quota management UI ([FluxGate Studio](https://github.com/OpenFluxGate/fluxgate-studio))
 - [ ] Circuit breaker integration
 
 ## License

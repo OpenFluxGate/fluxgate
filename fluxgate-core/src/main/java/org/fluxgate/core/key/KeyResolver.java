@@ -18,8 +18,8 @@ import org.fluxgate.core.context.RequestContext;
  * </ul>
  *
  * <p>Users can customize the key resolution by providing their own {@link KeyResolver}
- * implementation and setting the appropriate values in {@link RequestContext} via {@link
- * org.fluxgate.spring.filter.RequestContextCustomizer}.
+ * implementation and setting the appropriate values in {@link RequestContext} via a
+ * RequestContextCustomizer (in fluxgate-spring-boot-starter module).
  */
 public interface KeyResolver {
 

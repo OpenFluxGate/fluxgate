@@ -1,5 +1,6 @@
 package org.fluxgate.spring.properties;
 
+import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
 
@@ -46,6 +47,9 @@ public class FluxgateProperties {
   /** Actuator configuration. */
   @NestedConfigurationProperty private ActuatorProperties actuator = new ActuatorProperties();
 
+  /** Rule reload configuration for hot reload support. */
+  @NestedConfigurationProperty private ReloadProperties reload = new ReloadProperties();
+
   public MongoProperties getMongo() {
     return mongo;
   }
@@ -84,6 +88,14 @@ public class FluxgateProperties {
 
   public void setActuator(ActuatorProperties actuator) {
     this.actuator = actuator;
+  }
+
+  public ReloadProperties getReload() {
+    return reload;
+  }
+
+  public void setReload(ReloadProperties reload) {
+    this.reload = reload;
   }
 
   // =========================================================================
@@ -305,6 +317,19 @@ public class FluxgateProperties {
     private String defaultRuleSetId;
 
     /**
+     * Behavior when no matching rule set is found.
+     *
+     * <ul>
+     *   <li>ALLOW - Allow the request (default, permissive mode)
+     *   <li>DENY - Deny the request (strict mode, fail-closed)
+     * </ul>
+     *
+     * <p>In production environments with strict security requirements, consider setting this to
+     * DENY to ensure all requests are rate-limited.
+     */
+    private MissingRuleBehavior missingRuleBehavior = MissingRuleBehavior.ALLOW;
+
+    /**
      * Filter order (lower = higher priority). Default is high priority to run before other filters.
      */
     private int filterOrder = Integer.MIN_VALUE + 100;
@@ -403,6 +428,23 @@ public class FluxgateProperties {
       this.includeHeaders = includeHeaders;
     }
 
+    public MissingRuleBehavior getMissingRuleBehavior() {
+      return missingRuleBehavior;
+    }
+
+    public void setMissingRuleBehavior(MissingRuleBehavior missingRuleBehavior) {
+      this.missingRuleBehavior = missingRuleBehavior;
+    }
+
+    /**
+     * Check if requests should be denied when no rule is found.
+     *
+     * @return true if missing rules should result in denial
+     */
+    public boolean isDenyWhenRuleMissing() {
+      return missingRuleBehavior == MissingRuleBehavior.DENY;
+    }
+
     public WaitForRefillProperties getWaitForRefill() {
       return waitForRefill;
     }
@@ -410,6 +452,14 @@ public class FluxgateProperties {
     public void setWaitForRefill(WaitForRefillProperties waitForRefill) {
       this.waitForRefill = waitForRefill;
     }
+  }
+
+  /** Behavior when no matching rate limit rule is found. */
+  public enum MissingRuleBehavior {
+    /** Allow the request to proceed (permissive mode). */
+    ALLOW,
+    /** Deny the request (strict mode, fail-closed). */
+    DENY
   }
 
   /**
@@ -532,5 +582,211 @@ public class FluxgateProperties {
         this.enabled = enabled;
       }
     }
+  }
+
+  /**
+   * Rule reload configuration for hot reload support.
+   *
+   * <p>Supports multiple strategies:
+   *
+   * <ul>
+   *   <li>AUTO - Automatically select best strategy (Pub/Sub if Redis available, else Polling)
+   *   <li>PUBSUB - Use Redis Pub/Sub for real-time notifications
+   *   <li>POLLING - Periodically check for changes
+   *   <li>NONE - Disable hot reload (always fetch fresh from provider)
+   * </ul>
+   *
+   * <pre>
+   * fluxgate:
+   *   reload:
+   *     enabled: true
+   *     strategy: AUTO
+   *     cache:
+   *       enabled: true
+   *       ttl: 5m
+   *       max-size: 1000
+   *     polling:
+   *       interval: 30s
+   *     pubsub:
+   *       channel: fluxgate:rule-reload
+   * </pre>
+   */
+  public static class ReloadProperties {
+
+    /** Enable rule hot reload feature. */
+    private boolean enabled = true;
+
+    /**
+     * Reload strategy to use.
+     *
+     * <ul>
+     *   <li>AUTO - Use Pub/Sub if Redis is available, otherwise use Polling
+     *   <li>PUBSUB - Use Redis Pub/Sub only
+     *   <li>POLLING - Use periodic polling only
+     *   <li>NONE - Disable caching and always fetch fresh rules
+     * </ul>
+     */
+    private ReloadStrategy strategy = ReloadStrategy.AUTO;
+
+    /** Cache configuration. */
+    private CacheProperties cache = new CacheProperties();
+
+    /** Polling strategy configuration. */
+    private PollingProperties polling = new PollingProperties();
+
+    /** Pub/Sub strategy configuration. */
+    private PubSubProperties pubsub = new PubSubProperties();
+
+    public boolean isEnabled() {
+      return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+      this.enabled = enabled;
+    }
+
+    public ReloadStrategy getStrategy() {
+      return strategy;
+    }
+
+    public void setStrategy(ReloadStrategy strategy) {
+      this.strategy = strategy;
+    }
+
+    public CacheProperties getCache() {
+      return cache;
+    }
+
+    public void setCache(CacheProperties cache) {
+      this.cache = cache;
+    }
+
+    public PollingProperties getPolling() {
+      return polling;
+    }
+
+    public void setPolling(PollingProperties polling) {
+      this.polling = polling;
+    }
+
+    public PubSubProperties getPubsub() {
+      return pubsub;
+    }
+
+    public void setPubsub(PubSubProperties pubsub) {
+      this.pubsub = pubsub;
+    }
+
+    /** Rule cache configuration. */
+    public static class CacheProperties {
+
+      /** Enable local caching of rules. */
+      private boolean enabled = true;
+
+      /** Time-to-live for cached rules. Rules will be refetched after this duration. */
+      private Duration ttl = Duration.ofMinutes(5);
+
+      /** Maximum number of rules to cache. */
+      private int maxSize = 1000;
+
+      public boolean isEnabled() {
+        return enabled;
+      }
+
+      public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+      }
+
+      public Duration getTtl() {
+        return ttl;
+      }
+
+      public void setTtl(Duration ttl) {
+        this.ttl = ttl;
+      }
+
+      public int getMaxSize() {
+        return maxSize;
+      }
+
+      public void setMaxSize(int maxSize) {
+        this.maxSize = maxSize;
+      }
+    }
+
+    /** Polling strategy configuration. */
+    public static class PollingProperties {
+
+      /** Interval between polling checks. */
+      private Duration interval = Duration.ofSeconds(30);
+
+      /** Initial delay before first poll. */
+      private Duration initialDelay = Duration.ofSeconds(10);
+
+      public Duration getInterval() {
+        return interval;
+      }
+
+      public void setInterval(Duration interval) {
+        this.interval = interval;
+      }
+
+      public Duration getInitialDelay() {
+        return initialDelay;
+      }
+
+      public void setInitialDelay(Duration initialDelay) {
+        this.initialDelay = initialDelay;
+      }
+    }
+
+    /** Pub/Sub strategy configuration. */
+    public static class PubSubProperties {
+
+      /** Redis channel name for reload notifications. */
+      private String channel = "fluxgate:rule-reload";
+
+      /** Retry subscription on failure. */
+      private boolean retryOnFailure = true;
+
+      /** Interval between retry attempts. */
+      private Duration retryInterval = Duration.ofSeconds(5);
+
+      public String getChannel() {
+        return channel;
+      }
+
+      public void setChannel(String channel) {
+        this.channel = channel;
+      }
+
+      public boolean isRetryOnFailure() {
+        return retryOnFailure;
+      }
+
+      public void setRetryOnFailure(boolean retryOnFailure) {
+        this.retryOnFailure = retryOnFailure;
+      }
+
+      public Duration getRetryInterval() {
+        return retryInterval;
+      }
+
+      public void setRetryInterval(Duration retryInterval) {
+        this.retryInterval = retryInterval;
+      }
+    }
+  }
+
+  /** Reload strategy options. */
+  public enum ReloadStrategy {
+    /** Automatically select best strategy based on available infrastructure. */
+    AUTO,
+    /** Use Redis Pub/Sub for real-time reload notifications. */
+    PUBSUB,
+    /** Use periodic polling to check for changes. */
+    POLLING,
+    /** Disable hot reload - always fetch fresh rules from provider. */
+    NONE
   }
 }

@@ -378,6 +378,117 @@ fluxgate:
     uri: redis://localhost:6379
 ```
 
+### Docker Profile
+
+For Docker Compose environments:
+
+```yaml
+spring:
+  config:
+    activate:
+      on-profile: docker
+
+fluxgate:
+  mongodb:
+    uri: mongodb://fluxgate:fluxgate123@mongodb:27017/fluxgate?authSource=admin
+  redis:
+    uri: redis://redis:6379
+```
+
+## Key Components
+
+### StandaloneApplication.java
+
+```java
+@SpringBootApplication
+@EnableFluxgateFilter(
+    handler = StandaloneRateLimitHandler.class,
+    ruleSetId = "standalone-rules",
+    includePatterns = {"/api/test", "/api/test/**"},
+    excludePatterns = {"/api/admin/**", "/swagger-ui/**", "/v3/api-docs/**"}
+)
+public class StandaloneApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(StandaloneApplication.class, args);
+    }
+}
+```
+
+### StandaloneRateLimitHandler.java
+
+Custom handler that:
+1. Looks up rules from MongoDB via `RateLimitRuleSetProvider`
+2. Applies rate limiting via Redis using `RedisRateLimiter`
+3. Returns rate limit response to the filter
+
+### FluxgateConfig.java
+
+Configuration beans for:
+- MongoDB client and collection
+- Redis connection and token bucket store
+- Rule repository and provider
+- Key resolver (IP-based)
+
+## Observability
+
+### Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `/actuator/health` | Application health with FluxGate component status |
+| `/actuator/prometheus` | Prometheus metrics endpoint |
+| `/actuator/metrics` | Spring Boot metrics |
+
+### Health Check
+
+```bash
+curl http://localhost:8085/actuator/health | jq
+```
+
+Response:
+```json
+{
+  "status": "UP",
+  "components": {
+    "fluxgate": {
+      "status": "UP",
+      "details": {
+        "mongo": {
+          "status": "UP",
+          "message": "MongoDB connection is healthy",
+          "details": {
+            "version": "7.0.5",
+            "connections.current": 5,
+            "connections.available": 51195,
+            "latencyMs": 2
+          }
+        },
+        "redis": {
+          "status": "UP",
+          "message": "Redis connection is healthy",
+          "details": {
+            "mode": "standalone",
+            "latencyMs": 1
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### Prometheus Metrics
+
+```bash
+curl http://localhost:8085/actuator/prometheus | grep fluxgate
+```
+
+Key metrics:
+- `fluxgate_requests_total` - Total rate limit requests
+- `fluxgate_requests_allowed_total` - Allowed requests
+- `fluxgate_requests_rejected_total` - Rejected requests (429)
+- `fluxgate_request_duration_seconds` - Request processing time
+
 ## Swagger UI
 
 ```

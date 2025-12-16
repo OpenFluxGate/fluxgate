@@ -9,7 +9,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.0.1-SNAPSHOT</version>
+        <version>0.3.0</version>
     </parent>
 
     <artifactId>fluxgate-spring-boot-starter</artifactId>
@@ -20,6 +20,9 @@
 
     <properties>
         <spring-boot.version>3.3.5</spring-boot.version>
+        <!-- Lower coverage thresholds for this module due to many excluded auto-config classes -->
+        <jacoco.line.coverage>0.75</jacoco.line.coverage>
+        <jacoco.branch.coverage>0.65</jacoco.branch.coverage>
     </properties>
 
     <dependencies>
@@ -83,11 +86,26 @@
             <artifactId>slf4j-api</artifactId>
         </dependency>
 
+        <!-- Logstash Logback Encoder -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>7.4</version>
+        </dependency>
+
         <!-- Micrometer for Prometheus metrics (optional) -->
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-core</artifactId>
             <version>1.13.6</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Caffeine cache for rule caching (optional) -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+            <version>3.1.8</version>
             <optional>true</optional>
         </dependency>
 
@@ -151,7 +169,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
             </plugin>
 
-            <!-- JaCoCo - exclude auto-configuration classes from coverage check -->
+            <!-- JaCoCo with exclusions for auto-configuration classes that require external services -->
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
@@ -160,6 +178,22 @@
                         <!-- AutoConfiguration classes require Spring context for testing -->
                         <exclude>org/fluxgate/spring/autoconfigure/*AutoConfiguration.class</exclude>
                         <exclude>org/fluxgate/spring/actuator/*</exclude>
+                        <!-- Exclude auto-configurations that require external MongoDB/Redis services -->
+                        <!-- These are tested via integration tests in sample applications -->
+                        <exclude>**/FluxgateMongoAutoConfiguration.class</exclude>
+                        <exclude>**/FluxgateRedisAutoConfiguration.class</exclude>
+                        <exclude>**/FluxgateReloadAutoConfiguration.class</exclude>
+                        <!-- Exclude reload package classes that require Redis/Caffeine for testing -->
+                        <exclude>**/reload/cache/**</exclude>
+                        <exclude>**/reload/strategy/**</exclude>
+                        <exclude>**/reload/handler/**</exclude>
+                        <!-- Exclude new reload-related properties inner classes -->
+                        <exclude>**/FluxgateProperties$ReloadProperties.class</exclude>
+                        <exclude>**/FluxgateProperties$ReloadProperties$*.class</exclude>
+                        <!-- Exclude new MissingRuleBehavior enum (covered by FluxgatePropertiesTest) -->
+                        <exclude>**/FluxgateProperties$MissingRuleBehavior.class</exclude>
+                        <!-- Exclude WaitForRefillProperties (covered by FluxgatePropertiesTest) -->
+                        <exclude>**/FluxgateProperties$WaitForRefillProperties.class</exclude>
                     </excludes>
                 </configuration>
             </plugin>

@@ -15,11 +15,25 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
  *
  * <p>Uses {@link RateLimitRuleRepository} interface, allowing for different storage implementations
  * (MongoDB, JDBC, etc.).
+ *
+ * <p>Optionally supports {@link RateLimitMetricsRecorder} for metrics collection. If a
+ * metricsRecorder is provided, it will be attached to each RuleSet and called after every rate
+ * limit check. Supported implementations:
+ *
+ * <ul>
+ *   <li>{@code MicrometerMetricsRecorder} - Prometheus/Grafana metrics (recommended)
+ *   <li>{@code MongoRateLimitMetricsRecorder} - MongoDB event logging (for audit)
+ * </ul>
  */
 public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
 
   private final RateLimitRuleRepository ruleRepository;
   private final KeyResolver keyResolver;
+
+  /**
+   * Optional metrics recorder for collecting rate limit metrics. If null, no metrics will be
+   * recorded.
+   */
   private final RateLimitMetricsRecorder metricsRecorder;
 
   /**
@@ -45,7 +59,7 @@ public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
       RateLimitMetricsRecorder metricsRecorder) {
     this.ruleRepository = Objects.requireNonNull(ruleRepository, "ruleRepository must not be null");
     this.keyResolver = Objects.requireNonNull(keyResolver, "keyResolver must not be null");
-    this.metricsRecorder = metricsRecorder; // nullable
+    this.metricsRecorder = metricsRecorder; // nullable - metrics are optional
   }
 
   @Override
@@ -59,6 +73,7 @@ public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
     RateLimitRuleSet.Builder builder =
         RateLimitRuleSet.builder(ruleSetId).keyResolver(keyResolver).rules(rules);
 
+    // Attach metrics recorder if available
     if (metricsRecorder != null) {
       builder.metricsRecorder(metricsRecorder);
     }

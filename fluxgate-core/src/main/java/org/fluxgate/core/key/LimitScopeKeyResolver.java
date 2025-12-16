@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
  * <p>This resolver uses the following mapping:
  *
  * <table border="1">
+ *   <caption>LimitScope to Key Mapping</caption>
  *   <tr><th>LimitScope</th><th>Key Source</th><th>Example Key</th></tr>
  *   <tr><td>GLOBAL</td><td>ruleSetId</td><td>"global"</td></tr>
  *   <tr><td>PER_IP</td><td>RequestContext.clientIp</td><td>"192.168.1.100"</td></tr>

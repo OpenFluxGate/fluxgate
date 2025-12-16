@@ -7,7 +7,9 @@ spring:
 
 # FluxGate Configuration
 fluxgate:
-  mongodb:
+  # MongoDB configuration (uses FluxgateMongoAutoConfiguration)
+  mongo:
+    enabled: true
     uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
     rule-collection: rate_limit_rules
@@ -15,15 +17,64 @@ fluxgate:
     event-collection: rate_limit_events
     # DDL auto mode: validate (default) or create
     ddl-auto: validate
+  # Redis configuration (uses FluxgateConfig)
   redis:
+    enabled: true
     uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
     #uri: redis://localhost:6379
+  # Metrics enable for Prometheus
+  metrics:
+    enabled: true
+
+  # Resilience configuration
+  resilience:
+    retry:
+      enabled: true
+      max-attempts: 3
+      initial-backoff: 100ms
+      multiplier: 2.0
+      max-backoff: 2s
+    circuit-breaker:
+      enabled: false  # Enable if you want circuit breaker protection
+      failure-threshold: 5
+      wait-duration-in-open-state: 30s
+      permitted-calls-in-half-open-state: 3
+      fallback: FAIL_OPEN
 
 # Logging
+  # Rate limiting behavior configuration
+  ratelimit:
+    enabled: true
+    # Behavior when no matching rule is found: ALLOW (default) or DENY
+    # DENY: Strict mode - reject requests if no rule exists (fail-closed)
+    # ALLOW: Permissive mode - allow requests if no rule exists
+    missing-rule-behavior: ALLOW
+
+  # Hot reload configuration
+  reload:
+    enabled: true
+    strategy: PUBSUB  # Use Redis Pub/Sub for real-time updates
+    pubsub:
+      channel: fluxgate:rule-reload  # Must match Admin API channel
+
 logging:
   level:
     org.fluxgate: DEBUG
     org.fluxgate.sample.standalone: DEBUG
+    root: info
+
+# Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics,conditions
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+    prometheus:
+      enabled: true
 
 # Swagger/OpenAPI
 springdoc:
@@ -42,10 +93,22 @@ spring:
       on-profile: docker
 
 fluxgate:
-  mongodb:
+  mongo:
+    enabled: true
     uri: mongodb://fluxgate:fluxgate123@mongodb:27017/fluxgate?authSource=admin
     rule-collection: rate_limit_rules
     event-collection: rate_limit_events
+    ddl-auto: create
   redis:
     uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
     #uri: redis://redis:6379
+  resilience:
+    retry:
+      enabled: true
+      max-attempts: 5
+      initial-backoff: 200ms
+    circuit-breaker:
+      enabled: true
+      failure-threshold: 5
+      wait-duration-in-open-state: 30s
+      fallback: FAIL_OPEN

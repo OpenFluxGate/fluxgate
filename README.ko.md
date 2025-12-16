@@ -4,6 +4,7 @@
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build](https://github.com/OpenFluxGate/fluxgate/actions/workflows/maven-ci.yml/badge.svg)](https://github.com/OpenFluxGate/fluxgate/actions)
+[![Admin UI](https://img.shields.io/badge/Admin%20UI-FluxGate%20Studio-orange.svg)](https://github.com/OpenFluxGate/fluxgate-studio)
 
 [English](README.md) | 한국어
 
@@ -24,6 +25,8 @@
 - **프로덕션 안전 설계** - Redis 서버 시간 사용 (클럭 드리프트 없음), 정수 연산만 사용
 - **HTTP API 모드** - REST API를 통한 중앙 집중식 Rate Limiting 서비스
 - **플러그인 아키텍처** - 커스텀 핸들러 및 저장소로 쉽게 확장 가능
+- **구조화된 로깅** - ELK/Splunk 통합을 위한 상관관계 ID가 포함된 JSON 로깅
+- **Prometheus 메트릭** - 모니터링 및 알림을 위한 내장 Micrometer 통합
 
 ## 아키텍처
 
@@ -92,25 +95,24 @@
 ### 1. 의존성 추가
 
 ```xml
-
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot-starter</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.2.0</version>
 </dependency>
 
-        <!-- Redis 기반 Rate Limiting -->
+<!-- For Redis-backed rate limiting -->
 <dependency>
 <groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-redis-ratelimiter</artifactId>
-<version>0.0.1-SNAPSHOT</version>
+<version>0.2.0</version>
 </dependency>
 
-        <!-- MongoDB 규칙 관리 (선택사항) -->
+<!-- For MongoDB rule management (optional) -->
 <dependency>
 <groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-mongo-adapter</artifactId>
-<version>0.0.1-SNAPSHOT</version>
+<version>0.2.0</version>
 </dependency>
 ```
 
@@ -227,20 +229,48 @@ curl http://localhost:8083/api/hello
 
 ### FluxGate 속성
 
-| 속성                                       | 기본값                      | 설명                     |
-|------------------------------------------|--------------------------|------------------------|
-| `fluxgate.redis.enabled`                 | `false`                  | Redis Rate Limiter 활성화 |
-| `fluxgate.redis.uri`                     | `redis://localhost:6379` | Redis 연결 URI           |
-| `fluxgate.mongo.enabled`                 | `false`                  | MongoDB 어댑터 활성화        |
-| `fluxgate.mongo.uri`                     | -                        | MongoDB 연결 URI         |
-| `fluxgate.ratelimit.filter-enabled`      | `false`                  | Rate Limit 필터 활성화      |
-| `fluxgate.ratelimit.default-rule-set-id` | `default`                | 기본 규칙 세트 ID            |
-| `fluxgate.ratelimit.include-patterns`    | `[/api/*]`               | Rate Limit을 적용할 URL 패턴 |
-| `fluxgate.ratelimit.exclude-patterns`    | `[]`                     | 제외할 URL 패턴             |
-| `fluxgate.ratelimit.wait-for-refill.enabled` | `false` | WAIT_FOR_REFILL 정책 활성화 |
-| `fluxgate.ratelimit.wait-for-refill.max-wait-time-ms` | `5000` | 최대 대기 시간 (밀리초) |
-| `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits` | `100` | 최대 동시 대기 요청 수 |
-| `fluxgate.api.url`                       | -                        | 외부 Rate Limit API URL  |
+| 속성                                       | 기본값                                    | 설명                                         |
+|------------------------------------------|----------------------------------------|--------------------------------------------|
+| `fluxgate.redis.enabled`                 | `false`                                | Redis Rate Limiter 활성화                     |
+| `fluxgate.redis.uri`                     | `redis://localhost:6379`               | Redis 연결 URI                               |
+| `fluxgate.redis.mode`                    | `auto`                                 | Redis 모드: `standalone`, `cluster`, `auto` |
+| `fluxgate.mongo.enabled`                 | `false`                                | MongoDB 어댑터 활성화                            |
+| `fluxgate.mongo.uri`                     | `mongodb://localhost:27017/fluxgate`   | MongoDB 연결 URI                             |
+| `fluxgate.mongo.database`                | `fluxgate`                             | MongoDB 데이터베이스 이름                          |
+| `fluxgate.mongo.rule-collection`         | `rate_limit_rules`                     | Rate Limit 규칙 컬렉션 이름                       |
+| `fluxgate.mongo.event-collection`        | -                                      | 이벤트 컬렉션 이름 (선택사항)                          |
+| `fluxgate.mongo.ddl-auto`                | `validate`                             | DDL 모드: `validate` 또는 `create`             |
+| `fluxgate.ratelimit.filter-enabled`      | `false`                                | Rate Limit 필터 활성화                          |
+| `fluxgate.ratelimit.default-rule-set-id` | `default`                              | 기본 규칙 세트 ID                                |
+| `fluxgate.ratelimit.include-patterns`    | `[/api/*]`                             | Rate Limit을 적용할 URL 패턴                     |
+| `fluxgate.ratelimit.exclude-patterns`    | `[]`                                   | 제외할 URL 패턴                                 |
+| `fluxgate.ratelimit.wait-for-refill.enabled` | `false`                            | WAIT_FOR_REFILL 정책 활성화                     |
+| `fluxgate.ratelimit.wait-for-refill.max-wait-time-ms` | `5000`                   | 최대 대기 시간 (밀리초)                             |
+| `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits` | `100`               | 최대 동시 대기 요청 수                              |
+| `fluxgate.api.url`                       | -                                      | 외부 Rate Limit API URL                      |
+| `fluxgate.metrics.enabled`               | `true`                                 | Prometheus/Micrometer 메트릭 활성화             |
+
+### MongoDB DDL Auto 모드
+
+`fluxgate.mongo.ddl-auto` 속성은 FluxGate가 MongoDB 컬렉션을 처리하는 방식을 제어합니다:
+
+| 모드         | 설명                                      |
+|------------|----------------------------------------|
+| `validate` | (기본값) 컬렉션이 존재하는지 검증합니다. 없으면 에러를 발생시킵니다. |
+| `create`   | 컬렉션이 없으면 자동으로 생성합니다.                    |
+
+**설정 예시:**
+
+```yaml
+fluxgate:
+  mongo:
+    enabled: true
+    uri: mongodb://localhost:27017/fluxgate
+    database: fluxgate
+    rule-collection: my_rate_limit_rules    # 사용자 정의 컬렉션 이름
+    event-collection: my_rate_limit_events  # 선택사항: 이벤트 로깅 활성화
+    ddl-auto: create                        # 컬렉션 자동 생성
+```
 
 ### Rate Limit 규칙 설정
 
@@ -331,6 +361,75 @@ public RequestContextCustomizer requestContextCustomizer() {
 }
 ```
 
+## 관측성 (Observability)
+
+FluxGate는 즉시 사용 가능한 포괄적인 관측성 기능을 제공합니다.
+
+### 구조화된 로깅
+
+FluxGate는 ELK Stack이나 Splunk와 같은 로그 집계 시스템과 쉽게 통합할 수 있도록 상관관계 ID가 포함된 JSON 형식의 로그를 출력합니다.
+
+```json
+{
+  "timestamp": "2025-01-15T10:30:45.123Z",
+  "level": "INFO",
+  "logger": "org.fluxgate.spring.filter.FluxgateRateLimitFilter",
+  "message": "Request completed",
+  "fluxgate.rule_set": "api-limits",
+  "fluxgate.rule_id": "rate-limit-rule-1",
+  "fluxgate.allowed": true,
+  "fluxgate.remaining_tokens": 9,
+  "fluxgate.client_ip": "192.168.1.100",
+  "correlation_id": "abc123-def456"
+}
+```
+
+애플리케이션에서 `logback-spring.xml`을 포함하여 구조화된 로깅을 활성화합니다:
+
+```xml
+<include resource="org/fluxgate/spring/logback-spring.xml"/>
+```
+
+### Prometheus 메트릭
+
+FluxGate는 `spring-boot-starter-actuator`가 클래스패스에 있을 때 자동으로 Micrometer 기반 메트릭을 노출합니다.
+
+**사용 가능한 메트릭:**
+
+| 메트릭 | 타입 | 설명 |
+|--------|------|-------------|
+| `fluxgate_requests_total` | Counter | 엔드포인트, 메서드, rule_set별 총 Rate Limit 요청 수 |
+| `fluxgate_tokens_remaining` | Gauge | 버킷에 남은 토큰 수 |
+
+**Prometheus 출력 예시:**
+
+```
+# HELP fluxgate_requests_total FluxGate rate limit counter
+# TYPE fluxgate_requests_total counter
+fluxgate_requests_total{endpoint="/api/test",method="GET",rule_set="api-limits"} 42.0
+
+# HELP fluxgate_tokens_remaining
+# TYPE fluxgate_tokens_remaining gauge
+fluxgate_tokens_remaining{endpoint="/api/test",rule_set="api-limits"} 8.0
+```
+
+**설정:**
+
+```yaml
+fluxgate:
+  metrics:
+    enabled: true  # 기본값: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    prometheus:
+      enabled: true
+```
+
 ## 소스에서 빌드
 
 ```bash
@@ -367,13 +466,20 @@ cd fluxgate
 4. 브랜치에 푸시 (`git push origin feature/amazing-feature`)
 5. Pull Request 열기
 
+## 관련 프로젝트
+
+| 프로젝트 | 설명 |
+|---------|-------------|
+| [FluxGate Studio](https://github.com/OpenFluxGate/fluxgate-studio) | Rate Limit 규칙 관리를 위한 웹 기반 어드민 UI |
+
 ## 로드맵
 
 - [ ] 슬라이딩 윈도우 Rate Limiting 알고리즘
-- [ ] Prometheus 메트릭 통합
-- [ ] Redis Cluster 지원
+- [x] Prometheus 메트릭 통합
+- [x] Redis Cluster 지원
+- [x] 상관관계 ID가 포함된 구조화된 JSON 로깅
 - [ ] gRPC API 지원
-- [ ] Rate Limit 할당량 관리 UI
+- [x] Rate Limit 할당량 관리 UI ([FluxGate Studio](https://github.com/OpenFluxGate/fluxgate-studio))
 - [ ] Circuit Breaker 통합
 
 ## 라이선스

@@ -1,7 +1,18 @@
 package org.fluxgate.spring.autoconfigure;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import com.mongodb.client.ListCollectionNamesIterable;
+import com.mongodb.client.MongoDatabase;
+import java.util.Arrays;
+import java.util.Collection;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.fluxgate.spring.properties.FluxgateProperties.DdlAuto;
 import org.junit.jupiter.api.DisplayName;
@@ -225,6 +236,156 @@ class FluxgateMongoAutoConfigurationTest {
                 FluxgateProperties props = context.getBean(FluxgateProperties.class);
                 assertThat(props.getMongo().hasEventCollection()).isFalse();
               });
+    }
+  }
+
+  // ==================== DDL Auto Validation Logic Tests ====================
+
+  @Nested
+  @DisplayName("DDL Auto Validation Logic Tests")
+  class DdlAutoValidationLogicTests {
+
+    @Test
+    @DisplayName(
+        "should throw IllegalStateException when collection does not exist in VALIDATE mode")
+    void shouldThrowExceptionWhenCollectionNotExistsInValidateMode() {
+      // Given
+      FluxgateProperties properties = new FluxgateProperties();
+      properties.getMongo().setDdlAuto(DdlAuto.VALIDATE);
+
+      MongoDatabase mockDatabase = mock(MongoDatabase.class);
+      ListCollectionNamesIterable mockIterable = mock(ListCollectionNamesIterable.class);
+
+      when(mockDatabase.listCollectionNames()).thenReturn(mockIterable);
+      doAnswer(
+              invocation -> {
+                Collection<String> target = invocation.getArgument(0);
+                // Empty list - collection does not exist
+                return target;
+              })
+          .when(mockIterable)
+          .into(any());
+
+      FluxgateMongoAutoConfiguration config = new FluxgateMongoAutoConfiguration(properties);
+
+      // When & Then
+      assertThatThrownBy(
+              () -> invokeFluxgateRuleCollection(config, mockDatabase, "nonexistent_collection"))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("does not exist");
+    }
+
+    @Test
+    @DisplayName("should not throw exception when collection exists in VALIDATE mode")
+    void shouldNotThrowExceptionWhenCollectionExistsInValidateMode() {
+      // Given
+      FluxgateProperties properties = new FluxgateProperties();
+      properties.getMongo().setDdlAuto(DdlAuto.VALIDATE);
+      properties.getMongo().setRuleCollection("existing_collection");
+
+      MongoDatabase mockDatabase = mock(MongoDatabase.class);
+      ListCollectionNamesIterable mockIterable = mock(ListCollectionNamesIterable.class);
+
+      when(mockDatabase.listCollectionNames()).thenReturn(mockIterable);
+      doAnswer(
+              invocation -> {
+                Collection<String> target = invocation.getArgument(0);
+                target.addAll(Arrays.asList("existing_collection", "other_collection"));
+                return target;
+              })
+          .when(mockIterable)
+          .into(any());
+      when(mockDatabase.getCollection("existing_collection")).thenReturn(null);
+
+      FluxgateMongoAutoConfiguration config = new FluxgateMongoAutoConfiguration(properties);
+
+      // When & Then - should not throw
+      invokeFluxgateRuleCollection(config, mockDatabase, "existing_collection");
+      verify(mockDatabase, never()).createCollection(any());
+    }
+
+    @Test
+    @DisplayName("should create collection when it does not exist in CREATE mode")
+    void shouldCreateCollectionWhenNotExistsInCreateMode() {
+      // Given
+      FluxgateProperties properties = new FluxgateProperties();
+      properties.getMongo().setDdlAuto(DdlAuto.CREATE);
+      properties.getMongo().setRuleCollection("new_collection");
+
+      MongoDatabase mockDatabase = mock(MongoDatabase.class);
+      ListCollectionNamesIterable mockIterable = mock(ListCollectionNamesIterable.class);
+
+      when(mockDatabase.listCollectionNames()).thenReturn(mockIterable);
+      doAnswer(
+              invocation -> {
+                Collection<String> target = invocation.getArgument(0);
+                // Empty list - collection does not exist
+                return target;
+              })
+          .when(mockIterable)
+          .into(any());
+      when(mockDatabase.getCollection("new_collection")).thenReturn(null);
+
+      FluxgateMongoAutoConfiguration config = new FluxgateMongoAutoConfiguration(properties);
+
+      // When
+      invokeFluxgateRuleCollection(config, mockDatabase, "new_collection");
+
+      // Then
+      verify(mockDatabase).createCollection("new_collection");
+    }
+
+    @Test
+    @DisplayName("should not create collection when it already exists in CREATE mode")
+    void shouldNotCreateCollectionWhenAlreadyExistsInCreateMode() {
+      // Given
+      FluxgateProperties properties = new FluxgateProperties();
+      properties.getMongo().setDdlAuto(DdlAuto.CREATE);
+      properties.getMongo().setRuleCollection("existing_collection");
+
+      MongoDatabase mockDatabase = mock(MongoDatabase.class);
+      ListCollectionNamesIterable mockIterable = mock(ListCollectionNamesIterable.class);
+
+      when(mockDatabase.listCollectionNames()).thenReturn(mockIterable);
+      doAnswer(
+              invocation -> {
+                Collection<String> target = invocation.getArgument(0);
+                target.add("existing_collection");
+                return target;
+              })
+          .when(mockIterable)
+          .into(any());
+      when(mockDatabase.getCollection("existing_collection")).thenReturn(null);
+
+      FluxgateMongoAutoConfiguration config = new FluxgateMongoAutoConfiguration(properties);
+
+      // When
+      invokeFluxgateRuleCollection(config, mockDatabase, "existing_collection");
+
+      // Then
+      verify(mockDatabase, never()).createCollection(any());
+    }
+
+    /**
+     * Helper method to invoke the fluxgateRuleCollection bean method using reflection. This allows
+     * us to test the DDL auto logic without needing a real MongoDB connection.
+     */
+    private void invokeFluxgateRuleCollection(
+        FluxgateMongoAutoConfiguration config, MongoDatabase database, String collectionName) {
+      try {
+        java.lang.reflect.Method method =
+            FluxgateMongoAutoConfiguration.class.getDeclaredMethod(
+                "fluxgateRuleCollection", MongoDatabase.class);
+        method.setAccessible(true);
+        method.invoke(config, database);
+      } catch (java.lang.reflect.InvocationTargetException e) {
+        if (e.getCause() instanceof RuntimeException) {
+          throw (RuntimeException) e.getCause();
+        }
+        throw new RuntimeException(e.getCause());
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
     }
   }
 }

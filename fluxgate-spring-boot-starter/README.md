@@ -77,6 +77,21 @@ fluxgate:
     client-ip-header: X-Forwarded-For # Header for client IP
     trust-client-ip-header: true      # Trust the IP header
     include-headers: true             # Add rate limit headers to response
+
+  # Resilience Configuration
+  resilience:
+    retry:
+      enabled: true                   # Enable retry on failures
+      max-attempts: 3                 # Maximum retry attempts
+      initial-backoff: 100ms          # Initial backoff duration
+      multiplier: 2.0                 # Exponential backoff multiplier
+      max-backoff: 2s                 # Maximum backoff duration
+    circuit-breaker:
+      enabled: false                  # Enable circuit breaker (default: disabled)
+      failure-threshold: 5            # Failures before opening circuit
+      wait-duration-in-open-state: 30s # Wait before half-open
+      permitted-calls-in-half-open-state: 3
+      fallback: FAIL_OPEN             # FAIL_OPEN or FAIL_CLOSED
 ```
 
 ## Deployment Examples
@@ -252,6 +267,93 @@ Creates:
 |------|------|-------------|
 | `fluxgateRateLimitFilter` | `FluxgateRateLimitFilter` | HTTP filter |
 | `fluxgateRateLimitFilterRegistration` | `FilterRegistrationBean` | Servlet registration |
+
+### FluxgateResilienceAutoConfiguration
+
+**Condition:** Always loaded (enabled/disabled via properties)
+
+Creates:
+| Bean | Type | Description |
+|------|------|-------------|
+| `fluxgateRetryConfig` | `RetryConfig` | Retry configuration |
+| `fluxgateCircuitBreakerConfig` | `CircuitBreakerConfig` | Circuit breaker configuration |
+| `fluxgateRetryExecutor` | `RetryExecutor` | Retry executor (or NoOp if disabled) |
+| `fluxgateCircuitBreaker` | `CircuitBreaker` | Circuit breaker (or NoOp if disabled) |
+| `fluxgateResilientExecutor` | `ResilientExecutor` | Combined retry + circuit breaker |
+
+---
+
+## Resilience
+
+FluxGate provides built-in resilience features to handle transient failures in Redis/MongoDB connections.
+
+### Retry Strategy
+
+Automatically retries failed operations with exponential backoff:
+
+```yaml
+fluxgate:
+  resilience:
+    retry:
+      enabled: true
+      max-attempts: 3
+      initial-backoff: 100ms
+      multiplier: 2.0
+      max-backoff: 2s
+```
+
+**Behavior:**
+```
+Request → Fail → Wait 100ms → Retry → Fail → Wait 200ms → Retry → Success
+```
+
+Retryable exceptions:
+- `FluxgateConnectionException` (Redis/MongoDB connection failures)
+- `FluxgateTimeoutException` (Operation timeouts)
+
+### Circuit Breaker
+
+Prevents cascading failures by stopping requests when the system is unhealthy:
+
+```yaml
+fluxgate:
+  resilience:
+    circuit-breaker:
+      enabled: true
+      failure-threshold: 5        # Open after 5 consecutive failures
+      wait-duration-in-open-state: 30s
+      permitted-calls-in-half-open-state: 3
+      fallback: FAIL_OPEN         # or FAIL_CLOSED
+```
+
+**States:**
+```
+CLOSED ──(5 failures)──> OPEN ──(30s wait)──> HALF_OPEN ──(success)──> CLOSED
+                          │                        │
+                          └────(fallback)──────────┘
+```
+
+**Fallback Strategies:**
+- `FAIL_OPEN`: Allow requests through when circuit is open (default)
+- `FAIL_CLOSED`: Reject requests when circuit is open
+
+### Exception Hierarchy
+
+FluxGate provides a clear exception hierarchy for error handling:
+
+```
+FluxgateException (abstract)
+├── FluxgateConfigurationException      # Configuration errors (non-retryable)
+│   ├── InvalidRuleConfigException
+│   └── MissingConfigurationException
+├── FluxgateConnectionException         # Connection failures (retryable)
+│   ├── RedisConnectionException
+│   └── MongoConnectionException
+├── FluxgateOperationException          # Runtime errors
+│   ├── RateLimitExecutionException
+│   └── ScriptExecutionException
+└── FluxgateTimeoutException            # Timeout errors (retryable)
+```
 
 ---
 
@@ -589,6 +691,182 @@ fluxgate:
     filter-enabled: true
     default-rule-set-id: production-limits
 ```
+
+---
+
+## Observability
+
+FluxGate provides comprehensive observability features for production monitoring.
+
+### Structured JSON Logging
+
+FluxGate outputs structured JSON logs with correlation IDs for easy integration with ELK Stack, Splunk, or other log aggregation systems.
+
+**Enable structured logging** by including the FluxGate logback configuration in your `logback-spring.xml`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <include resource="org/fluxgate/spring/logback-spring.xml"/>
+</configuration>
+```
+
+**Example JSON log output:**
+
+```json
+{
+  "timestamp": "2025-01-15T10:30:45.123Z",
+  "level": "INFO",
+  "logger": "org.fluxgate.spring.filter.FluxgateRateLimitFilter",
+  "message": "Request completed",
+  "fluxgate.rule_set": "api-limits",
+  "fluxgate.rule_id": "rate-limit-rule-1",
+  "fluxgate.allowed": true,
+  "fluxgate.remaining_tokens": 9,
+  "fluxgate.client_ip": "192.168.1.100",
+  "correlation_id": "abc123-def456"
+}
+```
+
+**Log fields:**
+
+| Field | Description |
+|-------|-------------|
+| `fluxgate.rule_set` | Rule set ID applied |
+| `fluxgate.rule_id` | Specific rule ID matched |
+| `fluxgate.allowed` | Whether request was allowed |
+| `fluxgate.remaining_tokens` | Tokens remaining after request |
+| `fluxgate.client_ip` | Client IP address |
+| `correlation_id` | Request correlation ID for tracing |
+
+---
+
+### Prometheus Metrics
+
+FluxGate automatically exposes Micrometer-based metrics when `spring-boot-starter-actuator` is on the classpath.
+
+**Dependencies:**
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-actuator</artifactId>
+</dependency>
+<dependency>
+    <groupId>io.micrometer</groupId>
+    <artifactId>micrometer-registry-prometheus</artifactId>
+</dependency>
+```
+
+**Configuration:**
+
+```yaml
+fluxgate:
+  metrics:
+    enabled: true  # default: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    prometheus:
+      enabled: true
+```
+
+**Available Metrics:**
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `fluxgate_requests_total` | Counter | endpoint, method, rule_set | Total rate limit requests |
+| `fluxgate_tokens_remaining` | Gauge | endpoint, rule_set | Remaining tokens in bucket |
+
+**Example Prometheus output:**
+
+```
+# HELP fluxgate_requests_total FluxGate rate limit counter
+# TYPE fluxgate_requests_total counter
+fluxgate_requests_total{endpoint="/api/users",method="GET",rule_set="api-limits"} 142.0
+
+# HELP fluxgate_tokens_remaining
+# TYPE fluxgate_tokens_remaining gauge
+fluxgate_tokens_remaining{endpoint="/api/users",rule_set="api-limits"} 8.0
+```
+
+**Disable metrics:**
+
+```yaml
+fluxgate:
+  metrics:
+    enabled: false
+```
+
+---
+
+### Health Checks
+
+FluxGate provides detailed health indicators for Redis and MongoDB connections via Spring Boot Actuator.
+
+**Configuration:**
+
+```yaml
+management:
+  endpoint:
+    health:
+      show-details: always      # Show detailed health info
+      show-components: always   # Show component breakdown
+```
+
+**Access:** `GET /actuator/health`
+
+**Example Response:**
+
+```json
+{
+  "status": "UP",
+  "components": {
+    "fluxgate": {
+      "status": "UP",
+      "details": {
+        "rateLimitingEnabled": true,
+        "filterEnabled": true,
+        "mongo.status": "UP",
+        "mongo.message": "MongoDB is healthy",
+        "mongo.database": "fluxgate",
+        "mongo.latency_ms": 2,
+        "mongo.version": "7.0.0",
+        "mongo.connections.current": 10,
+        "mongo.connections.available": 100,
+        "redis.status": "UP",
+        "redis.message": "Redis cluster is healthy",
+        "redis.mode": "CLUSTER",
+        "redis.latency_ms": 1,
+        "redis.cluster_state": "ok",
+        "redis.cluster_nodes": 6,
+        "redis.cluster_masters": 3,
+        "redis.cluster_replicas": 3
+      }
+    }
+  }
+}
+```
+
+**Health Check Details:**
+
+| Component | Details Provided |
+|-----------|------------------|
+| **MongoDB** | database, version, latency_ms, connections (current/available), replicaSet info |
+| **Redis** | mode (STANDALONE/CLUSTER), latency_ms, cluster_state, cluster_nodes, masters/replicas |
+
+**Health Status Values:**
+
+| Status | Description |
+|--------|-------------|
+| `UP` | Component is healthy |
+| `DOWN` | Component has failed |
+| `DEGRADED` | Some components have issues |
+| `DISABLED` | Component is not enabled |
 
 ---
 
