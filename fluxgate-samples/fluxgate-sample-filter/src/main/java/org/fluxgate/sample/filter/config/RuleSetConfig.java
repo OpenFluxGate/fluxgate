@@ -53,7 +53,7 @@ public class RuleSetConfig {
         }
 
         // KeyResolver that extracts client IP
-        KeyResolver ipKeyResolver = context -> {
+        KeyResolver ipKeyResolver = (context, rule) -> {
             String ip = context.getClientIp();
             return new RateLimitKey(ip != null ? ip : "unknown");
         };

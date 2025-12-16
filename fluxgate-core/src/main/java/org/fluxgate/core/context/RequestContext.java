@@ -41,22 +41,47 @@ public final class RequestContext {
     this.attributes = Collections.unmodifiableMap(new HashMap<>(builder.attributes));
   }
 
+  /**
+   * Returns the client IP address.
+   *
+   * @return the client IP address, may be null
+   */
   public String getClientIp() {
     return clientIp;
   }
 
+  /**
+   * Returns the user ID.
+   *
+   * @return the user ID, may be null
+   */
   public String getUserId() {
     return userId;
   }
 
+  /**
+   * Returns the API key.
+   *
+   * @return the API key, may be null
+   */
   public String getApiKey() {
     return apiKey;
   }
 
+  /**
+   * Returns the request endpoint path.
+   *
+   * @return the endpoint path, may be null
+   */
   public String getEndpoint() {
     return endpoint;
   }
 
+  /**
+   * Returns the HTTP method.
+   *
+   * @return the HTTP method (GET, POST, etc.), may be null
+   */
   public String getMethod() {
     return method;
   }
@@ -99,10 +124,16 @@ public final class RequestContext {
     return attributes.get(key);
   }
 
+  /**
+   * Creates a new Builder instance.
+   *
+   * @return a new Builder
+   */
   public static Builder builder() {
     return new Builder();
   }
 
+  /** Builder for creating RequestContext instances. */
   public static final class Builder {
     private String clientIp;
     private String userId;
@@ -112,30 +143,65 @@ public final class RequestContext {
     private final Map<String, String> headers = new HashMap<>();
     private final Map<String, Object> attributes = new HashMap<>();
 
+    /** Creates a new Builder instance. */
+    public Builder() {
+      // Default constructor
+    }
+
     // =========================================================================
     // Setters
     // =========================================================================
 
+    /**
+     * Sets the client IP address.
+     *
+     * @param clientIp the client IP address
+     * @return this builder
+     */
     public Builder clientIp(String clientIp) {
       this.clientIp = clientIp;
       return this;
     }
 
+    /**
+     * Sets the user ID.
+     *
+     * @param userId the user ID
+     * @return this builder
+     */
     public Builder userId(String userId) {
       this.userId = userId;
       return this;
     }
 
+    /**
+     * Sets the API key.
+     *
+     * @param apiKey the API key
+     * @return this builder
+     */
     public Builder apiKey(String apiKey) {
       this.apiKey = apiKey;
       return this;
     }
 
+    /**
+     * Sets the request endpoint path.
+     *
+     * @param endpoint the endpoint path
+     * @return this builder
+     */
     public Builder endpoint(String endpoint) {
       this.endpoint = endpoint;
       return this;
     }
 
+    /**
+     * Sets the HTTP method.
+     *
+     * @param method the HTTP method
+     * @return this builder
+     */
     public Builder method(String method) {
       this.method = method;
       return this;
@@ -202,51 +268,94 @@ public final class RequestContext {
     // Getters - for use in RequestContextCustomizer
     // =========================================================================
 
-    /** Returns the current clientIp value. */
+    /**
+     * Returns the current clientIp value.
+     *
+     * @return the client IP address
+     */
     public String getClientIp() {
       return clientIp;
     }
 
-    /** Returns the current userId value. */
+    /**
+     * Returns the current userId value.
+     *
+     * @return the user ID
+     */
     public String getUserId() {
       return userId;
     }
 
-    /** Returns the current apiKey value. */
+    /**
+     * Returns the current apiKey value.
+     *
+     * @return the API key
+     */
     public String getApiKey() {
       return apiKey;
     }
 
-    /** Returns the current endpoint value. */
+    /**
+     * Returns the current endpoint value.
+     *
+     * @return the endpoint path
+     */
     public String getEndpoint() {
       return endpoint;
     }
 
-    /** Returns the current method value. */
+    /**
+     * Returns the current method value.
+     *
+     * @return the HTTP method
+     */
     public String getMethod() {
       return method;
     }
 
-    /** Returns the current headers map (modifiable). */
+    /**
+     * Returns the current headers map (modifiable).
+     *
+     * @return the headers map
+     */
     public Map<String, String> getHeaders() {
       return headers;
     }
 
-    /** Returns a specific header value. */
+    /**
+     * Returns a specific header value.
+     *
+     * @param name the header name
+     * @return the header value, or null if not present
+     */
     public String getHeader(String name) {
       return headers.get(name);
     }
 
-    /** Returns the current attributes map (modifiable). */
+    /**
+     * Returns the current attributes map (modifiable).
+     *
+     * @return the attributes map
+     */
     public Map<String, Object> getAttributes() {
       return attributes;
     }
 
-    /** Returns a specific attribute value. */
+    /**
+     * Returns a specific attribute value.
+     *
+     * @param key the attribute key
+     * @return the attribute value, or null if not present
+     */
     public Object getAttribute(String key) {
       return attributes.get(key);
     }
 
+    /**
+     * Builds and returns a new RequestContext instance.
+     *
+     * @return a new RequestContext
+     */
     public RequestContext build() {
       return new RequestContext(this);
     }

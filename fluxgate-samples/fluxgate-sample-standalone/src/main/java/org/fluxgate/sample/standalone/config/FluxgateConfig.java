@@ -11,7 +11,6 @@ import org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder;
 import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
 import org.fluxgate.adapter.mongo.rule.MongoRuleSetProvider;
 import org.fluxgate.core.key.KeyResolver;
-import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.spi.RateLimitRuleRepository;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
@@ -109,10 +108,30 @@ public class FluxgateConfig {
     return new MongoRateLimitRuleRepository(rulesCollection);
   }
 
+  /**
+   * KeyResolver that resolves keys based on the rule's LimitScope.
+   *
+   * <p>The LimitScopeKeyResolver uses:
+   *
+   * <ul>
+   *   <li>GLOBAL - Single bucket for all requests (key = "global")
+   *   <li>PER_IP - One bucket per client IP address
+   *   <li>PER_USER - One bucket per user ID (from RequestContext.userId)
+   *   <li>PER_API_KEY - One bucket per API key (from RequestContext.apiKey)
+   *   <li>CUSTOM - Custom resolution via attributes (using rule.keyStrategyId)
+   * </ul>
+   *
+   * <p>Use RequestContextCustomizer to set userId and apiKey from headers:
+   *
+   * <pre>
+   * builder.userId(request.getHeader("X-User-Id"));
+   * builder.apiKey(request.getHeader("X-API-Key"));
+   * </pre>
+   */
   @Bean
   public KeyResolver keyResolver() {
-    // Simple IP-based key resolver
-    return context -> new RateLimitKey(context.getClientIp());
+    log.info("Creating LimitScopeKeyResolver (resolves key based on rule's LimitScope)");
+    return new org.fluxgate.core.key.LimitScopeKeyResolver();
   }
 
   @Bean

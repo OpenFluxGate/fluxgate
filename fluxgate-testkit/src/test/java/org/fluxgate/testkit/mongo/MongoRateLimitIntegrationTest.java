@@ -19,7 +19,7 @@ import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
-import org.fluxgate.core.key.KeyResolver;
+import org.fluxgate.core.key.LimitScopeKeyResolver;
 import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
@@ -81,7 +81,7 @@ class MongoRateLimitIntegrationTest {
     insertRuleSetDocument();
 
     ruleRepository = new MongoRateLimitRuleRepository(ruleCollection);
-    ruleSetProvider = new MongoRuleSetProvider(ruleRepository, new IpKeyResolver());
+    ruleSetProvider = new MongoRuleSetProvider(ruleRepository, new LimitScopeKeyResolver());
     metricsRecorder = new MongoRateLimitMetricsRecorder(metricCollection);
 
     System.out.println("* Setup completed.\n");
@@ -249,8 +249,8 @@ class MongoRateLimitIntegrationTest {
     public RateLimitResult tryConsume(
         RequestContext context, RateLimitRuleSet ruleSet, long permits) {
 
-      RateLimitKey key = ruleSet.getKeyResolver().resolve(context);
       RateLimitRule rule = ruleSet.getRules().get(0);
+      RateLimitKey key = ruleSet.getKeyResolver().resolve(context, rule);
 
       // Lazily initialize window duration from the first band
       if (windowNanos < 0L) {
@@ -300,13 +300,6 @@ class MongoRateLimitIntegrationTest {
       recorder.record(context, result);
 
       return result;
-    }
-  }
-
-  private static class IpKeyResolver implements KeyResolver {
-    @Override
-    public RateLimitKey resolve(RequestContext context) {
-      return new RateLimitKey(context.getClientIp());
     }
   }
 }

@@ -7,8 +7,7 @@ import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
-import org.fluxgate.core.key.KeyResolver;
-import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.key.LimitScopeKeyResolver;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.fluxgate.redis.store.RedisRuleSetStore;
@@ -114,15 +113,9 @@ public class DynamicRuleSetProvider implements RateLimitRuleSetProvider {
                     .build())
             .build();
 
-    KeyResolver keyResolver =
-        context -> {
-          String ip = context.getClientIp();
-          return new RateLimitKey(ip != null ? ip : "unknown");
-        };
-
     return RateLimitRuleSet.builder(data.getRuleSetId())
         .rules(List.of(rule))
-        .keyResolver(keyResolver)
+        .keyResolver(new LimitScopeKeyResolver())
         .build();
   }
 }

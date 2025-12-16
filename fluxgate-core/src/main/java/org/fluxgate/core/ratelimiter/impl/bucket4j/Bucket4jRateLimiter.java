@@ -40,32 +40,68 @@ public class Bucket4jRateLimiter implements RateLimiter {
       throw new IllegalArgumentException("permits must be > 0");
     }
 
-    // 1) Resolve logical key
-    RateLimitKey logicalKey = ruleSet.getKeyResolver().resolve(context);
-    Objects.requireNonNull(logicalKey, "resolved RateLimitKey must not be null");
-
-    BucketKey bucketKey = new BucketKey(ruleSet.getId(), logicalKey);
-
-    // 2) Get or create Bucket for this key
-    Bucket bucket = buckets.computeIfAbsent(bucketKey, key -> createBucket(ruleSet));
-
-    // For now we simply pick the first rule as "matched rule".
-    // If you support multiple rules per set later, we can enhance this.
-    RateLimitRule matchedRule = firstRule(ruleSet);
-
-    // 3) Try consume
-    ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(permits);
-
-    RateLimitResult result;
-    if (probe.isConsumed()) {
-      result =
-          RateLimitResult.allowed(
-              logicalKey, matchedRule, probe.getRemainingTokens(), probe.getNanosToWaitForRefill());
-    } else {
-      result = RateLimitResult.rejected(logicalKey, matchedRule, probe.getNanosToWaitForRefill());
+    List<RateLimitRule> rules = ruleSet.getRules();
+    if (rules == null || rules.isEmpty()) {
+      throw new IllegalArgumentException("ruleSet must contain at least one RateLimitRule");
     }
 
-    // 4) Metrics hook
+    // ========================================================================
+    // Multi-Rule Rate Limiting with Per-Rule Key Resolution
+    // ========================================================================
+    // Each rule can have a different LimitScope (PER_IP, PER_USER, PER_API_KEY, etc.)
+    // The KeyResolver resolves the appropriate key based on the rule's scope.
+    // ========================================================================
+
+    RateLimitRule matchedRule = null;
+    RateLimitKey matchedKey = null;
+    long minRemainingTokens = Long.MAX_VALUE;
+    long maxNanosToWait = 0;
+    boolean anyRejected = false;
+
+    for (RateLimitRule rule : rules) {
+      if (!rule.isEnabled()) {
+        continue;
+      }
+
+      // Resolve the rate limit key for THIS rule based on its LimitScope
+      RateLimitKey logicalKey = ruleSet.getKeyResolver().resolve(context, rule);
+      Objects.requireNonNull(
+          logicalKey, "resolved RateLimitKey must not be null for rule: " + rule.getId());
+
+      // Create bucket key combining ruleSet, rule, and logical key
+      BucketKey bucketKey = new BucketKey(ruleSet.getId() + ":" + rule.getId(), logicalKey);
+
+      // Get or create Bucket for this key
+      Bucket bucket = buckets.computeIfAbsent(bucketKey, key -> createBucketForRule(rule));
+
+      // Try consume
+      ConsumptionProbe probe = bucket.tryConsumeAndReturnRemaining(permits);
+
+      minRemainingTokens = Math.min(minRemainingTokens, probe.getRemainingTokens());
+
+      if (!probe.isConsumed()) {
+        anyRejected = true;
+        maxNanosToWait = Math.max(maxNanosToWait, probe.getNanosToWaitForRefill());
+        matchedRule = rule;
+        matchedKey = logicalKey;
+      }
+
+      // Track the key for logging (use first rule's key if not rejected)
+      if (matchedKey == null) {
+        matchedKey = logicalKey;
+        matchedRule = rule;
+      }
+    }
+
+    // Build result
+    RateLimitResult result;
+    if (anyRejected) {
+      result = RateLimitResult.rejected(matchedKey, matchedRule, maxNanosToWait);
+    } else {
+      result = RateLimitResult.allowed(matchedKey, matchedRule, minRemainingTokens, 0L);
+    }
+
+    // Metrics hook
     RateLimitMetricsRecorder recorder = ruleSet.getMetricsRecorder();
     if (recorder != null) {
       recorder.record(context, result);
@@ -74,25 +110,25 @@ public class Bucket4jRateLimiter implements RateLimiter {
     return result;
   }
 
-  private Bucket createBucket(RateLimitRuleSet ruleSet) {
-    var builder = Bucket.builder(); // inferred as LocalBucketBuilder
+  /**
+   * Creates a Bucket for a single rule with all its bands.
+   *
+   * @param rule the rate limit rule
+   * @return a new Bucket configured with the rule's bands
+   */
+  private Bucket createBucketForRule(RateLimitRule rule) {
+    var builder = Bucket.builder();
 
-    List<RateLimitRule> rules = ruleSet.getRules();
-    if (rules == null || rules.isEmpty()) {
-      throw new IllegalArgumentException("ruleSet must contain at least one RateLimitRule");
+    List<RateLimitBand> bands = rule.getBands();
+    if (bands == null || bands.isEmpty()) {
+      throw new IllegalArgumentException("rule must contain at least one RateLimitBand");
     }
 
-    for (RateLimitRule rule : rules) {
-      List<RateLimitBand> bands = rule.getBands();
-      if (bands == null || bands.isEmpty()) {
-        continue;
-      }
-      for (RateLimitBand band : bands) {
-        builder.addLimit(toBandwidth(band));
-      }
+    for (RateLimitBand band : bands) {
+      builder.addLimit(toBandwidth(band));
     }
 
-    return builder.build(); // finally returns the Bucket
+    return builder.build();
   }
 
   private Bandwidth toBandwidth(RateLimitBand band) {
@@ -101,14 +137,6 @@ public class Bucket4jRateLimiter implements RateLimiter {
 
     // For now we use greedy refill (full amount over the window).
     return Bandwidth.builder().capacity(capacity).refillGreedy(capacity, window).build();
-  }
-
-  private RateLimitRule firstRule(RateLimitRuleSet ruleSet) {
-    List<RateLimitRule> rules = ruleSet.getRules();
-    if (rules == null || rules.isEmpty()) {
-      return null;
-    }
-    return rules.getFirst();
   }
 
   /** Composite key for bucket cache: (ruleSetId, logical RateLimitKey). */

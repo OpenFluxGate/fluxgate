@@ -15,7 +15,8 @@ English | [한국어](README.ko.md)
 - **Multi-Band Support** - Multiple rate limit tiers (e.g., 100/sec + 1000/min + 10000/hour)
 - **Dynamic Rule Management** - Store and update rules in MongoDB without restart
 - **Spring Boot Auto-Configuration** - Zero-config setup with sensible defaults
-- **Flexible Key Strategies** - Rate limit by IP, User ID, API Key, or custom keys
+- **LimitScope-based Key Resolution** - Rate limit by IP, User ID, API Key, or custom composite keys
+- **Composite Key Support** - Combine multiple identifiers (e.g., IP + User ID) for fine-grained control
 - **WAIT_FOR_REFILL Policy** - Wait for token refill instead of immediate rejection
 - **RequestContext Customization** - Override client IP, add custom attributes before rate limiting
 - **Multiple Filters Support** - Configure multiple filters with different priorities via Java Config
@@ -245,8 +246,7 @@ curl http://localhost:8083/api/hello
 RateLimitRule rule = RateLimitRule.builder("api-rule")
     .name("API Rate Limit")
     .enabled(true)
-    .scope(LimitScope.PER_IP)
-    .keyStrategyId("clientIp")
+    .scope(LimitScope.PER_IP)  // GLOBAL, PER_IP, PER_USER, PER_API_KEY, or CUSTOM
     .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)  // or WAIT_FOR_REFILL
     .addBand(RateLimitBand.builder(Duration.ofSeconds(1), 10)
         .label("10-per-second")
@@ -259,18 +259,70 @@ RateLimitRule rule = RateLimitRule.builder("api-rule")
     .build();
 ```
 
+### LimitScope Options
+
+| LimitScope | Key Source | Description |
+|------------|------------|-------------|
+| `GLOBAL` | `"global"` | Single bucket for all requests |
+| `PER_IP` | `RequestContext.clientIp` | One bucket per IP address |
+| `PER_USER` | `RequestContext.userId` | One bucket per user (set via header) |
+| `PER_API_KEY` | `RequestContext.apiKey` | One bucket per API key |
+| `CUSTOM` | `attributes.get(keyStrategyId)` | Custom key from RequestContext attributes |
+
+### Composite Key Example (IP + User)
+
+For fine-grained rate limiting by IP and User combination:
+
+```java
+// Rule with CUSTOM scope
+RateLimitRule rule = RateLimitRule.builder("composite-rule")
+    .name("IP+User Rate Limit")
+    .scope(LimitScope.CUSTOM)
+    .keyStrategyId("ipUser")  // Looks up context.attributes.get("ipUser")
+    .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).build())
+    .build();
+
+// RequestContextCustomizer builds the composite key
+@Bean
+public RequestContextCustomizer requestContextCustomizer() {
+    return (builder, request) -> {
+        String userId = request.getHeader("X-User-Id");
+        String clientIp = request.getRemoteAddr();
+
+        // Build composite key: "192.168.1.100:user-123"
+        String compositeKey = userId != null ? clientIp + ":" + userId : clientIp;
+        builder.attribute("ipUser", compositeKey);
+
+        return builder;
+    };
+}
+```
+
 ### RequestContext Customization
 
 ```java
 @Bean
 public RequestContextCustomizer requestContextCustomizer() {
     return (builder, request) -> {
+        // Set userId for PER_USER scope
+        String userId = request.getHeader("X-User-Id");
+        if (userId != null) {
+            builder.userId(userId);
+        }
+
+        // Set apiKey for PER_API_KEY scope
+        String apiKey = request.getHeader("X-API-Key");
+        if (apiKey != null) {
+            builder.apiKey(apiKey);
+        }
+
         // Override client IP from Cloudflare header
         String cfIp = request.getHeader("CF-Connecting-IP");
         if (cfIp != null) {
             builder.clientIp(cfIp);
         }
-        // Add tenant info for multi-tenant rate limiting
+
+        // Add tenant info for CUSTOM scope with keyStrategyId="tenantId"
         builder.attribute("tenantId", request.getHeader("X-Tenant-Id"));
         return builder;
     };

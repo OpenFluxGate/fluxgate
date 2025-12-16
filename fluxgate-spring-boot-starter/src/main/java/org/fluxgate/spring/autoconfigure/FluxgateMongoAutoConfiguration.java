@@ -9,7 +9,6 @@ import org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder;
 import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
 import org.fluxgate.adapter.mongo.rule.MongoRuleSetProvider;
 import org.fluxgate.core.key.KeyResolver;
-import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.spi.RateLimitRuleRepository;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
@@ -118,15 +117,25 @@ public class FluxgateMongoAutoConfiguration {
   }
 
   /**
-   * Creates a default KeyResolver that extracts client IP.
+   * Creates a default KeyResolver that resolves keys based on the rule's LimitScope.
+   *
+   * <p>The default implementation {@link org.fluxgate.core.key.LimitScopeKeyResolver} uses:
+   *
+   * <ul>
+   *   <li>GLOBAL - Single bucket for all requests
+   *   <li>PER_IP - One bucket per client IP address
+   *   <li>PER_USER - One bucket per user ID (from RequestContext.userId)
+   *   <li>PER_API_KEY - One bucket per API key (from RequestContext.apiKey)
+   *   <li>CUSTOM - Custom resolution via attributes
+   * </ul>
    *
    * <p>Users can override this bean with a custom KeyResolver.
    */
   @Bean(name = "fluxgateKeyResolver")
   @ConditionalOnMissingBean(KeyResolver.class)
   public KeyResolver fluxgateKeyResolver() {
-    log.info("Creating default KeyResolver (extracts client IP)");
-    return context -> new RateLimitKey(context.getClientIp());
+    log.info("Creating default LimitScopeKeyResolver (resolves key based on rule's LimitScope)");
+    return new org.fluxgate.core.key.LimitScopeKeyResolver();
   }
 
   /**

@@ -42,6 +42,7 @@ public class AdminController {
   // Rule Set IDs
   private static final String STANDALONE_RULESET_ID = "standalone-rules";
   private static final String MULTI_FILTER_RULESET_ID = "multi-filter-rules";
+  private static final String COMPOSITE_KEY_RULESET_ID = "composite-key-rules";
 
   private final RateLimitRuleSetProvider ruleSetProvider;
   private final RateLimitRuleRepository ruleRepository;
@@ -165,6 +166,54 @@ public class AdminController {
             "rule2",
             Map.of("ruleId", rule2.getId(), "limit", "20 requests per minute")));
     response.put("note", "Both rules apply - request rejected if ANY rule exceeded");
+    response.put("createdAt", Instant.now().toString());
+
+    return ResponseEntity.ok(response);
+  }
+
+  /**
+   * Create rule for /api/test/composite endpoint.
+   *
+   * <p>Creates a rule with CUSTOM scope and keyStrategyId="ipUser". The RequestContextCustomizer
+   * builds the composite key by combining IP and User ID: "192.168.1.100:user-123"
+   *
+   * <p>If X-User-Id header is not provided, falls back to IP only.
+   */
+  @PostMapping("/rules/composite")
+  @Operation(
+      summary = "Create composite key rule",
+      description =
+          "Creates a rate limit rule for /api/test/composite endpoint with composite key (IP+User). "
+              + "Limit: 10 requests per minute per IP+User combination. "
+              + "RuleSet: composite-key-rules. "
+              + "Use X-User-Id header to provide user identifier.")
+  public ResponseEntity<Map<String, Object>> createCompositeKeyRule() {
+    log.info("Creating composite key rule for /api/test/composite");
+
+    RateLimitRule rule =
+        RateLimitRule.builder("composite-10-per-minute")
+            .name("Composite Key API - 10 req/min per IP+User")
+            .enabled(true)
+            .scope(LimitScope.CUSTOM)
+            .keyStrategyId("ipUser") // Custom key strategy - resolved from RequestContext attribute
+            .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+            .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).label("per-minute").build())
+            .ruleSetId(COMPOSITE_KEY_RULESET_ID)
+            .attribute("endpoint", "/api/test/composite")
+            .attribute("description", "Rate limit by IP+User composite key")
+            .build();
+
+    ruleRepository.save(rule);
+    log.info("Composite key rule saved: {}", rule.getId());
+
+    Map<String, Object> response = new HashMap<>();
+    response.put("success", true);
+    response.put("ruleSetId", COMPOSITE_KEY_RULESET_ID);
+    response.put("ruleId", rule.getId());
+    response.put("endpoint", "/api/test/composite");
+    response.put("limit", "10 requests per minute per IP+User");
+    response.put("keyStrategy", "ipUser (composite of IP and User ID)");
+    response.put("usage", "curl -H 'X-User-Id: user-123' http://localhost:8085/api/test/composite");
     response.put("createdAt", Instant.now().toString());
 
     return ResponseEntity.ok(response);
