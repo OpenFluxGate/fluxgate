@@ -113,4 +113,5 @@ jobs:
             fluxgate-core/target/*.jar
             fluxgate-redis-ratelimiter/target/*.jar
             fluxgate-mongo-adapter/target/*.jar
-            fluxgate-spring-boot-starter/target/*.jar
+            fluxgate-spring-boot2-starter/target/*.jar
+            fluxgate-spring-boot3-starter/target/*.jar
