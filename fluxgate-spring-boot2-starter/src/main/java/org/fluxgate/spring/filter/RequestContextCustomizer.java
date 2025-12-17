@@ -17,11 +17,10 @@ import org.fluxgate.core.context.RequestContext;
  *
  * <p>Example implementation:
  *
- * <pre>{@code
- * @Component
+ * <pre>
+ * // Example: Custom RequestContextCustomizer
  * public class MyRequestContextCustomizer implements RequestContextCustomizer {
  *
- *     @Override
  *     public RequestContext.Builder customize(RequestContext.Builder builder,
  *                                              HttpServletRequest request) {
  *         // Extract tenant from header
@@ -40,7 +39,7 @@ import org.fluxgate.core.context.RequestContext;
  *         return cfIp != null ? cfIp : request.getRemoteAddr();
  *     }
  * }
- * }</pre>
+ * </pre>
  *
  * @see FluxgateRateLimitFilter
  */

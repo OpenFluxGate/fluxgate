@@ -238,8 +238,10 @@ jobs:
           distribution: temurin
           cache: maven
 
-      - name: Build all modules with Java 17
-        run: mvn -B install -DskipTests
+      - name: Build all modules with Java 17 (excluding Java 21 samples)
+        run: |
+          mvn -B install -DskipTests \
+            -pl !fluxgate-samples/fluxgate-sample-standalone-java21
 
       - name: Test Spring Boot 3.x starter with Java 17
         run: |
