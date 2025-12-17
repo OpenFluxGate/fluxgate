@@ -27,7 +27,7 @@ By participating in this project, you agree to maintain a respectful and inclusi
 
 ### Prerequisites
 
-- **Java 21+** - Required for building and running the project
+- **Java 11+** - Required for building and running the project
 - **Maven 3.8+** - Build tool
 - **Docker** - For running Redis and MongoDB during development
 - **Git** - Version control

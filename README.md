@@ -86,7 +86,7 @@ English | [한국어](README.ko.md)
 
 ### Prerequisites
 
-- Java 21+
+- Java 11+
 - Maven 3.8+
 - Redis 6.0+ (for distributed rate limiting)
 - MongoDB 4.4+ (optional, for rule management)

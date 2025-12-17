@@ -358,7 +358,7 @@ println("Rejected: "+event.getString("clientIp"));
 
 ## Requirements
 
-- Java 21+
+- Java 11+
 - MongoDB 4.0+
 - Maven 3.8+
 

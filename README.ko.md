@@ -87,7 +87,7 @@
 
 ### 사전 요구 사항
 
-- Java 21+
+- Java 11+
 - Maven 3.8+
 - Redis 6.0+ (분산 Rate Limiting용)
 - MongoDB 4.4+ (선택사항, 규칙 관리용)
