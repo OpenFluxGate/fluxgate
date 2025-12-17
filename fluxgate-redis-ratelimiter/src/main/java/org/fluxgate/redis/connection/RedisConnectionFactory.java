@@ -69,15 +69,17 @@ public final class RedisConnectionFactory {
       throw new IllegalArgumentException("At least one Redis URI is required");
     }
 
-    return switch (mode) {
-      case STANDALONE -> {
+    switch (mode) {
+      case STANDALONE:
         if (uris.size() > 1) {
           log.warn("Multiple URIs provided for standalone mode, using first: {}", uris.get(0));
         }
-        yield new StandaloneRedisConnection(uris.get(0), timeout);
-      }
-      case CLUSTER -> new ClusterRedisConnection(uris, timeout);
-    };
+        return new StandaloneRedisConnection(uris.get(0), timeout);
+      case CLUSTER:
+        return new ClusterRedisConnection(uris, timeout);
+      default:
+        throw new IllegalArgumentException("Unknown Redis mode: " + mode);
+    }
   }
 
   /**
@@ -87,7 +89,10 @@ public final class RedisConnectionFactory {
    * @return list of individual URIs
    */
   private static List<String> parseClusterNodes(String uri) {
-    return List.of(uri.split(",")).stream().map(String::trim).filter(s -> !s.isEmpty()).toList();
+    return java.util.Arrays.stream(uri.split(","))
+        .map(String::trim)
+        .filter(s -> !s.isEmpty())
+        .collect(java.util.stream.Collectors.toList());
   }
 
   /**

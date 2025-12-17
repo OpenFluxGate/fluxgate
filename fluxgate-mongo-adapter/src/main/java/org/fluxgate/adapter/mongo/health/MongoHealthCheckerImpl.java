@@ -150,8 +150,20 @@ public class MongoHealthCheckerImpl {
   }
 
   /** Health check result with status and details. */
-  public record HealthCheckResult(
-      String status, String message, boolean isHealthy, Map<String, Object> details) {
+  public static final class HealthCheckResult {
+
+    private final String status;
+    private final String message;
+    private final boolean isHealthy;
+    private final Map<String, Object> details;
+
+    public HealthCheckResult(
+        String status, String message, boolean isHealthy, Map<String, Object> details) {
+      this.status = status;
+      this.message = message;
+      this.isHealthy = isHealthy;
+      this.details = details;
+    }
 
     public static HealthCheckResult up(String message, Map<String, Object> details) {
       return new HealthCheckResult("UP", message, true, details);
@@ -159,6 +171,54 @@ public class MongoHealthCheckerImpl {
 
     public static HealthCheckResult down(String message, Map<String, Object> details) {
       return new HealthCheckResult("DOWN", message, false, details);
+    }
+
+    public String status() {
+      return status;
+    }
+
+    public String message() {
+      return message;
+    }
+
+    public boolean isHealthy() {
+      return isHealthy;
+    }
+
+    public Map<String, Object> details() {
+      return details;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (!(o instanceof HealthCheckResult)) return false;
+      HealthCheckResult that = (HealthCheckResult) o;
+      return isHealthy == that.isHealthy
+          && Objects.equals(status, that.status)
+          && Objects.equals(message, that.message)
+          && Objects.equals(details, that.details);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(status, message, isHealthy, details);
+    }
+
+    @Override
+    public String toString() {
+      return "HealthCheckResult{"
+          + "status='"
+          + status
+          + '\''
+          + ", message='"
+          + message
+          + '\''
+          + ", isHealthy="
+          + isHealthy
+          + ", details="
+          + details
+          + '}';
     }
   }
 }

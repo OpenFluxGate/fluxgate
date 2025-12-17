@@ -10,11 +10,15 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.3.1</version>
+        <version>0.3.3</version>
     </parent>
 
     <artifactId>fluxgate-core</artifactId>
     <packaging>jar</packaging>
+
+    <properties>
+        <skipJacocoForPom>false</skipJacocoForPom>
+    </properties>
 
     <name>FluxGate Core</name>
     <description>Core rate-limiting engine for FluxGate (Bucket4j-based)</description>
@@ -23,7 +27,7 @@
         <!-- Core rate limiting -->
         <dependency>
             <groupId>com.bucket4j</groupId>
-            <artifactId>bucket4j_jdk17-core</artifactId>
+            <artifactId>bucket4j_jdk11-core</artifactId>
         </dependency>
 
         <!-- Logging API (implementation to be provided by consumer) -->

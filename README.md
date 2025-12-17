@@ -1,7 +1,7 @@
 # FluxGate
 
-[![Java](https://img.shields.io/badge/Java-21%2B-blue.svg)](https://openjdk.org/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Java](https://img.shields.io/badge/Java-11%2B-blue.svg)](https://openjdk.org/)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.x%20%7C%203.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build](https://github.com/OpenFluxGate/fluxgate/actions/workflows/maven-ci.yml/badge.svg)](https://github.com/OpenFluxGate/fluxgate/actions)
 [![Admin UI](https://img.shields.io/badge/Admin%20UI-FluxGate%20Studio-orange.svg)](https://github.com/OpenFluxGate/fluxgate-studio)
@@ -78,7 +78,8 @@ English | [한국어](README.ko.md)
 | **fluxgate-core** | Core rate limiting engine with Bucket4j integration |
 | **fluxgate-redis-ratelimiter** | Redis-backed distributed rate limiter with Lua scripts |
 | **fluxgate-mongo-adapter** | MongoDB adapter for dynamic rule management |
-| **fluxgate-spring-boot-starter** | Spring Boot auto-configuration and filter support |
+| **fluxgate-spring-boot3-starter** | Spring Boot 3.x auto-configuration (Java 17+, jakarta.servlet) |
+| **fluxgate-spring-boot2-starter** | Spring Boot 2.x auto-configuration (Java 11+, javax.servlet) |
 | **fluxgate-testkit** | Integration testing utilities |
 | **fluxgate-samples** | Sample applications demonstrating various use cases |
 
@@ -86,7 +87,7 @@ English | [한국어](README.ko.md)
 
 ### Prerequisites
 
-- Java 21+
+- Java 11+
 - Maven 3.8+
 - Redis 6.0+ (for distributed rate limiting)
 - MongoDB 4.4+ (optional, for rule management)
@@ -94,24 +95,34 @@ English | [한국어](README.ko.md)
 ### 1. Add Dependencies
 
 ```xml
+<!-- For Spring Boot 3.x (Java 17+) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
-    <artifactId>fluxgate-spring-boot-starter</artifactId>
-    <version>0.3.1</version>
+    <artifactId>fluxgate-spring-boot3-starter</artifactId>
+    <version>0.3.3</version>
 </dependency>
+
+<!-- For Spring Boot 2.x (Java 11+) -->
+<!--
+<dependency>
+    <groupId>io.github.openfluxgate</groupId>
+    <artifactId>fluxgate-spring-boot2-starter</artifactId>
+    <version>0.3.3</version>
+</dependency>
+-->
 
 <!-- For Redis-backed rate limiting -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
-    <version>0.3.1</version>
+    <version>0.3.3</version>
 </dependency>
 
 <!-- For MongoDB rule management (optional) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
-    <version>0.3.1</version>
+    <version>0.3.3</version>
 </dependency>
 ```
 

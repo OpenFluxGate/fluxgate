@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.openfluxgate</groupId>
+        <artifactId>fluxgate</artifactId>
+        <version>0.3.3</version>
+    </parent>
+
+    <artifactId>fluxgate-spring-boot2-starter</artifactId>
+    <packaging>jar</packaging>
+
+    <name>FluxGate Spring Boot 2.x Starter</name>
+    <description>Spring Boot 2.x auto-configuration for FluxGate distributed rate limiting (Java 11+)</description>
+
+    <properties>
+        <java.version>11</java.version>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <!-- Spring Boot 2.7.x for Java 11 -->
+        <spring-boot.version>2.7.18</spring-boot.version>
+        <spring.version>5.3.31</spring.version>
+        <!-- Lower coverage thresholds for this module due to many excluded auto-config classes -->
+        <jacoco.line.coverage>0.75</jacoco.line.coverage>
+        <jacoco.branch.coverage>0.65</jacoco.branch.coverage>
+        <skipJacocoForPom>false</skipJacocoForPom>
+    </properties>
+
+    <dependencies>
+        <!-- FluxGate Core (required) -->
+        <dependency>
+            <groupId>io.github.openfluxgate</groupId>
+            <artifactId>fluxgate-core</artifactId>
+            <version>${project.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-api</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- FluxGate Mongo Adapter (optional) -->
+        <dependency>
+            <groupId>io.github.openfluxgate</groupId>
+            <artifactId>fluxgate-mongo-adapter</artifactId>
+            <version>${project.version}</version>
+            <optional>true</optional>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-api</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- FluxGate Redis Rate Limiter (optional) -->
+        <dependency>
+            <groupId>io.github.openfluxgate</groupId>
+            <artifactId>fluxgate-redis-ratelimiter</artifactId>
+            <version>${project.version}</version>
+            <optional>true</optional>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-api</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!-- Spring Boot Auto-Configuration -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+            <version>${spring-boot.version}</version>
+        </dependency>
+
+        <!-- Spring Boot Configuration Processor (for IDE hints) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <version>${spring-boot.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Spring Web (for Filter, optional) -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+            <version>${spring.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- javax.servlet for Java 11 / Spring Boot 2.x -->
+        <dependency>
+            <groupId>javax.servlet</groupId>
+            <artifactId>javax.servlet-api</artifactId>
+            <version>4.0.1</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Logging - SLF4J 1.7.x for Spring Boot 2.x -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>1.7.36</version>
+        </dependency>
+
+        <!-- Logstash Logback Encoder -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>7.4</version>
+        </dependency>
+
+        <!-- Micrometer for Prometheus metrics (optional) -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+            <version>1.9.17</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Caffeine cache for rule caching (optional) - use 2.x for Java 11 -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+            <version>2.9.3</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Spring Boot Actuator (optional) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-actuator</artifactId>
+            <version>${spring-boot.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Spring Boot Actuator Autoconfigure (optional) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-actuator-autoconfigure</artifactId>
+            <version>${spring-boot.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <version>${spring-boot.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Mock Servlet for Filter tests -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-test</artifactId>
+            <version>${spring.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>11</source>
+                    <target>11</target>
+                    <release>11</release>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+
+            <!-- JaCoCo with exclusions for auto-configuration classes that require external services -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <!-- AutoConfiguration classes require Spring context for testing -->
+                        <exclude>org/fluxgate/spring/autoconfigure/*AutoConfiguration.class</exclude>
+                        <exclude>org/fluxgate/spring/actuator/*</exclude>
+                        <!-- Exclude auto-configurations that require external MongoDB/Redis services -->
+                        <exclude>**/FluxgateMongoAutoConfiguration.class</exclude>
+                        <exclude>**/FluxgateRedisAutoConfiguration.class</exclude>
+                        <exclude>**/FluxgateReloadAutoConfiguration.class</exclude>
+                        <!-- Exclude reload package classes that require Redis/Caffeine for testing -->
+                        <exclude>**/reload/cache/**</exclude>
+                        <exclude>**/reload/strategy/**</exclude>
+                        <exclude>**/reload/handler/**</exclude>
+                        <!-- Exclude properties inner classes -->
+                        <exclude>**/FluxgateProperties$ReloadProperties.class</exclude>
+                        <exclude>**/FluxgateProperties$ReloadProperties$*.class</exclude>
+                        <exclude>**/FluxgateProperties$MissingRuleBehavior.class</exclude>
+                        <exclude>**/FluxgateProperties$WaitForRefillProperties.class</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

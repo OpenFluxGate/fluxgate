@@ -9,7 +9,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link BucketState}.
  *
- * <p>BucketState is a record that represents the result of a token bucket consume operation.
+ * <p>BucketState is an immutable class that represents the result of a token bucket consume
+ * operation.
  */
 @DisplayName("BucketState Tests")
 class BucketStateTest {
@@ -56,11 +57,11 @@ class BucketStateTest {
     }
   }
 
-  // ==================== Record Accessor Tests ====================
+  // ==================== Accessor Tests ====================
 
   @Nested
-  @DisplayName("Record Accessor Tests")
-  class RecordAccessorTests {
+  @DisplayName("Accessor Tests")
+  class AccessorTests {
 
     @Test
     @DisplayName("consumed() should return true for allowed state")
@@ -236,8 +237,8 @@ class BucketStateTest {
     }
 
     @Test
-    @DisplayName("should support record equality")
-    void shouldSupportRecordEquality() {
+    @DisplayName("should support equality")
+    void shouldSupportEquality() {
       // given
       long resetTime = System.currentTimeMillis();
       BucketState state1 = new BucketState(true, 50, 0, resetTime);
@@ -249,8 +250,8 @@ class BucketStateTest {
     }
 
     @Test
-    @DisplayName("should support record toString")
-    void shouldSupportRecordToString() {
+    @DisplayName("should support toString")
+    void shouldSupportToString() {
       // given
       BucketState state = new BucketState(true, 100, 0, 1234567890L);
 

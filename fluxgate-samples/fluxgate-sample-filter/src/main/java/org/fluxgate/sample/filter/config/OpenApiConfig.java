@@ -18,32 +18,24 @@ public class OpenApiConfig {
                 .title("FluxGate Filter Sample API")
                 .version("1.0.0")
                 .description(
-                    """
-                                Sample demonstrating **automatic rate limiting** using FluxgateRateLimitFilter.
-
-                                ## How it works
-
-                                All requests to `/api/**` are automatically rate-limited by the filter.
-                                No rate limiting code is needed in controllers!
-
-                                ## Configuration
-
-                                ```yaml
-                                fluxgate:
-                                  ratelimit:
-                                    filter-enabled: true
-                                    default-rule-set-id: api-limits
-                                    include-patterns:
-                                      - /api/*
-                                ```
-
-                                ## Rate Limit Response
-
-                                When rate limit is exceeded, you'll receive:
-                                - HTTP 429 Too Many Requests
-                                - `Retry-After` header with seconds to wait
-                                - `X-RateLimit-Remaining` header with remaining tokens
-                                """)
+                    "Sample demonstrating **automatic rate limiting** using FluxgateRateLimitFilter.\n\n"
+                        + "## How it works\n\n"
+                        + "All requests to `/api/**` are automatically rate-limited by the filter. "
+                        + "No rate limiting code is needed in controllers!\n\n"
+                        + "## Configuration\n\n"
+                        + "```yaml\n"
+                        + "fluxgate:\n"
+                        + "  ratelimit:\n"
+                        + "    filter-enabled: true\n"
+                        + "    default-rule-set-id: api-limits\n"
+                        + "    include-patterns:\n"
+                        + "      - /api/*\n"
+                        + "```\n\n"
+                        + "## Rate Limit Response\n\n"
+                        + "When rate limit is exceeded, you'll receive:\n"
+                        + "- HTTP 429 Too Many Requests\n"
+                        + "- `Retry-After` header with seconds to wait\n"
+                        + "- `X-RateLimit-Remaining` header with remaining tokens")
                 .contact(
                     new Contact().name("FluxGate").url("https://github.com/openfluxgate/fluxgate"))
                 .license(

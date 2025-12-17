@@ -7,7 +7,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate-samples</artifactId>
-        <version>0.3.1</version>
+        <version>0.3.3</version>
     </parent>
 
     <artifactId>fluxgate-sample-filter</artifactId>
@@ -21,7 +21,7 @@
         <!-- FluxGate Spring Boot Starter -->
         <dependency>
             <groupId>io.github.openfluxgate</groupId>
-            <artifactId>fluxgate-spring-boot-starter</artifactId>
+            <artifactId>fluxgate-spring-boot3-starter</artifactId>
             <version>${project.version}</version>
         </dependency>
 

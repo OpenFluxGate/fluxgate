@@ -189,11 +189,14 @@ class FluxgateRateLimitHandlerTest {
       // given - handler that checks rule set ID
       FluxgateRateLimitHandler ruleSetAwareHandler =
           (context, ruleSetId) -> {
-            return switch (ruleSetId) {
-              case "strict" -> RateLimitResponse.rejected(60000);
-              case "relaxed" -> RateLimitResponse.allowed(100, 0);
-              default -> RateLimitResponse.allowed(10, 0);
-            };
+            switch (ruleSetId) {
+              case "strict":
+                return RateLimitResponse.rejected(60000);
+              case "relaxed":
+                return RateLimitResponse.allowed(100, 0);
+              default:
+                return RateLimitResponse.allowed(10, 0);
+            }
           };
 
       RequestContext context = RequestContext.builder().build();

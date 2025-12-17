@@ -114,12 +114,18 @@ public class RateLimitController {
 
   private RateLimitRuleSet buildRuleSet(RuleSetData data, RateLimitCheckRequest request) {
     // Determine LimitScope based on keyStrategyId
-    LimitScope scope =
-        switch (data.getKeyStrategyId()) {
-          case "userId" -> LimitScope.PER_USER;
-          case "apiKey" -> LimitScope.PER_API_KEY;
-          default -> LimitScope.PER_IP;
-        };
+    LimitScope scope;
+    switch (data.getKeyStrategyId()) {
+      case "userId":
+        scope = LimitScope.PER_USER;
+        break;
+      case "apiKey":
+        scope = LimitScope.PER_API_KEY;
+        break;
+      default:
+        scope = LimitScope.PER_IP;
+        break;
+    }
 
     // Build a rate limit rule from the RuleSetData
     RateLimitRule rule =

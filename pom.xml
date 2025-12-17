@@ -9,7 +9,7 @@
 
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate</artifactId>
-    <version>0.3.1</version>
+    <version>0.3.3</version>
     <packaging>pom</packaging>
 
     <name>FluxGate</name>
@@ -21,15 +21,16 @@
         <module>fluxgate-core</module>
         <module>fluxgate-mongo-adapter</module>
         <module>fluxgate-redis-ratelimiter</module>
-        <module>fluxgate-spring-boot-starter</module>
+        <module>fluxgate-spring-boot2-starter</module>
+        <module>fluxgate-spring-boot3-starter</module>
         <module>fluxgate-control-support</module>
         <module>fluxgate-testkit</module>
         <module>fluxgate-samples</module>
     </modules>
 
-    <!-- Java 21 -->
+    <!-- Java 11 -->
     <properties>
-        <java.version>21</java.version>
+        <java.version>11</java.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
 
@@ -50,6 +51,9 @@
         <!-- Code coverage settings -->
         <jacoco.line.coverage>0.80</jacoco.line.coverage>
         <jacoco.branch.coverage>0.70</jacoco.branch.coverage>
+
+        <!-- Skip JaCoCo for pom packaging modules (default: true for parent pom) -->
+        <skipJacocoForPom>true</skipJacocoForPom>
     </properties>
 
     <licenses>
@@ -80,7 +84,7 @@
             <!-- Core rate limiting -->
             <dependency>
                 <groupId>com.bucket4j</groupId>
-                <artifactId>bucket4j_jdk17-core</artifactId>
+                <artifactId>bucket4j_jdk11-core</artifactId>
                 <version>${bucket4j.version}</version>
             </dependency>
 
@@ -210,7 +214,8 @@
                             <artifact>fluxgate-sample-redis</artifact>
                             <artifact>fluxgate-sample-api</artifact>
                             <artifact>fluxgate-sample-filter</artifact>
-                            <artifact>fluxgate-sample-standalone</artifact>
+                            <artifact>fluxgate-sample-standalone-java21</artifact>
+                            <artifact>fluxgate-sample-standalone-java11</artifact>
                             <artifact>fluxgate-testkit</artifact>
                         </excludeArtifacts>
                     </configuration>
@@ -292,6 +297,28 @@
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
+                <configuration>
+                    <!-- Skip JaCoCo for pom packaging modules (parent/aggregator) -->
+                    <skip>${skipJacocoForPom}</skip>
+                    <!-- Rules for check goal - same as pluginManagement -->
+                    <rules>
+                        <rule>
+                            <element>BUNDLE</element>
+                            <limits>
+                                <limit>
+                                    <counter>LINE</counter>
+                                    <value>COVEREDRATIO</value>
+                                    <minimum>${jacoco.line.coverage}</minimum>
+                                </limit>
+                                <limit>
+                                    <counter>BRANCH</counter>
+                                    <value>COVEREDRATIO</value>
+                                    <minimum>${jacoco.branch.coverage}</minimum>
+                                </limit>
+                            </limits>
+                        </rule>
+                    </rules>
+                </configuration>
             </plugin>
         </plugins>
     </build>

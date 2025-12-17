@@ -124,7 +124,8 @@ public class RetryConfig {
     }
 
     // Check if it's a FluxgateException with isRetryable
-    if (exception instanceof FluxgateException fluxgateEx) {
+    if (exception instanceof FluxgateException) {
+      FluxgateException fluxgateEx = (FluxgateException) exception;
       if (fluxgateEx.isRetryable()) {
         return true;
       }
@@ -184,7 +185,7 @@ public class RetryConfig {
     /**
      * Sets the maximum number of attempts.
      *
-     * @param maxAttempts the maximum attempts (must be >= 1)
+     * @param maxAttempts the maximum attempts (must be at least 1)
      * @return this builder
      */
     public Builder maxAttempts(int maxAttempts) {
@@ -209,7 +210,7 @@ public class RetryConfig {
     /**
      * Sets the backoff multiplier.
      *
-     * @param multiplier the multiplier (must be >= 1.0)
+     * @param multiplier the multiplier (must be at least 1.0)
      * @return this builder
      */
     public Builder multiplier(double multiplier) {

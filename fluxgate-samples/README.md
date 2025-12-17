@@ -180,4 +180,4 @@ public class MyApplication {
 - [FluxGate Core Documentation](../fluxgate-core/README.md)
 - [Redis Rate Limiter](../fluxgate-redis-ratelimiter/README.md)
 - [MongoDB Adaptor](../fluxgate-mongo-adaptor/README.md)
-- [Spring Boot Starter](../fluxgate-spring-boot-starter/README.md)
+- [Spring Boot Starter](../fluxgate-spring-boot3-starter/README.md)

@@ -9,7 +9,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.3.1</version>
+        <version>0.3.3</version>
     </parent>
 
     <artifactId>fluxgate-control-support</artifactId>
@@ -17,6 +17,10 @@
 
     <name>FluxGate Control Support</name>
     <description>Support library for FluxGate Control Plane (Admin/Studio) - provides rule change notification capabilities</description>
+
+    <properties>
+        <skipJacocoForPom>false</skipJacocoForPom>
+    </properties>
 
     <dependencies>
         <!-- Lettuce Redis Client -->
