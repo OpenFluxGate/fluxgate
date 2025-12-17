@@ -9,7 +9,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate-samples</artifactId>
-        <version>0.3.1</version>
+        <version>0.3.2</version>
     </parent>
 
     <artifactId>fluxgate-sample-redis</artifactId>
@@ -22,7 +22,7 @@
         <!-- FluxGate Spring Boot Starter -->
         <dependency>
             <groupId>io.github.openfluxgate</groupId>
-            <artifactId>fluxgate-spring-boot-starter</artifactId>
+            <artifactId>fluxgate-spring-boot3-starter</artifactId>
             <version>${project.version}</version>
         </dependency>
 
@@ -43,6 +43,12 @@
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
+        </dependency>
+
+        <!-- SpringDoc OpenAPI -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
         </dependency>
     </dependencies>
 

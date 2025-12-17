@@ -7,7 +7,9 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  # Build and test with Java 21 (all modules)
+  build-java21:
+    name: Build & Test (Java 21 - All Modules)
     runs-on: ubuntu-latest
 
     services:
@@ -61,10 +63,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: "21"
+          java-version: '21'
           distribution: temurin
           cache: maven
 
@@ -88,6 +90,167 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results
+          name: test-results-java21
           path: '**/target/surefire-reports/*.xml'
 
+  # Build and test Spring Boot 2.x modules with Java 11
+  build-java11:
+    name: Build & Test (Java 11 - Spring Boot 2.x)
+    runs-on: ubuntu-latest
+
+    services:
+      mongo:
+        image: mongo:7.0
+        env:
+          MONGO_INITDB_ROOT_USERNAME: fluxgate
+          MONGO_INITDB_ROOT_PASSWORD: fluxgate123
+          MONGO_INITDB_DATABASE: fluxgate
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --username fluxgate --password fluxgate123 --authenticationDatabase admin --eval 'db.adminCommand(\"ping\")'"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis-cluster:
+        image: grokzen/redis-cluster:7.0.10
+        env:
+          IP: "0.0.0.0"
+          INITIAL_PORT: 7100
+        ports:
+          - 7100:7100
+          - 7101:7101
+          - 7102:7102
+          - 7103:7103
+          - 7104:7104
+          - 7105:7105
+        options: >-
+          --health-cmd "redis-cli -p 7100 cluster info | grep cluster_state:ok"
+          --health-interval=10s
+          --health-timeout=10s
+          --health-retries=10
+
+    env:
+      FLUXGATE_MONGO_URI: "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin"
+      FLUXGATE_MONGO_DB: "fluxgate"
+      FLUXGATE_REDIS_URI: "redis://localhost:6379"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: temurin
+          cache: maven
+
+      - name: Build core modules with Java 11
+        run: |
+          # Build only Java 11 compatible modules
+          mvn -B install -DskipTests \
+            -pl fluxgate-core,fluxgate-mongo-adapter,fluxgate-redis-ratelimiter,fluxgate-spring-boot2-starter \
+            -am
+
+      - name: Test Spring Boot 2.x starter with Java 11
+        run: |
+          mvn -B verify \
+            -pl fluxgate-core,fluxgate-mongo-adapter,fluxgate-redis-ratelimiter,fluxgate-spring-boot2-starter
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-java11
+          path: '**/target/surefire-reports/*.xml'
+
+  # Build and test with Java 17 (Spring Boot 3.x minimum)
+  build-java17:
+    name: Build & Test (Java 17 - Spring Boot 3.x)
+    runs-on: ubuntu-latest
+
+    services:
+      mongo:
+        image: mongo:7.0
+        env:
+          MONGO_INITDB_ROOT_USERNAME: fluxgate
+          MONGO_INITDB_ROOT_PASSWORD: fluxgate123
+          MONGO_INITDB_DATABASE: fluxgate
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --username fluxgate --password fluxgate123 --authenticationDatabase admin --eval 'db.adminCommand(\"ping\")'"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis-cluster:
+        image: grokzen/redis-cluster:7.0.10
+        env:
+          IP: "0.0.0.0"
+          INITIAL_PORT: 7100
+        ports:
+          - 7100:7100
+          - 7101:7101
+          - 7102:7102
+          - 7103:7103
+          - 7104:7104
+          - 7105:7105
+        options: >-
+          --health-cmd "redis-cli -p 7100 cluster info | grep cluster_state:ok"
+          --health-interval=10s
+          --health-timeout=10s
+          --health-retries=10
+
+    env:
+      FLUXGATE_MONGO_URI: "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin"
+      FLUXGATE_MONGO_DB: "fluxgate"
+      FLUXGATE_REDIS_URI: "redis://localhost:6379"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: maven
+
+      - name: Build all modules with Java 17 (excluding Java 21 samples)
+        run: |
+          mvn -B install -DskipTests \
+            -pl !fluxgate-samples/fluxgate-sample-standalone-java21
+
+      - name: Test Spring Boot 3.x starter with Java 17
+        run: |
+          mvn -B verify \
+            -pl fluxgate-core,fluxgate-mongo-adapter,fluxgate-redis-ratelimiter,fluxgate-spring-boot3-starter
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-java17
+          path: '**/target/surefire-reports/*.xml'

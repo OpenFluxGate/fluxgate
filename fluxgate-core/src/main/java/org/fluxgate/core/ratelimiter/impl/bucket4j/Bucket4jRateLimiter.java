@@ -117,7 +117,7 @@ public class Bucket4jRateLimiter implements RateLimiter {
    * @return a new Bucket configured with the rule's bands
    */
   private Bucket createBucketForRule(RateLimitRule rule) {
-    var builder = Bucket.builder();
+    io.github.bucket4j.local.LocalBucketBuilder builder = Bucket.builder();
 
     List<RateLimitBand> bands = rule.getBands();
     if (bands == null || bands.isEmpty()) {
@@ -152,7 +152,8 @@ public class Bucket4jRateLimiter implements RateLimiter {
     @Override
     public boolean equals(Object o) {
       if (this == o) return true;
-      if (!(o instanceof BucketKey that)) return false;
+      if (!(o instanceof BucketKey)) return false;
+      BucketKey that = (BucketKey) o;
       return ruleSetId.equals(that.ruleSetId) && key.equals(that.key);
     }
 

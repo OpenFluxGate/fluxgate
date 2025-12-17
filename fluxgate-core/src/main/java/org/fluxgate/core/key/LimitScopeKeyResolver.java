@@ -58,14 +58,27 @@ public class LimitScopeKeyResolver implements KeyResolver {
       scope = LimitScope.PER_IP; // default
     }
 
-    String keyValue =
-        switch (scope) {
-          case GLOBAL -> GLOBAL_KEY;
-          case PER_IP -> resolveClientIp(context);
-          case PER_USER -> resolveUserId(context);
-          case PER_API_KEY -> resolveApiKey(context);
-          case CUSTOM -> resolveCustom(context, rule);
-        };
+    String keyValue;
+    switch (scope) {
+      case GLOBAL:
+        keyValue = GLOBAL_KEY;
+        break;
+      case PER_IP:
+        keyValue = resolveClientIp(context);
+        break;
+      case PER_USER:
+        keyValue = resolveUserId(context);
+        break;
+      case PER_API_KEY:
+        keyValue = resolveApiKey(context);
+        break;
+      case CUSTOM:
+        keyValue = resolveCustom(context, rule);
+        break;
+      default:
+        keyValue = resolveClientIp(context);
+        break;
+    }
 
     log.debug("Resolved key for rule {} with scope {}: {}", rule.getId(), scope, keyValue);
 

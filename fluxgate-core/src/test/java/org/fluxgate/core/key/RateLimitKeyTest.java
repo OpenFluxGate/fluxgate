@@ -9,7 +9,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link RateLimitKey}.
  *
- * <p>RateLimitKey is a record that wraps a string key used for rate limit bucket identification.
+ * <p>RateLimitKey is an immutable class that wraps a string key used for rate limit bucket
+ * identification.
  */
 @DisplayName("RateLimitKey Tests")
 class RateLimitKeyTest {

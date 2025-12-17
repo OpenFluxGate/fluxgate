@@ -1,7 +1,7 @@
 # FluxGate
 
-[![Java](https://img.shields.io/badge/Java-21%2B-blue.svg)](https://openjdk.org/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Java](https://img.shields.io/badge/Java-11%2B-blue.svg)](https://openjdk.org/)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.x%20%7C%203.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build](https://github.com/OpenFluxGate/fluxgate/actions/workflows/maven-ci.yml/badge.svg)](https://github.com/OpenFluxGate/fluxgate/actions)
 [![Admin UI](https://img.shields.io/badge/Admin%20UI-FluxGate%20Studio-orange.svg)](https://github.com/OpenFluxGate/fluxgate-studio)
@@ -79,7 +79,8 @@
 | **fluxgate-core**                | Bucket4j 통합을 포함한 핵심 Rate Limiting 엔진   |
 | **fluxgate-redis-ratelimiter**   | Lua 스크립트를 사용한 Redis 기반 분산 Rate Limiter |
 | **fluxgate-mongo-adapter**       | 동적 규칙 관리를 위한 MongoDB 어댑터               |
-| **fluxgate-spring-boot-starter** | Spring Boot 자동 설정 및 필터 지원              |
+| **fluxgate-spring-boot3-starter** | Spring Boot 3.x 자동 설정 (Java 17+, jakarta.servlet) |
+| **fluxgate-spring-boot2-starter** | Spring Boot 2.x 자동 설정 (Java 11+, javax.servlet) |
 | **fluxgate-testkit**             | 통합 테스트 유틸리티                            |
 | **fluxgate-samples**             | 다양한 사용 사례를 보여주는 샘플 애플리케이션              |
 
@@ -87,7 +88,7 @@
 
 ### 사전 요구 사항
 
-- Java 21+
+- Java 11+
 - Maven 3.8+
 - Redis 6.0+ (분산 Rate Limiting용)
 - MongoDB 4.4+ (선택사항, 규칙 관리용)
@@ -95,24 +96,34 @@
 ### 1. 의존성 추가
 
 ```xml
+<!-- Spring Boot 3.x (Java 17+) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
-    <artifactId>fluxgate-spring-boot-starter</artifactId>
-    <version>0.2.0</version>
+    <artifactId>fluxgate-spring-boot3-starter</artifactId>
+    <version>0.3.2</version>
 </dependency>
+
+<!-- Spring Boot 2.x (Java 11+) -->
+<!--
+<dependency>
+    <groupId>io.github.openfluxgate</groupId>
+    <artifactId>fluxgate-spring-boot2-starter</artifactId>
+    <version>0.3.2</version>
+</dependency>
+-->
 
 <!-- For Redis-backed rate limiting -->
 <dependency>
 <groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-redis-ratelimiter</artifactId>
-<version>0.2.0</version>
+<version>0.3.2</version>
 </dependency>
 
 <!-- For MongoDB rule management (optional) -->
 <dependency>
 <groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-mongo-adapter</artifactId>
-<version>0.2.0</version>
+<version>0.3.2</version>
 </dependency>
 ```
 

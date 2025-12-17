@@ -8,7 +8,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.3.1</version>
+        <version>0.3.2</version>
     </parent>
 
     <artifactId>fluxgate-testkit</artifactId>
@@ -22,6 +22,7 @@
         <jacoco.skip>true</jacoco.skip>
         <!-- Skip deployment to Maven Central -->
         <maven.deploy.skip>true</maven.deploy.skip>
+        <skipJacocoForPom>false</skipJacocoForPom>
     </properties>
 
     <dependencies>
