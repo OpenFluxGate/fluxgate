@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -191,7 +192,10 @@ public class RedisRuleChangeNotifier implements RuleChangeNotifier {
   private void createClusterConnection() {
     log.debug("Creating Redis cluster connection");
     List<RedisURI> uris =
-        Arrays.stream(redisUri.split(",")).map(String::trim).map(this::createRedisUri).toList();
+        Arrays.stream(redisUri.split(","))
+            .map(String::trim)
+            .map(this::createRedisUri)
+            .collect(Collectors.toList());
     redisClusterClient = RedisClusterClient.create(uris);
     clusterConnection = redisClusterClient.connect();
   }

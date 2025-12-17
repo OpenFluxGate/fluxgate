@@ -67,13 +67,85 @@ public interface RuleCache {
   }
 
   /** Statistics about cache performance. */
-  record CacheStats(
-      long hitCount, long missCount, long evictionCount, double hitRate, long estimatedSize) {
+  final class CacheStats {
+
+    private final long hitCount;
+    private final long missCount;
+    private final long evictionCount;
+    private final double hitRate;
+    private final long estimatedSize;
+
+    public CacheStats(
+        long hitCount, long missCount, long evictionCount, double hitRate, long estimatedSize) {
+      this.hitCount = hitCount;
+      this.missCount = missCount;
+      this.evictionCount = evictionCount;
+      this.hitRate = hitRate;
+      this.estimatedSize = estimatedSize;
+    }
 
     public static CacheStats of(
         long hitCount, long missCount, long evictionCount, long estimatedSize) {
       double hitRate = hitCount + missCount > 0 ? (double) hitCount / (hitCount + missCount) : 0.0;
       return new CacheStats(hitCount, missCount, evictionCount, hitRate, estimatedSize);
+    }
+
+    public long hitCount() {
+      return hitCount;
+    }
+
+    public long missCount() {
+      return missCount;
+    }
+
+    public long evictionCount() {
+      return evictionCount;
+    }
+
+    public double hitRate() {
+      return hitRate;
+    }
+
+    public long estimatedSize() {
+      return estimatedSize;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (!(o instanceof CacheStats)) return false;
+      CacheStats that = (CacheStats) o;
+      return hitCount == that.hitCount
+          && missCount == that.missCount
+          && evictionCount == that.evictionCount
+          && Double.compare(that.hitRate, hitRate) == 0
+          && estimatedSize == that.estimatedSize;
+    }
+
+    @Override
+    public int hashCode() {
+      int result = Long.hashCode(hitCount);
+      result = 31 * result + Long.hashCode(missCount);
+      result = 31 * result + Long.hashCode(evictionCount);
+      result = 31 * result + Double.hashCode(hitRate);
+      result = 31 * result + Long.hashCode(estimatedSize);
+      return result;
+    }
+
+    @Override
+    public String toString() {
+      return "CacheStats{"
+          + "hitCount="
+          + hitCount
+          + ", missCount="
+          + missCount
+          + ", evictionCount="
+          + evictionCount
+          + ", hitRate="
+          + hitRate
+          + ", estimatedSize="
+          + estimatedSize
+          + '}';
     }
   }
 }

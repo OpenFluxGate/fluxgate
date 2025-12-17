@@ -124,7 +124,8 @@ public class RetryConfig {
     }
 
     // Check if it's a FluxgateException with isRetryable
-    if (exception instanceof FluxgateException fluxgateEx) {
+    if (exception instanceof FluxgateException) {
+      FluxgateException fluxgateEx = (FluxgateException) exception;
       if (fluxgateEx.isRetryable()) {
         return true;
       }
