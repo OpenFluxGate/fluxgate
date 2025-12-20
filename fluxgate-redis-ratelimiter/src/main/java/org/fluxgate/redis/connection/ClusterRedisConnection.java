@@ -134,6 +134,18 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
   }
 
   @Override
+  @SuppressWarnings("unchecked")
+  public <T> T eval(String script, String[] keys, String[] args) {
+    Objects.requireNonNull(script, "script must not be null");
+    Objects.requireNonNull(keys, "keys must not be null");
+    Objects.requireNonNull(args, "args must not be null");
+
+    // Lettuce cluster client automatically routes EVAL to the correct node
+    // based on the key's slot
+    return (T) commands.eval(script, ScriptOutputType.MULTI, keys, args);
+  }
+
+  @Override
   public boolean hset(String key, String field, String value) {
     return commands.hset(key, field, value);
   }
