@@ -16,7 +16,7 @@ fluxgate:
     # Optional: Enable event logging by setting event-collection
     event-collection: rate_limit_events
     # DDL auto mode: validate (default) or create
-    ddl-auto: validate
+    ddl-auto: create
   # Redis configuration (uses FluxgateConfig)
   redis:
     enabled: true
