@@ -10,7 +10,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.3.3</version>
+        <version>0.3.5</version>
     </parent>
 
     <artifactId>fluxgate-core</artifactId>
