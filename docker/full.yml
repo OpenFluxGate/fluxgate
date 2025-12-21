@@ -25,7 +25,7 @@ services:
       - "27017:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: fluxgate
-      MONGO_INITDB_ROOT_PASSWORD: fluxgate123
+      MONGO_INITDB_ROOT_PASSWORD: fluxgate123#$
       MONGO_INITDB_DATABASE: fluxgate
     volumes:
       - mongo-data:/data/db
