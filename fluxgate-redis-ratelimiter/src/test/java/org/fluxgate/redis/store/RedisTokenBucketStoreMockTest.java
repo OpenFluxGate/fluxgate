@@ -90,7 +90,8 @@ class RedisTokenBucketStoreMockTest {
     // given
     RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 10).label("test").build();
 
-    // Lua script returns rejection: [consumed, remaining, nanosToWait, resetTimeMillis, isNewBucket]
+    // Lua script returns rejection: [consumed, remaining, nanosToWait, resetTimeMillis,
+    // isNewBucket]
     List<Long> scriptResult = Arrays.asList(0L, 0L, 5_000_000_000L, System.currentTimeMillis(), 0L);
     doReturn(scriptResult)
         .when(connectionProvider)
