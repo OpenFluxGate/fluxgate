@@ -157,8 +157,7 @@ public class RedisTokenBucketStore {
    * <p>This is used when rules are changed to reset rate limit state. The pattern matches keys
    * like: {@code fluxgate:{ruleSetId}:*}
    *
-   * <p>Warning: Uses KEYS command which can be slow on large databases. Consider using SCAN in
-   * high-traffic production environments.
+   * <p>Uses SCAN command which is production-safe (non-blocking, incremental scanning).
    *
    * @param ruleSetId the rule set ID to match
    * @return the number of buckets deleted
@@ -167,9 +166,9 @@ public class RedisTokenBucketStore {
     Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
 
     String pattern = "fluxgate:" + ruleSetId + ":*";
-    log.debug("Deleting token buckets matching pattern: {}", pattern);
+    log.debug("Scanning token buckets matching pattern: {}", pattern);
 
-    java.util.List<String> keys = connectionProvider.keys(pattern);
+    java.util.List<String> keys = connectionProvider.scan(pattern);
     if (keys.isEmpty()) {
       log.debug("No token buckets found for ruleSetId: {}", ruleSetId);
       return 0;
@@ -186,15 +185,15 @@ public class RedisTokenBucketStore {
    * <p>This is used when a full reload is triggered to reset all rate limit state. The pattern
    * matches all FluxGate keys: {@code fluxgate:*}
    *
-   * <p>Warning: Uses KEYS command which can be slow on large databases.
+   * <p>Uses SCAN command which is production-safe (non-blocking, incremental scanning).
    *
    * @return the number of buckets deleted
    */
   public long deleteAllBuckets() {
     String pattern = "fluxgate:*";
-    log.debug("Deleting all token buckets matching pattern: {}", pattern);
+    log.debug("Scanning all token buckets matching pattern: {}", pattern);
 
-    java.util.List<String> keys = connectionProvider.keys(pattern);
+    java.util.List<String> keys = connectionProvider.scan(pattern);
     if (keys.isEmpty()) {
       log.debug("No token buckets found");
       return 0;
