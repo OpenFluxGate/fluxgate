@@ -20,6 +20,11 @@ fluxgate:
   # Redis configuration (uses FluxgateConfig)
   redis:
     enabled: true
+    # Connection mode: auto (default), standalone, or cluster
+    # - auto: Auto-detect from URI (single = standalone, comma-separated = cluster)
+    # - standalone: Force standalone mode
+    # - cluster: Force cluster mode
+    mode: auto
     uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
     #uri: redis://localhost:6379
   # Metrics enable for Prometheus
