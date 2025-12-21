@@ -70,8 +70,8 @@ class RedisTokenBucketStoreMockTest {
     // given
     RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
 
-    // Lua script returns: [consumed, remaining, nanosToWait, resetTimeMillis]
-    List<Long> scriptResult = Arrays.asList(1L, 95L, 0L, System.currentTimeMillis() + 60000);
+    // Lua script returns: [consumed, remaining, nanosToWait, resetTimeMillis, isNewBucket]
+    List<Long> scriptResult = Arrays.asList(1L, 95L, 0L, System.currentTimeMillis() + 60000, 0L);
     doReturn(scriptResult)
         .when(connectionProvider)
         .evalsha(anyString(), any(String[].class), any(String[].class));
@@ -90,8 +90,8 @@ class RedisTokenBucketStoreMockTest {
     // given
     RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 10).label("test").build();
 
-    // Lua script returns rejection
-    List<Long> scriptResult = Arrays.asList(0L, 0L, 5_000_000_000L, System.currentTimeMillis());
+    // Lua script returns rejection: [consumed, remaining, nanosToWait, resetTimeMillis, isNewBucket]
+    List<Long> scriptResult = Arrays.asList(0L, 0L, 5_000_000_000L, System.currentTimeMillis(), 0L);
     doReturn(scriptResult)
         .when(connectionProvider)
         .evalsha(anyString(), any(String[].class), any(String[].class));
@@ -171,7 +171,8 @@ class RedisTokenBucketStoreMockTest {
     // given
     RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
 
-    List<Long> scriptResult = Arrays.asList(1L, 99L, 0L, System.currentTimeMillis());
+    // [consumed, remaining, nanosToWait, resetTimeMillis, isNewBucket]
+    List<Long> scriptResult = Arrays.asList(1L, 99L, 0L, System.currentTimeMillis(), 1L);
     doReturn(scriptResult)
         .when(connectionProvider)
         .evalsha(anyString(), any(String[].class), any(String[].class));
