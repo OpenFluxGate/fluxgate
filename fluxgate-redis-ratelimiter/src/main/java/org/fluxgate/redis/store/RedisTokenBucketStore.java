@@ -101,8 +101,8 @@ public class RedisTokenBucketStore {
     // In cluster mode, Lettuce automatically routes to the correct node based on KEYS[1]
     List<Long> result = connectionProvider.evalsha(sha, keys, args);
 
-    // Parse result: [consumed, remaining_tokens, nanos_to_wait, reset_time_millis]
-    if (result == null || result.size() != 4) {
+    // Parse result: [consumed, remaining_tokens, nanos_to_wait, reset_time_millis, is_new_bucket]
+    if (result == null || result.size() != 5) {
       log.error("Unexpected Lua script result: {}", result);
       throw new IllegalStateException("Lua script returned invalid result");
     }
@@ -111,18 +111,29 @@ public class RedisTokenBucketStore {
     long remainingTokens = result.get(1);
     long nanosToWait = result.get(2);
     long resetTimeMillis = result.get(3);
+    boolean isNewBucket = result.get(4) == 1;
 
     if (consumed == 1) {
-      log.debug(
-          "Token bucket {}: consumed {} permits, {} remaining, reset at {}",
-          bucketKey,
-          permits,
-          remainingTokens,
-          resetTimeMillis);
+      if (isNewBucket) {
+        log.debug(
+            "Token bucket CREATED: key={}, capacity={}, consumed={}, remaining={}, ttl={}s",
+            bucketKey,
+            capacity,
+            permits,
+            remainingTokens,
+            Math.min((long) Math.ceil(windowNanos / 1_000_000_000.0 * 1.1), 86400));
+      } else {
+        log.debug(
+            "Token bucket UPDATED: key={}, consumed={}, remaining={}, reset={}",
+            bucketKey,
+            permits,
+            remainingTokens,
+            resetTimeMillis);
+      }
       return BucketState.allowed(remainingTokens, resetTimeMillis);
     } else {
       log.debug(
-          "Token bucket {}: rejected (not enough tokens), {} remaining, wait {} ns, reset at {}",
+          "Token bucket REJECTED: key={}, remaining={}, waitNanos={}, reset={}",
           bucketKey,
           remainingTokens,
           nanosToWait,

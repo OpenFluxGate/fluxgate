@@ -13,11 +13,12 @@ ARGV[1] = capacity (max tokens, e.g., 100)
 ARGV[2] = window_nanos (window duration in nanoseconds, e.g., 60000000000 for 1 minute)
 ARGV[3] = permits (number of tokens to consume, usually 1)
 
-Returns array: {consumed, remaining_tokens, nanos_to_wait, reset_time_millis}
+Returns array: {consumed, remaining_tokens, nanos_to_wait, reset_time_millis, is_new_bucket}
   - consumed: 1 if allowed, 0 if rejected
   - remaining_tokens: tokens left after consumption (if allowed) or current tokens (if rejected)
   - nanos_to_wait: nanoseconds to wait until enough tokens available (0 if allowed)
   - reset_time_millis: Unix timestamp in milliseconds when bucket will be full again
+  - is_new_bucket: 1 if bucket was newly created, 0 if existing bucket was updated
 ]]
 
 -- Parse arguments
@@ -45,10 +46,14 @@ local bucket_data = redis.call('HMGET', bucket_key, 'tokens', 'last_refill_nanos
 local current_tokens = tonumber(bucket_data[1])
 local last_refill_nanos = tonumber(bucket_data[2])
 
+-- Track if this is a new bucket
+local is_new_bucket = 0
+
 -- Initialize if bucket doesn't exist (allow initial burst)
 if current_tokens == nil or last_refill_nanos == nil then
     current_tokens = capacity  -- Start with full capacity (allows initial burst)
     last_refill_nanos = current_time_nanos
+    is_new_bucket = 1
 end
 
 -- Calculate elapsed time since last refill
@@ -102,8 +107,8 @@ if new_tokens >= permits then
 
     redis.call('EXPIRE', bucket_key, actual_ttl_seconds)
 
-    -- Return: [consumed=1, remaining_tokens, nanos_to_wait=0, reset_time]
-    return {1, new_tokens, 0, reset_time_millis}
+    -- Return: [consumed=1, remaining_tokens, nanos_to_wait=0, reset_time, is_new_bucket]
+    return {1, new_tokens, 0, reset_time_millis, is_new_bucket}
 else
     -- ===== REJECTED: Not enough tokens =====
     -- Calculate how long to wait for enough tokens
@@ -121,6 +126,6 @@ else
     -- This prevents unfair rate limiting where rejected requests advance
     -- the timestamp, making subsequent requests think less time has elapsed.
 
-    -- Return: [consumed=0, current_tokens, nanos_to_wait, reset_time]
-    return {0, new_tokens, nanos_to_wait, reset_time_millis}
+    -- Return: [consumed=0, current_tokens, nanos_to_wait, reset_time, is_new_bucket]
+    return {0, new_tokens, nanos_to_wait, reset_time_millis, is_new_bucket}
 end
