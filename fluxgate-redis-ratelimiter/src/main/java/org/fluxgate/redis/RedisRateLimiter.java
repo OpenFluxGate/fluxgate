@@ -70,7 +70,7 @@ public class RedisRateLimiter implements RateLimiter {
     }
 
     // ========================================================================
-    // Multi-Rule Rate Limiting with Per-Rule Key Resolution
+    // Multi-Rule Rate Limiting with Per-Rule Key Resolution (Fail-Fast)
     // ========================================================================
     // Each rule can have a different LimitScope (PER_IP, PER_USER, PER_API_KEY, etc.)
     // The KeyResolver resolves the appropriate key based on the rule's scope.
@@ -79,15 +79,16 @@ public class RedisRateLimiter implements RateLimiter {
     // - Rule 1 (PER_IP): key = "192.168.1.100"
     // - Rule 2 (PER_USER): key = "user-123"
     //
-    // Both rules are checked independently, and if ANY rule rejects, the request is rejected.
+    // IMPORTANT: Fail-Fast Strategy
+    // - If ANY rule/band rejects, we immediately return (early return)
+    // - This prevents unfair token consumption in subsequent rules
+    // - Without early return: Rule 1 rejects, but Rule 2/3 still consume tokens → unfair
+    // - With early return: Rule 1 rejects, Rule 2/3 are not checked → fair
     // ========================================================================
 
     RateLimitRule matchedRule = null;
     RateLimitKey matchedKey = null;
     long minRemainingTokens = Long.MAX_VALUE;
-    long maxNanosToWait = 0;
-    long resetTimeMillis = 0;
-    boolean anyRejected = false;
 
     for (RateLimitRule rule : rules) {
       if (!rule.isEnabled()) {
@@ -114,51 +115,56 @@ public class RedisRateLimiter implements RateLimiter {
         // Track minimum remaining tokens across all bands
         minRemainingTokens = Math.min(minRemainingTokens, state.remainingTokens());
 
-        // Track reset time (use latest)
-        resetTimeMillis = Math.max(resetTimeMillis, state.resetTimeMillis());
-
         if (!state.consumed()) {
-          // This band rejected the request
-          anyRejected = true;
-          maxNanosToWait = Math.max(maxNanosToWait, state.nanosToWaitForRefill());
-          matchedRule = rule; // Track which rule caused the rejection
-          matchedKey = logicalKey;
+          // ================================================================
+          // EARLY RETURN: Fail-fast on first rejection
+          // ================================================================
+          // - Prevents subsequent rules from consuming tokens unfairly
+          // - Lua script already ensures no state change on rejection
+          // - Only the rejecting rule is recorded in metrics/logs
+          // ================================================================
+          log.debug(
+              "Rate limit REJECTED for key {}: rule {}, band {}, wait {} ns",
+              logicalKey.value(),
+              rule.getId(),
+              band.getLabel(),
+              state.nanosToWaitForRefill());
+
+          RateLimitResult rejectedResult =
+              RateLimitResult.rejected(logicalKey, rule, state.nanosToWaitForRefill());
+
+          // Record metrics for rejection
+          RateLimitMetricsRecorder recorder = ruleSet.getMetricsRecorder();
+          if (recorder != null) {
+            recorder.record(context, rejectedResult);
+          }
+
+          return rejectedResult;
         }
       }
 
-      // Track the key for logging (use first rule's key if not rejected)
+      // Track for allowed result (use first rule's key)
       if (matchedKey == null) {
         matchedKey = logicalKey;
+        matchedRule = rule;
       }
     }
 
-    // Build result
-    RateLimitResult result;
-    if (anyRejected) {
-      // At least one band rejected - entire request is rejected
-      result = RateLimitResult.rejected(matchedKey, matchedRule, maxNanosToWait);
-
-      log.debug(
-          "Rate limit REJECTED for key {}: matched rule {}, wait {} ns",
-          matchedKey != null ? matchedKey.value() : "unknown",
-          matchedRule != null ? matchedRule.getId() : "unknown",
-          maxNanosToWait);
-    } else {
-      // All bands allowed - request is allowed
-      // Use first rule if no matched rule was set
-      matchedRule = matchedRule != null ? matchedRule : rules.get(0);
-
-      result =
-          RateLimitResult.allowed(
-              matchedKey, matchedRule, minRemainingTokens, 0L // No wait time since allowed
-              );
-
-      log.debug(
-          "Rate limit ALLOWED for key {}: matched rule {}, {} tokens remaining",
-          matchedKey != null ? matchedKey.value() : "unknown",
-          matchedRule.getId(),
-          minRemainingTokens);
+    // All rules/bands allowed - request is allowed
+    if (matchedRule == null) {
+      matchedRule = rules.get(0);
     }
+
+    RateLimitResult result =
+        RateLimitResult.allowed(
+            matchedKey, matchedRule, minRemainingTokens, 0L // No wait time since allowed
+            );
+
+    log.debug(
+        "Rate limit ALLOWED for key {}: matched rule {}, {} tokens remaining",
+        matchedKey != null ? matchedKey.value() : "unknown",
+        matchedRule.getId(),
+        minRemainingTokens);
 
     // Record metrics if configured
     RateLimitMetricsRecorder recorder = ruleSet.getMetricsRecorder();

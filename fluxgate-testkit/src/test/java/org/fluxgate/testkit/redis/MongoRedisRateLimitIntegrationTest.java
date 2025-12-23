@@ -44,8 +44,8 @@ import org.junit.jupiter.api.Test;
  * bucket storage - RedisRateLimiter as the RateLimiter implementation
  *
  * <p>Prerequisites: - MongoDB running at:
- * mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin - Redis running at:
- * redis://localhost:6379
+ * mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin - Redis running
+ * at: redis://localhost:6379
  */
 class MongoRedisRateLimitIntegrationTest {
 
