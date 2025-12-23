@@ -107,7 +107,7 @@
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
-    <version>0.3.3</version>
+    <version>0.3.6</version>
 </dependency>
 
 <!-- Spring Boot 2.x (Java 11+) -->
@@ -115,7 +115,7 @@
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot2-starter</artifactId>
-    <version>0.3.3</version>
+    <version>0.3.6</version>
 </dependency>
 -->
 
@@ -123,14 +123,14 @@
 <dependency>
 <groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-redis-ratelimiter</artifactId>
-<version>0.3.3</version>
+<version>0.3.6</version>
 </dependency>
 
 <!-- For MongoDB rule management (optional) -->
 <dependency>
 <groupId>io.github.openfluxgate</groupId>
 <artifactId>fluxgate-mongo-adapter</artifactId>
-<version>0.3.3</version>
+<version>0.3.6</version>
 </dependency>
 ```
 

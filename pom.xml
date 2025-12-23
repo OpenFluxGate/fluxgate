@@ -9,7 +9,7 @@
 
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate</artifactId>
-    <version>0.3.3</version>
+    <version>0.3.6</version>
     <packaging>pom</packaging>
 
     <name>FluxGate</name>

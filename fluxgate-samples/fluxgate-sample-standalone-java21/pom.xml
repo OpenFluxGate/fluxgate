@@ -8,7 +8,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate-samples</artifactId>
-        <version>0.3.3</version>
+        <version>0.3.6</version>
     </parent>
 
     <artifactId>fluxgate-sample-standalone-java21</artifactId>
