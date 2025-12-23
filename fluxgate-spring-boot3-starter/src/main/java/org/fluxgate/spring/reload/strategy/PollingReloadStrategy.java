@@ -187,13 +187,7 @@ public class PollingReloadStrategy extends AbstractReloadStrategy {
    * @return version hash
    */
   private int computeVersion(RateLimitRuleSet ruleSet) {
-    // Use a combination of ID, description, and rules hash
-    int hash = ruleSet.getId().hashCode();
-    if (ruleSet.getDescription() != null) {
-      hash = 31 * hash + ruleSet.getDescription().hashCode();
-    }
-    hash = 31 * hash + ruleSet.getRules().hashCode();
-    return hash;
+    return Objects.hash(ruleSet.getId(), ruleSet.getDescription(), ruleSet.getRules());
   }
 
   /**

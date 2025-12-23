@@ -1,7 +1,9 @@
 package org.fluxgate.redis.store;
 
+import io.lettuce.core.RedisNoScriptException;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.fluxgate.redis.script.LuaScriptLoader;
@@ -29,7 +31,7 @@ import org.slf4j.LoggerFactory;
 public class RedisTokenBucketStore {
 
   private static final Logger log = LoggerFactory.getLogger(RedisTokenBucketStore.class);
-
+  private final AtomicBoolean reloadingLuaScript = new AtomicBoolean(false);
   private final RedisConnectionProvider connectionProvider;
 
   /**
@@ -94,12 +96,8 @@ public class RedisTokenBucketStore {
       String.valueOf(capacity), String.valueOf(windowNanos), String.valueOf(permits)
     };
 
-    // Get cached SHA from script loader
-    String sha = LuaScripts.getTokenBucketConsumeSha();
-
-    // Execute Lua script using EVALSHA (more efficient than EVAL)
-    // In cluster mode, Lettuce automatically routes to the correct node based on KEYS[1]
-    List<Long> result = connectionProvider.evalsha(sha, keys, args);
+    // Execute Lua script with NOSCRIPT fallback
+    List<Long> result = executeScriptWithFallback(keys, args);
 
     // Parse result: [consumed, remaining_tokens, nanos_to_wait, reset_time_millis, is_new_bucket]
     if (result == null || result.size() != 5) {
@@ -139,6 +137,69 @@ public class RedisTokenBucketStore {
           nanosToWait,
           resetTimeMillis);
       return BucketState.rejected(remainingTokens, nanosToWait, resetTimeMillis);
+    }
+  }
+
+  /**
+   * Executes the Lua script with NOSCRIPT error fallback.
+   *
+   * <p>This method handles the case where Redis has been restarted and the script cache is lost.
+   * When EVALSHA fails with NOSCRIPT error, it falls back to:
+   *
+   * <ol>
+   *   <li>Execute using EVAL (slower but works)
+   *   <li>Reload the script into Redis cache for future calls
+   * </ol>
+   *
+   * @param keys the keys for the script
+   * @param args the arguments for the script
+   * @return the script execution result
+   */
+  private List<Long> executeScriptWithFallback(String[] keys, String[] args) {
+    String sha = LuaScripts.getTokenBucketConsumeSha();
+    String script = LuaScripts.getTokenBucketConsumeScript();
+
+    try {
+      // Try EVALSHA first (efficient, uses cached script)
+      return connectionProvider.evalsha(sha, keys, args);
+    } catch (RedisNoScriptException e) {
+      // Script not in Redis cache (e.g., Redis was restarted)
+      log.warn(
+          "Lua script not found in Redis cache (NOSCRIPT). "
+              + "Falling back to EVAL and reloading script. SHA: {}",
+          sha);
+
+      // Fallback 1 - Execute using EVAL (slower but works immediately)
+      List<Long> result = connectionProvider.eval(script, keys, args);
+
+      // Fallback 2 - Reload script for future calls (thread-safe with AtomicBoolean)
+      reloadScript();
+
+      return result;
+    }
+  }
+
+  /**
+   * Reloads the Lua script into Redis cache.
+   *
+   * <p>This is called after a NOSCRIPT error to restore the script cache. Uses AtomicBoolean to
+   * prevent multiple concurrent reload attempts.
+   */
+  private void reloadScript() {
+    if (!reloadingLuaScript.compareAndSet(false, true)) {
+      log.debug("Lua script is already being reloaded, skipping...");
+      return;
+    }
+
+    try {
+      String script = LuaScripts.getTokenBucketConsumeScript();
+      String sha = connectionProvider.scriptLoad(script);
+      LuaScripts.setTokenBucketConsumeSha(sha);
+      log.info("Lua script reloaded into Redis. SHA: {}", sha);
+    } catch (Exception e) {
+      log.error("Failed to reload Lua script: {}", e.getMessage(), e);
+    } finally {
+      reloadingLuaScript.set(false);
     }
   }
 

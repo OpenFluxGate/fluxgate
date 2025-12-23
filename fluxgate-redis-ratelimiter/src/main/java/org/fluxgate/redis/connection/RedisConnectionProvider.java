@@ -44,8 +44,22 @@ public interface RedisConnectionProvider extends AutoCloseable {
    * @param args the arguments passed to the script
    * @param <T> the return type
    * @return the script execution result
+   * @throws io.lettuce.core.RedisNoScriptException if the script is not cached in Redis
    */
   <T> T evalsha(String sha, String[] keys, String[] args);
+
+  /**
+   * Executes a Lua script using EVAL.
+   *
+   * <p>This is less efficient than EVALSHA but useful as a fallback when the script is not cached.
+   *
+   * @param script the Lua script content
+   * @param keys the keys used by the script
+   * @param args the arguments passed to the script
+   * @param <T> the return type
+   * @return the script execution result
+   */
+  <T> T eval(String script, String[] keys, String[] args);
 
   /**
    * Sets a hash field value.
