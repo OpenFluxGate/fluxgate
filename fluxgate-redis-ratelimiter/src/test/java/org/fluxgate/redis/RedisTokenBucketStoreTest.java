@@ -45,7 +45,7 @@ class RedisTokenBucketStoreTest {
   @BeforeEach
   void cleanRedis() {
     // Clear Redis before each test
-    // connectionProvider.del("test:bucket:*");
+    connectionProvider.flushdb();
   }
 
   @Test

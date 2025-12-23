@@ -46,6 +46,12 @@ class RedisRateLimiterTest {
     }
   }
 
+  @BeforeEach
+  void cleanRedis() {
+    // Clear Redis before each test
+    config.getConnectionProvider().flushdb();
+  }
+
   @Test
   @Order(1)
   @DisplayName("Should allow requests within rate limit")

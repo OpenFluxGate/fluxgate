@@ -17,12 +17,12 @@ jobs:
         image: mongo:7.0
         env:
           MONGO_INITDB_ROOT_USERNAME: fluxgate
-          MONGO_INITDB_ROOT_PASSWORD: fluxgate123
+          MONGO_INITDB_ROOT_PASSWORD: "fluxgate123#$"
           MONGO_INITDB_DATABASE: fluxgate
         ports:
           - 27017:27017
         options: >-
-          --health-cmd "mongosh --username fluxgate --password fluxgate123 --authenticationDatabase admin --eval 'db.adminCommand(\"ping\")'"
+          --health-cmd "mongosh --username fluxgate --password 'fluxgate123#$' --authenticationDatabase admin --eval 'db.adminCommand(\"ping\")'"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -56,7 +56,7 @@ jobs:
           --health-retries=10
 
     env:
-      FLUXGATE_MONGO_URI: "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin"
+      FLUXGATE_MONGO_URI: "mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin"
       FLUXGATE_MONGO_DB: "fluxgate"
       FLUXGATE_REDIS_URI: "redis://localhost:6379"
 
@@ -103,12 +103,12 @@ jobs:
         image: mongo:7.0
         env:
           MONGO_INITDB_ROOT_USERNAME: fluxgate
-          MONGO_INITDB_ROOT_PASSWORD: fluxgate123
+          MONGO_INITDB_ROOT_PASSWORD: "fluxgate123#$"
           MONGO_INITDB_DATABASE: fluxgate
         ports:
           - 27017:27017
         options: >-
-          --health-cmd "mongosh --username fluxgate --password fluxgate123 --authenticationDatabase admin --eval 'db.adminCommand(\"ping\")'"
+          --health-cmd "mongosh --username fluxgate --password 'fluxgate123#$' --authenticationDatabase admin --eval 'db.adminCommand(\"ping\")'"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -142,7 +142,7 @@ jobs:
           --health-retries=10
 
     env:
-      FLUXGATE_MONGO_URI: "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin"
+      FLUXGATE_MONGO_URI: "mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin"
       FLUXGATE_MONGO_DB: "fluxgate"
       FLUXGATE_REDIS_URI: "redis://localhost:6379"
 
@@ -185,12 +185,12 @@ jobs:
         image: mongo:7.0
         env:
           MONGO_INITDB_ROOT_USERNAME: fluxgate
-          MONGO_INITDB_ROOT_PASSWORD: fluxgate123
+          MONGO_INITDB_ROOT_PASSWORD: "fluxgate123#$"
           MONGO_INITDB_DATABASE: fluxgate
         ports:
           - 27017:27017
         options: >-
-          --health-cmd "mongosh --username fluxgate --password fluxgate123 --authenticationDatabase admin --eval 'db.adminCommand(\"ping\")'"
+          --health-cmd "mongosh --username fluxgate --password 'fluxgate123#$' --authenticationDatabase admin --eval 'db.adminCommand(\"ping\")'"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -224,7 +224,7 @@ jobs:
           --health-retries=10
 
     env:
-      FLUXGATE_MONGO_URI: "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin"
+      FLUXGATE_MONGO_URI: "mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin"
       FLUXGATE_MONGO_DB: "fluxgate"
       FLUXGATE_REDIS_URI: "redis://localhost:6379"
 
