@@ -2,14 +2,10 @@ package org.fluxgate.spring.autoconfigure;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.Arrays;
-import java.util.List;
-import java.util.stream.Collectors;
 import org.fluxgate.core.ratelimiter.RateLimiter;
 import org.fluxgate.redis.RedisRateLimiter;
 import org.fluxgate.redis.config.RedisRateLimiterConfig;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
-import org.fluxgate.redis.connection.RedisConnectionProvider.RedisMode;
 import org.fluxgate.redis.health.RedisHealthCheckerImpl;
 import org.fluxgate.redis.store.RedisRuleSetStore;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
@@ -101,44 +97,15 @@ public class FluxgateRedisAutoConfiguration {
   public RedisRateLimiterConfig fluxgateRedisConfig() throws IOException {
     FluxgateProperties.RedisProperties redisProps = properties.getRedis();
     String uri = redisProps.getUri();
-    String configuredMode = redisProps.getMode();
     String effectiveMode = redisProps.getEffectiveMode();
     Duration timeout = Duration.ofMillis(redisProps.getTimeoutMs());
 
     log.info("Creating FluxGate RedisRateLimiterConfig");
     log.info("  URI: {}", maskUri(uri));
-    log.info("  Mode: {} (configured: {})", effectiveMode, configuredMode);
+    log.info("  Mode: {} (configured: {})", effectiveMode, redisProps.getMode());
     log.info("  Timeout: {}ms", redisProps.getTimeoutMs());
 
-    RedisRateLimiterConfig config;
-
-    // Use explicit mode if configured (not auto)
-    if ("cluster".equalsIgnoreCase(configuredMode)
-        || "standalone".equalsIgnoreCase(configuredMode)) {
-      // Explicit mode specified - use it with validation
-      RedisMode mode =
-          "cluster".equalsIgnoreCase(configuredMode) ? RedisMode.CLUSTER : RedisMode.STANDALONE;
-      List<String> uris = parseUris(uri);
-
-      // Validate configuration
-      if (mode == RedisMode.CLUSTER && uris.size() == 1) {
-        log.warn(
-            "Cluster mode specified but only one URI provided. "
-                + "Consider providing multiple node URIs for better availability.");
-      } else if (mode == RedisMode.STANDALONE && uris.size() > 1) {
-        log.warn(
-            "Standalone mode specified but multiple URIs provided. "
-                + "Only the first URI will be used: {}",
-            maskUri(uris.get(0)));
-      }
-
-      config = new RedisRateLimiterConfig(mode, uris, timeout);
-      log.info("Using explicit {} mode", mode);
-    } else {
-      // Auto mode - let the factory detect from URI
-      config = new RedisRateLimiterConfig(uri, timeout);
-      log.info("Using auto-detected mode based on URI");
-    }
+    RedisRateLimiterConfig config = new RedisRateLimiterConfig(uri, timeout);
 
     log.info("Redis connection established successfully");
     log.info("  Effective mode: {}", config.getMode());
@@ -153,14 +120,6 @@ public class FluxgateRedisAutoConfiguration {
     }
 
     return config;
-  }
-
-  /** Parse comma-separated URIs into a list. */
-  private List<String> parseUris(String uri) {
-    return Arrays.stream(uri.split(","))
-        .map(String::trim)
-        .filter(s -> !s.isEmpty())
-        .collect(Collectors.toList());
   }
 
   /**

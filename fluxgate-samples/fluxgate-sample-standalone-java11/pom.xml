@@ -8,7 +8,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate-samples</artifactId>
-        <version>0.3.5</version>
+        <version>0.3.3</version>
     </parent>
 
     <artifactId>fluxgate-sample-standalone-java11</artifactId>
@@ -71,6 +71,18 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- MongoDB -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-mongodb</artifactId>
+        </dependency>
+
+        <!-- Redis -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
         <!-- FluxGate Spring Boot 2.x Starter (with javax.servlet support) -->

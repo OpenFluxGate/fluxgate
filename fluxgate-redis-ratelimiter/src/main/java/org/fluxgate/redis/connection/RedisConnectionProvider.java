@@ -141,41 +141,12 @@ public interface RedisConnectionProvider extends AutoCloseable {
   /**
    * Finds all keys matching the given pattern.
    *
-   * <p><b>WARNING: DEPRECATED - Use {@link #scan(String)} instead.</b>
-   *
-   * <p>This operation uses the KEYS command which:
-   *
-   * <ul>
-   *   <li>Blocks Redis during execution (O(N) complexity)
-   *   <li>Is often disabled in production environments
-   *   <li>Can cause performance issues with large datasets
-   * </ul>
+   * <p>Warning: This operation can be slow on large databases. Use with caution in production.
    *
    * @param pattern the pattern to match (e.g., "fluxgate:*")
    * @return list of matching keys
-   * @deprecated Use {@link #scan(String)} instead for production-safe key scanning
    */
-  @Deprecated
   java.util.List<String> keys(String pattern);
-
-  /**
-   * Scans keys matching the given pattern using SCAN command.
-   *
-   * <p>This is the production-safe alternative to {@link #keys(String)}:
-   *
-   * <ul>
-   *   <li>Non-blocking - scans incrementally without blocking Redis
-   *   <li>Production-safe - not disabled in production environments
-   *   <li>Memory-efficient - processes keys in batches
-   * </ul>
-   *
-   * <p>Note: SCAN may return duplicates in some cases (e.g., during rehashing). The caller should
-   * handle deduplication if needed.
-   *
-   * @param pattern the pattern to match (e.g., "fluxgate:*")
-   * @return list of matching keys (may contain duplicates)
-   */
-  java.util.List<String> scan(String pattern);
 
   /**
    * Flushes the current database (deletes all keys).

@@ -99,8 +99,8 @@ public class RedisTokenBucketStore {
     // Execute Lua script with NOSCRIPT fallback
     List<Long> result = executeScriptWithFallback(keys, args);
 
-    // Parse result: [consumed, remaining_tokens, nanos_to_wait, reset_time_millis, is_new_bucket]
-    if (result == null || result.size() != 5) {
+    // Parse result: [consumed, remaining_tokens, nanos_to_wait, reset_time_millis]
+    if (result == null || result.size() != 4) {
       log.error("Unexpected Lua script result: {}", result);
       throw new IllegalStateException("Lua script returned invalid result");
     }
@@ -109,29 +109,18 @@ public class RedisTokenBucketStore {
     long remainingTokens = result.get(1);
     long nanosToWait = result.get(2);
     long resetTimeMillis = result.get(3);
-    boolean isNewBucket = result.get(4) == 1;
 
     if (consumed == 1) {
-      if (isNewBucket) {
-        log.debug(
-            "Token bucket CREATED: key={}, capacity={}, consumed={}, remaining={}, ttl={}s",
-            bucketKey,
-            capacity,
-            permits,
-            remainingTokens,
-            Math.min((long) Math.ceil(windowNanos / 1_000_000_000.0 * 1.1), 86400));
-      } else {
-        log.debug(
-            "Token bucket UPDATED: key={}, consumed={}, remaining={}, reset={}",
-            bucketKey,
-            permits,
-            remainingTokens,
-            resetTimeMillis);
-      }
+      log.debug(
+          "Token bucket {}: consumed {} permits, {} remaining, reset at {}",
+          bucketKey,
+          permits,
+          remainingTokens,
+          resetTimeMillis);
       return BucketState.allowed(remainingTokens, resetTimeMillis);
     } else {
       log.debug(
-          "Token bucket REJECTED: key={}, remaining={}, waitNanos={}, reset={}",
+          "Token bucket {}: rejected (not enough tokens), {} remaining, wait {} ns, reset at {}",
           bucketKey,
           remainingTokens,
           nanosToWait,
@@ -218,7 +207,8 @@ public class RedisTokenBucketStore {
    * <p>This is used when rules are changed to reset rate limit state. The pattern matches keys
    * like: {@code fluxgate:{ruleSetId}:*}
    *
-   * <p>Uses SCAN command which is production-safe (non-blocking, incremental scanning).
+   * <p>Warning: Uses KEYS command which can be slow on large databases. Consider using SCAN in
+   * high-traffic production environments.
    *
    * @param ruleSetId the rule set ID to match
    * @return the number of buckets deleted
@@ -227,9 +217,9 @@ public class RedisTokenBucketStore {
     Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
 
     String pattern = "fluxgate:" + ruleSetId + ":*";
-    log.debug("Scanning token buckets matching pattern: {}", pattern);
+    log.debug("Deleting token buckets matching pattern: {}", pattern);
 
-    java.util.List<String> keys = connectionProvider.scan(pattern);
+    java.util.List<String> keys = connectionProvider.keys(pattern);
     if (keys.isEmpty()) {
       log.debug("No token buckets found for ruleSetId: {}", ruleSetId);
       return 0;
@@ -246,15 +236,15 @@ public class RedisTokenBucketStore {
    * <p>This is used when a full reload is triggered to reset all rate limit state. The pattern
    * matches all FluxGate keys: {@code fluxgate:*}
    *
-   * <p>Uses SCAN command which is production-safe (non-blocking, incremental scanning).
+   * <p>Warning: Uses KEYS command which can be slow on large databases.
    *
    * @return the number of buckets deleted
    */
   public long deleteAllBuckets() {
     String pattern = "fluxgate:*";
-    log.debug("Scanning all token buckets matching pattern: {}", pattern);
+    log.debug("Deleting all token buckets matching pattern: {}", pattern);
 
-    java.util.List<String> keys = connectionProvider.scan(pattern);
+    java.util.List<String> keys = connectionProvider.keys(pattern);
     if (keys.isEmpty()) {
       log.debug("No token buckets found");
       return 0;

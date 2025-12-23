@@ -1,8 +1,6 @@
 package org.fluxgate.redis.connection;
 
-import io.lettuce.core.KeyScanCursor;
 import io.lettuce.core.RedisURI;
-import io.lettuce.core.ScanArgs;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.cluster.RedisClusterClient;
 import io.lettuce.core.cluster.api.StatefulRedisClusterConnection;
@@ -193,27 +191,9 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
   }
 
   @Override
-  @Deprecated
   public List<String> keys(String pattern) {
     // In cluster mode, this scans all nodes
     return new ArrayList<>(commands.keys(pattern));
-  }
-
-  @Override
-  public List<String> scan(String pattern) {
-    // In cluster mode, Lettuce's scan() automatically scans all master nodes
-    List<String> result = new ArrayList<>();
-    ScanArgs scanArgs = ScanArgs.Builder.matches(pattern).limit(100);
-
-    KeyScanCursor<String> cursor = commands.scan(scanArgs);
-    result.addAll(cursor.getKeys());
-
-    while (!cursor.isFinished()) {
-      cursor = commands.scan(cursor, scanArgs);
-      result.addAll(cursor.getKeys());
-    }
-
-    return result;
   }
 
   @Override

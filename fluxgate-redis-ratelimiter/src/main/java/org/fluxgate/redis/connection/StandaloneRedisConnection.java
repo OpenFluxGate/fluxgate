@@ -1,14 +1,11 @@
 package org.fluxgate.redis.connection;
 
-import io.lettuce.core.KeyScanCursor;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
-import io.lettuce.core.ScanArgs;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -167,25 +164,8 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
   }
 
   @Override
-  @Deprecated
   public List<String> keys(String pattern) {
     return commands.keys(pattern);
-  }
-
-  @Override
-  public List<String> scan(String pattern) {
-    List<String> result = new ArrayList<>();
-    ScanArgs scanArgs = ScanArgs.Builder.matches(pattern).limit(100);
-
-    KeyScanCursor<String> cursor = commands.scan(scanArgs);
-    result.addAll(cursor.getKeys());
-
-    while (!cursor.isFinished()) {
-      cursor = commands.scan(cursor, scanArgs);
-      result.addAll(cursor.getKeys());
-    }
-
-    return result;
   }
 
   @Override

@@ -8,7 +8,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate-samples</artifactId>
-        <version>0.3.5</version>
+        <version>0.3.3</version>
     </parent>
 
     <artifactId>fluxgate-sample-standalone-java21</artifactId>
@@ -29,7 +29,23 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
+        <!-- (선호) Boot 스타터로 버전 안정화 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-mongodb</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- FluxGate -->
+        <dependency>
+            <groupId>io.github.openfluxgate</groupId>
+            <artifactId>fluxgate-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>io.github.openfluxgate</groupId>
             <artifactId>fluxgate-spring-boot3-starter</artifactId>
