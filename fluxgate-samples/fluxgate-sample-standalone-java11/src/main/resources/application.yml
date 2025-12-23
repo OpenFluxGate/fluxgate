@@ -10,7 +10,7 @@ fluxgate:
   # MongoDB configuration (uses FluxgateMongoAutoConfiguration)
   mongo:
     enabled: true
-    uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
+    uri: mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
     rule-collection: rate_limit_rules
     # Optional: Enable event logging by setting event-collection
@@ -95,7 +95,7 @@ spring:
 fluxgate:
   mongo:
     enabled: true
-    uri: mongodb://fluxgate:fluxgate123@mongodb:27017/fluxgate?authSource=admin
+    uri: mongodb://fluxgate:fluxgate123%23%24@mongodb:27017/fluxgate?authSource=admin
     rule-collection: rate_limit_rules
     event-collection: rate_limit_events
     ddl-auto: create
