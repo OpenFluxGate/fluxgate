@@ -222,6 +222,7 @@ class RedisTokenBucketStoreMockTest {
         .evalsha(anyString(), any(String[].class), any(String[].class));
 
     // EVAL fallback should work
+    // [consumed, remaining, nanosToWait, resetTimeMillis]
     List<Long> scriptResult = Arrays.asList(1L, 99L, 0L, System.currentTimeMillis());
     doReturn(scriptResult)
         .when(connectionProvider)
@@ -253,6 +254,7 @@ class RedisTokenBucketStoreMockTest {
     // given
     RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
 
+    // [consumed, remaining, nanosToWait, resetTimeMillis]
     List<Long> scriptResult = Arrays.asList(1L, 99L, 0L, System.currentTimeMillis());
 
     // First call: NOSCRIPT error → fallback to EVAL
@@ -300,6 +302,7 @@ class RedisTokenBucketStoreMockTest {
         .evalsha(anyString(), any(String[].class), any(String[].class));
 
     // EVAL works
+    // [consumed, remaining, nanosToWait, resetTimeMillis]
     List<Long> scriptResult = Arrays.asList(1L, 99L, 0L, System.currentTimeMillis());
     doReturn(scriptResult)
         .when(connectionProvider)
