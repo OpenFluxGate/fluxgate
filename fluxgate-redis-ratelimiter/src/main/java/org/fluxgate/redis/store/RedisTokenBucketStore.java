@@ -1,7 +1,9 @@
 package org.fluxgate.redis.store;
 
+import io.lettuce.core.RedisNoScriptException;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.fluxgate.redis.script.LuaScriptLoader;
@@ -29,7 +31,7 @@ import org.slf4j.LoggerFactory;
 public class RedisTokenBucketStore {
 
   private static final Logger log = LoggerFactory.getLogger(RedisTokenBucketStore.class);
-
+  private final AtomicBoolean reloadingLuaScript = new AtomicBoolean(false);
   private final RedisConnectionProvider connectionProvider;
 
   /**
@@ -94,15 +96,11 @@ public class RedisTokenBucketStore {
       String.valueOf(capacity), String.valueOf(windowNanos), String.valueOf(permits)
     };
 
-    // Get cached SHA from script loader
-    String sha = LuaScripts.getTokenBucketConsumeSha();
+    // Execute Lua script with NOSCRIPT fallback
+    List<Long> result = executeScriptWithFallback(keys, args);
 
-    // Execute Lua script using EVALSHA (more efficient than EVAL)
-    // In cluster mode, Lettuce automatically routes to the correct node based on KEYS[1]
-    List<Long> result = connectionProvider.evalsha(sha, keys, args);
-
-    // Parse result: [consumed, remaining_tokens, nanos_to_wait, reset_time_millis, is_new_bucket]
-    if (result == null || result.size() != 5) {
+    // Parse result: [consumed, remaining_tokens, nanos_to_wait, reset_time_millis]
+    if (result == null || result.size() != 4) {
       log.error("Unexpected Lua script result: {}", result);
       throw new IllegalStateException("Lua script returned invalid result");
     }
@@ -111,34 +109,86 @@ public class RedisTokenBucketStore {
     long remainingTokens = result.get(1);
     long nanosToWait = result.get(2);
     long resetTimeMillis = result.get(3);
-    boolean isNewBucket = result.get(4) == 1;
 
     if (consumed == 1) {
-      if (isNewBucket) {
-        log.debug(
-            "Token bucket CREATED: key={}, capacity={}, consumed={}, remaining={}, ttl={}s",
-            bucketKey,
-            capacity,
-            permits,
-            remainingTokens,
-            Math.min((long) Math.ceil(windowNanos / 1_000_000_000.0 * 1.1), 86400));
-      } else {
-        log.debug(
-            "Token bucket UPDATED: key={}, consumed={}, remaining={}, reset={}",
-            bucketKey,
-            permits,
-            remainingTokens,
-            resetTimeMillis);
-      }
+      log.debug(
+          "Token bucket {}: consumed {} permits, {} remaining, reset at {}",
+          bucketKey,
+          permits,
+          remainingTokens,
+          resetTimeMillis);
       return BucketState.allowed(remainingTokens, resetTimeMillis);
     } else {
       log.debug(
-          "Token bucket REJECTED: key={}, remaining={}, waitNanos={}, reset={}",
+          "Token bucket {}: rejected (not enough tokens), {} remaining, wait {} ns, reset at {}",
           bucketKey,
           remainingTokens,
           nanosToWait,
           resetTimeMillis);
       return BucketState.rejected(remainingTokens, nanosToWait, resetTimeMillis);
+    }
+  }
+
+  /**
+   * Executes the Lua script with NOSCRIPT error fallback.
+   *
+   * <p>This method handles the case where Redis has been restarted and the script cache is lost.
+   * When EVALSHA fails with NOSCRIPT error, it falls back to:
+   *
+   * <ol>
+   *   <li>Execute using EVAL (slower but works)
+   *   <li>Reload the script into Redis cache for future calls
+   * </ol>
+   *
+   * @param keys the keys for the script
+   * @param args the arguments for the script
+   * @return the script execution result
+   */
+  private List<Long> executeScriptWithFallback(String[] keys, String[] args) {
+    String sha = LuaScripts.getTokenBucketConsumeSha();
+    String script = LuaScripts.getTokenBucketConsumeScript();
+
+    try {
+      // Try EVALSHA first (efficient, uses cached script)
+      return connectionProvider.evalsha(sha, keys, args);
+    } catch (RedisNoScriptException e) {
+      // Script not in Redis cache (e.g., Redis was restarted)
+      log.warn(
+          "Lua script not found in Redis cache (NOSCRIPT). "
+              + "Falling back to EVAL and reloading script. SHA: {}",
+          sha);
+
+      // Fallback 1 - Execute using EVAL (slower but works immediately)
+      List<Long> result = connectionProvider.eval(script, keys, args);
+
+      // Fallback 2 - Reload script for future calls (thread-safe with AtomicBoolean)
+      reloadScript();
+
+      return result;
+    }
+  }
+
+  /**
+   * Reloads the Lua script into Redis cache.
+   *
+   * <p>This is called after a NOSCRIPT error to restore the script cache. Uses AtomicBoolean to
+   * prevent multiple concurrent reload attempts.
+   */
+  private void reloadScript() {
+    if (!reloadingLuaScript.compareAndSet(false, true)) {
+      log.debug("Lua script is already being reloaded, skipping...");
+      return;
+    }
+
+    try {
+      String script = LuaScripts.getTokenBucketConsumeScript();
+      String sha = connectionProvider.scriptLoad(script);
+      LuaScripts.setTokenBucketConsumeSha(sha);
+      log.info("Lua script reloaded into Redis. SHA: {}", sha);
+    } catch (Exception e) {
+      log.error("Failed to reload Lua script: {}", e.getMessage(), e);
+    } finally {
+      reloadingLuaScript.set(false);
     }
   }
 
@@ -157,7 +207,8 @@ public class RedisTokenBucketStore {
    * <p>This is used when rules are changed to reset rate limit state. The pattern matches keys
    * like: {@code fluxgate:{ruleSetId}:*}
    *
-   * <p>Uses SCAN command which is production-safe (non-blocking, incremental scanning).
+   * <p>Warning: Uses KEYS command which can be slow on large databases. Consider using SCAN in
+   * high-traffic production environments.
    *
    * @param ruleSetId the rule set ID to match
    * @return the number of buckets deleted
@@ -166,9 +217,9 @@ public class RedisTokenBucketStore {
     Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
 
     String pattern = "fluxgate:" + ruleSetId + ":*";
-    log.debug("Scanning token buckets matching pattern: {}", pattern);
+    log.debug("Deleting token buckets matching pattern: {}", pattern);
 
-    java.util.List<String> keys = connectionProvider.scan(pattern);
+    java.util.List<String> keys = connectionProvider.keys(pattern);
     if (keys.isEmpty()) {
       log.debug("No token buckets found for ruleSetId: {}", ruleSetId);
       return 0;
@@ -185,15 +236,15 @@ public class RedisTokenBucketStore {
    * <p>This is used when a full reload is triggered to reset all rate limit state. The pattern
    * matches all FluxGate keys: {@code fluxgate:*}
    *
-   * <p>Uses SCAN command which is production-safe (non-blocking, incremental scanning).
+   * <p>Warning: Uses KEYS command which can be slow on large databases.
    *
    * @return the number of buckets deleted
    */
   public long deleteAllBuckets() {
     String pattern = "fluxgate:*";
-    log.debug("Scanning all token buckets matching pattern: {}", pattern);
+    log.debug("Deleting all token buckets matching pattern: {}", pattern);
 
-    java.util.List<String> keys = connectionProvider.scan(pattern);
+    java.util.List<String> keys = connectionProvider.keys(pattern);
     if (keys.isEmpty()) {
       log.debug("No token buckets found");
       return 0;

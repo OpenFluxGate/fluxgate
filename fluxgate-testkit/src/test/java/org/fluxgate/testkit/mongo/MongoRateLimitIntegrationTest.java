@@ -37,7 +37,7 @@ import org.junit.jupiter.api.*;
 class MongoRateLimitIntegrationTest {
 
   private static final String DEFAULT_MONGO_URI =
-      "mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin";
+      "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin";
   private static final String DEFAULT_DB_NAME = "fluxgate";
 
   private static final String MONGO_URI =

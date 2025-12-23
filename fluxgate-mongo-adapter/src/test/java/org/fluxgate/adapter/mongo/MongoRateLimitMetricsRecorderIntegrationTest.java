@@ -28,7 +28,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
           System.getenv()
               .getOrDefault(
                   "FLUXGATE_MONGO_URI",
-                  "mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin"));
+                  "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin"));
 
   private static final String DB_NAME =
       System.getProperty(
