@@ -29,11 +29,11 @@ import org.springframework.web.bind.annotation.RestController;
  * </ul>
  */
 @RestController
-@RequestMapping("/api/test")
-@Tag(name = "Test", description = "Rate-limited test API")
-public class TestController {
+@RequestMapping("/api/test/filter")
+@Tag(name = "Test", description = "Rate-limited Filter-Test API")
+public class FilterTestController {
 
-  private static final Logger log = LoggerFactory.getLogger(TestController.class);
+  private static final Logger log = LoggerFactory.getLogger(FilterTestController.class);
   private final AtomicLong standaloneCounter = new AtomicLong(0);
   private final AtomicLong multiFilterCounter = new AtomicLong(0);
   private final AtomicLong compositeCounter = new AtomicLong(0);
