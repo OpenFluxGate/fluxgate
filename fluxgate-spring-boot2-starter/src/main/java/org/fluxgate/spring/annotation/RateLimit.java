@@ -14,23 +14,23 @@ import java.lang.annotation.Target;
  *
  * <p>Example usage:
  *
- * <pre>{@code
- * @RestController
+ * <pre>
+ * &#64;RestController
  * public class ApiController {
  *
- *     @RateLimit(ruleSetId = "api-rules")
- *     @GetMapping("/search")
- *     public List<Result> search() {
+ *     &#64;RateLimit(ruleSetId = "api-rules")
+ *     &#64;GetMapping("/search")
+ *     public List&lt;Result&gt; search() {
  *         return searchService.search();
  *     }
  *
- *     @RateLimit(ruleSetId = "premium-rules", waitForRefill = true)
- *     @PostMapping("/submit")
- *     public Response submit(@RequestParam String userId) {
+ *     &#64;RateLimit(ruleSetId = "premium-rules", waitForRefill = true)
+ *     &#64;PostMapping("/submit")
+ *     public Response submit(&#64;RequestParam String userId) {
  *         return processService.process(userId);
  *     }
  * }
- * }</pre>
+ * </pre>
  *
  * @see org.fluxgate.spring.aop.RateLimitAspect
  * @see org.fluxgate.spring.annotation.EnableFluxgateAspect
