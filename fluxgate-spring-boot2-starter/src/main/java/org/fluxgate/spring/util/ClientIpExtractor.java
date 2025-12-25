@@ -20,8 +20,8 @@ public final class ClientIpExtractor {
    * Extracts the client IP address from the request.
    *
    * <p>First checks the X-Forwarded-For header for proxied requests. If multiple IPs are present,
-   * returns the first one (original client). Falls back to {@link HttpServletRequest#getRemoteAddr()}
-   * if no forwarded header is present.
+   * returns the first one (original client). Falls back to {@link
+   * HttpServletRequest#getRemoteAddr()} if no forwarded header is present.
    *
    * @param request the HTTP request
    * @return the client IP address

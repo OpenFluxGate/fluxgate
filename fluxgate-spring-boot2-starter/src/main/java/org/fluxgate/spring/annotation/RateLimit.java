@@ -40,40 +40,39 @@ import java.lang.annotation.Target;
 @Documented
 public @interface RateLimit {
 
-    /**
-     * The rule set ID to apply for rate limiting.
-     *
-     * @return rule set ID
-     */
-    String ruleSetId() default "";
+  /**
+   * The rule set ID to apply for rate limiting.
+   *
+   * @return rule set ID
+   */
+  String ruleSetId() default "";
 
-    /**
-     * Whether to wait for token refill when rate limit is exceeded.
-     *
-     * <p>When enabled, requests will wait up to {@link #maxWaitTimeMs()} for tokens to become
-     * available instead of failing immediately.
-     *
-     * @return true to wait for refill, false to fail immediately
-     */
-    boolean waitForRefill() default false;
+  /**
+   * Whether to wait for token refill when rate limit is exceeded.
+   *
+   * <p>When enabled, requests will wait up to {@link #maxWaitTimeMs()} for tokens to become
+   * available instead of failing immediately.
+   *
+   * @return true to wait for refill, false to fail immediately
+   */
+  boolean waitForRefill() default false;
 
-    /**
-     * Maximum time to wait for token refill in milliseconds.
-     *
-     * <p>Only applies when {@link #waitForRefill()} is true.
-     *
-     * @return maximum wait time in milliseconds
-     */
-    long maxWaitTimeMs() default 5000;
+  /**
+   * Maximum time to wait for token refill in milliseconds.
+   *
+   * <p>Only applies when {@link #waitForRefill()} is true.
+   *
+   * @return maximum wait time in milliseconds
+   */
+  long maxWaitTimeMs() default 5000;
 
-    /**
-     * Maximum number of concurrent requests that can wait for refill.
-     *
-     * <p>Only applies when {@link #waitForRefill()} is true. Prevents resource exhaustion from too
-     * many waiting requests.
-     *
-     * @return maximum concurrent waiting requests
-     */
-    int maxConcurrentWaits() default 100;
-
+  /**
+   * Maximum number of concurrent requests that can wait for refill.
+   *
+   * <p>Only applies when {@link #waitForRefill()} is true. Prevents resource exhaustion from too
+   * many waiting requests.
+   *
+   * @return maximum concurrent waiting requests
+   */
+  int maxConcurrentWaits() default 100;
 }

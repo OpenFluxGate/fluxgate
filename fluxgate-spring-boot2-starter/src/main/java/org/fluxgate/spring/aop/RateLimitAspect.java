@@ -28,8 +28,8 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 /**
  * Aspect that applies rate limiting to methods annotated with {@link RateLimit}.
  *
- * <p>This aspect intercepts method calls and checks rate limits before execution. If the rate
- * limit is exceeded, it returns a 429 Too Many Requests response.
+ * <p>This aspect intercepts method calls and checks rate limits before execution. If the rate limit
+ * is exceeded, it returns a 429 Too Many Requests response.
  *
  * @see RateLimit
  * @see FluxgateRateLimitHandler

@@ -59,53 +59,53 @@ import org.springframework.context.annotation.Role;
 @Role(BeanDefinition.ROLE_INFRASTRUCTURE)
 public class FluxgateAopAutoConfiguration {
 
-    private static final Logger log = LoggerFactory.getLogger(FluxgateAopAutoConfiguration.class);
+  private static final Logger log = LoggerFactory.getLogger(FluxgateAopAutoConfiguration.class);
 
-    /**
-     * Creates the RateLimitAspect bean.
-     *
-     * @param handler            the rate limit handler
-     * @param customizerProvider optional request context customizer
-     * @return the rate limit aspect
-     */
-    @Bean
-    @ConditionalOnMissingBean
-    public RateLimitAspect rateLimitAspect(
-            FluxgateRateLimitHandler handler,
-            ObjectProvider<RequestContextCustomizer> customizerProvider) {
+  /**
+   * Creates the RateLimitAspect bean.
+   *
+   * @param handler the rate limit handler
+   * @param customizerProvider optional request context customizer
+   * @return the rate limit aspect
+   */
+  @Bean
+  @ConditionalOnMissingBean
+  public RateLimitAspect rateLimitAspect(
+      FluxgateRateLimitHandler handler,
+      ObjectProvider<RequestContextCustomizer> customizerProvider) {
 
-        RequestContextCustomizer customizer = resolveContextCustomizer(customizerProvider);
+    RequestContextCustomizer customizer = resolveContextCustomizer(customizerProvider);
 
-        log.info("Creating RateLimitAspect");
-        log.info("  Handler: {}", handler.getClass().getSimpleName());
-        if (customizer != null) {
-            log.info("  RequestContext customizer: {}", customizer.getClass().getSimpleName());
-        }
-
-        return new RateLimitAspect(handler, customizer);
+    log.info("Creating RateLimitAspect");
+    log.info("  Handler: {}", handler.getClass().getSimpleName());
+    if (customizer != null) {
+      log.info("  RequestContext customizer: {}", customizer.getClass().getSimpleName());
     }
 
-    /**
-     * Resolves RequestContextCustomizer beans. If multiple customizers are registered, they are
-     * combined in order.
-     */
-    private RequestContextCustomizer resolveContextCustomizer(
-            ObjectProvider<RequestContextCustomizer> customizerProvider) {
-        RequestContextCustomizer[] customizers =
-                customizerProvider.orderedStream().toArray(RequestContextCustomizer[]::new);
+    return new RateLimitAspect(handler, customizer);
+  }
 
-        if (customizers.length == 0) {
-            return null;
-        } else if (customizers.length == 1) {
-            return customizers[0];
-        } else {
-            // Combine multiple customizers
-            log.info("Combining {} RequestContextCustomizers", customizers.length);
-            RequestContextCustomizer combined = customizers[0];
-            for (int i = 1; i < customizers.length; i++) {
-                combined = combined.andThen(customizers[i]);
-            }
-            return combined;
-        }
+  /**
+   * Resolves RequestContextCustomizer beans. If multiple customizers are registered, they are
+   * combined in order.
+   */
+  private RequestContextCustomizer resolveContextCustomizer(
+      ObjectProvider<RequestContextCustomizer> customizerProvider) {
+    RequestContextCustomizer[] customizers =
+        customizerProvider.orderedStream().toArray(RequestContextCustomizer[]::new);
+
+    if (customizers.length == 0) {
+      return null;
+    } else if (customizers.length == 1) {
+      return customizers[0];
+    } else {
+      // Combine multiple customizers
+      log.info("Combining {} RequestContextCustomizers", customizers.length);
+      RequestContextCustomizer combined = customizers[0];
+      for (int i = 1; i < customizers.length; i++) {
+        combined = combined.andThen(customizers[i]);
+      }
+      return combined;
     }
+  }
 }
