@@ -453,4 +453,329 @@ class FluxgateRateLimitFilterTest {
     RequestContext capturedContext = contextCaptor.getValue();
     assertThat(capturedContext.getHeader("Content-Length")).isEqualTo("1024");
   }
+
+  @Test
+  void shouldThrowExceptionWhenHandlerIsNull() {
+    // Given / When / Then
+    assertThatThrownBy(
+            () ->
+                new FluxgateRateLimitFilter(
+                    null, // null handler should throw
+                    RULE_SET_ID,
+                    new String[] {"/**"},
+                    new String[] {}))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessageContaining("handler must not be null");
+  }
+
+  @Test
+  void shouldHandleNullIncludePatterns() throws Exception {
+    // Given - null includePatterns should default to empty (include all)
+    filter = new FluxgateRateLimitFilter(handler, RULE_SET_ID, null, new String[] {});
+
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+
+    RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(allowedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    verify(handler).tryConsume(any(RequestContext.class), eq(RULE_SET_ID));
+    verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
+  void shouldHandleNullExcludePatterns() throws Exception {
+    // Given - null excludePatterns should default to empty
+    filter = new FluxgateRateLimitFilter(handler, RULE_SET_ID, new String[] {"/**"}, null);
+
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+
+    RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(allowedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    verify(handler).tryConsume(any(RequestContext.class), eq(RULE_SET_ID));
+    verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
+  void shouldWaitForRefillAndSucceed() throws Exception {
+    // Given - WAIT_FOR_REFILL enabled
+    filter =
+        new FluxgateRateLimitFilter(
+            handler,
+            RULE_SET_ID,
+            new String[] {"/**"},
+            new String[] {},
+            true, // waitForRefillEnabled = true
+            5000, // maxWaitTimeMs = 5 seconds
+            100);
+
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("POST");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+
+    // First call returns rejected with WAIT_FOR_REFILL
+    RateLimitResponse rejectedResult =
+        RateLimitResponse.rejected(
+            100, // 100ms wait (short for test)
+            org.fluxgate.core.config.OnLimitExceedPolicy.WAIT_FOR_REFILL);
+
+    // Second call (after wait) returns allowed
+    RateLimitResponse allowedResult = RateLimitResponse.allowed(10, 0);
+
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
+        .thenReturn(rejectedResult)
+        .thenReturn(allowedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then - Should wait and then allow
+    verify(handler, times(2)).tryConsume(any(RequestContext.class), eq(RULE_SET_ID));
+    verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
+  void shouldRejectAfterWaitingWhenStillRateLimited() throws Exception {
+    // Given - WAIT_FOR_REFILL enabled
+    filter =
+        new FluxgateRateLimitFilter(
+            handler,
+            RULE_SET_ID,
+            new String[] {"/**"},
+            new String[] {},
+            true, // waitForRefillEnabled = true
+            5000, // maxWaitTimeMs = 5 seconds
+            100);
+
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("POST");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+
+    StringWriter stringWriter = new StringWriter();
+    PrintWriter printWriter = new PrintWriter(stringWriter);
+    when(response.getWriter()).thenReturn(printWriter);
+
+    // Both calls return rejected with WAIT_FOR_REFILL
+    RateLimitResponse rejectedResult =
+        RateLimitResponse.rejected(
+            100, // 100ms wait (short for test)
+            org.fluxgate.core.config.OnLimitExceedPolicy.WAIT_FOR_REFILL);
+
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
+        .thenReturn(rejectedResult)
+        .thenReturn(rejectedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then - Should wait and then reject
+    verify(handler, times(2)).tryConsume(any(RequestContext.class), eq(RULE_SET_ID));
+    verify(filterChain, never()).doFilter(request, response);
+    verify(response).setStatus(429);
+  }
+
+  @Test
+  void shouldRejectWhenTooManyConcurrentWaits() throws Exception {
+    // Given - WAIT_FOR_REFILL enabled with max 1 concurrent wait
+    filter =
+        new FluxgateRateLimitFilter(
+            handler,
+            RULE_SET_ID,
+            new String[] {"/**"},
+            new String[] {},
+            true, // waitForRefillEnabled = true
+            5000, // maxWaitTimeMs = 5 seconds
+            0); // maxConcurrentWaits = 0 (no concurrent waits allowed)
+
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("POST");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+
+    StringWriter stringWriter = new StringWriter();
+    PrintWriter printWriter = new PrintWriter(stringWriter);
+    when(response.getWriter()).thenReturn(printWriter);
+
+    RateLimitResponse rejectedResult =
+        RateLimitResponse.rejected(
+            1000, org.fluxgate.core.config.OnLimitExceedPolicy.WAIT_FOR_REFILL);
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(rejectedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then - Should reject immediately due to no semaphore permits
+    verify(handler, times(1)).tryConsume(any(RequestContext.class), eq(RULE_SET_ID));
+    verify(filterChain, never()).doFilter(request, response);
+    verify(response).setStatus(429);
+  }
+
+  @Test
+  void shouldHandleEmptyIncludePatternsAsIncludeAll() throws Exception {
+    // Given - empty includePatterns should include all
+    filter = new FluxgateRateLimitFilter(handler, RULE_SET_ID, new String[] {}, new String[] {});
+
+    when(request.getRequestURI()).thenReturn("/any/path");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+
+    RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(allowedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    verify(handler).tryConsume(any(RequestContext.class), eq(RULE_SET_ID));
+    verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
+  void shouldHandleTraceIdFromHeader() throws Exception {
+    // Given
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+    when(request.getHeader("X-Trace-Id")).thenReturn("existing-trace-id-123");
+
+    RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(allowedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
+  void shouldHandleBlankTraceId() throws Exception {
+    // Given
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+    when(request.getHeader("X-Trace-Id")).thenReturn("   "); // blank trace id
+
+    RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(allowedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
+  void shouldHandleNegativeRemainingTokens() throws Exception {
+    // Given
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+
+    // Negative remaining tokens should not add header
+    RateLimitResponse allowedResult = RateLimitResponse.allowed(-1, 0);
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(allowedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    verify(filterChain).doFilter(request, response);
+    verify(response, never()).setHeader(eq("X-RateLimit-Remaining"), any());
+  }
+
+  @Test
+  void shouldHandleZeroContentLength() throws Exception {
+    // Given
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+    when(request.getContentLengthLong()).thenReturn(0L);
+
+    RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(allowedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    ArgumentCaptor<RequestContext> contextCaptor = ArgumentCaptor.forClass(RequestContext.class);
+    verify(handler).tryConsume(contextCaptor.capture(), eq(RULE_SET_ID));
+
+    RequestContext capturedContext = contextCaptor.getValue();
+    // Zero content length should not add header
+    assertThat(capturedContext.getHeader("Content-Length")).isNull();
+  }
+
+  @Test
+  void shouldHandleNullSessionId() throws Exception {
+    // Given
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+    when(request.getRequestedSessionId()).thenReturn(null);
+
+    RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(allowedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    ArgumentCaptor<RequestContext> contextCaptor = ArgumentCaptor.forClass(RequestContext.class);
+    verify(handler).tryConsume(contextCaptor.capture(), eq(RULE_SET_ID));
+
+    RequestContext capturedContext = contextCaptor.getValue();
+    assertThat(capturedContext.getHeader("Session-Id")).isNull();
+  }
+
+  @Test
+  void shouldHandleNullHeaderNames() throws Exception {
+    // Given
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+    when(request.getHeaderNames()).thenReturn(null);
+
+    RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(allowedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
+  void shouldHandleOptionalMdcHeaders() throws Exception {
+    // Given
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+    when(request.getQueryString()).thenReturn("param=value");
+    when(request.getHeader("User-Agent")).thenReturn("TestAgent");
+    when(request.getHeader("Referer")).thenReturn("http://example.com");
+
+    RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(allowedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    verify(filterChain).doFilter(request, response);
+  }
 }
