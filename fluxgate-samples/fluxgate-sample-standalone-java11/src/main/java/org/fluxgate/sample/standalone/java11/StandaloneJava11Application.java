@@ -1,5 +1,6 @@
 package org.fluxgate.sample.standalone.java11;
 
+import org.fluxgate.spring.annotation.EnableFluxgateAspect;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -20,6 +21,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
  */
 @SpringBootApplication
 @EnableConfigurationProperties(FluxgateProperties.class)
+@EnableFluxgateAspect
 public class StandaloneJava11Application {
 
   public static void main(String[] args) {

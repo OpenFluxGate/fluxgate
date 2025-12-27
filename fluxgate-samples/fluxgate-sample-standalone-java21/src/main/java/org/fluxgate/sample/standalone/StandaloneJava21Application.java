@@ -1,5 +1,6 @@
 package org.fluxgate.sample.standalone;
 
+import org.fluxgate.spring.annotation.EnableFluxgateAspect;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
@@ -14,6 +15,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *   <li>Multiple rate limit filters with different priorities (Java Config)
  *   <li>RequestContext customization for IP override and attribute injection
  *   <li>WAIT_FOR_REFILL policy for public APIs
+ *   <li>AOP-based rate limiting with @RateLimit annotation
  * </ul>
  *
  * <p>Filter Configuration (see {@code MultipleFiltersConfig}):
@@ -31,9 +33,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *   <li>POST /api/admin/sync - Sync rules to Redis rate limiter
  *   <li>GET /api/test - Rate-limited test endpoint (10 requests/minute)
  *   <li>GET /api/public/test - Public API with WAIT_FOR_REFILL policy
+ *   <li>GET /api/test/aop/aop-test1 - AOP-based rate limiting test
  * </ul>
  */
 @SpringBootApplication
+@EnableFluxgateAspect
 public class StandaloneJava21Application {
 
   public static void main(String[] args) {
