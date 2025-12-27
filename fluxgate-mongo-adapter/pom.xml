@@ -10,7 +10,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.3.6</version>
+        <version>0.3.7</version>
     </parent>
 
     <artifactId>fluxgate-mongo-adapter</artifactId>
