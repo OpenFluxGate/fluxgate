@@ -250,6 +250,80 @@ class BucketStateTest {
     }
 
     @Test
+    @DisplayName("equals should return true for same instance")
+    void equalsShouldReturnTrueForSameInstance() {
+      // given
+      BucketState state = new BucketState(true, 50, 0, 12345L);
+
+      // when / then
+      assertEquals(state, state);
+    }
+
+    @Test
+    @DisplayName("equals should return false for null")
+    void equalsShouldReturnFalseForNull() {
+      // given
+      BucketState state = new BucketState(true, 50, 0, 12345L);
+
+      // when / then
+      assertNotEquals(state, null);
+    }
+
+    @Test
+    @DisplayName("equals should return false for different type")
+    void equalsShouldReturnFalseForDifferentType() {
+      // given
+      BucketState state = new BucketState(true, 50, 0, 12345L);
+
+      // when / then
+      assertNotEquals(state, "not a BucketState");
+    }
+
+    @Test
+    @DisplayName("equals should return false for different consumed")
+    void equalsShouldReturnFalseForDifferentConsumed() {
+      // given
+      BucketState state1 = new BucketState(true, 50, 0, 12345L);
+      BucketState state2 = new BucketState(false, 50, 0, 12345L);
+
+      // when / then
+      assertNotEquals(state1, state2);
+    }
+
+    @Test
+    @DisplayName("equals should return false for different remainingTokens")
+    void equalsShouldReturnFalseForDifferentRemainingTokens() {
+      // given
+      BucketState state1 = new BucketState(true, 50, 0, 12345L);
+      BucketState state2 = new BucketState(true, 100, 0, 12345L);
+
+      // when / then
+      assertNotEquals(state1, state2);
+    }
+
+    @Test
+    @DisplayName("equals should return false for different nanosToWaitForRefill")
+    void equalsShouldReturnFalseForDifferentNanosToWait() {
+      // given
+      BucketState state1 = new BucketState(false, 0, 1000L, 12345L);
+      BucketState state2 = new BucketState(false, 0, 2000L, 12345L);
+
+      // when / then
+      assertNotEquals(state1, state2);
+    }
+
+    @Test
+    @DisplayName("equals should return false for different resetTimeMillis")
+    void equalsShouldReturnFalseForDifferentResetTime() {
+      // given
+      BucketState state1 = new BucketState(true, 50, 0, 12345L);
+      BucketState state2 = new BucketState(true, 50, 0, 67890L);
+
+      // when / then
+      assertNotEquals(state1, state2);
+    }
+
+    @Test
     @DisplayName("should support toString")
     void shouldSupportToString() {
       // given

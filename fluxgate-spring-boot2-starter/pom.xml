@@ -96,6 +96,22 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Spring AOP (for @RateLimit aspect, optional) -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-aop</artifactId>
+            <version>${spring.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- AspectJ Weaver (for @Aspect support, optional) -->
+        <dependency>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjweaver</artifactId>
+            <version>1.9.7</version>
+            <optional>true</optional>
+        </dependency>
+
         <!-- javax.servlet for Java 11 / Spring Boot 2.x -->
         <dependency>
             <groupId>javax.servlet</groupId>
@@ -131,6 +147,22 @@
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
             <version>2.9.3</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Spring AOP (for @RateLimit aspect, optional) -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-aop</artifactId>
+            <version>${spring.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- AspectJ Weaver (for @Aspect support, optional) -->
+        <dependency>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjweaver</artifactId>
+            <version>1.9.7</version>
             <optional>true</optional>
         </dependency>
 

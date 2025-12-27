@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.handler.FluxgateRateLimitHandler;
 import org.fluxgate.core.handler.RateLimitResponse;
+import org.fluxgate.spring.util.ClientIpExtractor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -179,7 +180,7 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
     // Request details
     MDC.put(MdcKeys.METHOD, request.getMethod());
     MDC.put(MdcKeys.ENDPOINT, request.getRequestURI());
-    MDC.put(MdcKeys.CLIENT_IP, extractClientIp(request));
+    MDC.put(MdcKeys.CLIENT_IP, ClientIpExtractor.extract(request));
     MDC.put(MdcKeys.PROTOCOL, request.getProtocol());
     MDC.put(MdcKeys.SERVER_PORT, String.valueOf(request.getServerPort()));
 
@@ -362,7 +363,7 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
    * RequestContextCustomizer to allow users to override or add custom fields.
    */
   private RequestContext buildRequestContext(HttpServletRequest request) {
-    String clientIp = extractClientIp(request);
+    String clientIp = ClientIpExtractor.extract(request);
     String userId = request.getHeader(Headers.USER_ID);
     String apiKey = request.getHeader(Headers.API_KEY);
 
@@ -404,20 +405,6 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
     if (sessionId != null) {
       builder.header("Session-Id", sessionId);
     }
-  }
-
-  /**
-   * Extracts the client IP address from the request. Supports X-Forwarded-For header for proxied
-   * requests.
-   */
-  private String extractClientIp(HttpServletRequest request) {
-    String forwardedFor = request.getHeader(Headers.X_FORWARDED_FOR);
-    if (StringUtils.hasText(forwardedFor)) {
-      // X-Forwarded-For can contain multiple IPs, take the first one
-      String[] ips = forwardedFor.split(",");
-      return ips[0].trim();
-    }
-    return request.getRemoteAddr();
   }
 
   /** Adds standard rate limit headers to the response. */
