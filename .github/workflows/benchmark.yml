@@ -1,0 +1,242 @@
+# Benchmark workflow for FluxGate
+# Runs JMH benchmarks and publishes results to GitHub Pages
+
+name: Benchmark
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'fluxgate-core/**'
+      - 'fluxgate-redis-ratelimiter/**'
+      - 'fluxgate-mongo-adapter/**'
+      - 'fluxgate-testkit/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'fluxgate-core/**'
+      - 'fluxgate-redis-ratelimiter/**'
+      - 'fluxgate-mongo-adapter/**'
+      - 'fluxgate-testkit/**'
+  workflow_dispatch:
+    inputs:
+      run_redis_benchmark:
+        description: 'Run Redis benchmarks (requires Redis)'
+        required: false
+        default: 'false'
+        type: boolean
+      run_mongo_benchmark:
+        description: 'Run MongoDB benchmarks (requires MongoDB)'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+  deployments: write
+
+jobs:
+  benchmark-standalone:
+    name: Standalone Benchmark (No Redis)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build project
+        run: ./mvnw install -DskipTests -q
+
+      - name: Build benchmark jar
+        run: ./mvnw package -Pbenchmark -pl fluxgate-testkit -DskipTests -q
+
+      - name: Run standalone benchmarks
+        run: |
+          java -jar fluxgate-testkit/target/benchmarks.jar \
+            StandaloneRateLimiterBenchmark \
+            -rf json \
+            -rff benchmark-results.json \
+            -wi 2 -i 5 -f 1
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: FluxGate Standalone Benchmark
+          tool: 'jmh'
+          output-file-path: benchmark-results.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          gh-pages-branch: main
+          benchmark-data-dir-path: docs/benchmark
+          alert-threshold: '150%'
+          comment-on-alert: true
+          fail-on-alert: false
+          alert-comment-cc-users: '@rojae'
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-standalone
+          path: benchmark-results.json
+          retention-days: 30
+
+  benchmark-redis:
+    name: Redis Benchmark
+    runs-on: ubuntu-latest
+    if: github.event.inputs.run_redis_benchmark == 'true' || github.event_name == 'push'
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build project
+        run: ./mvnw install -DskipTests -q
+
+      - name: Build benchmark jar
+        run: ./mvnw package -Pbenchmark -pl fluxgate-testkit -DskipTests -q
+
+      - name: Run Redis benchmarks
+        env:
+          FLUXGATE_REDIS_URI: redis://localhost:6379
+        run: |
+          java -jar fluxgate-testkit/target/benchmarks.jar \
+            RedisRateLimiterBenchmark \
+            -rf json \
+            -rff benchmark-results-redis.json \
+            -wi 2 -i 5 -f 1 \
+            -p threadCount=1,4,8
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: FluxGate Redis Benchmark
+          tool: 'jmh'
+          output-file-path: benchmark-results-redis.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          gh-pages-branch: main
+          benchmark-data-dir-path: docs/benchmark
+          alert-threshold: '150%'
+          comment-on-alert: true
+          fail-on-alert: false
+          alert-comment-cc-users: '@rojae'
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-redis
+          path: benchmark-results-redis.json
+          retention-days: 30
+
+  benchmark-mongo:
+    name: MongoDB Benchmark
+    runs-on: ubuntu-latest
+    if: github.event.inputs.run_mongo_benchmark == 'true' || github.event_name == 'push'
+
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        env:
+          MONGO_INITDB_ROOT_USERNAME: fluxgate
+          MONGO_INITDB_ROOT_PASSWORD: fluxgate123#$
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand(\"ping\")'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Build project
+        run: ./mvnw install -DskipTests -q
+
+      - name: Build benchmark jar
+        run: ./mvnw package -Pbenchmark -pl fluxgate-testkit -DskipTests -q
+
+      - name: Run MongoDB Rule Loading benchmarks
+        env:
+          FLUXGATE_MONGO_URI: mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin
+          FLUXGATE_MONGO_DB: fluxgate
+        run: |
+          java -jar fluxgate-testkit/target/benchmarks.jar \
+            MongoRuleLoadingBenchmark \
+            -rf json \
+            -rff benchmark-results-mongo-loading.json \
+            -wi 2 -i 5 -f 1
+
+      - name: Run MongoDB Event Recording benchmarks
+        env:
+          FLUXGATE_MONGO_URI: mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin
+          FLUXGATE_MONGO_DB: fluxgate
+        run: |
+          java -jar fluxgate-testkit/target/benchmarks.jar \
+            MongoEventRecordingBenchmark \
+            -rf json \
+            -rff benchmark-results-mongo-events.json \
+            -wi 2 -i 5 -f 1
+
+      - name: Merge MongoDB results
+        run: |
+          # Merge both JSON files for unified reporting
+          jq -s 'add' benchmark-results-mongo-loading.json benchmark-results-mongo-events.json > benchmark-results-mongo.json
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: FluxGate MongoDB Benchmark
+          tool: 'jmh'
+          output-file-path: benchmark-results-mongo.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          gh-pages-branch: main
+          benchmark-data-dir-path: docs/benchmark
+          alert-threshold: '150%'
+          comment-on-alert: true
+          fail-on-alert: false
+          alert-comment-cc-users: '@rojae'
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-mongo
+          path: |
+            benchmark-results-mongo-loading.json
+            benchmark-results-mongo-events.json
+            benchmark-results-mongo.json
+          retention-days: 30
