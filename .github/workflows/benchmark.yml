@@ -52,7 +52,7 @@ jobs:
           cache: maven
 
       - name: Build project
-        run: ./mvnw install -DskipTests -q -pl '!fluxgate-spring-boot3-starter'
+        run: ./mvnw install -DskipTests -q -pl fluxgate-core,fluxgate-redis-ratelimiter,fluxgate-mongo-adapter,fluxgate-spring-boot2-starter,fluxgate-testkit -am
 
       - name: Build benchmark jar
         run: ./mvnw package -Pbenchmark -pl fluxgate-testkit -DskipTests -q
@@ -115,7 +115,7 @@ jobs:
           cache: maven
 
       - name: Build project
-        run: ./mvnw install -DskipTests -q -pl '!fluxgate-spring-boot3-starter'
+        run: ./mvnw install -DskipTests -q -pl fluxgate-core,fluxgate-redis-ratelimiter,fluxgate-mongo-adapter,fluxgate-spring-boot2-starter,fluxgate-testkit -am
 
       - name: Build benchmark jar
         run: ./mvnw package -Pbenchmark -pl fluxgate-testkit -DskipTests -q
@@ -184,7 +184,7 @@ jobs:
           cache: maven
 
       - name: Build project
-        run: ./mvnw install -DskipTests -q -pl '!fluxgate-spring-boot3-starter'
+        run: ./mvnw install -DskipTests -q -pl fluxgate-core,fluxgate-redis-ratelimiter,fluxgate-mongo-adapter,fluxgate-spring-boot2-starter,fluxgate-testkit -am
 
       - name: Build benchmark jar
         run: ./mvnw package -Pbenchmark -pl fluxgate-testkit -DskipTests -q
