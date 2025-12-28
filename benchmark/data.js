@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1766929917590,
+  "lastUpdate": 1766931017357,
   "repoUrl": "https://github.com/OpenFluxGate/fluxgate",
   "entries": {
     "FluxGate Standalone Benchmark": [
@@ -70,6 +70,78 @@ window.BENCHMARK_DATA = {
           {
             "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeSingleThread",
             "value": 0.1544395672005468,
+            "unit": "us/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "41769568+rojae@users.noreply.github.com",
+            "name": "JaeSeong Oh",
+            "username": "rojae"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "90f7dafce9e004e8ab03ec5c8dc1617dd41867f2",
+          "message": "Fix formatting in README.md for architecture section",
+          "timestamp": "2025-12-28T23:07:54+09:00",
+          "tree_id": "ea9458761c0a5568784aef561f8a7096e22291bf",
+          "url": "https://github.com/OpenFluxGate/fluxgate/commit/90f7dafce9e004e8ab03ec5c8dc1617dd41867f2"
+        },
+        "date": 1766931017032,
+        "tool": "jmh",
+        "benches": [
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeBurst",
+            "value": 6.533214657250663,
+            "unit": "ops/us",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeMultiThread",
+            "value": 15.220273410755183,
+            "unit": "ops/us",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeMultipleClients",
+            "value": 10.725010822879975,
+            "unit": "ops/us",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeSingleThread",
+            "value": 6.461480538952893,
+            "unit": "ops/us",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeBurst",
+            "value": 0.15683052382650578,
+            "unit": "us/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeMultiThread",
+            "value": 0.2569328567495536,
+            "unit": "us/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeMultipleClients",
+            "value": 0.3462679169936472,
+            "unit": "us/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeSingleThread",
+            "value": 0.15452481380561797,
             "unit": "us/op",
             "extra": "iterations: 5\nforks: 1\nthreads: 1"
           }
