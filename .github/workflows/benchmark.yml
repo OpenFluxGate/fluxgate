@@ -6,18 +6,6 @@ name: Benchmark
 on:
   push:
     branches: [main]
-    paths:
-      - 'fluxgate-core/**'
-      - 'fluxgate-redis-ratelimiter/**'
-      - 'fluxgate-mongo-adapter/**'
-      - 'fluxgate-testkit/**'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'fluxgate-core/**'
-      - 'fluxgate-redis-ratelimiter/**'
-      - 'fluxgate-mongo-adapter/**'
-      - 'fluxgate-testkit/**'
   workflow_dispatch:
     inputs:
       run_redis_benchmark:
@@ -73,6 +61,7 @@ jobs:
           output-file-path: benchmark-results.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: false
+          skip-fetch-gh-pages: true
           benchmark-data-dir-path: docs/benchmark
           alert-threshold: '150%'
           comment-on-alert: true
@@ -147,6 +136,7 @@ jobs:
           output-file-path: benchmark-results-redis.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: false
+          skip-fetch-gh-pages: true
           benchmark-data-dir-path: docs/benchmark
           alert-threshold: '150%'
           comment-on-alert: true
@@ -240,6 +230,7 @@ jobs:
           output-file-path: benchmark-results-mongo.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: false
+          skip-fetch-gh-pages: true
           benchmark-data-dir-path: docs/benchmark
           alert-threshold: '150%'
           comment-on-alert: true
