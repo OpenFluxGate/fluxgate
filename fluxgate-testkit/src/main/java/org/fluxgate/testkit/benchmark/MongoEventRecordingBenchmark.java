@@ -52,21 +52,23 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 /**
  * JMH Benchmark for MongoDB event recording performance.
  *
- * <p>This benchmark measures the CURRENT synchronous event recording performance.
- * Use this as a baseline before implementing async optimization.
+ * <p>This benchmark measures the CURRENT synchronous event recording performance. Use this as a
+ * baseline before implementing async optimization.
  *
  * <p>Measures:
+ *
  * <ul>
- *   <li>Event insert latency (single thread)</li>
- *   <li>Event insert throughput (multi thread)</li>
- *   <li>Impact on rate limiting performance</li>
+ *   <li>Event insert latency (single thread)
+ *   <li>Event insert throughput (multi thread)
+ *   <li>Impact on rate limiting performance
  * </ul>
  *
  * <p>Run with: {@code java -jar target/benchmarks.jar MongoEventRecordingBenchmark}
  *
  * <p>Prerequisites:
+ *
  * <ul>
- *   <li>MongoDB running (set FLUXGATE_MONGO_URI env or use default)</li>
+ *   <li>MongoDB running (set FLUXGATE_MONGO_URI env or use default)
  * </ul>
  *
  * @author rojae
@@ -76,7 +78,9 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 2)
-@Fork(value = 1, jvmArgs = {"-Xms512m", "-Xmx512m"})
+@Fork(
+    value = 1,
+    jvmArgs = {"-Xms512m", "-Xmx512m"})
 public class MongoEventRecordingBenchmark {
 
   private static final String MONGO_URI =
@@ -117,24 +121,24 @@ public class MongoEventRecordingBenchmark {
 
     // Pre-create rule for events
     RateLimitBand band =
-        RateLimitBand.builder(Duration.ofMinutes(1), 100)
-            .label("benchmark-band")
+        RateLimitBand.builder(Duration.ofMinutes(1), 100).label("benchmark-band").build();
+
+    rule =
+        RateLimitRule.builder("benchmark-rule")
+            .name("Benchmark Rule")
+            .enabled(true)
+            .scope(LimitScope.PER_IP)
+            .addBand(band)
+            .ruleSetId("benchmark-ruleset")
             .build();
 
-    rule = RateLimitRule.builder("benchmark-rule")
-        .name("Benchmark Rule")
-        .enabled(true)
-        .scope(LimitScope.PER_IP)
-        .addBand(band)
-        .ruleSetId("benchmark-ruleset")
-        .build();
-
     // Pre-create context
-    context = RequestContext.builder()
-        .clientIp("127.0.0.1")
-        .endpoint("/api/benchmark")
-        .method("GET")
-        .build();
+    context =
+        RequestContext.builder()
+            .clientIp("127.0.0.1")
+            .endpoint("/api/benchmark")
+            .method("GET")
+            .build();
 
     // Pre-create key (format: ruleSetId:ruleId:identifier)
     key = RateLimitKey.of("benchmark-ruleset:benchmark-rule:127.0.0.1");
@@ -155,8 +159,7 @@ public class MongoEventRecordingBenchmark {
   }
 
   /**
-   * Benchmark: Record allowed event (single thread).
-   * Measures synchronous MongoDB insert latency.
+   * Benchmark: Record allowed event (single thread). Measures synchronous MongoDB insert latency.
    */
   @Benchmark
   @Threads(1)
@@ -164,9 +167,7 @@ public class MongoEventRecordingBenchmark {
     metricsRecorder.record(context, allowedResult);
   }
 
-  /**
-   * Benchmark: Record rejected event (single thread).
-   */
+  /** Benchmark: Record rejected event (single thread). */
   @Benchmark
   @Threads(1)
   public void recordRejectedEventSingleThread(Blackhole bh) {
@@ -174,8 +175,8 @@ public class MongoEventRecordingBenchmark {
   }
 
   /**
-   * Benchmark: Concurrent event recording.
-   * Simulates high-traffic scenario with multiple threads writing events.
+   * Benchmark: Concurrent event recording. Simulates high-traffic scenario with multiple threads
+   * writing events.
    */
   @Benchmark
   @Threads(Threads.MAX)
@@ -183,15 +184,14 @@ public class MongoEventRecordingBenchmark {
     metricsRecorder.record(context, allowedResult);
   }
 
-  /**
-   * Main method to run benchmarks directly.
-   */
+  /** Main method to run benchmarks directly. */
   public static void main(String[] args) throws RunnerException {
-    Options opt = new OptionsBuilder()
-        .include(MongoEventRecordingBenchmark.class.getSimpleName())
-        .resultFormat(ResultFormatType.JSON)
-        .result("benchmark-results-mongo-events.json")
-        .build();
+    Options opt =
+        new OptionsBuilder()
+            .include(MongoEventRecordingBenchmark.class.getSimpleName())
+            .resultFormat(ResultFormatType.JSON)
+            .result("benchmark-results-mongo-events.json")
+            .build();
 
     new Runner(opt).run();
   }

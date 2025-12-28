@@ -54,17 +54,19 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
  * JMH Benchmark for MongoDB rule loading performance.
  *
  * <p>This benchmark measures:
+ *
  * <ul>
- *   <li>Rule set loading latency from MongoDB</li>
- *   <li>Throughput of findById operations</li>
- *   <li>Performance under concurrent load</li>
+ *   <li>Rule set loading latency from MongoDB
+ *   <li>Throughput of findById operations
+ *   <li>Performance under concurrent load
  * </ul>
  *
  * <p>Run with: {@code java -jar target/benchmarks.jar MongoRuleLoadingBenchmark}
  *
  * <p>Prerequisites:
+ *
  * <ul>
- *   <li>MongoDB running (set FLUXGATE_MONGO_URI env or use default)</li>
+ *   <li>MongoDB running (set FLUXGATE_MONGO_URI env or use default)
  * </ul>
  *
  * @author rojae
@@ -74,7 +76,9 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 2)
-@Fork(value = 1, jvmArgs = {"-Xms512m", "-Xmx512m"})
+@Fork(
+    value = 1,
+    jvmArgs = {"-Xms512m", "-Xmx512m"})
 public class MongoRuleLoadingBenchmark {
 
   private static final String MONGO_URI =
@@ -117,9 +121,7 @@ public class MongoRuleLoadingBenchmark {
     // Insert multiple rules for the benchmark ruleset
     for (int i = 0; i < 5; i++) {
       RateLimitBand band =
-          RateLimitBand.builder(Duration.ofMinutes(1), 1000)
-              .label("benchmark-band-" + i)
-              .build();
+          RateLimitBand.builder(Duration.ofMinutes(1), 1000).label("benchmark-band-" + i).build();
 
       RateLimitRule rule =
           RateLimitRule.builder("benchmark-rule-" + i)
@@ -145,10 +147,7 @@ public class MongoRuleLoadingBenchmark {
     }
   }
 
-  /**
-   * Benchmark: Load a rule set by ID.
-   * Measures MongoDB query performance for rule loading.
-   */
+  /** Benchmark: Load a rule set by ID. Measures MongoDB query performance for rule loading. */
   @Benchmark
   @Threads(1)
   public void loadRuleSetSingleThread(Blackhole bh) {
@@ -156,8 +155,8 @@ public class MongoRuleLoadingBenchmark {
   }
 
   /**
-   * Benchmark: Concurrent rule set loading.
-   * Simulates multiple services loading rules simultaneously.
+   * Benchmark: Concurrent rule set loading. Simulates multiple services loading rules
+   * simultaneously.
    */
   @Benchmark
   @Threads(Threads.MAX)
@@ -166,8 +165,7 @@ public class MongoRuleLoadingBenchmark {
   }
 
   /**
-   * Benchmark: Load all rules (without grouping by ruleset).
-   * Measures raw MongoDB find performance.
+   * Benchmark: Load all rules (without grouping by ruleset). Measures raw MongoDB find performance.
    */
   @Benchmark
   @Threads(1)
@@ -175,15 +173,14 @@ public class MongoRuleLoadingBenchmark {
     bh.consume(repository.findAll());
   }
 
-  /**
-   * Main method to run benchmarks directly.
-   */
+  /** Main method to run benchmarks directly. */
   public static void main(String[] args) throws RunnerException {
-    Options opt = new OptionsBuilder()
-        .include(MongoRuleLoadingBenchmark.class.getSimpleName())
-        .resultFormat(ResultFormatType.JSON)
-        .result("benchmark-results-mongo-loading.json")
-        .build();
+    Options opt =
+        new OptionsBuilder()
+            .include(MongoRuleLoadingBenchmark.class.getSimpleName())
+            .resultFormat(ResultFormatType.JSON)
+            .result("benchmark-results-mongo-loading.json")
+            .build();
 
     new Runner(opt).run();
   }
