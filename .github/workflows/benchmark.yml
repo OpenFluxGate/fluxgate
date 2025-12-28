@@ -78,7 +78,8 @@ jobs:
   benchmark-redis:
     name: Redis Benchmark
     runs-on: ubuntu-latest
-    if: github.event.inputs.run_redis_benchmark == 'true' || github.event_name == 'push'
+    needs: benchmark-standalone
+    if: always() && (github.event.inputs.run_redis_benchmark == 'true' || github.event_name == 'push')
 
     services:
       redis:
@@ -144,7 +145,8 @@ jobs:
   benchmark-mongo:
     name: MongoDB Benchmark
     runs-on: ubuntu-latest
-    if: github.event.inputs.run_mongo_benchmark == 'true' || github.event_name == 'push'
+    needs: benchmark-redis
+    if: always() && (github.event.inputs.run_mongo_benchmark == 'true' || github.event_name == 'push')
 
     services:
       mongo:
