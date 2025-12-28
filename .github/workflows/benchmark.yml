@@ -60,22 +60,13 @@ jobs:
           tool: 'jmh'
           output-file-path: benchmark-results.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: false
-          skip-fetch-gh-pages: true
-          benchmark-data-dir-path: docs/benchmark
+          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: benchmark
           alert-threshold: '150%'
           comment-on-alert: true
           fail-on-alert: false
           alert-comment-cc-users: '@rojae'
-
-      - name: Push benchmark results
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/benchmark/
-          git diff --staged --quiet || git commit -m "Update benchmark results [skip ci]"
-          git push
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -135,22 +126,13 @@ jobs:
           tool: 'jmh'
           output-file-path: benchmark-results-redis.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: false
-          skip-fetch-gh-pages: true
-          benchmark-data-dir-path: docs/benchmark
+          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: benchmark
           alert-threshold: '150%'
           comment-on-alert: true
           fail-on-alert: false
           alert-comment-cc-users: '@rojae'
-
-      - name: Push benchmark results
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/benchmark/
-          git diff --staged --quiet || git commit -m "Update benchmark results [skip ci]"
-          git push
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
@@ -219,7 +201,6 @@ jobs:
 
       - name: Merge MongoDB results
         run: |
-          # Merge both JSON files for unified reporting
           jq -s 'add' benchmark-results-mongo-loading.json benchmark-results-mongo-events.json > benchmark-results-mongo.json
 
       - name: Store benchmark result
@@ -229,22 +210,13 @@ jobs:
           tool: 'jmh'
           output-file-path: benchmark-results-mongo.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: false
-          skip-fetch-gh-pages: true
-          benchmark-data-dir-path: docs/benchmark
+          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: benchmark
           alert-threshold: '150%'
           comment-on-alert: true
           fail-on-alert: false
           alert-comment-cc-users: '@rojae'
-
-      - name: Push benchmark results
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/benchmark/
-          git diff --staged --quiet || git commit -m "Update benchmark results [skip ci]"
-          git push
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
