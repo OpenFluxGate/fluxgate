@@ -52,7 +52,7 @@ jobs:
           cache: maven
 
       - name: Build project
-        run: ./mvnw install -DskipTests -q
+        run: ./mvnw install -DskipTests -q -pl '!fluxgate-spring-boot3-starter'
 
       - name: Build benchmark jar
         run: ./mvnw package -Pbenchmark -pl fluxgate-testkit -DskipTests -q
@@ -115,7 +115,7 @@ jobs:
           cache: maven
 
       - name: Build project
-        run: ./mvnw install -DskipTests -q
+        run: ./mvnw install -DskipTests -q -pl '!fluxgate-spring-boot3-starter'
 
       - name: Build benchmark jar
         run: ./mvnw package -Pbenchmark -pl fluxgate-testkit -DskipTests -q
@@ -184,7 +184,7 @@ jobs:
           cache: maven
 
       - name: Build project
-        run: ./mvnw install -DskipTests -q
+        run: ./mvnw install -DskipTests -q -pl '!fluxgate-spring-boot3-starter'
 
       - name: Build benchmark jar
         run: ./mvnw package -Pbenchmark -pl fluxgate-testkit -DskipTests -q
