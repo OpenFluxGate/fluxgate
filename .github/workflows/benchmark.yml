@@ -73,8 +73,8 @@ jobs:
           output-file-path: benchmark-results.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          gh-pages-branch: main
-          benchmark-data-dir-path: docs/benchmark
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: benchmark
           alert-threshold: '150%'
           comment-on-alert: true
           fail-on-alert: false
@@ -139,8 +139,8 @@ jobs:
           output-file-path: benchmark-results-redis.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          gh-pages-branch: main
-          benchmark-data-dir-path: docs/benchmark
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: benchmark
           alert-threshold: '150%'
           comment-on-alert: true
           fail-on-alert: false
@@ -224,8 +224,8 @@ jobs:
           output-file-path: benchmark-results-mongo.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          gh-pages-branch: main
-          benchmark-data-dir-path: docs/benchmark
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: benchmark
           alert-threshold: '150%'
           comment-on-alert: true
           fail-on-alert: false
