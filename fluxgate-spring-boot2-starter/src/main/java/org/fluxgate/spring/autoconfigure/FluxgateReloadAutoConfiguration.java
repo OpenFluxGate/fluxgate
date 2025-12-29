@@ -193,7 +193,7 @@ public class FluxgateReloadAutoConfiguration {
 
   private RedisPubSubReloadStrategy createPubSubStrategy() {
     ReloadProperties.PubSubProperties pubsubProps = properties.getReload().getPubsub();
-    String redisUri = properties.getRedis().getUri();
+    String redisUri = properties.getRedis().getEffectiveUri();
     Duration timeout = Duration.ofMillis(properties.getRedis().getTimeoutMs());
 
     log.info("Creating RedisPubSubReloadStrategy on channel={}", pubsubProps.getChannel());

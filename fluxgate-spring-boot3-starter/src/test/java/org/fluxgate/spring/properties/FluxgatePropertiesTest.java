@@ -17,7 +17,8 @@ class FluxgatePropertiesTest {
 
     // Mongo defaults
     assertThat(properties.getMongo().isEnabled()).isFalse();
-    assertThat(properties.getMongo().getUri()).isEqualTo("mongodb://localhost:27017/fluxgate");
+    assertThat(properties.getMongo().getUri()).isNull(); // URI is null by default, use getEffectiveUri()
+    assertThat(properties.getMongo().getEffectiveUri()).isEqualTo("mongodb://localhost:27017/fluxgate");
     assertThat(properties.getMongo().getDatabase()).isEqualTo("fluxgate");
     assertThat(properties.getMongo().getRuleCollection()).isEqualTo("rate_limit_rules");
     assertThat(properties.getMongo().getEventCollection()).isNull(); // Optional, null by default
@@ -27,7 +28,8 @@ class FluxgatePropertiesTest {
 
     // Redis defaults
     assertThat(properties.getRedis().isEnabled()).isFalse();
-    assertThat(properties.getRedis().getUri()).isEqualTo("redis://localhost:6379");
+    assertThat(properties.getRedis().getUri()).isNull(); // URI is null by default, use getEffectiveUri()
+    assertThat(properties.getRedis().getEffectiveUri()).isEqualTo("redis://localhost:6379");
 
     // RateLimit defaults
     assertThat(properties.getRatelimit().isEnabled()).isTrue();

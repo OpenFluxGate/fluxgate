@@ -8,20 +8,33 @@ spring:
 # FluxGate Configuration
 fluxgate:
   # MongoDB configuration (uses FluxgateMongoAutoConfiguration)
+  # Option 1: Use individual settings (recommended for Vault integration)
   mongo:
     enabled: true
-    uri: mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin
+    host: localhost
+    port: 27017
     database: fluxgate
+    username: fluxgate
+    password: fluxgate123#$
+    auth-database: admin
     rule-collection: rate_limit_rules
     # Optional: Enable event logging by setting event-collection
     event-collection: rate_limit_events
     # DDL auto mode: validate (default) or create
     ddl-auto: validate
+    # Option 2: Use URI directly (takes precedence if set)
+    # uri: mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin
+
   # Redis configuration (uses FluxgateConfig)
+  # Option 1: Use individual settings (recommended for Vault integration)
   redis:
     enabled: true
-    uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
-    #uri: redis://localhost:6379
+    mode: cluster
+    nodes: "127.0.0.1:7100,127.0.0.1:7101,127.0.0.1:7102"
+    # password: ${REDIS_PASSWORD:}  # Can be injected from Vault
+    # Option 2: Use URI directly (takes precedence if set)
+    # uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
+    # For standalone: host, port, password, database
   # Metrics enable for Prometheus
   metrics:
     enabled: true
@@ -95,13 +108,23 @@ spring:
 fluxgate:
   mongo:
     enabled: true
-    uri: mongodb://fluxgate:fluxgate123%23%24@mongodb:27017/fluxgate?authSource=admin
+    host: mongodb
+    port: 27017
+    database: fluxgate
+    username: fluxgate
+    password: fluxgate123#$
+    auth-database: admin
     rule-collection: rate_limit_rules
     event-collection: rate_limit_events
     ddl-auto: create
   redis:
-    uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
-    #uri: redis://redis:6379
+    enabled: true
+    mode: cluster
+    nodes: "127.0.0.1:7100,127.0.0.1:7101,127.0.0.1:7102"
+    # For standalone Redis in Docker:
+    # mode: standalone
+    # host: redis
+    # port: 6379
   resilience:
     retry:
       enabled: true

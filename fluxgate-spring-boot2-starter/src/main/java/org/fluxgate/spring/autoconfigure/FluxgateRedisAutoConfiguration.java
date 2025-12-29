@@ -96,7 +96,7 @@ public class FluxgateRedisAutoConfiguration {
   @ConditionalOnMissingBean(RedisRateLimiterConfig.class)
   public RedisRateLimiterConfig fluxgateRedisConfig() throws IOException {
     FluxgateProperties.RedisProperties redisProps = properties.getRedis();
-    String uri = redisProps.getUri();
+    String uri = redisProps.getEffectiveUri();
     String effectiveMode = redisProps.getEffectiveMode();
     Duration timeout = Duration.ofMillis(redisProps.getTimeoutMs());
 

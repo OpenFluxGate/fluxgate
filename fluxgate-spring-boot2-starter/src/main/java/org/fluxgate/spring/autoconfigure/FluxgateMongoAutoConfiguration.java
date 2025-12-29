@@ -74,7 +74,7 @@ public class FluxgateMongoAutoConfiguration {
   @Bean(name = "fluxgateMongoClient", destroyMethod = "close")
   @ConditionalOnMissingBean(name = "fluxgateMongoClient")
   public MongoClient fluxgateMongoClient() {
-    String uri = properties.getMongo().getUri();
+    String uri = properties.getMongo().getEffectiveUri();
     log.info("Creating FluxGate MongoClient with URI: {}", maskUri(uri));
     return MongoClients.create(uri);
   }

@@ -109,7 +109,8 @@ class FluxgateRedisAutoConfigurationTest {
 
           // Verify defaults
           assertThat(props.getRedis().isEnabled()).isFalse();
-          assertThat(props.getRedis().getUri()).isEqualTo("redis://localhost:6379");
+          assertThat(props.getRedis().getUri()).isNull(); // URI is null by default
+          assertThat(props.getRedis().getEffectiveUri()).isEqualTo("redis://localhost:6379");
         });
   }
 }

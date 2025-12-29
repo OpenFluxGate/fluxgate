@@ -111,8 +111,25 @@ public class FluxgateProperties {
     /**
      * MongoDB connection URI. Example:
      * mongodb://user:pass@localhost:27017/fluxgate?authSource=admin
+     *
+     * <p>If uri is set, it takes precedence over individual host/port/username/password settings.
      */
-    private String uri = "mongodb://localhost:27017/fluxgate";
+    private String uri;
+
+    /** MongoDB host. Used when uri is not set. Default: localhost */
+    private String host = "localhost";
+
+    /** MongoDB port. Used when uri is not set. Default: 27017 */
+    private int port = 27017;
+
+    /** MongoDB username. Optional - if not set, no authentication is used. */
+    private String username;
+
+    /** MongoDB password. Optional - can be injected from Vault or environment variables. */
+    private String password;
+
+    /** Authentication database. Used with username/password. Default: admin */
+    private String authDatabase = "admin";
 
     /** MongoDB database name. */
     private String database = "fluxgate";
@@ -152,6 +169,46 @@ public class FluxgateProperties {
       this.uri = uri;
     }
 
+    public String getHost() {
+      return host;
+    }
+
+    public void setHost(String host) {
+      this.host = host;
+    }
+
+    public int getPort() {
+      return port;
+    }
+
+    public void setPort(int port) {
+      this.port = port;
+    }
+
+    public String getUsername() {
+      return username;
+    }
+
+    public void setUsername(String username) {
+      this.username = username;
+    }
+
+    public String getPassword() {
+      return password;
+    }
+
+    public void setPassword(String password) {
+      this.password = password;
+    }
+
+    public String getAuthDatabase() {
+      return authDatabase;
+    }
+
+    public void setAuthDatabase(String authDatabase) {
+      this.authDatabase = authDatabase;
+    }
+
     public String getDatabase() {
       return database;
     }
@@ -188,6 +245,58 @@ public class FluxgateProperties {
     public boolean hasEventCollection() {
       return eventCollection != null && !eventCollection.trim().isEmpty();
     }
+
+    /**
+     * Build the effective MongoDB URI.
+     *
+     * <p>Priority: 1. If uri is set, use it directly 2. Otherwise, build from host/port/credentials
+     *
+     * @return the effective MongoDB connection URI
+     */
+    public String getEffectiveUri() {
+      if (uri != null && !uri.trim().isEmpty()) {
+        return uri;
+      }
+      return buildUri();
+    }
+
+    private String buildUri() {
+      StringBuilder sb = new StringBuilder("mongodb://");
+
+      // Add credentials if present
+      if (hasCredentials()) {
+        sb.append(encodeUriComponent(username)).append(":").append(encodeUriComponent(password)).append("@");
+      }
+
+      // Add host and port
+      sb.append(host).append(":").append(port);
+
+      // Add database
+      sb.append("/").append(database);
+
+      // Add auth source if credentials are present
+      if (hasCredentials()) {
+        sb.append("?authSource=").append(authDatabase);
+      }
+
+      return sb.toString();
+    }
+
+    private boolean hasCredentials() {
+      return username != null && !username.trim().isEmpty()
+          && password != null && !password.trim().isEmpty();
+    }
+
+    private String encodeUriComponent(String value) {
+      if (value == null) {
+        return "";
+      }
+      try {
+        return java.net.URLEncoder.encode(value, "UTF-8");
+      } catch (java.io.UnsupportedEncodingException e) {
+        return value;
+      }
+    }
   }
 
   /** DDL auto mode for MongoDB collections. */
@@ -207,6 +316,7 @@ public class FluxgateProperties {
    *   <li>Standalone: Single URI (e.g., redis://localhost:6379)
    *   <li>Cluster: Comma-separated URIs (e.g., redis://node1:6379,redis://node2:6379)
    *   <li>Explicit mode: Set mode property to "standalone" or "cluster"
+   *   <li>Individual settings: Use host/port/password instead of URI
    * </ul>
    */
   public static class RedisProperties {
@@ -231,6 +341,8 @@ public class FluxgateProperties {
     /**
      * Redis connection URI for standalone mode, or comma-separated URIs for cluster mode.
      *
+     * <p>If uri is set, it takes precedence over individual host/port/password settings.
+     *
      * <p>Examples:
      *
      * <ul>
@@ -239,7 +351,25 @@ public class FluxgateProperties {
      *   <li>Cluster: redis://node1:6379,redis://node2:6379,redis://node3:6379
      * </ul>
      */
-    private String uri = "redis://localhost:6379";
+    private String uri;
+
+    /** Redis host. Used when uri is not set. Default: localhost */
+    private String host = "localhost";
+
+    /** Redis port. Used when uri is not set. Default: 6379 */
+    private int port = 6379;
+
+    /** Redis password. Optional - can be injected from Vault or environment variables. */
+    private String password;
+
+    /** Redis database index (0-15). Used for standalone mode only. Default: 0 */
+    private int database = 0;
+
+    /**
+     * Cluster node addresses. Used when mode is "cluster" and uri is not set.
+     * Format: "host1:port1,host2:port2,host3:port3"
+     */
+    private String nodes;
 
     /** Connection timeout in milliseconds. Default: 5000 (5 seconds). */
     private long timeoutMs = 5000;
@@ -268,6 +398,46 @@ public class FluxgateProperties {
       this.uri = uri;
     }
 
+    public String getHost() {
+      return host;
+    }
+
+    public void setHost(String host) {
+      this.host = host;
+    }
+
+    public int getPort() {
+      return port;
+    }
+
+    public void setPort(int port) {
+      this.port = port;
+    }
+
+    public String getPassword() {
+      return password;
+    }
+
+    public void setPassword(String password) {
+      this.password = password;
+    }
+
+    public int getDatabase() {
+      return database;
+    }
+
+    public void setDatabase(int database) {
+      this.database = database;
+    }
+
+    public String getNodes() {
+      return nodes;
+    }
+
+    public void setNodes(String nodes) {
+      this.nodes = nodes;
+    }
+
     public long getTimeoutMs() {
       return timeoutMs;
     }
@@ -287,8 +457,15 @@ public class FluxgateProperties {
       } else if ("standalone".equalsIgnoreCase(mode)) {
         return "standalone";
       } else {
-        // Auto-detect from URI
-        return (uri != null && uri.contains(",")) ? "cluster" : "standalone";
+        // Auto-detect from URI or nodes
+        String effectiveUri = getEffectiveUri();
+        if (effectiveUri != null && effectiveUri.contains(",")) {
+          return "cluster";
+        }
+        if (nodes != null && !nodes.trim().isEmpty()) {
+          return "cluster";
+        }
+        return "standalone";
       }
     }
 
@@ -299,6 +476,76 @@ public class FluxgateProperties {
      */
     public boolean isClusterMode() {
       return "cluster".equals(getEffectiveMode());
+    }
+
+    /**
+     * Build the effective Redis URI.
+     *
+     * <p>Priority: 1. If uri is set, use it directly 2. Otherwise, build from host/port/password
+     *
+     * @return the effective Redis connection URI (or comma-separated URIs for cluster)
+     */
+    public String getEffectiveUri() {
+      if (uri != null && !uri.trim().isEmpty()) {
+        return uri;
+      }
+      return buildUri();
+    }
+
+    private String buildUri() {
+      // For cluster mode with nodes specified
+      if ("cluster".equalsIgnoreCase(mode) && nodes != null && !nodes.trim().isEmpty()) {
+        return buildClusterUri();
+      }
+
+      // Standalone mode
+      StringBuilder sb = new StringBuilder("redis://");
+
+      // Add password if present (Redis uses :password@ format, no username)
+      if (hasPassword()) {
+        sb.append(":").append(password).append("@");
+      }
+
+      // Add host and port
+      sb.append(host).append(":").append(port);
+
+      // Add database if not default
+      if (database > 0) {
+        sb.append("/").append(database);
+      }
+
+      return sb.toString();
+    }
+
+    private String buildClusterUri() {
+      String[] nodeList = nodes.split(",");
+      StringBuilder sb = new StringBuilder();
+
+      for (int i = 0; i < nodeList.length; i++) {
+        if (i > 0) {
+          sb.append(",");
+        }
+        String node = nodeList[i].trim();
+
+        sb.append("redis://");
+        if (hasPassword()) {
+          sb.append(":").append(password).append("@");
+        }
+
+        // If node already has host:port format, use it directly
+        if (node.contains(":")) {
+          sb.append(node);
+        } else {
+          // Just host, use default port
+          sb.append(node).append(":6379");
+        }
+      }
+
+      return sb.toString();
+    }
+
+    private boolean hasPassword() {
+      return password != null && !password.trim().isEmpty();
     }
   }
 
