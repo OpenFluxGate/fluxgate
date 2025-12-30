@@ -200,6 +200,8 @@ public class RateLimitAspect {
       throws IOException {
     long retryAfterSeconds = (result.getRetryAfterMillis() + 999) / 1000;
     response.setHeader(Headers.RETRY_AFTER, String.valueOf(retryAfterSeconds));
+    response.setHeader(
+        Headers.RATE_LIMIT_REMAINING, String.valueOf(Math.max(0, result.getRemainingTokens())));
     response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
     response.setContentType("application/json");
     response
