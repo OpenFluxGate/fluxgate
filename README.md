@@ -44,7 +44,7 @@ English | [한국어](README.ko.md)
 │                                                                         │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────────────────┐   │
 │  │   Client     │───▶│ Spring Boot  │───▶│   FluxGate Filter        │   │
-│  │  Application │    │  Application │    │  (Auto Rate Limiting)    │  │
+│  │  Application │    │  Application │    │  (Auto Rate Limiting)    │   │
 │  └──────────────┘    └──────────────┘    └───────────┬──────────────┘  │
 │                                                      │                  │
 │                      ┌───────────────────────────────┼───────────────┐  │
