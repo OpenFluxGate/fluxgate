@@ -498,6 +498,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 - [ ] gRPC API support
 - [x] Rate limit quota management UI ([FluxGate Studio](https://github.com/OpenFluxGate/fluxgate-studio))
 - [ ] Circuit breaker integration
+- [ ] Modularization 
 
 ## License
 
