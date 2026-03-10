@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  k6:
+    image: grafana/k6:latest
+    container_name: fluxgate-k6
+    volumes:
+      - ./scripts:/scripts
+      - ./results:/results
+    environment:
+      - BASE_URL=http://host.docker.internal:8085
+      # Rate limit test settings
+      - EXPECTED_LIMIT=10
+      - WINDOW_SECONDS=60
+      - TEST_ITERATIONS=15
+      # Distributed test settings
+      - NUM_CLIENTS=10
+      - REQUESTS_PER_CLIENT=20
+    # Default: wait mode (manual execution)
+    entrypoint: ["tail", "-f", "/dev/null"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - fluxgate-test
+
+networks:
+  fluxgate-test:
+    driver: bridge

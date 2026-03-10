@@ -99,3 +99,6 @@ replay_pid*
 
 # Secret
 private.key
+
+# k6-result
+docker/k6/results
