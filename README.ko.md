@@ -13,8 +13,8 @@
 >
 > | 데모 | 설명 | 링크 |
 > |------|------|------|
-> | **FluxGate Studio** | Rate Limit 규칙 관리를 위한 어드민 UI | [데모 열기](https://port-next-fluxgate-studio-demo-mjdyw2g80a39ae78.sel3.cloudtype.app/) |
-> | **FluxGate API** | Swagger UI가 포함된 Rate Limiting API | [Swagger 열기](https://port-0-fluxgate-demo-mjdyw2g80a39ae78.sel3.cloudtype.app/swagger-ui/index.html) |
+> | **FluxGate Studio** | Rate Limit 규칙 관리를 위한 어드민 UI | [데모 열기](http://52.78.8.213:3000/) |
+> | **FluxGate API** | Swagger UI가 포함된 Rate Limiting API | [Swagger 열기](http://52.78.8.213:8080/swagger-ui/index.html) |
 
 **FluxGate**는 Java 애플리케이션을 위한 프로덕션 수준의 분산 Rate Limiting 프레임워크입니다. [Bucket4j](https://github.com/bucket4j/bucket4j)를 기반으로
 구축되었으며, Redis 기반 분산 Rate Limiting, MongoDB 규칙 관리, Spring Boot 자동 설정 등 엔터프라이즈급 기능을 제공합니다.
