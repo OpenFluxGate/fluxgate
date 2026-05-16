@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778920341176,
+  "lastUpdate": 1778920457498,
   "repoUrl": "https://github.com/OpenFluxGate/fluxgate",
   "entries": {
     "FluxGate Standalone Benchmark": [
@@ -1080,6 +1080,102 @@ window.BENCHMARK_DATA = {
           {
             "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsumeBurst ( {\"threadCount\":\"8\"} )",
             "value": 0.2272421104294981,
+            "unit": "ms/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "41769568+rojae@users.noreply.github.com",
+            "name": "JaeSeong Oh",
+            "username": "rojae"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "29edda1ba9959f7c26f265ef7949f4cf3b20a5dc",
+          "message": "docs: update demo links from cloudtype to AWS Lightsail (ko)\n\nUpdated demo links for FluxGate Studio and FluxGate API.",
+          "timestamp": "2026-05-16T17:27:54+09:00",
+          "tree_id": "efc8740b6820aea32a3dc125c22952fc9094959b",
+          "url": "https://github.com/OpenFluxGate/fluxgate/commit/29edda1ba9959f7c26f265ef7949f4cf3b20a5dc"
+        },
+        "date": 1778920456609,
+        "tool": "jmh",
+        "benches": [
+          {
+            "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsume ( {\"threadCount\":\"1\"} )",
+            "value": 22.219541940515118,
+            "unit": "ops/ms",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsume ( {\"threadCount\":\"4\"} )",
+            "value": 21.83406619197443,
+            "unit": "ops/ms",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsume ( {\"threadCount\":\"8\"} )",
+            "value": 22.069762180661584,
+            "unit": "ops/ms",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsumeBurst ( {\"threadCount\":\"1\"} )",
+            "value": 22.94552503497901,
+            "unit": "ops/ms",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsumeBurst ( {\"threadCount\":\"4\"} )",
+            "value": 22.110420779173186,
+            "unit": "ops/ms",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsumeBurst ( {\"threadCount\":\"8\"} )",
+            "value": 22.415139238723345,
+            "unit": "ops/ms",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsume ( {\"threadCount\":\"1\"} )",
+            "value": 0.18521913849980168,
+            "unit": "ms/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsume ( {\"threadCount\":\"4\"} )",
+            "value": 0.18017736624856753,
+            "unit": "ms/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsume ( {\"threadCount\":\"8\"} )",
+            "value": 0.18470506285298077,
+            "unit": "ms/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsumeBurst ( {\"threadCount\":\"1\"} )",
+            "value": 0.17311952494187707,
+            "unit": "ms/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsumeBurst ( {\"threadCount\":\"4\"} )",
+            "value": 0.17319734718822008,
+            "unit": "ms/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.RedisRateLimiterBenchmark.tryConsumeBurst ( {\"threadCount\":\"8\"} )",
+            "value": 0.18228247022626545,
             "unit": "ms/op",
             "extra": "iterations: 5\nforks: 1\nthreads: 4"
           }
