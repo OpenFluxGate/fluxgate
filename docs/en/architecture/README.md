@@ -603,7 +603,9 @@ fluxgate:
     exclude-patterns:
       - /health
       - /actuator/*
-    missing-rule-behavior: ALLOW  # or REJECT
+    missing-rule-behavior: DENY  # or ALLOW
+    failure-behavior: DENY       # or ALLOW
+    trust-client-ip-header: false
 
   # Hot Reload Configuration
   reload:

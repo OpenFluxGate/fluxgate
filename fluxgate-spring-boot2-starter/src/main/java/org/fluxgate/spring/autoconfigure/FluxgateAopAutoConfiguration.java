@@ -5,6 +5,7 @@ import org.fluxgate.core.handler.FluxgateRateLimitHandler;
 import org.fluxgate.spring.annotation.EnableFluxgateAspect;
 import org.fluxgate.spring.aop.RateLimitAspect;
 import org.fluxgate.spring.filter.RequestContextCustomizer;
+import org.fluxgate.spring.properties.FluxgateProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -13,6 +14,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.EnableAspectJAutoProxy;
@@ -55,6 +57,7 @@ import org.springframework.context.annotation.Role;
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
 @ConditionalOnClass({Aspect.class, FluxgateRateLimitHandler.class})
 @ConditionalOnBean(FluxgateRateLimitHandler.class)
+@EnableConfigurationProperties(FluxgateProperties.class)
 @EnableAspectJAutoProxy
 @Role(BeanDefinition.ROLE_INFRASTRUCTURE)
 public class FluxgateAopAutoConfiguration {
@@ -72,7 +75,8 @@ public class FluxgateAopAutoConfiguration {
   @ConditionalOnMissingBean
   public RateLimitAspect rateLimitAspect(
       FluxgateRateLimitHandler handler,
-      ObjectProvider<RequestContextCustomizer> customizerProvider) {
+      ObjectProvider<RequestContextCustomizer> customizerProvider,
+      FluxgateProperties properties) {
 
     RequestContextCustomizer customizer = resolveContextCustomizer(customizerProvider);
 
@@ -82,7 +86,19 @@ public class FluxgateAopAutoConfiguration {
       log.info("  RequestContext customizer: {}", customizer.getClass().getSimpleName());
     }
 
-    return new RateLimitAspect(handler, customizer);
+    return new RateLimitAspect(
+        handler,
+        customizer,
+        properties.getRatelimit().getClientIpHeader(),
+        properties.getRatelimit().isTrustClientIpHeader(),
+        properties.getRatelimit().isAllowWhenLimiterFails(),
+        defaultRuleSetId(properties),
+        properties.getRatelimit().isDenyWhenRuleMissing());
+  }
+
+  private String defaultRuleSetId(FluxgateProperties properties) {
+    String ruleSetId = properties.getRatelimit().getDefaultRuleSetId();
+    return org.springframework.util.StringUtils.hasText(ruleSetId) ? ruleSetId : "";
   }
 
   /**

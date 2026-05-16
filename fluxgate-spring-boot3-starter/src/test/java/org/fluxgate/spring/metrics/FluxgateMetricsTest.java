@@ -151,4 +151,23 @@ class FluxgateMetricsTest {
     Counter counter = registry.find("fluxgate.requests").tag("rule_set", "unknown").counter();
     assertThat(counter).isNotNull();
   }
+
+  @Test
+  void shouldRecordLimiterFailureAction() {
+    // when
+    metrics.recordLimiterFailure(
+        "api-limits", "/api/users", "fail_closed", new IllegalStateException("Redis down"));
+
+    // then
+    Counter counter =
+        registry
+            .find("fluxgate.limiter.failures")
+            .tag("rule_set", "api-limits")
+            .tag("endpoint", "/api/users")
+            .tag("action", "fail_closed")
+            .tag("exception", "IllegalStateException")
+            .counter();
+    assertThat(counter).isNotNull();
+    assertThat(counter.count()).isEqualTo(1.0);
+  }
 }

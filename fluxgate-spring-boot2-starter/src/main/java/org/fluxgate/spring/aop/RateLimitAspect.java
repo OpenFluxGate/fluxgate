@@ -42,13 +42,52 @@ public class RateLimitAspect {
 
   private final FluxgateRateLimitHandler handler;
   private final RequestContextCustomizer contextCustomizer;
+  private final String clientIpHeader;
+  private final boolean trustClientIpHeader;
+  private final boolean failOpenOnError;
+  private final String defaultRuleSetId;
+  private final boolean denyWhenRuleMissing;
 
   public RateLimitAspect(
       FluxgateRateLimitHandler handler,
       @Autowired(required = false) RequestContextCustomizer contextCustomizer) {
+    this(handler, contextCustomizer, Headers.X_FORWARDED_FOR, true, true, "", false);
+  }
+
+  public RateLimitAspect(
+      FluxgateRateLimitHandler handler,
+      @Autowired(required = false) RequestContextCustomizer contextCustomizer,
+      String clientIpHeader,
+      boolean trustClientIpHeader,
+      boolean failOpenOnError,
+      String defaultRuleSetId) {
+    this(
+        handler,
+        contextCustomizer,
+        clientIpHeader,
+        trustClientIpHeader,
+        failOpenOnError,
+        defaultRuleSetId,
+        false);
+  }
+
+  public RateLimitAspect(
+      FluxgateRateLimitHandler handler,
+      @Autowired(required = false) RequestContextCustomizer contextCustomizer,
+      String clientIpHeader,
+      boolean trustClientIpHeader,
+      boolean failOpenOnError,
+      String defaultRuleSetId,
+      boolean denyWhenRuleMissing) {
     this.handler = handler;
     this.contextCustomizer =
         contextCustomizer != null ? contextCustomizer : RequestContextCustomizer.identity();
+    this.clientIpHeader =
+        StringUtils.hasText(clientIpHeader) ? clientIpHeader : Headers.X_FORWARDED_FOR;
+    this.trustClientIpHeader = trustClientIpHeader;
+    this.failOpenOnError = failOpenOnError;
+    this.defaultRuleSetId = defaultRuleSetId;
+    this.denyWhenRuleMissing = denyWhenRuleMissing;
   }
 
   /**
@@ -86,8 +125,14 @@ public class RateLimitAspect {
       return joinPoint.proceed();
     }
 
-    String ruleSetId = rateLimit.ruleSetId();
+    String ruleSetId =
+        StringUtils.hasText(rateLimit.ruleSetId()) ? rateLimit.ruleSetId() : defaultRuleSetId;
     if (!StringUtils.hasText(ruleSetId)) {
+      if (denyWhenRuleMissing) {
+        log.warn("No ruleSetId specified, rejecting request");
+        handleRateLimitExceeded(response, RateLimitResponse.rejected(0));
+        return null;
+      }
       log.warn("No ruleSetId specified, skipping rate limiting");
       return joinPoint.proceed();
     }
@@ -116,9 +161,13 @@ public class RateLimitAspect {
       return null;
 
     } catch (Exception e) {
-      log.error("Error during rate limiting, allowing request", e);
-      // Fail open: allow request if rate limiter fails
-      return joinPoint.proceed();
+      if (failOpenOnError) {
+        log.error("Error during rate limiting, allowing request", e);
+        return joinPoint.proceed();
+      }
+      log.error("Error during rate limiting, rejecting request", e);
+      handleRateLimitExceeded(response, RateLimitResponse.rejected(0));
+      return null;
     }
   }
 
@@ -181,11 +230,15 @@ public class RateLimitAspect {
   private RequestContext buildRequestContext(HttpServletRequest request) {
     RequestContext.Builder builder =
         RequestContext.builder()
-            .clientIp(ClientIpExtractor.extract(request))
+            .clientIp(extractClientIp(request))
             .endpoint(request.getRequestURI())
             .method(request.getMethod());
 
     return contextCustomizer.customize(builder, request).build();
+  }
+
+  private String extractClientIp(HttpServletRequest request) {
+    return ClientIpExtractor.extract(request, clientIpHeader, trustClientIpHeader);
   }
 
   /** Adds standard rate limit headers to the response. */

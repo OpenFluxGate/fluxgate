@@ -145,12 +145,19 @@ fluxgate:
   ratelimit:
     filter-enabled: true
     default-rule-set-id: api-limits
+    failure-behavior: DENY
+    missing-rule-behavior: DENY
+    trust-client-ip-header: false
     include-patterns:
       - /api/*
     exclude-patterns:
       - /health
       - /actuator/*
 ```
+
+FluxGate's Spring Boot auto-configuration is fail-closed by default. A version upgrade is enough for auto-configured applications to deny limiter failures and missing rules with HTTP 429, and forwarded client IP headers are ignored unless `fluxgate.ratelimit.trust-client-ip-header=true` is explicitly set behind a trusted proxy.
+
+Redis bucket keys use the `fluxgate:{ruleSetId}:{ruleId}:{keyValue}:{bandLabel}` layout. In shared Redis deployments, isolate tenants with distinct rule set IDs and include tenant identity in custom key strategies; do not rely on a shared global rule set for multiple tenants.
 
 ### 3. Enable Rate Limiting Filter
 
@@ -258,7 +265,10 @@ curl http://localhost:8083/api/hello
 | `fluxgate.mongo.event-collection` | - | Collection name for events (optional) |
 | `fluxgate.mongo.ddl-auto` | `validate` | DDL mode: `validate` or `create` |
 | `fluxgate.ratelimit.filter-enabled` | `false` | Enable rate limit filter |
-| `fluxgate.ratelimit.default-rule-set-id` | `default` | Default rule set ID |
+| `fluxgate.ratelimit.default-rule-set-id` | - | Default rule set ID |
+| `fluxgate.ratelimit.failure-behavior` | `DENY` | `DENY` or `ALLOW` when the limiter fails |
+| `fluxgate.ratelimit.missing-rule-behavior` | `DENY` | `DENY` or `ALLOW` when no rule set is available |
+| `fluxgate.ratelimit.trust-client-ip-header` | `false` | Whether to trust forwarded client IP headers |
 | `fluxgate.ratelimit.include-patterns` | `[/api/*]` | URL patterns to rate limit |
 | `fluxgate.ratelimit.exclude-patterns` | `[]` | URL patterns to exclude |
 | `fluxgate.ratelimit.wait-for-refill.enabled` | `false` | Enable WAIT_FOR_REFILL policy |
@@ -347,6 +357,8 @@ public RequestContextCustomizer requestContextCustomizer() {
 }
 ```
 
+For multi-tenant systems, validate `X-Tenant-Id` at your application boundary before copying it into `RequestContext`. A safe custom key should include both tenant and subject, for example `tenantId + ":" + userId`, so one tenant cannot consume or reset another tenant's bucket.
+
 ### RequestContext Customization
 
 ```java
@@ -411,11 +423,14 @@ Enable structured logging by including `logback-spring.xml` in your application:
 
 FluxGate automatically exposes Micrometer-based metrics when `spring-boot-starter-actuator` is on the classpath.
 
+Limiter failures are exposed through `fluxgate.limiter.failures` with `rule_set`, `endpoint`, `action`, and `exception` tags. Alert on non-zero `action=fail_open` in production and track `action=fail_closed` as a dependency incident signal.
+
 **Available Metrics:**
 
 | Metric | Type | Description |
 |--------|------|-------------|
 | `fluxgate_requests_total` | Counter | Total rate limit requests by endpoint, method, and rule_set |
+| `fluxgate_limiter_failures_total` | Counter | Limiter dependency failures by action and exception |
 | `fluxgate_tokens_remaining` | Gauge | Remaining tokens in the bucket |
 
 **Example Prometheus output:**
@@ -459,6 +474,9 @@ cd fluxgate
 
 # Run tests
 ./mvnw test
+
+# Run Redis Cluster integration tests (requires docker/redis-cluster.yml or localhost:7100-7105)
+./mvnw -pl fluxgate-redis-ratelimiter -Predis-cluster-it test
 
 # Build without tests
 ./mvnw clean install -DskipTests

@@ -616,7 +616,9 @@ fluxgate:
     exclude-patterns:
       - /health
       - /actuator/*
-    missing-rule-behavior: ALLOW  # 또는 REJECT
+    missing-rule-behavior: DENY  # 또는 ALLOW
+    failure-behavior: DENY       # 또는 ALLOW
+    trust-client-ip-header: false
 
   # 핫 리로드 설정
   reload:

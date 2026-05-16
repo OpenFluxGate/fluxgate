@@ -173,6 +173,43 @@ class FluxgateRateLimitFilterTest {
   }
 
   @Test
+  void shouldIgnoreSpoofedForwardedIpWhenHeaderTrustDisabled() throws Exception {
+    // Given
+    filter =
+        new FluxgateRateLimitFilter(
+            handler,
+            RULE_SET_ID,
+            new String[] {"/**"},
+            new String[] {},
+            false,
+            5000,
+            100,
+            null,
+            "X-Forwarded-For",
+            false,
+            false,
+            true);
+
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getHeader("X-Forwarded-For")).thenReturn("203.0.113.50");
+    when(request.getRemoteAddr()).thenReturn("10.0.0.10");
+
+    RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(allowedResult);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    ArgumentCaptor<RequestContext> contextCaptor = ArgumentCaptor.forClass(RequestContext.class);
+    verify(handler).tryConsume(contextCaptor.capture(), eq(RULE_SET_ID));
+
+    RequestContext capturedContext = contextCaptor.getValue();
+    assertThat(capturedContext.getClientIp()).isEqualTo("10.0.0.10");
+  }
+
+  @Test
   void shouldFallbackToRemoteAddrWhenNoForwardedHeader() throws Exception {
     // Given
     when(request.getRequestURI()).thenReturn("/api/users");
@@ -208,6 +245,40 @@ class FluxgateRateLimitFilterTest {
   }
 
   @Test
+  void shouldDenyRequestWhenRuleSetIdMissingAndConfigured() throws Exception {
+    // Given
+    filter =
+        new FluxgateRateLimitFilter(
+            handler,
+            "",
+            new String[] {"/**"},
+            new String[] {},
+            false,
+            5000,
+            100,
+            null,
+            "X-Forwarded-For",
+            true,
+            true,
+            true);
+
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+
+    StringWriter stringWriter = new StringWriter();
+    PrintWriter printWriter = new PrintWriter(stringWriter);
+    when(response.getWriter()).thenReturn(printWriter);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    verify(filterChain, never()).doFilter(request, response);
+    verify(handler, never()).tryConsume(any(), any());
+    verify(response).setStatus(429);
+  }
+
+  @Test
   void shouldFailOpenOnHandlerException() throws Exception {
     // Given
     when(request.getRequestURI()).thenReturn("/api/users");
@@ -221,6 +292,41 @@ class FluxgateRateLimitFilterTest {
 
     // Then - Should fail open (allow request)
     verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
+  void shouldFailClosedOnHandlerExceptionWhenConfigured() throws Exception {
+    // Given
+    filter =
+        new FluxgateRateLimitFilter(
+            handler,
+            RULE_SET_ID,
+            new String[] {"/**"},
+            new String[] {},
+            false,
+            5000,
+            100,
+            null,
+            "X-Forwarded-For",
+            true,
+            false);
+
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
+        .thenThrow(new RuntimeException("Redis connection failed"));
+
+    StringWriter stringWriter = new StringWriter();
+    PrintWriter printWriter = new PrintWriter(stringWriter);
+    when(response.getWriter()).thenReturn(printWriter);
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    verify(filterChain, never()).doFilter(request, response);
+    verify(response).setStatus(429);
   }
 
   @Test

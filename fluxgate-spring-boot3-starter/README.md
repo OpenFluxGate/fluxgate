@@ -75,8 +75,10 @@ fluxgate:
       - /*
     exclude-patterns: []              # URL patterns to exclude
     client-ip-header: X-Forwarded-For # Header for client IP
-    trust-client-ip-header: true      # Trust the IP header
+    trust-client-ip-header: false     # Trust only behind a sanitizing proxy
     include-headers: true             # Add rate limit headers to response
+    missing-rule-behavior: DENY       # ALLOW or DENY when no rule matches
+    failure-behavior: DENY            # ALLOW or DENY when limiter fails
 
   # Resilience Configuration
   resilience:
@@ -93,6 +95,16 @@ fluxgate:
       permitted-calls-in-half-open-state: 3
       fallback: FAIL_OPEN             # FAIL_OPEN or FAIL_CLOSED
 ```
+
+### Hardened Defaults
+
+FluxGate's Spring Boot auto-configuration is fail-closed by default:
+
+- `fluxgate.ratelimit.failure-behavior=DENY` returns HTTP 429 when the rate limiter throws an error.
+- `fluxgate.ratelimit.missing-rule-behavior=DENY` denies requests when no rule is available.
+- `fluxgate.ratelimit.trust-client-ip-header=false` ignores forwarded client IP headers unless explicitly enabled.
+
+Set `failure-behavior: ALLOW`, `missing-rule-behavior: ALLOW`, or `trust-client-ip-header: true` only when that behavior is intentional and the deployment has compensating controls.
 
 ## Deployment Examples
 
@@ -402,7 +414,7 @@ Configure for your proxy setup:
 fluxgate:
   ratelimit:
     client-ip-header: X-Real-IP        # Your proxy's IP header
-    trust-client-ip-header: true       # Set false if not behind proxy
+    trust-client-ip-header: true       # Enable only behind a sanitizing proxy
 ```
 
 ---

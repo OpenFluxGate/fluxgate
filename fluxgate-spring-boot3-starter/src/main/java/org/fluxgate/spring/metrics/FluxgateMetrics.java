@@ -37,6 +37,8 @@ public class FluxgateMetrics {
   private static final String TAG_RULE_SET = "rule_set";
   private static final String TAG_ENDPOINT = "endpoint";
   private static final String TAG_RESULT = "result";
+  private static final String TAG_ACTION = "action";
+  private static final String TAG_EXCEPTION = "exception";
 
   private final MeterRegistry registry;
   private final ConcurrentMap<String, Counter> requestCounters = new ConcurrentHashMap<>();
@@ -99,6 +101,26 @@ public class FluxgateMetrics {
         METRIC_PREFIX + ".tokens.remaining",
         io.micrometer.core.instrument.Tags.of(TAG_RULE_SET, sanitize(ruleSetId)),
         remainingTokens);
+  }
+
+  /**
+   * Records a rate limiter failure and the action taken by the caller.
+   *
+   * @param ruleSetId the rule set ID
+   * @param endpoint the request endpoint
+   * @param action the action taken, such as fail_closed or fail_open
+   * @param cause the limiter failure cause
+   */
+  public void recordLimiterFailure(
+      String ruleSetId, String endpoint, String action, Throwable cause) {
+    Counter.builder(METRIC_PREFIX + ".limiter.failures")
+        .description("FluxGate rate limiter failures")
+        .tag(TAG_RULE_SET, sanitize(ruleSetId))
+        .tag(TAG_ENDPOINT, sanitize(endpoint))
+        .tag(TAG_ACTION, sanitize(action))
+        .tag(TAG_EXCEPTION, cause != null ? cause.getClass().getSimpleName() : "unknown")
+        .register(registry)
+        .increment();
   }
 
   private Counter getOrCreateCounter(

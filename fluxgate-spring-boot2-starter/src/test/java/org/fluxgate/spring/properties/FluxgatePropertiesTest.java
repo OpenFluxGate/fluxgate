@@ -37,8 +37,13 @@ class FluxgatePropertiesTest {
     assertThat(properties.getRatelimit().getIncludePatterns()).containsExactly("/*");
     assertThat(properties.getRatelimit().getExcludePatterns()).isEmpty();
     assertThat(properties.getRatelimit().getClientIpHeader()).isEqualTo("X-Forwarded-For");
-    assertThat(properties.getRatelimit().isTrustClientIpHeader()).isTrue();
+    assertThat(properties.getRatelimit().isTrustClientIpHeader()).isFalse();
     assertThat(properties.getRatelimit().isIncludeHeaders()).isTrue();
+    assertThat(properties.getRatelimit().getMissingRuleBehavior())
+        .isEqualTo(FluxgateProperties.MissingRuleBehavior.DENY);
+    assertThat(properties.getRatelimit().getFailureBehavior())
+        .isEqualTo(FluxgateProperties.FailureBehavior.DENY);
+    assertThat(properties.getRatelimit().isAllowWhenLimiterFails()).isFalse();
   }
 
   @Test
@@ -193,10 +198,31 @@ class FluxgatePropertiesTest {
     FluxgateProperties properties = new FluxgateProperties();
     FluxgateProperties.RateLimitProperties rateLimit = properties.getRatelimit();
 
-    // Default should be ALLOW
+    // Default should be DENY
     assertThat(rateLimit.getMissingRuleBehavior())
-        .isEqualTo(FluxgateProperties.MissingRuleBehavior.ALLOW);
-    assertThat(rateLimit.isDenyWhenRuleMissing()).isFalse();
+        .isEqualTo(FluxgateProperties.MissingRuleBehavior.DENY);
+    assertThat(rateLimit.isDenyWhenRuleMissing()).isTrue();
+  }
+
+  @Test
+  void shouldSetFailureBehaviorToAllow() {
+    FluxgateProperties properties = new FluxgateProperties();
+    FluxgateProperties.RateLimitProperties rateLimit = properties.getRatelimit();
+
+    rateLimit.setFailureBehavior(FluxgateProperties.FailureBehavior.ALLOW);
+
+    assertThat(rateLimit.getFailureBehavior()).isEqualTo(FluxgateProperties.FailureBehavior.ALLOW);
+    assertThat(rateLimit.isAllowWhenLimiterFails()).isTrue();
+  }
+
+  @Test
+  void failureBehaviorEnumShouldHaveCorrectValues() {
+    FluxgateProperties.FailureBehavior[] values = FluxgateProperties.FailureBehavior.values();
+
+    assertThat(values).hasSize(2);
+    assertThat(values)
+        .contains(
+            FluxgateProperties.FailureBehavior.ALLOW, FluxgateProperties.FailureBehavior.DENY);
   }
 
   @Test

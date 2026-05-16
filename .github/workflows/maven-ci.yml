@@ -77,7 +77,7 @@ jobs:
         run: mvn -B install -DskipTests
 
       - name: Run tests with coverage
-        run: mvn -B verify
+        run: mvn -B verify -Predis-cluster-it
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -165,7 +165,7 @@ jobs:
 
       - name: Test Spring Boot 2.x starter with Java 11
         run: |
-          mvn -B verify \
+          mvn -B verify -Predis-cluster-it \
             -pl fluxgate-core,fluxgate-mongo-adapter,fluxgate-redis-ratelimiter,fluxgate-spring-boot2-starter
 
       - name: Upload test results
@@ -245,7 +245,7 @@ jobs:
 
       - name: Test Spring Boot 3.x starter with Java 17
         run: |
-          mvn -B verify \
+          mvn -B verify -Predis-cluster-it \
             -pl fluxgate-core,fluxgate-mongo-adapter,fluxgate-redis-ratelimiter,fluxgate-spring-boot3-starter
 
       - name: Upload test results

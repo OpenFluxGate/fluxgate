@@ -160,6 +160,50 @@ class RateLimitAspectTest {
   }
 
   @Test
+  void shouldDenyRequestWhenRuleSetIdMissingAndConfigured() throws Throwable {
+    // Given
+    aspect = new RateLimitAspect(handler, null, "X-Forwarded-For", true, true, "", true);
+    when(rateLimit.ruleSetId()).thenReturn("");
+
+    StringWriter stringWriter = new StringWriter();
+    PrintWriter printWriter = new PrintWriter(stringWriter);
+    when(response.getWriter()).thenReturn(printWriter);
+
+    // When
+    Object result = aspect.aroundMethod(joinPoint, rateLimit);
+
+    // Then
+    assertThat(result).isNull();
+    verify(joinPoint, never()).proceed();
+    verify(handler, never()).tryConsume(any(), any());
+    verify(response).setStatus(429);
+  }
+
+  @Test
+  void shouldUseDefaultRuleSetIdWhenAnnotationRuleSetIdIsEmpty() throws Throwable {
+    // Given
+    aspect =
+        new RateLimitAspect(handler, null, "X-Forwarded-For", true, true, "default-rules", true);
+    when(rateLimit.ruleSetId()).thenReturn("");
+    when(rateLimit.waitForRefill()).thenReturn(false);
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+
+    Object expectedResult = "success";
+    when(joinPoint.proceed()).thenReturn(expectedResult);
+    when(handler.tryConsume(any(RequestContext.class), eq("default-rules")))
+        .thenReturn(RateLimitResponse.allowed(50, 0));
+
+    // When
+    Object result = aspect.aroundMethod(joinPoint, rateLimit);
+
+    // Then
+    assertThat(result).isEqualTo(expectedResult);
+    verify(handler).tryConsume(any(RequestContext.class), eq("default-rules"));
+  }
+
+  @Test
   void shouldFailOpenOnHandlerException() throws Throwable {
     // Given
     when(rateLimit.ruleSetId()).thenReturn(RULE_SET_ID);

@@ -13,6 +13,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 /**
  * Integration test for Redis Cluster connection.
@@ -21,7 +22,10 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Start cluster locally: docker run -d -p 7100-7105:7100-7105 -e IP=0.0.0.0
  * grokzen/redis-cluster:7.0.10
+ *
+ * <p>Run with: mvn -pl fluxgate-redis-ratelimiter -Predis-cluster-it test
  */
+@EnabledIfSystemProperty(named = "fluxgate.redis.cluster.tests", matches = "true")
 class ClusterConnectionIntegrationTest {
 
   // Comma-separated nodes -> automatically detected as Cluster mode

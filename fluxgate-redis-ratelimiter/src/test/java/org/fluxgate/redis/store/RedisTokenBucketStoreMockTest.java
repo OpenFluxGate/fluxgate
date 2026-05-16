@@ -211,6 +211,39 @@ class RedisTokenBucketStoreMockTest {
   }
 
   @Test
+  void shouldDeleteBucketsByRuleSetIdUsingScan() {
+    // given
+    List<String> keys =
+        Arrays.asList("fluxgate:test-rule:per-ip:127.0.0.1", "fluxgate:test-rule:per-user:user-1");
+    when(connectionProvider.scanKeys("fluxgate:test-rule:*", 1000L)).thenReturn(keys);
+    when(connectionProvider.del(keys.toArray(new String[0]))).thenReturn(2L);
+
+    // when
+    long deleted = store.deleteBucketsByRuleSetId("test-rule");
+
+    // then
+    assertThat(deleted).isEqualTo(2L);
+    verify(connectionProvider).scanKeys("fluxgate:test-rule:*", 1000L);
+    verify(connectionProvider, never()).keys(anyString());
+  }
+
+  @Test
+  void shouldDeleteAllBucketsUsingScan() {
+    // given
+    List<String> keys = Arrays.asList("fluxgate:rule-a:key", "fluxgate:rule-b:key");
+    when(connectionProvider.scanKeys("fluxgate:*", 1000L)).thenReturn(keys);
+    when(connectionProvider.del(keys.toArray(new String[0]))).thenReturn(2L);
+
+    // when
+    long deleted = store.deleteAllBuckets();
+
+    // then
+    assertThat(deleted).isEqualTo(2L);
+    verify(connectionProvider).scanKeys("fluxgate:*", 1000L);
+    verify(connectionProvider, never()).keys(anyString());
+  }
+
+  @Test
   @DisplayName("NOSCRIPT error should fallback to EVAL and reload script")
   void shouldFallbackToEvalOnNoscriptError() {
     // given

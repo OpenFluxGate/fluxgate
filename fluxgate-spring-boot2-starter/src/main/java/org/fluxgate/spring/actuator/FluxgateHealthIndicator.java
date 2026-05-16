@@ -46,6 +46,14 @@ public class FluxgateHealthIndicator implements HealthIndicator {
     // Check rate limiting status
     builder.withDetail("rateLimitingEnabled", properties.getRatelimit().isEnabled());
     builder.withDetail("filterEnabled", properties.getRatelimit().isFilterEnabled());
+    builder.withDetail("failureBehavior", properties.getRatelimit().getFailureBehavior().name());
+    builder.withDetail(
+        "missingRuleBehavior", properties.getRatelimit().getMissingRuleBehavior().name());
+    builder.withDetail("trustClientIpHeader", properties.getRatelimit().isTrustClientIpHeader());
+    builder.withDetail(
+        "defaultRuleSetIdConfigured",
+        properties.getRatelimit().getDefaultRuleSetId() != null
+            && !properties.getRatelimit().getDefaultRuleSetId().isBlank());
 
     // Check MongoDB status
     if (properties.getMongo().isEnabled()) {
@@ -66,6 +74,7 @@ public class FluxgateHealthIndicator implements HealthIndicator {
       } catch (Exception e) {
         log.warn("MongoDB health check failed: {}", e.getMessage());
         builder.withDetail("mongo.status", "ERROR");
+        builder.withDetail("mongo.error", e.getClass().getSimpleName());
         builder.withDetail("mongo.message", e.getMessage());
         hasIssues = true;
       }
@@ -92,6 +101,7 @@ public class FluxgateHealthIndicator implements HealthIndicator {
       } catch (Exception e) {
         log.warn("Redis health check failed: {}", e.getMessage());
         builder.withDetail("redis.status", "ERROR");
+        builder.withDetail("redis.error", e.getClass().getSimpleName());
         builder.withDetail("redis.message", e.getMessage());
         hasIssues = true;
       }
@@ -101,9 +111,12 @@ public class FluxgateHealthIndicator implements HealthIndicator {
 
     // Set overall status
     if (hasIssues) {
+      builder.withDetail("dependencyIssues", true);
+      builder.withDetail("statusReason", "One or more enabled FluxGate dependencies are unhealthy");
       return builder.status("DEGRADED").build();
     }
 
+    builder.withDetail("dependencyIssues", false);
     return builder.build();
   }
 

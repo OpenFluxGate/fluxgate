@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>Tests the conditional behavior of Filter auto-configuration: - Requires @EnableFluxgateFilter
  * annotation - Requires servlet web application context - Uses FluxgateRateLimitHandler from
- * context or ALLOW_ALL fallback
+ * context or configured fallback
  */
 @DisplayName("FluxgateFilterAutoConfiguration Tests")
 class FluxgateFilterAutoConfigurationTest {
@@ -89,14 +89,14 @@ class FluxgateFilterAutoConfigurationTest {
     }
 
     @Test
-    @DisplayName("should create filter with ALLOW_ALL handler when no handler bean")
-    void shouldCreateFilterWithAllowAllHandler() {
+    @DisplayName("should create filter with fallback handler when no handler bean")
+    void shouldCreateFilterWithFallbackHandler() {
       webContextRunner
           .withUserConfiguration(EnabledConfig.class)
           .run(
               context -> {
                 assertThat(context).hasSingleBean(FluxgateRateLimitFilter.class);
-                // Filter is created with ALLOW_ALL fallback
+                // Filter is created with the configured fallback behavior.
               });
     }
 

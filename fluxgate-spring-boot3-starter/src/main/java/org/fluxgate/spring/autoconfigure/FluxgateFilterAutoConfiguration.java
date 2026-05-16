@@ -2,6 +2,7 @@ package org.fluxgate.spring.autoconfigure;
 
 import java.util.Map;
 import org.fluxgate.core.handler.FluxgateRateLimitHandler;
+import org.fluxgate.core.handler.RateLimitResponse;
 import org.fluxgate.spring.annotation.EnableFluxgateFilter;
 import org.fluxgate.spring.filter.FluxgateRateLimitFilter;
 import org.fluxgate.spring.filter.RequestContextCustomizer;
@@ -79,16 +80,31 @@ public class FluxgateFilterAutoConfiguration {
     if (annotation == null) {
       log.warn("@EnableFluxgateFilter annotation not found, using defaults");
       FluxgateRateLimitHandler handler =
-          handlerProvider.getIfAvailable(() -> FluxgateRateLimitHandler.ALLOW_ALL);
-      return new FluxgateRateLimitFilter(handler, "", new String[0], new String[0]);
+          resolveHandler(applicationContext, handlerProvider, properties, null);
+      return new FluxgateRateLimitFilter(
+          handler,
+          defaultRuleSetId(properties),
+          new String[0],
+          new String[0],
+          false,
+          5000,
+          100,
+          null,
+          properties.getRatelimit().getClientIpHeader(),
+          properties.getRatelimit().isTrustClientIpHeader(),
+          properties.getRatelimit().isAllowWhenLimiterFails(),
+          properties.getRatelimit().isDenyWhenRuleMissing());
     }
 
     // Get handler
     FluxgateRateLimitHandler handler =
-        resolveHandler(applicationContext, handlerProvider, annotation);
+        resolveHandler(applicationContext, handlerProvider, properties, annotation);
 
     // Get configuration from annotation
-    String ruleSetId = annotation.ruleSetId();
+    String ruleSetId =
+        StringUtils.hasText(annotation.ruleSetId())
+            ? annotation.ruleSetId()
+            : defaultRuleSetId(properties);
     String[] includePatterns = annotation.includePatterns();
     String[] excludePatterns = annotation.excludePatterns();
 
@@ -113,7 +129,11 @@ public class FluxgateFilterAutoConfiguration {
         waitConfig.isEnabled(),
         waitConfig.getMaxWaitTimeMs(),
         waitConfig.getMaxConcurrentWaits(),
-        contextCustomizer);
+        contextCustomizer,
+        properties.getRatelimit().getClientIpHeader(),
+        properties.getRatelimit().isTrustClientIpHeader(),
+        properties.getRatelimit().isAllowWhenLimiterFails(),
+        properties.getRatelimit().isDenyWhenRuleMissing());
   }
 
   /**
@@ -180,13 +200,20 @@ public class FluxgateFilterAutoConfiguration {
     return null;
   }
 
+  private String defaultRuleSetId(FluxgateProperties properties) {
+    String ruleSetId = properties.getRatelimit().getDefaultRuleSetId();
+    return StringUtils.hasText(ruleSetId) ? ruleSetId : "";
+  }
+
   /** Resolves the handler from annotation or context. */
   private FluxgateRateLimitHandler resolveHandler(
       ApplicationContext context,
       ObjectProvider<FluxgateRateLimitHandler> handlerProvider,
+      FluxgateProperties properties,
       EnableFluxgateFilter annotation) {
 
-    Class<? extends FluxgateRateLimitHandler> handlerClass = annotation.handler();
+    Class<? extends FluxgateRateLimitHandler> handlerClass =
+        annotation != null ? annotation.handler() : FluxgateRateLimitHandler.class;
 
     // If handler class is specified and not the interface itself
     if (handlerClass != FluxgateRateLimitHandler.class) {
@@ -206,8 +233,12 @@ public class FluxgateFilterAutoConfiguration {
       return handler;
     }
 
-    // Final fallback
-    log.warn("No FluxgateRateLimitHandler found, using ALLOW_ALL handler");
-    return FluxgateRateLimitHandler.ALLOW_ALL;
+    if (properties.getRatelimit().isAllowWhenLimiterFails()) {
+      log.warn("No FluxgateRateLimitHandler found, using ALLOW_ALL handler");
+      return FluxgateRateLimitHandler.ALLOW_ALL;
+    }
+
+    log.warn("No FluxgateRateLimitHandler found, using fail-closed handler");
+    return (requestContext, ruleSetId) -> RateLimitResponse.rejected(0);
   }
 }

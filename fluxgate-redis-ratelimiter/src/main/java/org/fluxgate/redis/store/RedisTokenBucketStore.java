@@ -31,6 +31,8 @@ import org.slf4j.LoggerFactory;
 public class RedisTokenBucketStore {
 
   private static final Logger log = LoggerFactory.getLogger(RedisTokenBucketStore.class);
+  private static final long BUCKET_SCAN_COUNT = 1000L;
+  private static final int DELETE_BATCH_SIZE = 500;
   private final AtomicBoolean reloadingLuaScript = new AtomicBoolean(false);
   private final RedisConnectionProvider connectionProvider;
 
@@ -207,8 +209,7 @@ public class RedisTokenBucketStore {
    * <p>This is used when rules are changed to reset rate limit state. The pattern matches keys
    * like: {@code fluxgate:{ruleSetId}:*}
    *
-   * <p>Warning: Uses KEYS command which can be slow on large databases. Consider using SCAN in
-   * high-traffic production environments.
+   * <p>Uses SCAN semantics to avoid blocking Redis on production-sized keyspaces.
    *
    * @param ruleSetId the rule set ID to match
    * @return the number of buckets deleted
@@ -219,13 +220,13 @@ public class RedisTokenBucketStore {
     String pattern = "fluxgate:" + ruleSetId + ":*";
     log.debug("Deleting token buckets matching pattern: {}", pattern);
 
-    java.util.List<String> keys = connectionProvider.keys(pattern);
-    if (keys.isEmpty()) {
+    java.util.List<String> keys = connectionProvider.scanKeys(pattern, BUCKET_SCAN_COUNT);
+    long deleted = deleteInBatches(keys);
+    if (deleted == 0) {
       log.debug("No token buckets found for ruleSetId: {}", ruleSetId);
       return 0;
     }
 
-    long deleted = connectionProvider.del(keys.toArray(new String[0]));
     log.info("Deleted {} token buckets for ruleSetId: {}", deleted, ruleSetId);
     return deleted;
   }
@@ -236,7 +237,7 @@ public class RedisTokenBucketStore {
    * <p>This is used when a full reload is triggered to reset all rate limit state. The pattern
    * matches all FluxGate keys: {@code fluxgate:*}
    *
-   * <p>Warning: Uses KEYS command which can be slow on large databases.
+   * <p>Uses SCAN semantics to avoid blocking Redis on production-sized keyspaces.
    *
    * @return the number of buckets deleted
    */
@@ -244,14 +245,28 @@ public class RedisTokenBucketStore {
     String pattern = "fluxgate:*";
     log.debug("Deleting all token buckets matching pattern: {}", pattern);
 
-    java.util.List<String> keys = connectionProvider.keys(pattern);
-    if (keys.isEmpty()) {
+    java.util.List<String> keys = connectionProvider.scanKeys(pattern, BUCKET_SCAN_COUNT);
+    long deleted = deleteInBatches(keys);
+    if (deleted == 0) {
       log.debug("No token buckets found");
       return 0;
     }
 
-    long deleted = connectionProvider.del(keys.toArray(new String[0]));
     log.info("Deleted {} token buckets (full reset)", deleted);
+    return deleted;
+  }
+
+  private long deleteInBatches(java.util.List<String> keys) {
+    if (keys == null || keys.isEmpty()) {
+      return 0;
+    }
+
+    long deleted = 0;
+    for (int start = 0; start < keys.size(); start += DELETE_BATCH_SIZE) {
+      int end = Math.min(start + DELETE_BATCH_SIZE, keys.size());
+      java.util.List<String> batch = keys.subList(start, end);
+      deleted += connectionProvider.del(batch.toArray(new String[0]));
+    }
     return deleted;
   }
 

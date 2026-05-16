@@ -320,14 +320,24 @@ public class FluxgateProperties {
      * Behavior when no matching rule set is found.
      *
      * <ul>
-     *   <li>ALLOW - Allow the request (default, permissive mode)
-     *   <li>DENY - Deny the request (strict mode, fail-closed)
+     *   <li>ALLOW - Allow the request (permissive mode)
+     *   <li>DENY - Deny the request (default, fail-closed)
      * </ul>
      *
      * <p>In production environments with strict security requirements, consider setting this to
      * DENY to ensure all requests are rate-limited.
      */
-    private MissingRuleBehavior missingRuleBehavior = MissingRuleBehavior.ALLOW;
+    private MissingRuleBehavior missingRuleBehavior = MissingRuleBehavior.DENY;
+
+    /**
+     * Behavior when the rate limiter itself fails, such as Redis/API errors.
+     *
+     * <ul>
+     *   <li>ALLOW - Allow the request (fail-open)
+     *   <li>DENY - Deny the request (default, fail-closed)
+     * </ul>
+     */
+    private FailureBehavior failureBehavior = FailureBehavior.DENY;
 
     /**
      * Filter order (lower = higher priority). Default is high priority to run before other filters.
@@ -344,10 +354,10 @@ public class FluxgateProperties {
     private String clientIpHeader = "X-Forwarded-For";
 
     /**
-     * Whether to trust the client IP header. Set to false in production if not behind a trusted
-     * proxy.
+     * Whether to trust the client IP header. Keep false unless the application is behind a trusted
+     * proxy that strips incoming client-supplied forwarding headers.
      */
-    private boolean trustClientIpHeader = true;
+    private boolean trustClientIpHeader = false;
 
     /** Enable rate limit response headers. X-RateLimit-Limit, X-RateLimit-Remaining, etc. */
     private boolean includeHeaders = true;
@@ -445,6 +455,23 @@ public class FluxgateProperties {
       return missingRuleBehavior == MissingRuleBehavior.DENY;
     }
 
+    public FailureBehavior getFailureBehavior() {
+      return failureBehavior;
+    }
+
+    public void setFailureBehavior(FailureBehavior failureBehavior) {
+      this.failureBehavior = failureBehavior;
+    }
+
+    /**
+     * Check if requests should be allowed when the rate limiter fails.
+     *
+     * @return true if rate limiter errors should fail open
+     */
+    public boolean isAllowWhenLimiterFails() {
+      return failureBehavior == FailureBehavior.ALLOW;
+    }
+
     public WaitForRefillProperties getWaitForRefill() {
       return waitForRefill;
     }
@@ -459,6 +486,14 @@ public class FluxgateProperties {
     /** Allow the request to proceed (permissive mode). */
     ALLOW,
     /** Deny the request (strict mode, fail-closed). */
+    DENY
+  }
+
+  /** Behavior when rate limiter execution fails. */
+  public enum FailureBehavior {
+    /** Allow the request to proceed (fail-open). */
+    ALLOW,
+    /** Deny the request (fail-closed). */
     DENY
   }
 

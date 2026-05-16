@@ -37,10 +37,11 @@ class FluxgateHealthIndicatorTest {
       assertThat(health.getStatus()).isEqualTo(Status.UP);
       assertThat(health.getDetails().get("mongo.status")).isEqualTo("DISABLED");
       assertThat(health.getDetails().get("redis.status")).isEqualTo("DISABLED");
+      assertThat(health.getDetails().get("dependencyIssues")).isEqualTo(false);
     }
 
     @Test
-    void shouldIncludeRateLimitingStatus() {
+    void shouldIncludeRateLimitingAndSecurityStatus() {
       // given
       properties.getRatelimit().setEnabled(true);
       properties.getRatelimit().setFilterEnabled(true);
@@ -52,6 +53,10 @@ class FluxgateHealthIndicatorTest {
       // then
       assertThat(health.getDetails().get("rateLimitingEnabled")).isEqualTo(true);
       assertThat(health.getDetails().get("filterEnabled")).isEqualTo(true);
+      assertThat(health.getDetails().get("failureBehavior")).isEqualTo("DENY");
+      assertThat(health.getDetails().get("missingRuleBehavior")).isEqualTo("DENY");
+      assertThat(health.getDetails().get("trustClientIpHeader")).isEqualTo(false);
+      assertThat(health.getDetails().get("defaultRuleSetIdConfigured")).isEqualTo(false);
     }
   }
 
@@ -107,7 +112,11 @@ class FluxgateHealthIndicatorTest {
       // then
       assertThat(health.getStatus().getCode()).isEqualTo("DEGRADED");
       assertThat(health.getDetails().get("mongo.status")).isEqualTo("ERROR");
+      assertThat(health.getDetails().get("mongo.error")).isEqualTo("RuntimeException");
       assertThat(health.getDetails().get("mongo.message")).isEqualTo("Connection timeout");
+      assertThat(health.getDetails().get("dependencyIssues")).isEqualTo(true);
+      assertThat(health.getDetails().get("statusReason"))
+          .isEqualTo("One or more enabled FluxGate dependencies are unhealthy");
     }
 
     @Test
@@ -176,6 +185,7 @@ class FluxgateHealthIndicatorTest {
       // then
       assertThat(health.getStatus().getCode()).isEqualTo("DEGRADED");
       assertThat(health.getDetails().get("redis.status")).isEqualTo("ERROR");
+      assertThat(health.getDetails().get("redis.error")).isEqualTo("RuntimeException");
     }
 
     @Test

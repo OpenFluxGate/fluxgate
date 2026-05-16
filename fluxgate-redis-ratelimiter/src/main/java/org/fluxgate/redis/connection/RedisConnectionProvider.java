@@ -149,6 +149,20 @@ public interface RedisConnectionProvider extends AutoCloseable {
   java.util.List<String> keys(String pattern);
 
   /**
+   * Incrementally scans keys matching the given pattern.
+   *
+   * <p>Unlike {@link #keys(String)}, this method is safe for production-sized keyspaces because it
+   * uses Redis SCAN semantics instead of blocking the server for a full keyspace scan.
+   *
+   * @param pattern the pattern to match (e.g., "fluxgate:*")
+   * @param count scan batch size hint
+   * @return list of matching keys
+   */
+  default java.util.List<String> scanKeys(String pattern, long count) {
+    return keys(pattern);
+  }
+
+  /**
    * Flushes the current database (deletes all keys).
    *
    * <p>Warning: This is a destructive operation. Use with caution.

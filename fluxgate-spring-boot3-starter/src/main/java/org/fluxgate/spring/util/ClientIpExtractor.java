@@ -27,7 +27,26 @@ public final class ClientIpExtractor {
    * @return the client IP address
    */
   public static String extract(HttpServletRequest request) {
-    String forwardedFor = request.getHeader(Headers.X_FORWARDED_FOR);
+    return extract(request, Headers.X_FORWARDED_FOR, true);
+  }
+
+  /**
+   * Extracts the client IP address using the configured forwarding header only when it is trusted.
+   *
+   * @param request the HTTP request
+   * @param clientIpHeader forwarding header to inspect when trusted
+   * @param trustClientIpHeader whether forwarding headers are trusted
+   * @return the client IP address
+   */
+  public static String extract(
+      HttpServletRequest request, String clientIpHeader, boolean trustClientIpHeader) {
+    if (!trustClientIpHeader) {
+      return request.getRemoteAddr();
+    }
+
+    String headerName =
+        StringUtils.hasText(clientIpHeader) ? clientIpHeader : Headers.X_FORWARDED_FOR;
+    String forwardedFor = request.getHeader(headerName);
     if (StringUtils.hasText(forwardedFor)) {
       // X-Forwarded-For can contain multiple IPs, take the first one
       String[] ips = forwardedFor.split(",");

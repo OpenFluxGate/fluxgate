@@ -90,4 +90,28 @@ class ClientIpExtractorTest {
     // Then
     assertThat(ip).isEqualTo("10.0.0.1");
   }
+
+  @Test
+  void shouldIgnoreForwardedHeaderWhenNotTrusted() {
+    // Given
+    when(request.getRemoteAddr()).thenReturn("10.0.0.1");
+
+    // When
+    String ip = ClientIpExtractor.extract(request, "X-Forwarded-For", false);
+
+    // Then
+    assertThat(ip).isEqualTo("10.0.0.1");
+  }
+
+  @Test
+  void shouldUseConfiguredClientIpHeaderWhenTrusted() {
+    // Given
+    when(request.getHeader("X-Real-IP")).thenReturn("203.0.113.10");
+
+    // When
+    String ip = ClientIpExtractor.extract(request, "X-Real-IP", true);
+
+    // Then
+    assertThat(ip).isEqualTo("203.0.113.10");
+  }
 }

@@ -56,6 +56,10 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
   private final String ruleSetId;
   private final String[] includePatterns;
   private final String[] excludePatterns;
+  private final String clientIpHeader;
+  private final boolean trustClientIpHeader;
+  private final boolean failOpenOnError;
+  private final boolean denyWhenRuleMissing;
   private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
   // WAIT_FOR_REFILL configuration
@@ -134,10 +138,102 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
       long maxWaitTimeMs,
       int maxConcurrentWaits,
       RequestContextCustomizer contextCustomizer) {
+    this(
+        handler,
+        ruleSetId,
+        includePatterns,
+        excludePatterns,
+        waitForRefillEnabled,
+        maxWaitTimeMs,
+        maxConcurrentWaits,
+        contextCustomizer,
+        Headers.X_FORWARDED_FOR,
+        true,
+        true,
+        false);
+  }
+
+  /**
+   * Creates a new FluxgateRateLimitFilter with full security-sensitive configuration.
+   *
+   * @param handler The rate limit handler (required)
+   * @param ruleSetId Default rule set ID to use
+   * @param includePatterns URL patterns to include
+   * @param excludePatterns URL patterns to exclude
+   * @param waitForRefillEnabled Enable WAIT_FOR_REFILL behavior
+   * @param maxWaitTimeMs Maximum time to wait for token refill
+   * @param maxConcurrentWaits Maximum concurrent waiting requests (semaphore permits)
+   * @param contextCustomizer Customizer for RequestContext (nullable)
+   * @param clientIpHeader Header used for client IP extraction when trusted
+   * @param trustClientIpHeader Trust forwarding headers for client IP extraction
+   * @param failOpenOnError Allow requests when the rate limiter fails
+   * @param denyWhenRuleMissing Deny requests when no rule set ID is configured
+   */
+  public FluxgateRateLimitFilter(
+      FluxgateRateLimitHandler handler,
+      String ruleSetId,
+      String[] includePatterns,
+      String[] excludePatterns,
+      boolean waitForRefillEnabled,
+      long maxWaitTimeMs,
+      int maxConcurrentWaits,
+      RequestContextCustomizer contextCustomizer,
+      String clientIpHeader,
+      boolean trustClientIpHeader,
+      boolean failOpenOnError) {
+    this(
+        handler,
+        ruleSetId,
+        includePatterns,
+        excludePatterns,
+        waitForRefillEnabled,
+        maxWaitTimeMs,
+        maxConcurrentWaits,
+        contextCustomizer,
+        clientIpHeader,
+        trustClientIpHeader,
+        failOpenOnError,
+        false);
+  }
+
+  /**
+   * Creates a new FluxgateRateLimitFilter with full security-sensitive configuration.
+   *
+   * @param handler The rate limit handler (required)
+   * @param ruleSetId Default rule set ID to use
+   * @param includePatterns URL patterns to include
+   * @param excludePatterns URL patterns to exclude
+   * @param waitForRefillEnabled Enable WAIT_FOR_REFILL behavior
+   * @param maxWaitTimeMs Maximum time to wait for token refill
+   * @param maxConcurrentWaits Maximum concurrent waiting requests (semaphore permits)
+   * @param contextCustomizer Customizer for RequestContext (nullable)
+   * @param clientIpHeader Header used for client IP extraction when trusted
+   * @param trustClientIpHeader Trust forwarding headers for client IP extraction
+   * @param failOpenOnError Allow requests when the rate limiter fails
+   * @param denyWhenRuleMissing Deny requests when no rule set ID is configured
+   */
+  public FluxgateRateLimitFilter(
+      FluxgateRateLimitHandler handler,
+      String ruleSetId,
+      String[] includePatterns,
+      String[] excludePatterns,
+      boolean waitForRefillEnabled,
+      long maxWaitTimeMs,
+      int maxConcurrentWaits,
+      RequestContextCustomizer contextCustomizer,
+      String clientIpHeader,
+      boolean trustClientIpHeader,
+      boolean failOpenOnError,
+      boolean denyWhenRuleMissing) {
     this.handler = Objects.requireNonNull(handler, "handler must not be null");
     this.ruleSetId = Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
     this.includePatterns = includePatterns != null ? includePatterns : new String[0];
     this.excludePatterns = excludePatterns != null ? excludePatterns : new String[0];
+    this.clientIpHeader =
+        StringUtils.hasText(clientIpHeader) ? clientIpHeader : Headers.X_FORWARDED_FOR;
+    this.trustClientIpHeader = trustClientIpHeader;
+    this.failOpenOnError = failOpenOnError;
+    this.denyWhenRuleMissing = denyWhenRuleMissing;
     this.waitForRefillEnabled = waitForRefillEnabled;
     this.maxWaitTimeMs = maxWaitTimeMs;
     this.waitSemaphore = new Semaphore(maxConcurrentWaits);
@@ -150,6 +246,10 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
       log.debug("  Rule set ID: {}", ruleSetId);
       log.debug("  Include patterns: {}", Arrays.toString(this.includePatterns));
       log.debug("  Exclude patterns: {}", Arrays.toString(this.excludePatterns));
+      log.debug("  Client IP header: {}", this.clientIpHeader);
+      log.debug("  Trust client IP header: {}", trustClientIpHeader);
+      log.debug("  Fail open on error: {}", failOpenOnError);
+      log.debug("  Deny when rule missing: {}", denyWhenRuleMissing);
       log.debug("  WAIT_FOR_REFILL enabled: {}", waitForRefillEnabled);
       if (waitForRefillEnabled) {
         log.debug("  Max wait time: {} ms", maxWaitTimeMs);
@@ -180,7 +280,7 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
     // Request details
     MDC.put(MdcKeys.METHOD, request.getMethod());
     MDC.put(MdcKeys.ENDPOINT, request.getRequestURI());
-    MDC.put(MdcKeys.CLIENT_IP, ClientIpExtractor.extract(request));
+    MDC.put(MdcKeys.CLIENT_IP, extractClientIp(request));
     MDC.put(MdcKeys.PROTOCOL, request.getProtocol());
     MDC.put(MdcKeys.SERVER_PORT, String.valueOf(request.getServerPort()));
 
@@ -214,8 +314,13 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
 
     // Check rule set ID
     if (!StringUtils.hasText(ruleSetId)) {
-      log.warn("No rule set ID configured, skipping rate limiting");
-      filterChain.doFilter(request, response);
+      if (denyWhenRuleMissing) {
+        log.warn("No rule set ID configured, rejecting request");
+        handleRateLimitExceeded(response, RateLimitResponse.rejected(0));
+      } else {
+        log.warn("No rule set ID configured, skipping rate limiting");
+        filterChain.doFilter(request, response);
+      }
       return;
     }
 
@@ -253,9 +358,13 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
       MDC.put(MdcKeys.ERROR_MESSAGE, e.getMessage());
       MDC.put(MdcKeys.STATUS_CODE, "500");
       MDC.put(MdcKeys.DURATION_MS, String.valueOf(System.currentTimeMillis() - startTimeMs));
-      log.error("Error during rate limiting, allowing request", e);
-      // Fail open: allow request if rate limiter fails
-      filterChain.doFilter(request, response);
+      if (failOpenOnError) {
+        log.error("Error during rate limiting, allowing request", e);
+        filterChain.doFilter(request, response);
+      } else {
+        log.error("Error during rate limiting, rejecting request", e);
+        handleRateLimitExceeded(response, RateLimitResponse.rejected(0));
+      }
     } finally {
       // Clear MDC
       MDC.clear();
@@ -363,7 +472,7 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
    * RequestContextCustomizer to allow users to override or add custom fields.
    */
   private RequestContext buildRequestContext(HttpServletRequest request) {
-    String clientIp = ClientIpExtractor.extract(request);
+    String clientIp = extractClientIp(request);
     String userId = request.getHeader(Headers.USER_ID);
     String apiKey = request.getHeader(Headers.API_KEY);
 
@@ -462,5 +571,9 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
       return "****";
     }
     return value.substring(0, 4) + "****" + value.substring(value.length() - 4);
+  }
+
+  private String extractClientIp(HttpServletRequest request) {
+    return ClientIpExtractor.extract(request, clientIpHeader, trustClientIpHeader);
   }
 }
