@@ -13,8 +13,8 @@ English | [한국어](README.ko.md)
 >
 > | Demo | Description | Link |
 > |------|-------------|------|
-> | **FluxGate Studio** | Admin UI for rate limit rule management | [Open Demo](https://port-next-fluxgate-studio-demo-mjdyw2g80a39ae78.sel3.cloudtype.app/) |
-> | **FluxGate API** | Rate limiting API with Swagger UI | [Open Swagger](https://port-0-fluxgate-demo-mjdyw2g80a39ae78.sel3.cloudtype.app/swagger-ui/index.html) |
+> | **FluxGate Studio** | Admin UI for rate limit rule management | [Open Demo](http://52.78.8.213:3000/) |
+> | **FluxGate API** | Rate limiting API with Swagger UI | [Open Swagger](http://52.78.8.213:8080/swagger-ui/index.html) |
 
 **FluxGate** is a production-ready, distributed rate limiting framework for Java applications. Built on top of [Bucket4j](https://github.com/bucket4j/bucket4j), it provides enterprise-grade features including Redis-backed distributed rate limiting, MongoDB rule management, and seamless Spring Boot integration.
 
