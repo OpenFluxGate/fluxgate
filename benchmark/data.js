@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778920686445,
+  "lastUpdate": 1778946104177,
   "repoUrl": "https://github.com/OpenFluxGate/fluxgate",
   "entries": {
     "FluxGate Standalone Benchmark": [
@@ -502,6 +502,78 @@ window.BENCHMARK_DATA = {
           {
             "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeSingleThread",
             "value": 0.1688860640473855,
+            "unit": "us/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "41769568+rojae@users.noreply.github.com",
+            "name": "JaeSeong Oh",
+            "username": "rojae"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8ce01ccb03859c21b6dd47d3051d6f84b74c15ca",
+          "message": "docs: update demo IP from 52.78.8.213 to 13.124.192.116",
+          "timestamp": "2026-05-17T00:39:15+09:00",
+          "tree_id": "2cd0c9efdb645bfd39d41b00a1740b5571196534",
+          "url": "https://github.com/OpenFluxGate/fluxgate/commit/8ce01ccb03859c21b6dd47d3051d6f84b74c15ca"
+        },
+        "date": 1778946103345,
+        "tool": "jmh",
+        "benches": [
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeBurst",
+            "value": 6.457428896800113,
+            "unit": "ops/us",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeMultiThread",
+            "value": 16.409685190819623,
+            "unit": "ops/us",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeMultipleClients",
+            "value": 11.301294121964347,
+            "unit": "ops/us",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeSingleThread",
+            "value": 6.420932447223021,
+            "unit": "ops/us",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeBurst",
+            "value": 0.15637507715650473,
+            "unit": "us/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeMultiThread",
+            "value": 0.23785939160187017,
+            "unit": "us/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeMultipleClients",
+            "value": 0.3933613538493754,
+            "unit": "us/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeSingleThread",
+            "value": 0.15603627307562432,
             "unit": "us/op",
             "extra": "iterations: 5\nforks: 1\nthreads: 1"
           }
