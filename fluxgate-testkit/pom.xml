@@ -51,16 +51,35 @@
             <version>${project.version}</version>
         </dependency>
 
-        <!-- Test dependencies -->
+        <!--
+          JUnit 5 and AssertJ are compile dependencies of src/main here, because the testkit ships a
+          JUnit extension (FluxgateInMemoryExtension) and assertion helpers (RateLimitAssertions).
+          Scope 'provided' keeps them off consumers' transitive runtime classpath - a project using
+          the testkit already brings its own test framework - while still putting them on this
+          module's own compile and test classpaths.
+        -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
+            <scope>provided</scope>
         </dependency>
 
         <dependency>
             <groupId>org.assertj</groupId>
             <artifactId>assertj-core</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Testcontainers: disposable Redis + MongoDB for the integration tier -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
 
