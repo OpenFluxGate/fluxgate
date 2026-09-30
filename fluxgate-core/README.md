@@ -403,7 +403,7 @@ You can implement the `RateLimiter` interface or extend `Bucket4jRateLimiter`:
 - **Decorator pattern** for logging, auditing, metrics
 - **Circuit breaker** for fault tolerance
 
-📖 **See the complete guide**: [How to Extend RateLimiter](../docs/HOW_TO_EXTEND_RATELIMITER.md)
+📖 **See also**: [Key Resolver](../docs/en/customization/key-resolver.md) and [Request Context](../docs/en/customization/request-context.md)
 
 ### Custom Storage Backend Example
 
@@ -545,7 +545,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](../LICENS
 
 <div align="center">
 
-**[Documentation](#-quick-start)** • **[Examples](src/test/java/org/fluxgate/core/FeatureDemoTest.java)** • **[Extend Guide](../docs/HOW_TO_EXTEND_RATELIMITER.md)** • **[Contributing](#-contributing)** • **[License](#-license)**
+**[Documentation](#-quick-start)** • **[Examples](src/test/java/org/fluxgate/core/FeatureDemoTest.java)** • **[Extend Guide](../docs/en/customization/key-resolver.md)** • **[Contributing](#-contributing)** • **[License](#-license)**
 
 Made with ❤️ by the FluxGate team
 

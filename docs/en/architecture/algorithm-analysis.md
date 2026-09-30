@@ -35,8 +35,8 @@ The heart of FluxGate is an optimized Token Bucket implementation running as a R
 | Metric | Complexity | Description |
 |--------|------------|-------------|
 | **Time** | O(1) | Constant time per rate limit check |
-| **Space** | O(1) per key | 2 fields per bucket (tokens, last_refill_nanos) |
-| **Network** | 1 RTT | Single round-trip for atomic execution |
+| **Space** | O(1) per band | 2 fields per bucket (`tokens`, `last_refill_micros`) |
+| **Network** | 1 RTT per rule | Every band of one rule in a single round-trip |
 
 ### 2.2 Key Optimizations
 
@@ -101,19 +101,27 @@ end
 
 ---
 
-#### Fix #4: TTL Safety Margin
+#### Fix #4: TTL Safety Margin, with no upper cap
 
-**Problem:** Clock skew can cause premature key expiration.
+**Problem:** Clock skew can cause premature key expiration. A hard cap causes the opposite problem:
+it silently resets any window longer than the cap.
 
 ```lua
--- Add 10% safety margin
-local desired_ttl = math.ceil(window_nanos / 1000000000 * 1.1)
-
--- Cap at 24 hours to prevent runaway TTLs
-local actual_ttl = math.min(desired_ttl, 86400)
+-- Window plus a 10% margin for clock skew, never below 1s, and deliberately with NO upper cap:
+-- a 7 day window keeps a 7 day bucket.
+local function ttl_seconds(window_micros)
+    return math.max(1, math.ceil(window_micros / 1000000 * 1.1))
+end
 ```
 
-**Impact:** Prevents edge cases where buckets expire too early.
+**Impact:** Buckets no longer expire too early, and a quota longer than a day is enforced for its
+full length. The previous `math.min(desired_ttl, 86400)` cap meant a 7-day quota reset every 24
+hours, effectively allowing 7× its configured capacity.
+
+On rejection the script issues `EXPIRE` on every key but writes no state. `EXPIRE` is a no-op for a
+key that does not exist, so a band that was never charged is not created, and a bucket that only ever
+sees rejections still expires on schedule instead of inheriting the shrinking TTL of its last allowed
+request.
 
 ---
 

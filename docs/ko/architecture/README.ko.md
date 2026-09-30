@@ -2,7 +2,7 @@
 
 이 문서는 FluxGate의 아키텍처, 모듈 구조, 데이터 흐름, 커스터마이징 포인트에 대한 상세한 개요를 제공합니다.
 
-[English](ARCHITECTURE.md) | 한국어
+[English](../../en/architecture/README.md) | 한국어
 
 ---
 
@@ -15,7 +15,7 @@
    - [fluxgate-core](#41-fluxgate-core)
    - [fluxgate-redis-ratelimiter](#42-fluxgate-redis-ratelimiter)
    - [fluxgate-mongo-adapter](#43-fluxgate-mongo-adapter)
-   - [fluxgate-spring-boot-starter](#44-fluxgate-spring-boot-starter)
+   - [fluxgate-spring-boot3-starter](#44-fluxgate-spring-boot3-starter)
 5. [데이터 흐름](#5-데이터-흐름)
 6. [핵심 개념](#6-핵심-개념)
 
@@ -31,7 +31,7 @@ flowchart TB
 
     subgraph SpringBoot["Spring Boot 애플리케이션"]
         Filter[FluxgateRateLimitFilter]
-        Handler[RateLimitHandler]
+        Handler[FluxgateRateLimitHandler]
         Engine[RateLimitEngine]
     end
 
@@ -86,17 +86,22 @@ flowchart TB
     subgraph Handler["핸들러 레이어"]
         direction TB
         HI[FluxgateRateLimitHandler<br/>인터페이스]
-        SH[StandaloneRateLimitHandler]
-        HH[HttpRateLimitHandler]
+        EBH[EngineBackedRateLimitHandler<br/>라이브러리 기본]
+        HH[사용자 핸들러<br/>예: HTTP API]
     end
 
     subgraph Engine["엔진 레이어"]
-        PROV[RuleSetProvider]
+        ENG[RateLimitEngine]
+        PROV[RateLimitRuleSetProvider]
+        CPROV[CachingRuleSetProvider]
         CACHE[RuleCache - Caffeine]
     end
 
     subgraph RateLimiter["RateLimiter 레이어"]
+        RES_RL[ResilientRateLimiter]
         RRL[RedisRateLimiter]
+        B4J[Bucket4jRateLimiter]
+        KEY[KeyResolver - 규칙마다]
     end
 
     subgraph Storage["스토리지 레이어"]
@@ -124,13 +129,18 @@ flowchart TB
     FLT --> REQ_CTX
     REQ_CTX --> CUST
     FLT --> HI
-    HI -.->|구현체 1| SH
-    HI -.->|구현체 2| HH
-    SH --> PROV
-    SH --> RRL
+    HI -.->|기본 구현| EBH
+    HI -.->|사용자 구현| HH
+    EBH --> ENG
     HH -->|REST API| API
-    PROV --> CACHE
-    CACHE --> REPO
+    ENG --> PROV
+    PROV --> CPROV
+    CPROV --> CACHE
+    CPROV --> REPO
+    ENG --> RES_RL
+    RES_RL --> RRL & B4J
+    RRL --> KEY
+    B4J --> KEY
     RRL --> TBS
     TBS --> LUA
     REPO --> COLL
@@ -162,11 +172,11 @@ flowchart TB
 
 | 구현체 | 용도 | 연결 대상 |
 |--------|------|----------|
-| `StandaloneRateLimitHandler` | Redis 직접 접근 | RuleSetProvider + RedisRateLimiter |
+| `EngineBackedRateLimitHandler` | Redis 직접 접근 (라이브러리 기본) | RuleSetProvider + RedisRateLimiter |
 | `HttpRateLimitHandler` | 외부 API 호출 | FluxGate API Server (REST) |
 
 ```
-StandaloneRateLimitHandler 흐름:
+EngineBackedRateLimitHandler 흐름:
 ─────────────────────────────────
 Filter → Handler → RuleSetProvider (MongoDB)
                  → RedisRateLimiter → RedisTokenBucketStore → Lua → Redis
@@ -206,7 +216,7 @@ flowchart TB
         end
 
         subgraph StorageCustom["스토리지 커스터마이징"]
-            CS[커스텀 RuleSetProvider]
+            CS[커스텀 RateLimitRuleSetProvider]
             CBS[커스텀 BucketStore]
         end
     end
@@ -235,8 +245,9 @@ flowchart TB
 |--------|-----------|------|
 | **RequestContextCustomizer** | `RequestContextCustomizer` | IP 추출, 사용자 ID, 커스텀 속성 |
 | **KeyResolver** | `KeyResolver` | Rate Limit 키 생성 로직 |
-| **RateLimitHandler** | `RateLimitHandler` | Rate Limiting 전체 흐름 제어 |
-| **RuleSetProvider** | `RuleSetProvider` | 규칙 소스 (DB, 파일 등) |
+| **FluxgateRateLimitHandler** | `FluxgateRateLimitHandler` | Rate Limiting 전체 흐름 제어 |
+| **RateLimitRuleSetProvider** | `RateLimitRuleSetProvider` | 규칙 소스 (DB, 파일 등) |
+| **RateLimitResponseWriter** | `RateLimitResponseWriter` | 429 응답 본문 |
 | **BucketResetHandler** | `BucketResetHandler` | 규칙 변경 시 버킷 리셋 |
 
 ### 예시: 커스텀 RequestContextCustomizer
@@ -295,9 +306,9 @@ flowchart TB
 
         subgraph Interfaces["인터페이스"]
             IRL[RateLimiter]
-            IPROV[RuleSetProvider]
+            IPROV[RateLimitRuleSetProvider]
             IKEY[KeyResolver]
-            IHAND[RateLimitHandler]
+            IHAND[FluxgateRateLimitHandler]
             ICACHE[RuleCache]
         end
 
@@ -326,23 +337,26 @@ flowchart TB
 
 | 클래스 | 설명 |
 |--------|------|
-| `RateLimitRule` | 단일 Rate Limit 규칙 (path, method, bands, scope) |
-| `RateLimitBand` | 대역폭 설정 (capacity, refillTokens, refillDuration) |
-| `LimitScope` | 키 범위 (IP, USER_ID, API_KEY, COMPOSITE) |
-| `RateLimitEngine` | 규칙 매칭 + Rate Limiting 실행 |
-| `RequestContext` | 요청 메타데이터 (IP, userId, path, method, attributes) |
+| `RateLimitRule` | 단일 Rate Limit 규칙 (id, scope, keyStrategyId, bands, policy, attributes). path·method·priority는 **없습니다** |
+| `RateLimitBand` | 한 계층: `(window, capacity)` + 선택적 label |
+| `LimitScope` | 키 범위 (`GLOBAL`, `PER_IP`, `PER_USER`, `PER_API_KEY`, `CUSTOM`) |
+| `RateLimitEngine` | 룰셋 해석 + `RateLimiter` 위임 (규칙 매칭 로직 없음) |
+| `RequestContext` | 요청 메타데이터 (clientIp, userId, apiKey, endpoint, method, headers, attributes) |
 
 #### LimitScope Enum
 
 ```java
 public enum LimitScope {
-    GLOBAL,      // 단일 전역 제한
-    IP,          // 클라이언트 IP별
-    USER_ID,     // 사용자 식별자별
-    API_KEY,     // API 키별
-    COMPOSITE    // 여러 범위 조합
+    GLOBAL,       // 모든 요청이 하나의 버킷
+    PER_API_KEY,  // API 키별
+    PER_USER,     // 사용자 식별자별
+    PER_IP,       // 클라이언트 IP별
+    CUSTOM        // rule.keyStrategyId가 지정한 RequestContext 속성 값별
 }
 ```
+
+복합 키는 `RequestContextCustomizer`에서 직접 만든 속성을 읽는 `CUSTOM` 규칙입니다.
+`COMPOSITE` 스코프나 `compositeKeyFields` 필드는 존재하지 않습니다.
 
 ---
 
@@ -398,40 +412,61 @@ flowchart TB
 | 기능 | 설명 |
 |------|------|
 | **Lua 스크립트** | 원자적 토큰 소비 (Race Condition 방지) |
-| **다중 대역폭** | 여러 대역폭을 단일 Lua 호출로 처리 |
-| **서버 시간** | Redis 서버 시간 사용 (Clock Drift 방지) |
-| **클러스터** | Redis Cluster 자동 감지 및 지원 |
+| **다중 대역폭** | 한 규칙의 모든 대역을 단일 Lua 호출로, 전부-또는-전무 처리 |
+| **서버 시간** | Redis 서버 시간을 마이크로초로 사용 (Clock Drift 방지) |
+| **클러스터** | Redis Cluster 자동 감지. `{...}` 해시 태그로 한 규칙의 대역들을 한 슬롯에 고정 |
+| **범위 제한 삭제** | `fluxgate:bucket:*`만 대상으로 `SCAN` + `UNLINK`. `KEYS`를 쓰지 않습니다 |
 
 #### Lua 스크립트 흐름
 
 ```lua
--- token_bucket_consume.lua (간략화)
-local key = KEYS[1]
-local capacity = tonumber(ARGV[1])
-local refillTokens = tonumber(ARGV[2])
-local refillNanos = tonumber(ARGV[3])
-local tokensToConsume = tonumber(ARGV[4])
-local nowNanos = redis.call('TIME')[1] * 1000000000
+-- token_bucket_consume.lua (간략화. 전체 계약은 모듈 README 참고)
+-- KEYS[1..n]   한 규칙의 대역마다 하나의 버킷 키. 모두 같은 해시 태그 안에 있어야 합니다
+-- ARGV[1]      permits
+-- ARGV[2+3i]   capacity,  ARGV[3+3i] window_micros,  ARGV[4+3i] 예약 ("0")
 
--- 현재 상태 조회
-local tokens = tonumber(redis.call('HGET', key, 'tokens') or capacity)
-local lastRefill = tonumber(redis.call('HGET', key, 'lastRefill') or nowNanos)
+local time_info = redis.call('TIME')
+local now_micros = tonumber(time_info[1]) * 1000000 + tonumber(time_info[2])
 
--- 리필 계산
-local elapsed = nowNanos - lastRefill
-local refillAmount = math.floor(elapsed / refillNanos) * refillTokens
-tokens = math.min(capacity, tokens + refillAmount)
+-- 1패스: 아무것도 쓰기 전에 모든 대역을 리필하고 검사
+for i = 1, band_count do
+    local bucket_data = redis.call('HMGET', KEYS[i], 'tokens', 'last_refill_micros')
+    local current_tokens = tonumber(bucket_data[1])
+    local last_refill_micros = tonumber(bucket_data[2])
+    if current_tokens == nil or last_refill_micros == nil then
+        current_tokens = capacity          -- 없거나 0.3.x 버킷: 가득 찬 상태로 시작
+        last_refill_micros = now_micros
+    end
 
--- 토큰 소비 시도
-if tokens >= tokensToConsume then
-    tokens = tokens - tokensToConsume
-    redis.call('HSET', key, 'tokens', tokens, 'lastRefill', nowNanos)
-    return {1, tokens, 0}  -- 허용, 남은 토큰, 대기 시간
-else
-    local waitNanos = math.ceil((tokensToConsume - tokens) / refillTokens) * refillNanos
-    return {0, tokens, waitNanos}  -- 거부, 남은 토큰, 대기 시간
+    local elapsed_micros = math.min(math.max(0, now_micros - last_refill_micros), window_micros)
+    local tokens_to_add = math.floor(elapsed_micros * capacity / window_micros)
+    local refilled = math.min(capacity, current_tokens + tokens_to_add)
+
+    if refilled < permits then
+        -- 거부: 상태를 쓰지 않습니다. TTL만 갱신합니다(EXPIRE는 없는 키에는 no-op).
+        -- 허용했을 대역은 토큰을 그대로 유지합니다.
+        for j = 1, band_count do
+            redis.call('EXPIRE', KEYS[j], ttl_seconds(windows[j]))
+        end
+        return {0, i, refilled, micros_to_wait, reset_time_millis, capacity, i}
+    end
 end
+
+-- 2패스: 전부 가능하므로 모든 대역에서 차감
+for i = 1, band_count do
+    redis.call('HMSET', KEYS[i],
+        'tokens', string.format('%.0f', remaining),
+        'last_refill_micros', string.format('%.0f', refill_micros[i]))
+    redis.call('EXPIRE', KEYS[i], ttl_seconds(windows[i]))   -- max(1, ceil(window*1.1)), 상한 없음
+end
+
+-- 리셋 시각은 소비 **후**에 계산합니다.
+return {1, 0, tokens[binding], 0, reset_time_millis, binding_capacity, binding}
 ```
+
+시간 단위는 나노초가 아니라 **마이크로초**입니다. Redis의 Lua 5.1에서 모든 수는 정확한 정수 범위가
+2^53인 double이고, epoch 나노초(약 1.76e18)는 그 범위를 벗어납니다. 해시에 쓰는 모든 값은
+`string.format('%.0f', v)`를 통과합니다.
 
 ---
 
@@ -476,55 +511,44 @@ flowchart TB
 
 ```json
 {
-  "_id": "rule-1",
+  "id": "rule-1",
   "ruleSetId": "api-limits",
-  "path": "/api/users/*",
-  "method": "GET",
-  "limitScope": "IP",
-  "compositeKeyFields": null,
+  "name": "API Rate Limit",
+  "scope": "PER_IP",
+  "keyStrategyId": null,
+  "onLimitExceedPolicy": "REJECT_REQUEST",
   "bands": [
-    {
-      "label": "per-second",
-      "capacity": 100,
-      "refillTokens": 100,
-      "refillSeconds": 1
-    },
-    {
-      "label": "per-minute",
-      "capacity": 1000,
-      "refillTokens": 1000,
-      "refillSeconds": 60
-    }
+    { "label": "per-second", "capacity": 100, "windowSeconds": 1 },
+    { "label": "per-minute", "capacity": 1000, "windowSeconds": 60 }
   ],
-  "priority": 10,
   "enabled": true,
-  "onLimitExceed": "REJECT",
   "attributes": {
     "tenant": "enterprise",
     "tier": "premium"
-  },
-  "createdAt": "2024-01-01T00:00:00Z",
-  "updatedAt": "2024-01-01T00:00:00Z"
+  }
 }
 ```
+
+`path`, `method`, `priority`, `compositeKeyFields` 필드는 **없습니다.** 규칙은 스코프와 대역을 갖고,
+룰셋 안의 모든 활성 규칙이 평가됩니다.
 
 #### 인덱스
 
 ```javascript
-// 성능을 위한 권장 인덱스
-db.rate_limit_rules.createIndex({ "ruleSetId": 1, "enabled": 1 })
-db.rate_limit_rules.createIndex({ "ruleSetId": 1, "priority": -1 })
+// fluxgate.mongo.ddl-auto=create가 자동으로 생성합니다
+db.rate_limit_rules.createIndex({ "ruleSetId": 1 })
+db.rate_limit_rules.createIndex({ "ruleSetId": 1, "id": 1 }, { unique: true })
 ```
 
 ---
 
-### 4.4 fluxgate-spring-boot-starter
+### 4.4 fluxgate-spring-boot3-starter
 
 원활한 통합을 위한 Spring Boot 자동 설정입니다.
 
 ```mermaid
 flowchart TB
-    subgraph Starter["fluxgate-spring-boot-starter"]
+    subgraph Starter["fluxgate-spring-boot3-starter"]
         subgraph AutoConfig["자동 설정"]
             FAC[FluxgateFilterAutoConfiguration]
             MAC[FluxgateMongoAutoConfiguration]
@@ -608,24 +632,34 @@ fluxgate:
 
   # Rate Limiting 설정
   ratelimit:
-    filter-enabled: true
+    enabled: true                # 마스터 스위치. filter-enabled는 deprecated + 무동작
+    mode: AUTO                   # AUTO | REDIS | IN_MEMORY
     default-rule-set-id: api-limits
     filter-order: 1
     include-patterns:
-      - /api/*
+      - /api/**                  # /*는 세그먼트 하나만 매칭합니다
     exclude-patterns:
       - /health
-      - /actuator/*
+      - /actuator/**
     missing-rule-behavior: DENY  # 또는 ALLOW
     failure-behavior: DENY       # 또는 ALLOW
+    missing-key-behavior: FALLBACK_TO_IP  # 또는 REJECT
     trust-client-ip-header: false
+    trusted-proxies: []          # trust-client-ip-header=true면 반드시 설정
 
-  # 핫 리로드 설정
+  # 핫 리로드 설정 (fluxgate.ratelimit.reload가 아니라 fluxgate.reload)
   reload:
     enabled: true
-    strategy: POLLING  # 또는 REDIS_PUBSUB
-    polling-interval: 30s
-    reset-buckets-on-reload: true
+    strategy: AUTO               # AUTO | POLLING | PUBSUB | NONE
+    cache:
+      ttl: 5m
+      negative-ttl: 5s
+    polling:
+      interval: 30s
+      initial-delay: 10s
+    pubsub:
+      channel: fluxgate:rule-reload
+      backstop-polling-interval: 60s
 
   # Wait for Refill 설정
   wait-for-refill:
@@ -645,34 +679,35 @@ sequenceDiagram
     participant F as 필터
     participant H as 핸들러
     participant E as 엔진
-    participant P as RuleSetProvider
+    participant P as RateLimitRuleSetProvider
     participant K as KeyResolver
     participant R as RateLimiter
     participant S as RedisStore
     participant L as Lua 스크립트
 
     C->>F: HTTP 요청
-    F->>F: RequestContext 생성
-    F->>H: handle(context)
-    H->>E: check(ruleSetId, context)
-    E->>P: getRuleSet(ruleSetId)
-    P-->>E: RateLimitRuleSet
-    E->>E: Path/Method로 규칙 매칭
-    E->>K: resolve(rule, context)
-    K-->>E: RateLimitKey
-    E->>R: tryConsume(context, ruleSet)
-    R->>S: consume(key, bands)
-    S->>L: EVALSHA (원자적)
-    L-->>S: [허용여부, 남은토큰, 대기시간]
-    S-->>R: BucketState
+    F->>F: RequestContextFactory.create(request, endpoint)
+    F->>H: tryConsume(context, ruleSetId, permits)
+    H->>E: check(ruleSetId, context, permits)
+    E->>P: findById(ruleSetId)
+    P-->>E: Optional<RateLimitRuleSet>
+    E->>R: tryConsume(context, ruleSet, permits)
+    loop 활성 규칙마다
+        R->>K: resolve(context, rule)
+        K-->>R: RateLimitKey
+        R->>S: tryConsume(bucketKeys, bands, permits)
+        S->>L: EVALSHA (규칙 단위 원자적)
+        L-->>S: 정수 7개
+        S-->>R: BucketState
+    end
     R-->>E: RateLimitResult
     E-->>H: RateLimitResult
-    H-->>F: RateLimitResponse
+    H-->>F: RateLimitResponse.from(result)
 
     alt 허용됨
         F->>C: 200 OK + Rate Limit 헤더
     else 거부됨
-        F->>C: 429 Too Many Requests
+        F->>C: 429 + Retry-After + application/problem+json
     end
 ```
 
@@ -681,11 +716,20 @@ sequenceDiagram
 요청이 처리되면 FluxGate는 다음 헤더를 추가합니다:
 
 ```http
-X-RateLimit-Limit: 100
+X-RateLimit-Limit: 100          # 레거시 계열
 X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1640000000
-Retry-After: 60  # 거부된 경우에만
+X-RateLimit-Reset: 1640000000   # epoch 초
+RateLimit-Limit: 100            # IETF 계열
+RateLimit-Remaining: 95
+RateLimit-Reset: 27             # 잔여 초
+RateLimit-Policy: 100;w=60
+Retry-After: 27                 # 거부 시에만. 올림, 절대 0이 아님
 ```
+
+두 계열 모두 기본 활성이며 독립적으로 끌 수 있습니다
+(`fluxgate.ratelimit.response.include-legacy-headers` /
+`response.include-standard-headers`). Limiter가 "알 수 없음"(`-1`)으로 보고한 값은 오해를 낳는
+숫자로 쓰지 않고 헤더를 생략합니다. 거부 응답에는 RFC 9457 problem 문서가 함께 나갑니다.
 
 ---
 
@@ -696,18 +740,18 @@ Retry-After: 60  # 거부된 경우에만
 ```mermaid
 flowchart LR
     subgraph Scopes["LimitScope 옵션"]
-        IP[IP - 클라이언트 IP]
-        USER[USER_ID - 사용자 ID]
-        API[API_KEY - API 키]
-        COMP[COMPOSITE - 복합]
+        IP[PER_IP - 클라이언트 IP]
+        USER[PER_USER - 사용자 ID]
+        API[PER_API_KEY - API 키]
+        COMP[CUSTOM - 속성]
         GLOBAL[GLOBAL - 전역]
     end
 
     subgraph Examples["키 예시"]
-        E1["192.168.1.1"]
-        E2["user-123"]
-        E3["api-key-abc"]
-        E4["192.168.1.1:user-123"]
+        E1["ip:192.168.1.1"]
+        E2["user:user-123"]
+        E3["key:api-key-abc"]
+        E4["custom:ip:192.168.1.1:user:user-123"]
         E5["global"]
     end
 
@@ -816,13 +860,14 @@ flowchart LR
 
 ## 관련 문서
 
-- [README.md](../README.md) - 시작 가이드
-- [README.ko.md](../README.ko.md) - 시작 가이드 (한국어)
-- [CONTRIBUTING.md](../CONTRIBUTING.md) - 기여 가이드라인
-- [fluxgate-samples](fluxgate-samples/) - 샘플 애플리케이션
+- [메인 README](../../../README.ko.md) - 시작 가이드
+- [문서 색인](../../README.ko.md) - 전체 문서 목록
+- [0.4 마이그레이션](../operations/migration-0.4.ko.md) - 0.3.x에서 올라올 때의 영향
+- [CONTRIBUTING.ko.md](../../../CONTRIBUTING.ko.md) - 기여 가이드라인
+- [fluxgate-samples](../../../fluxgate-samples/README.md) - 샘플 애플리케이션
 
 ---
 
 ## 라이선스
 
-MIT 라이선스 - 자세한 내용은 [LICENSE](../LICENSE)를 참조하세요.
+MIT 라이선스 - 자세한 내용은 [LICENSE](../../../LICENSE)를 참조하세요.

@@ -35,7 +35,7 @@ FluxGate의 핵심은 Redis Lua 스크립트로 실행되는 최적화된 토큰
 | 지표 | 복잡도 | 설명 |
 |------|--------|------|
 | **시간** | O(1) | Rate Limit 검사당 상수 시간 |
-| **공간** | O(1) per key | 버킷당 2개 필드 (tokens, last_refill_nanos) |
+| **공간** | O(1) per key | 버킷당 2개 필드 (tokens, last_refill_micros) |
 | **네트워크** | 1 RTT | 원자적 실행을 위한 단일 왕복 |
 
 ### 2.2 핵심 최적화

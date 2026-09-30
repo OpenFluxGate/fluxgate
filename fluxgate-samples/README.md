@@ -10,7 +10,8 @@ FluxGate is a distributed rate limiting framework for Spring Boot applications. 
 
 | Sample | Port | Description | Prerequisites |
 |--------|------|-------------|---------------|
-| [fluxgate-sample-standalone](./fluxgate-sample-standalone) | 8085 | **Full Stack** - Direct MongoDB + Redis integration with `@EnableFluxgateFilter` | MongoDB, Redis |
+| [fluxgate-sample-standalone-java21](./fluxgate-sample-standalone-java21) | 8085 | **Full Stack** - Direct MongoDB + Redis integration with `@EnableFluxgateFilter`, plus the `@RateLimit` aspect and a `@RestControllerAdvice` for `RateLimitExceededException` | MongoDB, Redis |
+| [fluxgate-sample-standalone-java11](./fluxgate-sample-standalone-java11) | 8085 | The same stack on Java 11 / Spring Boot 2.7 (boot2 starter) | MongoDB, Redis |
 | [fluxgate-sample-filter](./fluxgate-sample-filter) | 8083 | **Recommended** - Automatic rate limiting with `@EnableFluxgateFilter` annotation | Redis |
 | [fluxgate-sample-redis](./fluxgate-sample-redis) | 8082 | Redis-based rate limiting (Data-plane) | Redis |
 | [fluxgate-sample-mongo](./fluxgate-sample-mongo) | 8081 | MongoDB rule management (Control-plane) | MongoDB |
@@ -22,13 +23,20 @@ FluxGate is a distributed rate limiting framework for Spring Boot applications. 
 
 ```bash
 # Start Redis
-docker run -d --name redis -p 6379:6379 redis:latest
+docker run -d --name redis -p 127.0.0.1:6379:6379 redis:latest
 
 # Start MongoDB (if needed)
-docker run -d --name mongodb -p 27017:27017 \
+docker run -d --name mongodb -p 127.0.0.1:27017:27017 \
   -e MONGO_INITDB_ROOT_USERNAME=fluxgate \
   -e MONGO_INITDB_ROOT_PASSWORD=fluxgate123 \
   mongo:latest
+```
+
+Or use the compose files, which bind every port to `127.0.0.1` and are labelled local development
+only:
+
+```bash
+docker compose -f ../docker/redis-standalone.yml -f ../docker/mongo.yml up -d
 ```
 
 ### Run a Sample
@@ -90,7 +98,7 @@ Use this for:
 - Combined control-plane and data-plane
 - Production-like architecture
 
-### For Standalone Integration: `fluxgate-sample-standalone`
+### For Standalone Integration: `fluxgate-sample-standalone-java21` / `-java11`
 
 Use this for:
 - Direct MongoDB + Redis integration (no external services)
@@ -144,12 +152,17 @@ fluxgate:
   ratelimit:
     default-rule-set-id: api-limits
     include-patterns:
-      - /api/*
+      - /api/**        # /* matches ONE segment only
     exclude-patterns:
       - /health
-      - /actuator/*
+      - /actuator/**
     filter-order: 1
 ```
+
+No handler class is needed. With a `RateLimiter` (Redis, or `mode: IN_MEMORY`) and a
+`RateLimitRuleSetProvider` on the context, the starter registers `EngineBackedRateLimitHandler`
+automatically. `fluxgate-sample-filter` keeps a handler on purpose, to demonstrate the HTTP API
+pattern.
 
 ### Annotations
 
@@ -179,5 +192,5 @@ public class MyApplication {
 
 - [FluxGate Core Documentation](../fluxgate-core/README.md)
 - [Redis Rate Limiter](../fluxgate-redis-ratelimiter/README.md)
-- [MongoDB Adaptor](../fluxgate-mongo-adaptor/README.md)
+- [MongoDB Adapter](../fluxgate-mongo-adapter/README.md)
 - [Spring Boot Starter](../fluxgate-spring-boot3-starter/README.md)
