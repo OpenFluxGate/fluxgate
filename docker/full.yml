@@ -1,18 +1,24 @@
-version: "3.8"
-
+# Local development only - not for production.
+#
 # Full FluxGate Development Environment
 # Includes: MongoDB, Redis (standalone), ELK Stack
 #
-# Usage:
-#   docker-compose -f docker/full.yml up -d
-#   docker-compose -f docker/full.yml down
+# Every port is published on 127.0.0.1 only, so this unauthenticated Redis, this
+# security-disabled Elasticsearch and these throwaway MongoDB credentials stay unreachable
+# from the surrounding network. Redis authentication stays off on purpose: the samples and
+# the integration tests default to redis://localhost:6379 with no credentials.
 #
-# Services:
-#   - MongoDB:       localhost:27017 (user: fluxgate, password: fluxgate123)
-#   - Redis:         localhost:6379
-#   - Elasticsearch: localhost:9200
-#   - Kibana:        localhost:5601
-#   - Logstash:      localhost:5044 (TCP input), localhost:9600 (monitoring)
+# Usage:
+#   docker compose -f docker/full.yml up -d
+#   docker compose -f docker/full.yml down
+#
+# Services (all bound to 127.0.0.1):
+#   - MongoDB:       127.0.0.1:27017 (user: fluxgate, password: fluxgate123 - throwaway)
+#   - Redis:         127.0.0.1:6379 (no auth)
+#   - Elasticsearch: 127.0.0.1:9200
+#   - Kibana:        127.0.0.1:5601
+#   - Logstash:      127.0.0.1:5044 (TCP input), 127.0.0.1:9600 (monitoring)
+version: "3.8"
 
 services:
   # ============================================
@@ -22,7 +28,7 @@ services:
     image: mongo:7.0
     container_name: fluxgate-mongo
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: fluxgate
       MONGO_INITDB_ROOT_PASSWORD: fluxgate123
@@ -37,7 +43,7 @@ services:
     image: redis:7.2-alpine
     container_name: fluxgate-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
 
   # ============================================
   # ELK Stack - Logging & Monitoring
@@ -50,7 +56,7 @@ services:
       - xpack.security.enabled=false
       - ES_JAVA_OPTS=-Xms1g -Xmx1g
     ports:
-      - "9200:9200"
+      - "127.0.0.1:9200:9200"
     volumes:
       - es-data:/usr/share/elasticsearch/data
 
@@ -62,7 +68,7 @@ services:
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
     ports:
-      - "5601:5601"
+      - "127.0.0.1:5601:5601"
 
   logstash:
     image: docker.elastic.co/logstash/logstash:8.12.2
@@ -70,8 +76,8 @@ services:
     depends_on:
       - elasticsearch
     ports:
-      - "5044:5044"   # TCP input
-      - "9600:9600"   # Logstash monitoring API
+      - "127.0.0.1:5044:5044"   # TCP input
+      - "127.0.0.1:9600:9600"   # Logstash monitoring API
     environment:
       - XPACK_MONITORING_ENABLED=false
       - PIPELINE_WORKERS=1
