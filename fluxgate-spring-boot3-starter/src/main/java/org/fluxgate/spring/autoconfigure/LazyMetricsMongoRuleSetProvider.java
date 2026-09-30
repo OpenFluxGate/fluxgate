@@ -1,9 +1,8 @@
 package org.fluxgate.spring.autoconfigure;
 
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import org.fluxgate.core.config.RateLimitRule;
+import org.fluxgate.adapter.mongo.rule.MongoRuleSetProvider;
 import org.fluxgate.core.key.KeyResolver;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
@@ -20,8 +19,13 @@ import org.springframework.beans.factory.ObjectProvider;
  * <p>This solves the bean initialization order problem where the CompositeMetricsRecorder may not
  * be available when MongoRuleSetProvider is created.
  *
- * <p>The metricsRecorder is resolved on the first call to {@link #findById(String)}, ensuring all
- * Spring beans are fully initialized.
+ * <p>The metricsRecorder is resolved on the first call to {@link #findById(String)}, and the
+ * delegate {@link MongoRuleSetProvider} is built with it at that point. Delegating rather than
+ * reimplementing keeps the store error handling - a MongoDB failure is a FluxGate exception, not an
+ * empty rule set - in one place.
+ *
+ * <p>Composes with {@code RuleCache.getOrLoad}: the caching provider calls {@link
+ * #findById(String)} as the loader, so a miss triggers exactly one MongoDB query per rule set id.
  */
 class LazyMetricsMongoRuleSetProvider implements RateLimitRuleSetProvider {
 
@@ -31,8 +35,7 @@ class LazyMetricsMongoRuleSetProvider implements RateLimitRuleSetProvider {
   private final KeyResolver keyResolver;
   private final ObjectProvider<RateLimitMetricsRecorder> metricsRecorderProvider;
 
-  private volatile RateLimitMetricsRecorder resolvedRecorder;
-  private volatile boolean recorderResolved = false;
+  private volatile MongoRuleSetProvider delegate;
 
   LazyMetricsMongoRuleSetProvider(
       RateLimitRuleRepository ruleRepository,
@@ -45,42 +48,31 @@ class LazyMetricsMongoRuleSetProvider implements RateLimitRuleSetProvider {
 
   @Override
   public Optional<RateLimitRuleSet> findById(String ruleSetId) {
-    List<RateLimitRule> rules = ruleRepository.findByRuleSetId(ruleSetId);
-
-    if (rules.isEmpty()) {
-      return Optional.empty();
-    }
-
-    RateLimitRuleSet.Builder builder =
-        RateLimitRuleSet.builder(ruleSetId).keyResolver(keyResolver).rules(rules);
-
-    // Lazily resolve the metrics recorder
-    RateLimitMetricsRecorder recorder = getMetricsRecorder();
-    if (recorder != null) {
-      builder.metricsRecorder(recorder);
-    }
-
-    return Optional.of(builder.build());
+    return getDelegate().findById(ruleSetId);
   }
 
   /**
-   * Lazily resolves the metrics recorder from the ObjectProvider. Uses double-checked locking for
-   * thread safety.
+   * Lazily builds the delegate once the metrics recorder can be resolved. Uses double-checked
+   * locking for thread safety.
    */
-  private RateLimitMetricsRecorder getMetricsRecorder() {
-    if (!recorderResolved) {
+  private MongoRuleSetProvider getDelegate() {
+    MongoRuleSetProvider resolved = delegate;
+    if (resolved == null) {
       synchronized (this) {
-        if (!recorderResolved) {
-          resolvedRecorder = metricsRecorderProvider.getIfAvailable();
-          recorderResolved = true;
-          if (resolvedRecorder != null) {
-            log.info("Resolved metrics recorder: {}", resolvedRecorder.getClass().getSimpleName());
+        resolved = delegate;
+        if (resolved == null) {
+          RateLimitMetricsRecorder recorder =
+              metricsRecorderProvider != null ? metricsRecorderProvider.getIfAvailable() : null;
+          if (recorder != null) {
+            log.info("Resolved metrics recorder: {}", recorder.getClass().getSimpleName());
           } else {
             log.info("No metrics recorder available");
           }
+          resolved = new MongoRuleSetProvider(ruleRepository, keyResolver, recorder);
+          delegate = resolved;
         }
       }
     }
-    return resolvedRecorder;
+    return resolved;
   }
 }
