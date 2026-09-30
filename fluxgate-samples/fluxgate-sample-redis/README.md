@@ -91,7 +91,7 @@ fluxgate:
     uri: redis://localhost:6379
   ratelimit:
     enabled: true
-    filter-enabled: true
+    enabled: true      # filter-enabled is deprecated and inert
     default-rule-set-id: api-limits
     include-patterns:
       - /api/**
@@ -179,7 +179,7 @@ Multiple instances share the same Redis, enabling distributed rate limiting:
 |----------|---------|-------------|
 | `fluxgate.redis.enabled` | `false` | Enable Redis |
 | `fluxgate.redis.uri` | - | Redis URI |
-| `fluxgate.ratelimit.filter-enabled` | `false` | Enable HTTP filter |
+| `fluxgate.ratelimit.enabled` | `true` | Master switch. `filter-enabled` is deprecated and inert |
 | `fluxgate.ratelimit.default-rule-set-id` | - | Default RuleSet |
 | `fluxgate.ratelimit.include-patterns` | `[]` | URLs to rate limit |
 | `fluxgate.ratelimit.exclude-patterns` | `[]` | URLs to exclude |
