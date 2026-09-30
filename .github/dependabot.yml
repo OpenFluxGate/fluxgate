@@ -1,0 +1,44 @@
+version: 2
+
+updates:
+  # Maven dependencies of the whole reactor (the parent pom manages the versions).
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - java
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      # One PR per family keeps the review load down without hiding a single risky bump.
+      spring:
+        patterns:
+          - "org.springframework*:*"
+      testing:
+        patterns:
+          - "org.junit*:*"
+          - "org.mockito:*"
+          - "org.assertj:*"
+          - "org.testcontainers:*"
+      build-plugins:
+        patterns:
+          - "org.apache.maven.plugins:*"
+          - "com.diffplug.spotless:*"
+          - "org.jacoco:*"
+
+  # Workflow actions: keeps checkout/setup-java and the third-party actions current.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "ci(deps)"
