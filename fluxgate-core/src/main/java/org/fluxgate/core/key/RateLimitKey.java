@@ -7,6 +7,11 @@ import java.util.Objects;
  *
  * <p>The key determines which token bucket to use for rate limiting. Different keys result in
  * separate rate limit tracking.
+ *
+ * <p>Key values are sanitised on construction by {@link KeyValueSanitizer}: characters outside
+ * {@code [A-Za-z0-9._:@-]} become {@code _} and values longer than 256 characters are replaced by
+ * their SHA-256 hex digest. Custom {@link KeyResolver} implementations therefore cannot inject
+ * storage metacharacters or unbounded key values.
  */
 public final class RateLimitKey {
 
@@ -19,7 +24,7 @@ public final class RateLimitKey {
    * @throws NullPointerException if key is null
    */
   public RateLimitKey(String key) {
-    this.key = Objects.requireNonNull(key, "key must not be null");
+    this.key = KeyValueSanitizer.sanitize(Objects.requireNonNull(key, "key must not be null"));
   }
 
   /**

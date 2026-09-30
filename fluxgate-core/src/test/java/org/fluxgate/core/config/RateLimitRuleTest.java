@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import org.fluxgate.core.exception.InvalidRuleConfigException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -584,6 +585,177 @@ class RateLimitRuleTest {
 
       // then
       assertThrows(UnsupportedOperationException.class, () -> attrs.put("new", "value"));
+    }
+  }
+
+  // ==================== Band Key Label Validation Tests ====================
+
+  @Nested
+  @DisplayName("Band Key Label Validation Tests")
+  class BandKeyLabelValidationTests {
+
+    @Test
+    @DisplayName("should reject two bands sharing an explicit label")
+    void build_shouldRejectDuplicateExplicitBandLabels() {
+      // given
+      RateLimitBand first = RateLimitBand.builder(Duration.ofMinutes(1), 100).label("api").build();
+      RateLimitBand second = RateLimitBand.builder(Duration.ofHours(1), 1000).label("api").build();
+
+      // when / then
+      InvalidRuleConfigException exception =
+          assertThrows(
+              InvalidRuleConfigException.class,
+              () -> RateLimitRule.builder("rule-1").addBand(first).addBand(second).build());
+      assertTrue(exception.getMessage().contains("Duplicate band key label 'api'"));
+      assertEquals("rule-1", exception.getRuleId());
+    }
+
+    @Test
+    @DisplayName("should reject two unlabelled bands with the same window and capacity")
+    void build_shouldRejectDuplicateDerivedBandLabels() {
+      // given - both bands derive the key label "100-per-60s"
+      RateLimitBand first = createBand(Duration.ofMinutes(1), 100);
+      RateLimitBand second = createBand(Duration.ofMinutes(1), 100);
+
+      // when / then
+      assertThrows(
+          InvalidRuleConfigException.class,
+          () -> RateLimitRule.builder("rule-1").addBand(first).addBand(second).build());
+    }
+
+    @Test
+    @DisplayName("should accept unlabelled bands with distinct windows")
+    void build_shouldAcceptDistinctDerivedBandLabels() {
+      // given / when
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-1")
+              .addBand(createBand(Duration.ofMinutes(1), 100))
+              .addBand(createBand(Duration.ofHours(1), 1000))
+              .build();
+
+      // then
+      assertEquals(2, rule.getBands().size());
+    }
+
+    @Test
+    @DisplayName("should accept two unlabelled sub-second bands of the same capacity")
+    void build_shouldAcceptDistinctSubSecondBands() {
+      // given - both derived the label "10-per-0s" while the window was truncated to seconds
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-1")
+              .addBand(createBand(Duration.ofMillis(500), 10))
+              .addBand(createBand(Duration.ofMillis(200), 10))
+              .build();
+
+      // then
+      assertEquals(2, rule.getBands().size());
+      assertEquals("10-per-500ms", rule.getBands().get(0).getKeyLabel());
+      assertEquals("10-per-200ms", rule.getBands().get(1).getKeyLabel());
+    }
+
+    @Test
+    @DisplayName("should accept a whole-second band next to a fractional-second one")
+    void build_shouldAcceptWholeAndFractionalSecondBands() {
+      // given - both derived the label "10-per-1s"
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-1")
+              .addBand(createBand(Duration.ofSeconds(1), 10))
+              .addBand(createBand(Duration.ofMillis(1500), 10))
+              .build();
+
+      // then
+      assertEquals(2, rule.getBands().size());
+      assertEquals("10-per-1s", rule.getBands().get(0).getKeyLabel());
+      assertEquals("10-per-1500ms", rule.getBands().get(1).getKeyLabel());
+    }
+  }
+
+  // ==================== Equality Tests ====================
+
+  @Nested
+  @DisplayName("Equality Tests")
+  class EqualityTests {
+
+    private RateLimitRule buildRule(String id) {
+      return RateLimitRule.builder(id)
+          .name("Test Rule")
+          .scope(LimitScope.PER_IP)
+          .keyStrategyId("ip")
+          .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+          .ruleSetId("api-limits")
+          .attribute("tier", "premium")
+          .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100).label("per-minute").build())
+          .addBand(RateLimitBand.builder(Duration.ofHours(1), 1000).label("per-hour").build())
+          .build();
+    }
+
+    @Test
+    @DisplayName("independently built identical rules should be equal with the same hashCode")
+    void equals_shouldBeValueBased() {
+      // given - two instances built separately, as a storage adapter would on every load
+      RateLimitRule first = buildRule("rule-1");
+      RateLimitRule second = buildRule("rule-1");
+
+      // then - reload strategies hash rule lists to detect changes; identity hashing broke that
+      assertEquals(first, second);
+      assertEquals(first.hashCode(), second.hashCode());
+      assertEquals(List.of(first).hashCode(), List.of(second).hashCode());
+    }
+
+    @Test
+    @DisplayName("rules differing in any field should not be equal")
+    void equals_shouldDistinguishDifferentFields() {
+      // given
+      RateLimitRule rule = buildRule("rule-1");
+
+      // when / then
+      assertNotEquals(rule, buildRule("rule-2"));
+      assertNotEquals(
+          rule,
+          RateLimitRule.builder("rule-1")
+              .name("Test Rule")
+              .scope(LimitScope.PER_USER)
+              .keyStrategyId("ip")
+              .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+              .ruleSetId("api-limits")
+              .attribute("tier", "premium")
+              .addBand(
+                  RateLimitBand.builder(Duration.ofMinutes(1), 100).label("per-minute").build())
+              .addBand(RateLimitBand.builder(Duration.ofHours(1), 1000).label("per-hour").build())
+              .build());
+    }
+
+    @Test
+    @DisplayName("rules differing only in a band should not be equal")
+    void equals_shouldDistinguishDifferentBands() {
+      // given
+      RateLimitRule rule = buildRule("rule-1");
+      RateLimitRule changed =
+          RateLimitRule.builder("rule-1")
+              .name("Test Rule")
+              .scope(LimitScope.PER_IP)
+              .keyStrategyId("ip")
+              .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+              .ruleSetId("api-limits")
+              .attribute("tier", "premium")
+              .addBand(
+                  RateLimitBand.builder(Duration.ofMinutes(1), 200).label("per-minute").build())
+              .addBand(RateLimitBand.builder(Duration.ofHours(1), 1000).label("per-hour").build())
+              .build();
+
+      // when / then
+      assertNotEquals(rule, changed);
+    }
+
+    @Test
+    @DisplayName("equals should return false for null and other types")
+    void equals_shouldReturnFalseForNullAndOtherTypes() {
+      // given
+      RateLimitRule rule = buildRule("rule-1");
+
+      // when / then
+      assertNotEquals(null, rule);
+      assertNotEquals(rule, "not-a-rule");
     }
   }
 }

@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Objects;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A composite implementation of {@link RateLimitMetricsRecorder} that delegates to multiple
@@ -35,6 +37,8 @@ import org.fluxgate.core.ratelimiter.RateLimitResult;
  * @see RateLimitMetricsRecorder
  */
 public class CompositeMetricsRecorder implements RateLimitMetricsRecorder {
+
+  private static final Logger log = LoggerFactory.getLogger(CompositeMetricsRecorder.class);
 
   private final List<RateLimitMetricsRecorder> recorders;
 
@@ -68,12 +72,7 @@ public class CompositeMetricsRecorder implements RateLimitMetricsRecorder {
         recorder.record(context, result);
       } catch (Exception e) {
         // Log error but continue to next recorder
-        // Using stderr here to avoid circular dependency on logging framework
-        System.err.println(
-            "[CompositeMetricsRecorder] Error in recorder "
-                + recorder.getClass().getSimpleName()
-                + ": "
-                + e.getMessage());
+        log.error("Error in recorder {}", recorder.getClass().getSimpleName(), e);
       }
     }
   }

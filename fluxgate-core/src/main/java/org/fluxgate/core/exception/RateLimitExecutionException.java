@@ -13,7 +13,10 @@ package org.fluxgate.core.exception;
  */
 public class RateLimitExecutionException extends FluxgateOperationException {
 
+  /** Id of the rule set being evaluated. */
   private final String ruleSetId;
+
+  /** The rate limit key being evaluated. */
   private final String key;
 
   /**

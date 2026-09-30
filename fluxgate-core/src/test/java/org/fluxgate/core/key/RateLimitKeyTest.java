@@ -256,9 +256,9 @@ class RateLimitKeyTest {
       RateLimitKey uuidKey = RateLimitKey.of("550e8400-e29b-41d4-a716-446655440000");
       assertEquals("550e8400-e29b-41d4-a716-446655440000", uuidKey.value());
 
-      // Composite format
+      // Composite format - separators survive, the path slashes are sanitised
       RateLimitKey compositeKey = RateLimitKey.of("user:123:endpoint:/api/v1/users");
-      assertEquals("user:123:endpoint:/api/v1/users", compositeKey.value());
+      assertEquals("user:123:endpoint:_api_v1_users", compositeKey.value());
     }
   }
 
@@ -302,6 +302,77 @@ class RateLimitKeyTest {
       assertEquals(2, keys.size());
       assertTrue(keys.contains(RateLimitKey.of("key-1")));
       assertTrue(keys.contains(RateLimitKey.of("key-2")));
+    }
+  }
+
+  // ==================== Sanitisation Tests ====================
+
+  @Nested
+  @DisplayName("Sanitisation Tests")
+  class SanitisationTests {
+
+    @Test
+    @DisplayName("allowed characters should pass through unchanged")
+    void of_shouldKeepAllowedCharacters() {
+      // given / when / then
+      assertEquals(
+          "user:a-b_c.d@e:0123456789", RateLimitKey.of("user:a-b_c.d@e:0123456789").value());
+    }
+
+    @Test
+    @DisplayName("disallowed characters should be replaced by underscores")
+    void of_shouldReplaceDisallowedCharacters() {
+      // given / when / then
+      assertEquals("a_b_c_d_e_f", RateLimitKey.of("a*b?c[d]e\\f").value());
+      assertEquals("ip_10.0.0.1", RateLimitKey.of("ip 10.0.0.1").value());
+    }
+
+    @Test
+    @DisplayName("values longer than 256 characters should be replaced by a SHA-256 hex digest")
+    void of_shouldHashOverLongValues() {
+      // given
+      StringBuilder sb = new StringBuilder();
+      for (int i = 0; i < 257; i++) {
+        sb.append('a');
+      }
+
+      // when
+      RateLimitKey key = RateLimitKey.of(sb.toString());
+
+      // then
+      assertEquals(64, key.value().length());
+      assertTrue(key.value().matches("[0-9a-f]{64}"));
+    }
+
+    @Test
+    @DisplayName("values of exactly 256 characters should be kept")
+    void of_shouldKeepValuesAtTheLengthCap() {
+      // given
+      StringBuilder sb = new StringBuilder();
+      for (int i = 0; i < 256; i++) {
+        sb.append('a');
+      }
+      String value = sb.toString();
+
+      // when / then
+      assertEquals(value, RateLimitKey.of(value).value());
+    }
+
+    @Test
+    @DisplayName("sanitisation should be stable when applied twice")
+    void of_shouldBeIdempotent() {
+      // given
+      StringBuilder sb = new StringBuilder();
+      for (int i = 0; i < 300; i++) {
+        sb.append("x/");
+      }
+
+      // when
+      RateLimitKey once = RateLimitKey.of(sb.toString());
+      RateLimitKey twice = RateLimitKey.of(once.value());
+
+      // then
+      assertEquals(once, twice);
     }
   }
 }

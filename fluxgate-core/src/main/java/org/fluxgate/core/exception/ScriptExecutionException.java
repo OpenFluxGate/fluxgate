@@ -13,6 +13,7 @@ package org.fluxgate.core.exception;
  */
 public class ScriptExecutionException extends FluxgateOperationException {
 
+  /** Name of the script that failed to execute. */
   private final String scriptName;
 
   /**

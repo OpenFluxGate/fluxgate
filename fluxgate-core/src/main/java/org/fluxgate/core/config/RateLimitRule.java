@@ -3,14 +3,21 @@ package org.fluxgate.core.config;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import org.fluxgate.core.exception.InvalidRuleConfigException;
 
 /**
  * Core configuration object describing a rate limit rule. This rule is intentionally
  * storage-agnostic and engine-agnostic. It does not depend on Redis, MongoDB, HTTP frameworks, etc.
  * Adapters will translate this rule into engine-specific configuration (e.g. Bucket4j).
+ *
+ * <p>Equality is value-based over every field, so a rule loaded twice from the same storage
+ * compares equal. Reload strategies depend on this to tell a real rule change from a fresh
+ * deserialisation.
  */
 public final class RateLimitRule {
 
@@ -78,41 +85,97 @@ public final class RateLimitRule {
       throw new IllegalArgumentException("At least one RateLimitBand must be configured");
     }
     this.bands = List.copyOf(builder.bands);
+    verifyDistinctBandKeyLabels(this.id, this.bands);
     this.attributes =
         builder.attributes.isEmpty()
             ? Collections.emptyMap()
             : Collections.unmodifiableMap(new HashMap<>(builder.attributes));
   }
 
+  /**
+   * Rejects bands that share a {@link RateLimitBand#getKeyLabel() key label}.
+   *
+   * <p>Two bands with the same key label would share a storage bucket and silently destroy each
+   * other's limits, so this is a configuration error rather than a warning.
+   */
+  private static void verifyDistinctBandKeyLabels(String ruleId, List<RateLimitBand> bands) {
+    Set<String> seen = new HashSet<>();
+    for (RateLimitBand band : bands) {
+      String keyLabel = band.getKeyLabel();
+      if (!seen.add(keyLabel)) {
+        throw new InvalidRuleConfigException("Duplicate band key label '" + keyLabel + "'", ruleId);
+      }
+    }
+  }
+
+  /**
+   * Returns the rule identifier.
+   *
+   * @return the rule id (never null)
+   */
   public String getId() {
     return id;
   }
 
+  /**
+   * Returns the display name, defaulting to the rule id when none was set.
+   *
+   * @return the rule name (never null)
+   */
   public String getName() {
     return name;
   }
 
+  /**
+   * Returns whether this rule is enabled.
+   *
+   * @return true if the rule should be evaluated
+   */
   public boolean isEnabled() {
     return enabled;
   }
 
+  /**
+   * Returns the scope that determines which bucket a request maps to.
+   *
+   * @return the limit scope (never null)
+   */
   public LimitScope getScope() {
     return scope;
   }
 
+  /**
+   * Returns the identifier of the key strategy, for example "ip", "userId" or "apiKey".
+   *
+   * @return the key strategy id (never null)
+   */
   public String getKeyStrategyId() {
     return keyStrategyId;
   }
 
+  /**
+   * Returns the policy applied when the limit is exceeded.
+   *
+   * @return the policy (never null)
+   */
   public OnLimitExceedPolicy getOnLimitExceedPolicy() {
     return onLimitExceedPolicy;
   }
 
+  /**
+   * Returns the bands of this rule, in configuration order.
+   *
+   * @return an unmodifiable list of bands (never empty)
+   */
   public List<RateLimitBand> getBands() {
     return Collections.unmodifiableList(bands);
   }
 
-  /** May be null if this rule is not associated with a specific rule set. */
+  /**
+   * May be null if this rule is not associated with a specific rule set.
+   *
+   * @return the rule set id, or null if none was set
+   */
   public String getRuleSetIdOrNull() {
     return ruleSetId;
   }
@@ -153,10 +216,17 @@ public final class RateLimitRule {
     return value != null ? (T) value : null;
   }
 
+  /**
+   * Creates a new builder for a rule with the given id.
+   *
+   * @param id the rule id (must not be null)
+   * @return a new builder
+   */
   public static Builder builder(String id) {
     return new Builder(id);
   }
 
+  /** Builder for {@link RateLimitRule}. */
   public static final class Builder {
     private final String id;
     private String name;
@@ -172,32 +242,67 @@ public final class RateLimitRule {
       this.id = Objects.requireNonNull(id, "id must not be null");
     }
 
+    /**
+     * Sets the display name; defaults to the rule id when not set.
+     *
+     * @param name the display name
+     * @return this builder
+     */
     public Builder name(String name) {
       this.name = name;
       return this;
     }
 
+    /**
+     * Sets whether the rule is enabled.
+     *
+     * @param enabled true to evaluate this rule
+     * @return this builder
+     */
     public Builder enabled(boolean enabled) {
       this.enabled = enabled;
       return this;
     }
 
+    /**
+     * Sets the scope that determines which bucket a request maps to.
+     *
+     * @param scope the limit scope
+     * @return this builder
+     */
     public Builder scope(LimitScope scope) {
       this.scope = scope;
       return this;
     }
 
-    /** References a key strategy defined in SPI, e.g. "ip", "userId", "apiKey". */
+    /**
+     * References a key strategy defined in SPI, e.g. "ip", "userId", "apiKey".
+     *
+     * @param keyStrategyId the key strategy id
+     * @return this builder
+     */
     public Builder keyStrategyId(String keyStrategyId) {
       this.keyStrategyId = keyStrategyId;
       return this;
     }
 
+    /**
+     * Sets the policy applied when the limit is exceeded.
+     *
+     * @param policy the policy
+     * @return this builder
+     */
     public Builder onLimitExceedPolicy(OnLimitExceedPolicy policy) {
       this.onLimitExceedPolicy = policy;
       return this;
     }
 
+    /**
+     * Adds a band to this rule. Bands must have distinct key labels.
+     *
+     * @param band the band to add (must not be null)
+     * @return this builder
+     */
     public Builder addBand(RateLimitBand band) {
       this.bands.add(Objects.requireNonNull(band, "band must not be null"));
       return this;
@@ -206,6 +311,9 @@ public final class RateLimitRule {
     /**
      * Optional: set the logical rule set id this rule belongs to. Only used for observability
      * (logging/metrics).
+     *
+     * @param ruleSetId the rule set id
+     * @return this builder
      */
     public Builder ruleSetId(String ruleSetId) {
       this.ruleSetId = ruleSetId;
@@ -251,9 +359,38 @@ public final class RateLimitRule {
       return this;
     }
 
+    /**
+     * Builds the rule.
+     *
+     * @return the rule
+     * @throws IllegalArgumentException if no band is configured
+     * @throws org.fluxgate.core.exception.InvalidRuleConfigException if two bands share a key label
+     */
     public RateLimitRule build() {
       return new RateLimitRule(this);
     }
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (!(o instanceof RateLimitRule)) return false;
+    RateLimitRule that = (RateLimitRule) o;
+    return enabled == that.enabled
+        && Objects.equals(id, that.id)
+        && Objects.equals(name, that.name)
+        && scope == that.scope
+        && Objects.equals(keyStrategyId, that.keyStrategyId)
+        && onLimitExceedPolicy == that.onLimitExceedPolicy
+        && Objects.equals(bands, that.bands)
+        && Objects.equals(ruleSetId, that.ruleSetId)
+        && Objects.equals(attributes, that.attributes);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        id, name, enabled, scope, keyStrategyId, onLimitExceedPolicy, bands, ruleSetId, attributes);
   }
 
   @Override

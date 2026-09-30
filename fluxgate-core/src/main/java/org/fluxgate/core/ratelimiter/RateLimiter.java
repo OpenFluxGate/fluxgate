@@ -9,7 +9,13 @@ import org.fluxgate.core.context.RequestContext;
  */
 public interface RateLimiter {
 
-  /** Try to consume a single permit for the given context and rule set. */
+  /**
+   * Try to consume a single permit for the given context and rule set.
+   *
+   * @param context request-scoped information (IP, userId, path, etc.)
+   * @param ruleSet rule set to apply
+   * @return the rate limit result
+   */
   default RateLimitResult tryConsume(RequestContext context, RateLimitRuleSet ruleSet) {
     return tryConsume(context, ruleSet, 1L);
   }
@@ -20,6 +26,7 @@ public interface RateLimiter {
    * @param context request-scoped information (IP, userId, path, etc.)
    * @param ruleSet rule set to apply
    * @param permits number of permits to consume
+   * @return the rate limit result
    */
   RateLimitResult tryConsume(RequestContext context, RateLimitRuleSet ruleSet, long permits);
 }
