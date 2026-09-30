@@ -69,13 +69,28 @@ class FluxgateResilienceAutoConfigurationTest {
     }
 
     @Test
-    @DisplayName("should create disabled circuit breaker by default")
-    void shouldCreateDisabledCircuitBreakerByDefault() {
+    @DisplayName("should create an enabled circuit breaker by default")
+    void shouldCreateEnabledCircuitBreakerByDefault() {
+      // Retry is on by default, so without a breaker a failing backend was called
+      // max-attempts times per request and nothing ever stopped the amplification.
       contextRunner.run(
           context -> {
             CircuitBreaker cb = context.getBean(CircuitBreaker.class);
-            assertThat(cb).isInstanceOf(NoOpCircuitBreaker.class);
+            assertThat(cb).isInstanceOf(DefaultCircuitBreaker.class);
+            assertThat(context.getBean(CircuitBreakerConfig.class).isEnabled()).isTrue();
           });
+    }
+
+    @Test
+    @DisplayName("should create a no-op circuit breaker when explicitly disabled")
+    void shouldCreateNoOpCircuitBreakerWhenExplicitlyDisabled() {
+      contextRunner
+          .withPropertyValues("fluxgate.resilience.circuit-breaker.enabled=false")
+          .run(
+              context -> {
+                CircuitBreaker cb = context.getBean(CircuitBreaker.class);
+                assertThat(cb).isInstanceOf(NoOpCircuitBreaker.class);
+              });
     }
   }
 
