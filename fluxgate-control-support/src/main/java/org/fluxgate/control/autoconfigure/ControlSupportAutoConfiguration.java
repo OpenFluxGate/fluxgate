@@ -3,6 +3,7 @@ package org.fluxgate.control.autoconfigure;
 import org.fluxgate.control.aop.RuleChangeAspect;
 import org.fluxgate.control.notify.RedisRuleChangeNotifier;
 import org.fluxgate.control.notify.RuleChangeNotifier;
+import org.fluxgate.control.notify.RuleChangeNotifierMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -80,7 +81,25 @@ public class ControlSupportAutoConfiguration {
         properties.getSource());
 
     return new RedisRuleChangeNotifier(
-        redis.getUri(), redis.getChannel(), redis.getTimeout(), properties.getSource());
+        redis.getUri(),
+        redis.getChannel(),
+        redis.getTimeout(),
+        properties.getSource(),
+        properties.getSecret());
+  }
+
+  /**
+   * Creates the notification counters.
+   *
+   * <p>{@code getFailedNotifications()} is the number worth alerting on: every increment is a rule
+   * change that no data plane instance was told about.
+   *
+   * @return the metrics instance
+   */
+  @Bean
+  @ConditionalOnMissingBean(RuleChangeNotifierMetrics.class)
+  public RuleChangeNotifierMetrics ruleChangeNotifierMetrics() {
+    return new RuleChangeNotifierMetrics();
   }
 
   /**
@@ -94,14 +113,16 @@ public class ControlSupportAutoConfiguration {
    * </ul>
    *
    * @param notifier the rule change notifier
+   * @param metrics counters for notification outcomes
    * @return the aspect instance
    */
-  @Bean
+  @Bean(destroyMethod = "shutdown")
   @ConditionalOnClass(name = "org.aspectj.lang.annotation.Aspect")
   @ConditionalOnBean(RuleChangeNotifier.class)
   @ConditionalOnMissingBean(RuleChangeAspect.class)
-  public RuleChangeAspect ruleChangeAspect(RuleChangeNotifier notifier) {
+  public RuleChangeAspect ruleChangeAspect(
+      RuleChangeNotifier notifier, RuleChangeNotifierMetrics metrics) {
     log.info("Creating RuleChangeAspect for @NotifyRuleChange and @NotifyFullReload support");
-    return new RuleChangeAspect(notifier);
+    return new RuleChangeAspect(notifier, metrics);
   }
 }

@@ -41,6 +41,30 @@ class RedisRuleChangeNotifierTest {
   }
 
   @Test
+  void shouldAcceptASigningSecret() {
+    RedisRuleChangeNotifier notifier =
+        new RedisRuleChangeNotifier(
+            "redis://localhost:6379",
+            "channel",
+            Duration.ofSeconds(5),
+            "source",
+            "unit-test-only-secret");
+
+    assertThat(notifier).isNotNull();
+    notifier.close();
+  }
+
+  @Test
+  void shouldTreatABlankSecretAsAbsent() {
+    RedisRuleChangeNotifier notifier =
+        new RedisRuleChangeNotifier(
+            "redis://localhost:6379", "channel", Duration.ofSeconds(5), "source", "   ");
+
+    assertThat(notifier).isNotNull();
+    notifier.close();
+  }
+
+  @Test
   void shouldDetectClusterMode() {
     // Cluster mode is detected by comma-separated URIs
     RedisRuleChangeNotifier notifier =
