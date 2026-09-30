@@ -97,6 +97,21 @@ public interface RedisConnectionProvider extends AutoCloseable {
   long del(String... keys);
 
   /**
+   * Deletes one or more keys, reclaiming the memory in a background thread where the server
+   * supports it.
+   *
+   * <p>{@code UNLINK} keeps a bulk delete off the Redis event loop, which matters when a rule
+   * reload drops a large number of buckets at once. The default implementation delegates to {@link
+   * #del(String...)} so that providers talking to a server older than Redis 4 keep working.
+   *
+   * @param keys the keys to delete
+   * @return the number of keys deleted
+   */
+  default long unlink(String... keys) {
+    return del(keys);
+  }
+
+  /**
    * Adds members to a set.
    *
    * @param key the set key

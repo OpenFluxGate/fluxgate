@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Set;
 import org.fluxgate.redis.connection.RedisConnectionProvider.RedisMode;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -242,5 +243,29 @@ class ClusterRedisConnectionMockTest {
   @Test
   void shouldReturnUnderlyingCommands() {
     assertThat(connection.getCommands()).isEqualTo(commands);
+  }
+
+  @Test
+  @DisplayName("isConnected works when the commands come from outside (H-12)")
+  void isConnectedShouldPingOnlyForExternallySuppliedCommands() {
+    when(commands.ping()).thenReturn("PONG");
+
+    assertThat(connection.isConnected()).isTrue();
+    verify(commands).ping();
+  }
+
+  @Test
+  void isConnectedShouldBeFalseWhenPingThrows() {
+    when(commands.ping()).thenThrow(new RuntimeException("connection reset"));
+
+    assertThat(connection.isConnected()).isFalse();
+  }
+
+  @Test
+  void shouldUnlinkKeys() {
+    when(commands.unlink("a", "b")).thenReturn(2L);
+
+    assertThat(connection.unlink("a", "b")).isEqualTo(2L);
+    verify(commands).unlink("a", "b");
   }
 }

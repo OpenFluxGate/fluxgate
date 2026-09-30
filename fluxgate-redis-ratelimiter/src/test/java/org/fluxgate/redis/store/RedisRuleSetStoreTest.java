@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 /** Unit tests for {@link RedisRuleSetStore}. */
+@SuppressWarnings("deprecation") // the store and its data class are deprecated but still tested
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class RedisRuleSetStoreTest {
@@ -114,19 +115,50 @@ class RedisRuleSetStoreTest {
   }
 
   @Test
-  void shouldUseDefaultValuesWhenFieldsMissing() {
+  void shouldFailLoudlyWhenARequiredFieldIsMissing() {
+    // A half-written hash used to silently become "capacity 10, window 60s" - a rate limit
+    // nobody configured. It now names the field and the key.
     Map<String, String> hash = new HashMap<>();
     hash.put("ruleSetId", "test-rule");
+
+    when(connectionProvider.hgetall("fluxgate:ruleset:test-rule")).thenReturn(hash);
+
+    assertThatThrownBy(() -> store.findById("test-rule"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("fluxgate:ruleset:test-rule")
+        .hasMessageContaining("capacity");
+  }
+
+  @Test
+  void shouldFailLoudlyWhenANumericFieldIsCorrupt() {
+    Map<String, String> hash = new HashMap<>();
+    hash.put("ruleSetId", "test-rule");
+    hash.put("capacity", "not-a-number");
+    hash.put("windowSeconds", "60");
+    hash.put("createdAt", "0");
+
+    when(connectionProvider.hgetall("fluxgate:ruleset:test-rule")).thenReturn(hash);
+
+    assertThatThrownBy(() -> store.findById("test-rule"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("non-numeric 'capacity'")
+        .hasCauseInstanceOf(NumberFormatException.class);
+  }
+
+  @Test
+  void shouldStillDefaultTheOptionalKeyStrategy() {
+    Map<String, String> hash = new HashMap<>();
+    hash.put("ruleSetId", "test-rule");
+    hash.put("capacity", "100");
+    hash.put("windowSeconds", "60");
+    hash.put("createdAt", "0");
 
     when(connectionProvider.hgetall("fluxgate:ruleset:test-rule")).thenReturn(hash);
 
     Optional<RuleSetData> result = store.findById("test-rule");
 
     assertThat(result).isPresent();
-    assertThat(result.get().getCapacity()).isEqualTo(10);
-    assertThat(result.get().getWindowSeconds()).isEqualTo(60);
     assertThat(result.get().getKeyStrategyId()).isEqualTo("clientIp");
-    assertThat(result.get().getCreatedAt()).isZero();
   }
 
   @Test

@@ -5,12 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
-import java.io.IOException;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.fluxgate.redis.connection.RedisConnectionProvider.RedisMode;
-import org.fluxgate.redis.script.LuaScripts;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -25,19 +22,6 @@ class RedisRateLimiterConfigMockTest {
 
   @Mock private RedisConnectionProvider connectionProvider;
 
-  @BeforeEach
-  void setUp() {
-    // Reset LuaScripts state before each test
-    LuaScripts.setTokenBucketConsumeSha(null);
-    LuaScripts.setTokenBucketConsumeScript(null);
-  }
-
-  @AfterEach
-  void tearDown() {
-    LuaScripts.setTokenBucketConsumeSha(null);
-    LuaScripts.setTokenBucketConsumeScript(null);
-  }
-
   @Test
   void shouldThrowWhenConnectionProviderIsNull() {
     RedisConnectionProvider nullProvider = null;
@@ -47,7 +31,7 @@ class RedisRateLimiterConfigMockTest {
   }
 
   @Test
-  void shouldInitializeWithConnectionProvider() throws IOException {
+  void shouldInitializeWithConnectionProvider() {
     // given
     when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
     when(connectionProvider.scriptLoad(anyString())).thenReturn("test-sha");
@@ -60,14 +44,13 @@ class RedisRateLimiterConfigMockTest {
     assertThat(config.getConnectionProvider()).isEqualTo(connectionProvider);
     assertThat(config.getMode()).isEqualTo(RedisMode.STANDALONE);
     assertThat(config.getTokenBucketStore()).isNotNull();
-    assertThat(config.getRuleSetStore()).isNotNull();
     assertThat(config.isConnected()).isTrue();
 
     config.close();
   }
 
   @Test
-  void shouldInitializeInClusterMode() throws IOException {
+  void shouldInitializeInClusterMode() {
     // given
     when(connectionProvider.getMode()).thenReturn(RedisMode.CLUSTER);
     when(connectionProvider.scriptLoad(anyString())).thenReturn("cluster-sha");
@@ -82,17 +65,30 @@ class RedisRateLimiterConfigMockTest {
   }
 
   @Test
-  void shouldCloseConnectionProviderOnClose() throws IOException {
+  @DisplayName("Scripts are uploaded to the supplied connection on construction")
+  void shouldLoadLuaScriptsOnConstruction() {
+    when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
+    when(connectionProvider.scriptLoad(anyString())).thenReturn("test-sha");
+
+    new RedisRateLimiterConfig(connectionProvider).close();
+
+    verify(connectionProvider).scriptLoad(contains("token"));
+  }
+
+  @Test
+  @DisplayName("An externally supplied connection is never closed by this config")
+  void shouldNotCloseAnExternallySuppliedConnectionProvider() {
     // given
     when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
     when(connectionProvider.scriptLoad(anyString())).thenReturn("test-sha");
 
     RedisRateLimiterConfig config = new RedisRateLimiterConfig(connectionProvider);
+    assertThat(config.ownsConnectionProvider()).isFalse();
 
     // when
     config.close();
 
-    // then
-    verify(connectionProvider).close();
+    // then: the caller's Lettuce client keeps running
+    verify(connectionProvider, never()).close();
   }
 }

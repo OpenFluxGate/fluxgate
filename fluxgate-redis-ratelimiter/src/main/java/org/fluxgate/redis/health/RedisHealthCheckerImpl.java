@@ -79,10 +79,8 @@ public class RedisHealthCheckerImpl {
         addClusterDetails(details);
       }
 
-      // Check if connection is truly healthy
-      if (!connectionProvider.isConnected()) {
-        return HealthCheckResult.down("Connection is not active", details);
-      }
+      // A successful PONG above is the liveness proof; calling isConnected() here would issue a
+      // second PING per health check (four round trips in cluster mode).
 
       String message =
           connectionProvider.getMode() == RedisMode.CLUSTER
@@ -109,18 +107,21 @@ public class RedisHealthCheckerImpl {
       List<String> nodes = connectionProvider.clusterNodes();
       details.put("cluster_nodes", nodes.size());
 
-      // Count master and slave nodes
+      // Count master and replica nodes. CLUSTER NODES is space separated and the role lives in
+      // the third column (flags), so the flags are read from there rather than matched against the
+      // whole line - a node id or hostname containing "master" no longer inflates the count.
       int masters = 0;
-      int slaves = 0;
+      int replicas = 0;
       for (String node : nodes) {
-        if (node.contains("master")) {
+        String[] flags = nodeFlags(node);
+        if (containsFlag(flags, "master")) {
           masters++;
-        } else if (node.contains("slave") || node.contains("replica")) {
-          slaves++;
+        } else if (containsFlag(flags, "slave") || containsFlag(flags, "replica")) {
+          replicas++;
         }
       }
       details.put("cluster_masters", masters);
-      details.put("cluster_replicas", slaves);
+      details.put("cluster_replicas", replicas);
 
       // Parse cluster info for more details
       if (connectionProvider instanceof ClusterRedisConnection) {
@@ -132,6 +133,28 @@ public class RedisHealthCheckerImpl {
       log.warn("Failed to get cluster details: {}", e.getMessage());
       details.put("cluster_error", e.getMessage());
     }
+  }
+
+  /**
+   * Extracts the comma-separated flags column of one {@code CLUSTER NODES} line.
+   *
+   * <p>Line layout: {@code <id> <ip:port@cport> <flags> <master> <ping-sent> ...}
+   *
+   * @param node one line of CLUSTER NODES output
+   * @return the individual flags, empty when the line is too short to carry any
+   */
+  private static String[] nodeFlags(String node) {
+    String[] columns = node.trim().split("\\s+");
+    return columns.length >= 3 ? columns[2].split(",") : new String[0];
+  }
+
+  private static boolean containsFlag(String[] flags, String flag) {
+    for (String candidate : flags) {
+      if (flag.equals(candidate.trim())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
