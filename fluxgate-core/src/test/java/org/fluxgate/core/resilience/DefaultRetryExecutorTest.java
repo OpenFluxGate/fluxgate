@@ -22,6 +22,7 @@ import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.fluxgate.core.exception.FluxgateConfigurationException;
 import org.fluxgate.core.exception.FluxgateConnectionException;
+import org.fluxgate.core.exception.FluxgateTimeoutException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -99,6 +100,54 @@ class DefaultRetryExecutorTest {
                         throw new FluxgateConnectionException("always fails");
                       }))
           .isInstanceOf(FluxgateConnectionException.class);
+
+      assertThat(attempts.get()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("should not retry timeouts by default")
+    void shouldNotRetryTimeouts() {
+      AtomicInteger attempts = new AtomicInteger(0);
+      RetryConfig config =
+          RetryConfig.builder().maxAttempts(3).initialBackoff(Duration.ofMillis(10)).build();
+      RetryExecutor executor = new DefaultRetryExecutor(config);
+
+      // A timed-out consume may already have been applied by the server, so retrying it would
+      // charge the caller twice.
+      assertThatThrownBy(
+              () ->
+                  executor.execute(
+                      "consume",
+                      () -> {
+                        attempts.incrementAndGet();
+                        throw new FluxgateTimeoutException("consume", Duration.ofSeconds(5));
+                      }))
+          .isInstanceOf(FluxgateTimeoutException.class);
+
+      assertThat(attempts.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("should retry timeouts when retryOnTimeout is enabled")
+    void shouldRetryTimeoutsWhenEnabled() {
+      AtomicInteger attempts = new AtomicInteger(0);
+      RetryConfig config =
+          RetryConfig.builder()
+              .maxAttempts(3)
+              .initialBackoff(Duration.ofMillis(10))
+              .retryOnTimeout(true)
+              .build();
+      RetryExecutor executor = new DefaultRetryExecutor(config);
+
+      assertThatThrownBy(
+              () ->
+                  executor.execute(
+                      "consume",
+                      () -> {
+                        attempts.incrementAndGet();
+                        throw new FluxgateTimeoutException("consume", Duration.ofSeconds(5));
+                      }))
+          .isInstanceOf(FluxgateTimeoutException.class);
 
       assertThat(attempts.get()).isEqualTo(3);
     }
