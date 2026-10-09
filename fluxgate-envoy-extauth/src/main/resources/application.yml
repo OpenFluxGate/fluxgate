@@ -5,6 +5,9 @@ spring:
     name: fluxgate-envoy-extauth
 fluxgate:
   resilience:
+    circuit-breaker:
+      enabled: true
+      wait-duration-in-open-state: 5s
     retry:
       enabled: false
   reload:
