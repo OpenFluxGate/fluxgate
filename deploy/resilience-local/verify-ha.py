@@ -44,6 +44,20 @@ def packaged_script(jar_file):
             'loader': 'UTF-8 BufferedReader.lines().collect(joining("\\n"))'}
 
 
+def validate_prepared_publisher(state, pod, baseline, rule_set_id, local_jar_sha, deployed_jar_sha):
+    assert isinstance(state.get('operationId'), str) and state['operationId'].strip(), 'Prepared publication operation ID missing'
+    assert state.get('ruleSetId') == rule_set_id and state.get('baseline', {}).get('ruleSetId') == rule_set_id, 'Prepared policy rule set differs'
+    assert state.get('pod') == pod['metadata']['name'] and state.get('pod_uid') == pod['metadata']['uid'], 'Prepared publisher Pod identity changed'
+    assert not pod['metadata'].get('deletionTimestamp'), 'Prepared publisher Pod is terminating'
+    assert pod['metadata'].get('labels', {}).get('app') == 'fluxgate-authz', 'Prepared publisher is not an authz Pod'
+    assert any(c['type'] == 'Ready' and c['status'] == 'True' for c in pod.get('status', {}).get('conditions', [])), 'Prepared publisher Pod is not Ready'
+    assert state.get('jar_sha256') == local_jar_sha == deployed_jar_sha, 'Prepared publisher JAR identity changed'
+    assert isinstance(local_jar_sha, str) and re.fullmatch(r'[0-9a-f]{64}', local_jar_sha), 'Prepared publisher JAR digest missing'
+    for field in ('snapshotId', 'revision', 'counterEpoch', 'checksum'):
+        assert field in state['baseline'] and field in baseline, 'Prepared policy identity field missing'
+        assert str(state['baseline'][field]) == str(baseline[field]), 'Prepared publisher policy snapshot changed: ' + field
+
+
 def main():
     if not __debug__:
         raise RuntimeError('Assertions disabled; run Python without -O')
@@ -51,8 +65,11 @@ def main():
     parser.add_argument('--fixture', required=True, type=Path)
     parser.add_argument('--phase', choices=['all', 'baseline', 'redis', 'mongo', 'pod-restarts', 'node', 'no-quorum'], default='all')
     parser.add_argument('--publisher-hook', type=Path, default=Path(__file__).with_name('publish-hook.py'))
+    parser.add_argument('--prepared-publisher', action='store_true', help='Reuse a validated helper prepared before measured Mongo load')
     parser.add_argument('--proof', type=Path)
     args = parser.parse_args()
+    if args.prepared_publisher and args.phase != 'mongo':
+        parser.error('--prepared-publisher is valid only with --phase mongo')
     os.umask(0o077)
     fixture_file = args.fixture / 'fixture.json' if args.fixture.is_dir() else args.fixture
     fixture = json.loads(fixture_file.read_text())
@@ -364,6 +381,18 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         prepared = subprocess.run(['python3', str(args.publisher_hook), '--fixture', str(fixture_file), '--prepare'], env=env, capture_output=True, text=True, timeout=120)
         assert prepared.returncode == 0, 'Actual repository publisher preflight preparation failed'
 
+    def reuse_prepared_publisher(baseline):
+        state_file = fixture_file.parent / 'publication-hook-state.json'
+        assert state_file.is_file() and not state_file.stat().st_mode & 0o077, 'Private prepared publication state required'
+        state = json.loads(state_file.read_text())
+        assert isinstance(state.get('pod'), str) and state['pod'], 'Prepared publication Pod missing'
+        pod = obj('pod', state['pod'])
+        jar_sha = hashlib.sha256(Path(fixture['application_jar_file']).read_bytes()).hexdigest()
+        deployed_sha = kube(['-n', ns, 'exec', state['pod'], '--', 'sha256sum', '/app/app.jar']).split()[0]
+        validate_prepared_publisher(state, pod, baseline, fixture['rule_set_id'], jar_sha, deployed_sha)
+        record('prepared-publisher-validated', pod_uid=state['pod_uid'], jar_sha256=jar_sha, operation_id=state['operationId'],
+               snapshot_id=baseline['snapshotId'], revision=baseline['revision'], counter_epoch=baseline['counterEpoch'], checksum=baseline['checksum'])
+
     def authz_processes():
         return sorted((p['metadata']['uid'], c['containerID'], c.get('restartCount', 0))
                       for p in obj('pods', selector='app=fluxgate-authz')['items']
@@ -521,7 +550,10 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             failure_phase = 'mongo-election-publication'
             phase_evidence = {}
             outage_samples = []
-            prepare_publisher()
+            if args.prepared_publisher:
+                reuse_prepared_publisher(baseline)
+            else:
+                prepare_publisher()
             old_primary = mongo_primary()
             fault_started = time.monotonic()
             phase_evidence['timestamps'] = {'rto_budget_started': utc_milestone()}
