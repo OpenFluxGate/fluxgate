@@ -52,18 +52,26 @@ def main():
         previous_identity = proof.f.get('ha_api_key_id')
         proof.f.update(ha_api_key_file=str(key_file), ha_api_key_id=identity)
         module.private_write(fixture, json.dumps(proof.f, indent=2) + '\n')
-        proof.backups.clear()
         result = {'passed': True, 'previous_identity': previous_identity, 'identity': identity,
                   'quota_slot': candidate_slot, 'load_slot': load_slot,
                   'existing_mapping_entries_preserved': len(existing),
                   'policy_pointer_unchanged': True, 'existing_counters_deleted_or_reset': False}
         args.output.write_text(json.dumps(result, indent=2) + '\n')
+        proof.backups.clear()
         print(json.dumps(result))
     except Exception:
-        module.private_write(fixture, original_fixture)
-        module.private_write(mapping, original_mapping)
-        proof.cleanup_failed()
-        key_file.unlink(missing_ok=True)
+        # A failed local restore must not prevent the independent remote Secret rollback.
+        rollback_failures = []
+        for action in (lambda: module.private_write(fixture, original_fixture),
+                       lambda: module.private_write(mapping, original_mapping),
+                       proof.cleanup_failed,
+                       lambda: key_file.unlink(missing_ok=True)):
+            try:
+                action()
+            except Exception:
+                rollback_failures.append(True)
+        if rollback_failures:
+            raise RuntimeError('Preparation failed and at least one independent rollback failed') from None
         raise
 
 
