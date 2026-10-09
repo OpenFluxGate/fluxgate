@@ -43,9 +43,16 @@ def main():
     sampler_stop = None
     sampler_thread = None
     route_restore = None
+    route_header = None
+    restore_deadline = None
     sentinels = []
 
     def kube(command, stdin=None, timeout=45, binary=False):
+        if restore_deadline is not None:
+            remaining = restore_deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError('Whole-fixture restoration exceeded 180s')
+            timeout = min(timeout, remaining)
         result = subprocess.run(kube_base + command, input=stdin, env=env, capture_output=True,
                                 text=not binary, timeout=timeout)
         if result.returncode:
@@ -292,6 +299,53 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                       for p in obj('pods', selector='app=fluxgate-authz')['items']
                       for c in p['status'].get('containerStatuses', []))
 
+    def full_restore(started):
+        nonlocal restore_deadline
+        restore_deadline = started + 180
+        def healthy():
+            nodes = obj('nodes')['items']
+            assert {n['metadata']['name'] for n in nodes} == expected_nodes
+            assert all(any(c['type'] == 'Ready' and c['status'] == 'True' for c in n['status']['conditions']) for n in nodes)
+            counts = {}
+            for namespace, selector, desired in [(ns, 'app=mongo', 3), (ns, 'app=redis', 9),
+                    (ns, 'app=fluxgate-authz', 2), (ns, 'app=echo', 2),
+                    (fixture['gateway_namespace'], 'control-plane=envoy-gateway', 2),
+                    (fixture['gateway_namespace'], 'gateway.envoyproxy.io/owning-gateway-namespace=' + ns, 2)]:
+                pods = obj('pods', namespace=namespace, selector=selector)['items']
+                assert len(pods) == desired
+                assert all(not p['metadata'].get('deletionTimestamp') and any(c['type'] == 'Ready' and c['status'] == 'True' for c in p['status'].get('conditions', [])) for p in pods)
+                counts[selector] = desired
+            members = mongo('print(JSON.stringify(admin.runCommand({replSetGetStatus:1})));')['members']
+            assert len(members) == 3 and all(m['health'] == 1 for m in members)
+            assert sum(m['state'] == 1 for m in members) == 1 and sum(m['state'] == 2 for m in members) == 2
+            redis_nodes = topology()
+            primaries = {identity: n for identity, n in redis_nodes.items() if 'master' in n['flags']}
+            replicas = {identity: n for identity, n in redis_nodes.items() if 'slave' in n['flags']}
+            assert len(redis_nodes) == 9 and len(primaries) == 3 and len(replicas) == 6
+            assert all(not set(n['flags']).intersection({'fail', 'fail?', 'handshake', 'noaddr'}) for n in redis_nodes.values())
+            for pod in fixture['redis_pods']:
+                info = redis(pod, ['CLUSTER', 'INFO'])
+                assert 'cluster_state:ok' in info and 'cluster_slots_ok:16384' in info and 'cluster_known_nodes:9' in info
+            for identity, primary in primaries.items():
+                assert sum(n['primary'] == identity for n in replicas.values()) == 2
+                replication = redis(primary['pod'], ['INFO', 'replication'])
+                assert 'connected_slaves:2' in replication
+                assert len([line for line in replication.splitlines() if line.startswith(('slave0:', 'slave1:')) and 'state=online' in line]) == 2
+            for replica in replicas.values():
+                assert 'master_link_status:up' in redis(replica['pod'], ['INFO', 'replication'])
+            if route_restore is not None:
+                assert obj('httproute', 'resilience-api')['spec'] == route_restore
+            return {'ready_counts': counts, 'mongo_healthy_voters': 3, 'redis_primaries': 3, 'redis_linked_replicas': 6}
+        try:
+            remaining = restore_deadline - time.monotonic()
+            state, _ = wait('Complete fixture restoration', healthy, max(0, remaining))
+            elapsed, responses = sustained_traffic(started, 180, expected_header=(route_header, None) if route_header else None)
+            state.update({'restore_seconds': elapsed, 'sustained_gateway': responses, 'original_route_restored': route_restore is not None})
+            record('complete-fixture-restoration', **state)
+            return state
+        finally:
+            restore_deadline = None
+
     namespace_guard = obj('namespace', ns)
     assert namespace_guard['metadata'].get('labels', {}).get('fluxgate.io/environment') == 'local-ephemeral'
 
@@ -410,6 +464,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             assert inspection['Config']['Labels']['io.x-k8s.kind.cluster'] == ns
             route_restore = obj('httproute', 'resilience-api')['spec']
             header = ('x-ha-controller-proof', str(uuid.uuid4()))
+            route_header = header[0]
             request(fixture['load_path'], {200}, expected_header=(header[0], None))
             # A unique new header cannot be supplied by previously cached xDS.
             stopped_nodes.add(node)
@@ -442,12 +497,13 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                    lease_recovery_seconds=lease_seconds, reconciled_header=header, live_xds_update=True, continuous_outage_samples=outage_samples,
                    recovery_seconds=seconds, sustained_gateway=sustained, policy=baseline)
             kube(['-n', ns, 'patch', 'httproute', 'resilience-api', '--type=merge', '--patch-file=/dev/stdin'], stdin=json.dumps({'spec': route_restore}))
-            route_restore = None
+            restore_started = time.monotonic()
             subprocess.run(['docker', 'start', node], check=True, stdout=subprocess.DEVNULL)
             assert json.loads(subprocess.check_output(['docker', 'inspect', node], text=True))[0]['State']['Running']
             stopped_nodes.discard(node)
-            kube(['wait', '--for=condition=Ready', 'node/' + node, '--timeout=90s'], timeout=95)
-            sustained_traffic(time.monotonic(), 90)
+            full_restore(restore_started)
+            route_restore = None
+            route_header = None
         if args.phase in ('all', 'no-quorum'):
             prepare_publisher()
             primary = mongo_primary()
@@ -521,6 +577,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                   'limits': ['Single Docker Desktop host only', 'AOF everysec and asynchronous replication retain nonzero RPO risk', 'Local PVCs do not prove off-host backup recovery']}
         (proof / 'pending-result.json').write_text(json.dumps({**result, 'complete': False}, indent=2) + '\n')
     finally:
+        cleanup_started = time.monotonic()
         cleanup_failures = []
         try:
             stop_sampler()
@@ -544,6 +601,10 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                 kube(['-n', ns, 'patch', 'httproute', 'resilience-api', '--type=merge', '--patch-file=/dev/stdin'], stdin=json.dumps({'spec': route_restore}))
             except Exception:
                 cleanup_failures.append('route restoration failed')
+        try:
+            full_restore(cleanup_started)
+        except Exception:
+            cleanup_failures.append('complete fixture restoration failed within 180s')
         for kind, name in [('pod', probe), ('secret', probe_secret), ('networkpolicy', probe_policy)]:
             try:
                 kube(['-n', ns, 'delete', kind, name, '--ignore-not-found=true', '--wait=false'])
