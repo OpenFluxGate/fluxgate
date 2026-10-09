@@ -77,6 +77,21 @@ fluxgate:
     client-ip-header: X-Forwarded-For # Header for client IP
     trust-client-ip-header: true      # Trust the IP header
     include-headers: true             # Add rate limit headers to response
+
+  # Resilience Configuration
+  resilience:
+    retry:
+      enabled: true                   # Enable retry on failures
+      max-attempts: 3                 # Maximum retry attempts
+      initial-backoff: 100ms          # Initial backoff duration
+      multiplier: 2.0                 # Exponential backoff multiplier
+      max-backoff: 2s                 # Maximum backoff duration
+    circuit-breaker:
+      enabled: false                  # Enable circuit breaker (default: disabled)
+      failure-threshold: 5            # Failures before opening circuit
+      wait-duration-in-open-state: 30s # Wait before half-open
+      permitted-calls-in-half-open-state: 3
+      fallback: FAIL_OPEN             # FAIL_OPEN or FAIL_CLOSED
 ```
 
 ## Deployment Examples
@@ -252,6 +267,93 @@ Creates:
 |------|------|-------------|
 | `fluxgateRateLimitFilter` | `FluxgateRateLimitFilter` | HTTP filter |
 | `fluxgateRateLimitFilterRegistration` | `FilterRegistrationBean` | Servlet registration |
+
+### FluxgateResilienceAutoConfiguration
+
+**Condition:** Always loaded (enabled/disabled via properties)
+
+Creates:
+| Bean | Type | Description |
+|------|------|-------------|
+| `fluxgateRetryConfig` | `RetryConfig` | Retry configuration |
+| `fluxgateCircuitBreakerConfig` | `CircuitBreakerConfig` | Circuit breaker configuration |
+| `fluxgateRetryExecutor` | `RetryExecutor` | Retry executor (or NoOp if disabled) |
+| `fluxgateCircuitBreaker` | `CircuitBreaker` | Circuit breaker (or NoOp if disabled) |
+| `fluxgateResilientExecutor` | `ResilientExecutor` | Combined retry + circuit breaker |
+
+---
+
+## Resilience
+
+FluxGate provides built-in resilience features to handle transient failures in Redis/MongoDB connections.
+
+### Retry Strategy
+
+Automatically retries failed operations with exponential backoff:
+
+```yaml
+fluxgate:
+  resilience:
+    retry:
+      enabled: true
+      max-attempts: 3
+      initial-backoff: 100ms
+      multiplier: 2.0
+      max-backoff: 2s
+```
+
+**Behavior:**
+```
+Request → Fail → Wait 100ms → Retry → Fail → Wait 200ms → Retry → Success
+```
+
+Retryable exceptions:
+- `FluxgateConnectionException` (Redis/MongoDB connection failures)
+- `FluxgateTimeoutException` (Operation timeouts)
+
+### Circuit Breaker
+
+Prevents cascading failures by stopping requests when the system is unhealthy:
+
+```yaml
+fluxgate:
+  resilience:
+    circuit-breaker:
+      enabled: true
+      failure-threshold: 5        # Open after 5 consecutive failures
+      wait-duration-in-open-state: 30s
+      permitted-calls-in-half-open-state: 3
+      fallback: FAIL_OPEN         # or FAIL_CLOSED
+```
+
+**States:**
+```
+CLOSED ──(5 failures)──> OPEN ──(30s wait)──> HALF_OPEN ──(success)──> CLOSED
+                          │                        │
+                          └────(fallback)──────────┘
+```
+
+**Fallback Strategies:**
+- `FAIL_OPEN`: Allow requests through when circuit is open (default)
+- `FAIL_CLOSED`: Reject requests when circuit is open
+
+### Exception Hierarchy
+
+FluxGate provides a clear exception hierarchy for error handling:
+
+```
+FluxgateException (abstract)
+├── FluxgateConfigurationException      # Configuration errors (non-retryable)
+│   ├── InvalidRuleConfigException
+│   └── MissingConfigurationException
+├── FluxgateConnectionException         # Connection failures (retryable)
+│   ├── RedisConnectionException
+│   └── MongoConnectionException
+├── FluxgateOperationException          # Runtime errors
+│   ├── RateLimitExecutionException
+│   └── ScriptExecutionException
+└── FluxgateTimeoutException            # Timeout errors (retryable)
+```
 
 ---
 

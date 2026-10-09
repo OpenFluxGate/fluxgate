@@ -4,3 +4,4 @@ org.fluxgate.spring.autoconfigure.FluxgateReloadAutoConfiguration
 org.fluxgate.spring.autoconfigure.FluxgateMetricsAutoConfiguration
 org.fluxgate.spring.autoconfigure.FluxgateMetricsCompositeAutoConfiguration
 org.fluxgate.spring.autoconfigure.FluxgateActuatorAutoConfiguration
+org.fluxgate.spring.autoconfigure.FluxgateResilienceAutoConfiguration
