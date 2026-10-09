@@ -7,6 +7,12 @@ serialize --phase quota against the other proofs. The in-cluster Python generato
 uses HTTP/1.1 keepalive, bypasses kubectl/port-forward on the measured request path,
 and receives credential contents through stdin only. No notifier or storage write
 is performed. Acceptance bounds are fixed below, before any measurement.
+
+--phase resilience warms up then observes 100 RPS for 120 seconds. Its result
+OBSERVATION_COMPLETE proves complete accounting/body integrity, not a fault SLO.
+Find its owned Pod via label fluxgate.io/load-phase=resilience and read
+/tmp/fluxgate-load-ready.json via kubectl exec; the atomic marker gives the
+scheduled start Unix time. Root alone injects faults and assesses fault windows.
 """
 
 import argparse
@@ -18,6 +24,7 @@ from pathlib import Path
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -32,6 +39,8 @@ EXPECTED_FRACTION = 0.999
 QUOTA_BURST = 100
 QUOTA_ALLOWED = 5
 BACKEND_BODY = b"fluxgate-resilience-ok"  # Exact public echo text in stack.yaml.
+RESILIENCE_SECONDS = 120
+READY_MARKER = "/tmp/fluxgate-load-ready.json"
 
 
 def percentile(values, quantile):
@@ -107,6 +116,7 @@ class GatewayClient:
     def __init__(self, config):
         self.config = config
         self.local = threading.local()
+        self.clock_offset = time.time() - time.monotonic()
 
     def request(self, sequence, scheduled, method, path, credential, expected):
         started = time.monotonic()
@@ -160,17 +170,30 @@ class GatewayClient:
                 "status": status, "received_status": received_status, "error": error,
                 "backend_body": backend_body, "body_valid": body_valid,
                 "latency_ms": (finished - scheduled) * 1000,
+                "scheduled_unix_ms": (scheduled + self.clock_offset) * 1000,
+                "completed_unix_ms": (finished + self.clock_offset) * 1000,
                 "service_time_ms": (finished - started) * 1000,
                 "dispatch_lag_ms": max(0, (started - scheduled) * 1000)}
 
 
-def fixed_arrivals(client, pool, rate, seconds, mixed=False):
+def fixed_arrivals(client, pool, rate, seconds, mixed=False, readiness=False):
     target = rate * seconds
     start = time.monotonic() + 0.25
+    offset = getattr(client, "clock_offset", time.time() - time.monotonic())
+    schedule_start_unix_ms = (start + offset) * 1000
+    if readiness:
+        marker = {"phase": "resilience", "load_pod_name": client.config["load_pod_name"],
+                  "run_label": client.config["load_pod_name"],
+                  "schedule_start_unix_ms": schedule_start_unix_ms,
+                  "target_rps": rate, "duration_seconds": seconds, "planned_requests": target}
+        temporary = Path(READY_MARKER + ".tmp")
+        temporary.write_text(json.dumps(marker))
+        temporary.replace(READY_MARKER)
     # Bound in-flight + queued work. Saturation cannot turn into an unbounded hidden queue.
     slots = threading.BoundedSemaphore(512)
     results = queue.Queue()
     omitted = 0
+    omitted_samples = []
     worker_failures = 0
     futures = []
 
@@ -188,6 +211,8 @@ def fixed_arrivals(client, pool, rate, seconds, mixed=False):
             time.sleep(delay)
         if not slots.acquire(blocking=False):
             omitted += 1
+            omitted_samples.append({"sequence": sequence, "scheduled_unix_ms": (due + offset) * 1000,
+                                    "reason": "pending-limit"})
             continue
         method, credential, expected = "GET", client.config["api_key"], 200
         if mixed and sequence % 5 == 0:
@@ -200,6 +225,8 @@ def fixed_arrivals(client, pool, rate, seconds, mixed=False):
             slots.release()
             worker_failures += 1
             omitted += 1
+            omitted_samples.append({"sequence": sequence, "scheduled_unix_ms": (due + offset) * 1000,
+                                    "reason": "submission-error"})
     # Keep the denominator equal to the planned interval, even if its last request finishes early.
     delay = start + seconds - time.monotonic()
     if delay > 0:
@@ -213,8 +240,31 @@ def fixed_arrivals(client, pool, rate, seconds, mixed=False):
     while not results.empty():
         samples.append(results.get_nowait())
     samples.sort(key=lambda s: s["sequence"])
-    return aggregate(samples, target, seconds, max(seconds, time.monotonic() - start),
-                     omitted, worker_failures)
+    report = aggregate(samples, target, seconds, max(seconds, time.monotonic() - start),
+                       omitted, worker_failures)
+    report["schedule_start_unix_ms"] = schedule_start_unix_ms
+    report["schedule_end_unix_ms"] = schedule_start_unix_ms + seconds * 1000
+    report["clock_unix_offset_seconds"] = offset
+    report["omitted_samples"] = omitted_samples
+    return report
+
+
+def last_sixty_seconds(observation):
+    """Assess arrivals in the final minute, retaining lateness beyond the planned finish."""
+    first_sequence = BASELINE_RPS * (RESILIENCE_SECONDS - BASELINE_SECONDS)
+    samples = [s for s in observation["samples"] if s["sequence"] >= first_sequence]
+    omitted = [s for s in observation["omitted_samples"] if s["sequence"] >= first_sequence]
+    start = observation["schedule_end_unix_ms"] - BASELINE_SECONDS * 1000
+    completed = max((s["completed_unix_ms"] for s in samples), default=start)
+    report = aggregate(samples, BASELINE_RPS * BASELINE_SECONDS, BASELINE_SECONDS,
+                       max(BASELINE_SECONDS, (completed - start) / 1000), len(omitted),
+                       observation["worker_failures"])
+    report["schedule_start_unix_ms"] = start
+    report["schedule_end_unix_ms"] = observation["schedule_end_unix_ms"]
+    report["omitted_samples"] = omitted
+    report["steady_bounds_met_without_fault_alignment"] = baseline_passes(report)
+    report["requires_external_fault_window_alignment"] = True
+    return report
 
 
 def quota_burst(client):
@@ -263,6 +313,23 @@ def worker(config):
         return report
     if config["phase"] == "control":
         report["result"] = "PASS"
+        return report
+    if config["phase"] == "resilience":
+        with concurrent.futures.ThreadPoolExecutor(max_workers=128) as pool:
+            warmup = fixed_arrivals(client, pool, BASELINE_RPS, 5)
+            report["warmup"] = warmup
+            if not generator_valid(warmup) or warmup["expected_status_fraction"] != 1:
+                report["result"] = "FAIL"
+                report["failure_stage"] = "resilience-warmup"
+                return report
+            observation = fixed_arrivals(client, pool, BASELINE_RPS, RESILIENCE_SECONDS,
+                                         readiness=True)
+        report["observation"] = observation
+        report["last_60_seconds"] = last_sixty_seconds(observation)
+        report["assessment"] = "observation completeness and body integrity only; assess fault windows externally"
+        report["steady_slo_pass"] = None
+        report["result"] = ("OBSERVATION_COMPLETE" if generator_valid(observation)
+                            and observation["unexpected_body_responses"] == 0 else "FAIL")
         return report
     if config["phase"] in ("load", "all"):
         with concurrent.futures.ThreadPoolExecutor(max_workers=128) as pool:
@@ -366,10 +433,11 @@ def live(args):
               "quota_path": fixture["quota_path"], "api_key": api_key,
               "quota_api_key": quota_key, "phase": args.phase}
     pod_name = "fluxgate-load-" + uuid.uuid4().hex[:12]
+    config["load_pod_name"] = pod_name
     pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {
         "name": pod_name, "namespace": fixture["namespace"],
         "labels": {"app": "fluxgate-load-generator", "fluxgate.io/environment": "local-ephemeral",
-                   "fluxgate.io/load-run": pod_name}},
+                   "fluxgate.io/load-run": pod_name, "fluxgate.io/load-phase": args.phase}},
         "spec": {"restartPolicy": "Never", "automountServiceAccountToken": False,
                  "terminationGracePeriodSeconds": 1,
                  "containers": [{"name": "generator", "image": fixture.get("generator_image", "python:3.12-alpine"),
@@ -518,14 +586,62 @@ def self_check():
     assert {p["port"] for rule in policy["spec"]["egress"] for p in rule["ports"]} == {53, 10080}
     assert all("namespaceSelector" in target and "podSelector" in target
                for rule in policy["spec"]["egress"] for target in rule["to"])
+    wall_start = 1700000000000
+    observation = aggregate([
+        dict(sample, sequence=n, status=503 if n < 6000 else 200,
+             scheduled_unix_ms=wall_start + n * 10,
+             completed_unix_ms=wall_start + n * 10 + 10)
+        for n in range(12000)], 12000, 120, 120, 0, 0)
+    observation.update(schedule_start_unix_ms=wall_start,
+                       schedule_end_unix_ms=wall_start + 120000, omitted_samples=[])
+    tail = last_sixty_seconds(observation)
+    assert tail["target_requests"] == 6000 and tail["all_statuses"] == {"200": 6000}
+    assert tail["steady_bounds_met_without_fault_alignment"]
+    assert tail["requires_external_fault_window_alignment"]
+    omitted_tail = dict(observation, samples=observation["samples"][:-1],
+                        omitted_samples=[{"sequence": 11999, "scheduled_unix_ms": wall_start + 119990}])
+    assert not last_sixty_seconds(omitted_tail)["steady_bounds_met_without_fault_alignment"]
+    slow_tail_samples = list(observation["samples"])
+    slow_tail_samples[-1] = dict(slow_tail_samples[-1], completed_unix_ms=wall_start + 130000,
+                                 status="ERROR", error="transport-error", latency_ms=10010)
+    slow_tail = last_sixty_seconds(dict(observation, samples=slow_tail_samples))
+    assert slow_tail["expected_status_fraction"] >= EXPECTED_FRACTION
+    assert slow_tail["latency_ms"]["p99"] == 10
+    assert slow_tail["achieved_rps"] < MIN_ACHIEVED_RPS
+    assert not slow_tail["steady_bounds_met_without_fault_alignment"]
+    assert truncated["completed_unix_ms"] >= truncated["scheduled_unix_ms"]
+    original_marker = READY_MARKER
+
+    class OfflineTimedClient:
+        config = {"load_path": "/offline", "api_key": "offline-placeholder", "load_pod_name": "offline-pod"}
+        clock_offset = time.time() - time.monotonic()
+
+        def request(self, sequence, due, method, path, credential, expected):
+            return dict(sample, sequence=sequence, method=method, expected=expected,
+                        scheduled_unix_ms=(due + self.clock_offset) * 1000,
+                        completed_unix_ms=(time.monotonic() + self.clock_offset) * 1000)
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="fluxgate-load-offline-") as directory:
+            globals()["READY_MARKER"] = str(Path(directory) / "ready.json")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                timed = fixed_arrivals(OfflineTimedClient(), pool, 10, 1, readiness=True)
+            marker = json.loads(Path(READY_MARKER).read_text())
+            assert marker["load_pod_name"] == "offline-pod" and marker["planned_requests"] == 10
+            assert marker["schedule_start_unix_ms"] == timed["schedule_start_unix_ms"]
+            assert marker["schedule_start_unix_ms"] == timed["samples"][0]["scheduled_unix_ms"]
+            assert generator_valid(timed) and len(timed["samples"]) == 10
+            assert not Path(READY_MARKER + ".tmp").exists()
+    finally:
+        globals()["READY_MARKER"] = original_marker
     assert percentile([1, 2, 3, 4, 5], 0.95) == 5
-    print(json.dumps({"result": "PASS", "self_checks": 16}))
+    print(json.dumps({"result": "PASS", "self_checks": 21}))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixture")
-    parser.add_argument("--phase", choices=("control", "load", "quota", "all"), default="load")
+    parser.add_argument("--phase", choices=("control", "load", "quota", "all", "resilience"), default="load")
     parser.add_argument("--output", help="sanitized JSON output, written only after complete PASS")
     parser.add_argument("--self-check", action="store_true")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
@@ -541,9 +657,10 @@ def main():
     report = live(args)
     encoded = json.dumps(report, indent=2)
     print(encoded)
-    if report["result"] == "PASS" and args.output:
+    successful = report["result"] in ("PASS", "OBSERVATION_COMPLETE")
+    if successful and args.output:
         Path(args.output).write_text(encoded + "\n")
-    return 0 if report["result"] == "PASS" else 1
+    return 0 if successful else 1
 
 
 if __name__ == "__main__":
