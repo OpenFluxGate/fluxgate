@@ -273,7 +273,8 @@ class MultiAlgorithmLuaIntegrationTest {
 
       assertThat(consume(1, b, key).get(ALLOWED)).isEqualTo(1L);
 
-      assertThat(pttl(key)).isBetween(1L, 101L);
+      // -1 means "no TTL" (the bug); 0 or -2 just mean the window ended before PTTL ran.
+      assertThat(pttl(key)).isNotEqualTo(-1L).isLessThanOrEqualTo(101L);
     }
 
     @Test
@@ -289,7 +290,8 @@ class MultiAlgorithmLuaIntegrationTest {
         rejected = consume(1, b, key).get(ALLOWED) == 0L;
       }
       assertThat(rejected).as("capacity 2 per 100 ms must reject within 10 calls").isTrue();
-      assertThat(pttl(key)).isBetween(1L, 101L);
+      // -1 means "no TTL" (the bug); 0 or -2 just mean the window ended before PTTL ran.
+      assertThat(pttl(key)).isNotEqualTo(-1L).isLessThanOrEqualTo(101L);
 
       Thread.sleep(250L);
 
@@ -305,7 +307,8 @@ class MultiAlgorithmLuaIntegrationTest {
 
       assertThat(consume(1, b, key).get(ALLOWED)).isZero();
 
-      assertThat(pttl(key)).isBetween(1L, 101L);
+      // -1 means "no TTL" (the bug); 0 or -2 just mean the window ended before PTTL ran.
+      assertThat(pttl(key)).isNotEqualTo(-1L).isLessThanOrEqualTo(101L);
     }
 
     @Test
