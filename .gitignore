@@ -99,3 +99,15 @@ replay_pid*
 
 # Secret
 private.key
+
+# Keys, certificates and keystores - never commit one, not even a test fixture.
+# `git add -f` is the only way past this, and it should make you stop and think.
+*.key
+*.pem
+*.asc
+*.p12
+*.jks
+
+# Local environment files (credentials, connection strings)
+.env
+.env.*
