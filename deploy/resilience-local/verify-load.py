@@ -25,11 +25,13 @@ import uuid
 
 BASELINE_RPS = 100
 BASELINE_SECONDS = 60
+MIN_ACHIEVED_RPS = 99
 P95_MS = 100
 P99_MS = 250
 EXPECTED_FRACTION = 0.999
 QUOTA_BURST = 100
 QUOTA_ALLOWED = 5
+BACKEND_BODY = b"fluxgate-resilience-ok"  # Exact public echo text in stack.yaml.
 
 
 def percentile(values, quantile):
@@ -45,12 +47,13 @@ def aggregate(samples, target, duration, elapsed, omitted, worker_failures):
     distributions = {}
     expected = 0
     for sample in samples:
-        status = str(sample["status"])
+        status = "ERROR" if sample.get("error") is not None else str(sample["status"])
         statuses[status] = statuses.get(status, 0) + 1
         kind = "invalid-key" if sample["expected"] == 403 else sample["method"]
         counts = distributions.setdefault(kind, {})
         counts[status] = counts.get(status, 0) + 1
-        expected += sample["status"] == sample["expected"]
+        expected += (sample.get("error") is None and status == str(sample["expected"])
+                     and sample.get("body_valid", True))
     return {
         "target_requests": target,
         "planned_requests": target,
@@ -63,6 +66,8 @@ def aggregate(samples, target, duration, elapsed, omitted, worker_failures):
         "omitted_schedules": omitted,
         "unaccounted_schedules": target - len(samples) - omitted,
         "worker_failures": worker_failures,
+        "transport_errors": sum(sample.get("error") is not None for sample in samples),
+        "unexpected_body_responses": sum(not sample.get("body_valid", True) for sample in samples),
         "all_statuses": statuses,
         "request_distributions": distributions,
         "expected_status_fraction": expected / target if target else 0,
@@ -90,6 +95,8 @@ def baseline_passes(report):
     return (generator_valid(report)
             and report["target_requests"] == BASELINE_RPS * BASELINE_SECONDS
             and report["measurement_seconds"] == BASELINE_SECONDS
+            and report["achieved_rps"] >= MIN_ACHIEVED_RPS
+            and report["unexpected_body_responses"] == 0
             and report["expected_status_fraction"] >= EXPECTED_FRACTION
             and report["latency_ms"]["p95"] is not None
             and report["latency_ms"]["p95"] <= P95_MS
@@ -104,7 +111,10 @@ class GatewayClient:
     def request(self, sequence, scheduled, method, path, credential, expected):
         started = time.monotonic()
         status = "ERROR"
+        received_status = None
         error = None
+        backend_body = False
+        body_valid = True
         connection = getattr(self.local, "connection", None)
         try:
             if connection is None:
@@ -117,21 +127,38 @@ class GatewayClient:
             connection.request(method, path, headers=headers)
             response = connection.getresponse()
             status = response.status
+            received_status = status
             # Fully drain the body before reusing the connection, including denied responses.
-            while response.read(65536):
-                pass
+            prefix = bytearray()
+            total_bytes = 0
+            while True:
+                chunk = response.read(65536)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if len(prefix) < 1024:
+                    prefix.extend(chunk[:1024 - len(prefix)])
+            # read(n) can return EOF without raising when Content-Length was not fulfilled.
+            # Even an apparently correct echo prefix is incomplete transport in that case.
+            remaining = getattr(response, "length", None)
+            if remaining is not None and remaining != 0:
+                raise http.client.IncompleteRead(bytes(prefix), remaining)
+            backend_body = total_bytes <= 1024 and bytes(prefix).strip() == BACKEND_BODY
+            body_valid = backend_body if status == 200 else not backend_body
             if response.will_close:
                 connection.close()
                 self.local.connection = None
         except (OSError, http.client.HTTPException):
             # No automatic retry: retries would hide real errors and alter quota consumption.
             error = "transport-error"
+            status = "ERROR"
             if connection is not None:
                 connection.close()
             self.local.connection = None
         finished = time.monotonic()
         return {"sequence": sequence, "method": method, "expected": expected,
-                "status": status, "error": error,
+                "status": status, "received_status": received_status, "error": error,
+                "backend_body": backend_body, "body_valid": body_valid,
                 "latency_ms": (finished - scheduled) * 1000,
                 "service_time_ms": (finished - started) * 1000,
                 "dispatch_lag_ms": max(0, (started - scheduled) * 1000)}
@@ -213,6 +240,8 @@ def quota_burst(client):
         sample["expected"] = "quota-distribution"
     report["passed"] = (report["all_statuses"] == {"200": QUOTA_ALLOWED,
                                                    "429": QUOTA_BURST - QUOTA_ALLOWED}
+                        and report["unexpected_body_responses"] == 0
+                        and report["transport_errors"] == 0
                         and generator_valid(report))
     return report
 
@@ -221,10 +250,13 @@ def worker(config):
     client = GatewayClient(config)
     report = {"phase": config["phase"], "thresholds": {
         "baseline_rps": BASELINE_RPS, "baseline_seconds": BASELINE_SECONDS,
+        "min_achieved_rps": MIN_ACHIEVED_RPS,
         "p95_ms": P95_MS, "p99_ms": P99_MS, "expected_200_fraction": EXPECTED_FRACTION,
         "omitted_schedules": 0, "quota_burst": QUOTA_BURST, "quota_allowed": QUOTA_ALLOWED},
         "latency_origin": "scheduled arrival, including dispatch/queue delay"}
-    passed = True
+    control = client.request(-1, time.monotonic(), "GET", config["load_path"], config["api_key"], 200)
+    report["backend_positive_control"] = control
+    passed = control["status"] == 200 and control["body_valid"]
     if config["phase"] in ("load", "all"):
         with concurrent.futures.ThreadPoolExecutor(max_workers=128) as pool:
             warmup = fixed_arrivals(client, pool, 100, 5)
@@ -232,7 +264,7 @@ def worker(config):
             baseline = fixed_arrivals(client, pool, BASELINE_RPS, BASELINE_SECONDS)
             baseline["passed"] = baseline_passes(baseline)
             report["baseline"] = baseline
-            passed = (generator_valid(warmup) and warmup["expected_status_fraction"] == 1
+            passed = (passed and generator_valid(warmup) and warmup["expected_status_fraction"] == 1
                       and baseline["passed"])
             report["characterization"] = []
             for rate in (300, 600):
@@ -342,8 +374,72 @@ def self_check():
     errors = aggregate([dict(sample, sequence=n, status="ERROR" if n < 7 else 200)
                         for n in range(6000)], 6000, 60, 60, 0, 0)
     assert not baseline_passes(errors)
+    slow_drain = aggregate(
+        [dict(s, status="ERROR", error="transport-error", latency_ms=10000)
+         if n == 5999 else s for n, s in enumerate(report["samples"])],
+        6000, 60, 70, 0, 0)
+    assert generator_valid(slow_drain)
+    assert slow_drain["expected_status_fraction"] >= EXPECTED_FRACTION
+    assert slow_drain["latency_ms"]["p99"] == 10
+    assert not baseline_passes(slow_drain)
+    wrong_body = aggregate([dict(sample, sequence=n, body_valid=n != 0) for n in range(6000)],
+                           6000, 60, 60, 0, 0)
+    assert not baseline_passes(wrong_body)
+
+    class TruncatedResponse:
+        will_close = False
+
+        def __init__(self, status):
+            self.status = status
+
+        def read(self, amount):
+            raise http.client.IncompleteRead(b"partial", 128)
+
+    class HeaderOnlyConnection:
+        def __init__(self, status):
+            self.status = status
+            self.closed = False
+
+        def request(self, *args, **kwargs):
+            pass
+
+        def getresponse(self):
+            return TruncatedResponse(self.status)
+
+        def close(self):
+            self.closed = True
+
+    for received in (200, 403, 429):
+        client = GatewayClient({"host": "fixture.invalid"})
+        connection = HeaderOnlyConnection(received)
+        client.local.connection = connection
+        truncated = client.request(0, time.monotonic(), "GET", "/fixture", None, received)
+        assert truncated["status"] == "ERROR" and truncated["received_status"] == received
+        assert truncated["error"] == "transport-error" and connection.closed
+        assert client.local.connection is None
+        broken = aggregate([truncated], 1, 1, 1, 0, 0)
+        assert broken["all_statuses"] == {"ERROR": 1} and broken["expected_status_fraction"] == 0
+    mislabeled = aggregate([dict(sample, error="transport-error")], 1, 1, 1, 0, 0)
+    assert mislabeled["all_statuses"] == {"ERROR": 1} and mislabeled["expected_status_fraction"] == 0
+
+    class ShortBody(TruncatedResponse):
+        length = 128
+        read_once = False
+
+        def read(self, amount):
+            if self.read_once:
+                return b""
+            self.read_once = True
+            self.length -= len(BACKEND_BODY)
+            return BACKEND_BODY
+
+    connection = HeaderOnlyConnection(200)
+    connection.getresponse = lambda: ShortBody(200)
+    client.local.connection = connection
+    truncated = client.request(0, time.monotonic(), "GET", "/fixture", None, 200)
+    assert truncated["status"] == "ERROR" and truncated["error"] == "transport-error"
     assert percentile([1, 2, 3, 4, 5], 0.95) == 5
-    print(json.dumps({"result": "PASS", "self_checks": 7}))
+    print(json.dumps({"result": "PASS", "self_checks": 14}))
 
 
 def main():
