@@ -173,7 +173,10 @@ def main():
             assert current['metadata'].get('labels', {}).get('fluxgate.io/ha-probe') == probe, 'Probe cleanup ownership label differs'
             expected_uid = owned_probe_uids.get((kind, name))
             assert expected_uid is None or current['metadata']['uid'] == expected_uid, 'Probe cleanup UID changed'
-            kube(['-n', ns, 'delete', kind, name, '--wait=true', '--timeout=25s'], timeout=max(.1, 30 - (time.monotonic() - started)))
+            delete_args = ['-n', ns, 'delete', kind, name, '--wait=true', '--timeout=25s']
+            if kind == 'pod':
+                delete_args.append('--grace-period=3')
+            kube(delete_args, timeout=max(.1, 30 - (time.monotonic() - started)))
         assert lookup() is None and time.monotonic() - started <= 30, 'Owned probe resource remains after cleanup'
         record('owned-probe-resource-cleanup', kind=kind, name=name, uid=owned_probe_uids.get((kind, name)), absent=True)
 
@@ -522,7 +525,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                 {'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'kube-system'}}, 'podSelector': {'matchLabels': {'k8s-app': 'kube-dns'}}}],
                  'ports': [{'port': 53, 'protocol': 'UDP'}, {'port': 53, 'protocol': 'TCP'}]}]}})
         apply_owned_probe({'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': probe, 'namespace': ns, 'labels': {'app': probe}},
-            'spec': {'automountServiceAccountToken': False, 'nodeSelector': {'kubernetes.io/hostname': ns + '-control-plane'},
+            'spec': {'automountServiceAccountToken': False, 'terminationGracePeriodSeconds': 1, 'nodeSelector': {'kubernetes.io/hostname': ns + '-control-plane'},
                      'tolerations': [{'key': 'node-role.kubernetes.io/control-plane', 'operator': 'Exists', 'effect': 'NoSchedule'}],
                      'containers': [{'name': 'probe', 'image': 'python:3.12-alpine', 'command': ['python', '-c', 'import time;time.sleep(3600)'],
                          'resources': {'requests': {'cpu': '10m', 'memory': '32Mi'}, 'limits': {'cpu': '100m', 'memory': '128Mi'}},
