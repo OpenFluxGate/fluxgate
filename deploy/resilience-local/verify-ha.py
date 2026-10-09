@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import signal as process_signal
 from pathlib import Path
 import subprocess
 import tempfile
@@ -42,6 +43,29 @@ def packaged_script(jar_file):
     return {'sha1': canonical_lua_sha(script), 'jar_file': str(jar_file), 'jar_sha256': hashlib.sha256(jar_bytes).hexdigest(),
             'nested_archive': libraries[0], 'resource': resource, 'raw_resource_sha256': hashlib.sha256(script).hexdigest(),
             'loader': 'UTF-8 BufferedReader.lines().collect(joining("\\n"))'}
+
+
+def run_publisher_preparation(command, env, timeout=120):
+    process = subprocess.Popen(command, env=env, text=True, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # This dedicated session contains only the preparation helper and its descendants.
+        try:
+            os.killpg(process.pid, process_signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            process.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, process_signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate(timeout=3)
+        raise
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
 def validate_prepared_publisher(state, pod, baseline, rule_set_id, local_jar_sha, deployed_jar_sha):
@@ -378,7 +402,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         return json.loads(output.read_text())
 
     def prepare_publisher():
-        prepared = subprocess.run(['python3', str(args.publisher_hook), '--fixture', str(fixture_file), '--prepare'], env=env, capture_output=True, text=True, timeout=120)
+        prepared = run_publisher_preparation(['python3', str(args.publisher_hook), '--fixture', str(fixture_file), '--prepare'], env, timeout=120)
         assert prepared.returncode == 0, 'Actual repository publisher preflight preparation failed'
 
     def reuse_prepared_publisher(baseline):
