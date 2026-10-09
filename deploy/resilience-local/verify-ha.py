@@ -146,6 +146,21 @@ print(json.dumps({'recovered':recovered,'samples':samples,'consecutive_successes
 '''
 
 
+
+def verified_mongo_primary(observation, pods, namespace):
+    status, hello = observation['status'], observation['hello']
+    assert status.get('ok') == 1 and hello.get('ok') == 1, 'Mongo primary observations failed'
+    assert status.get('set') == hello.get('setName') == 'rs0', 'Mongo replica set identity differs'
+    assert status.get('myState') == 1 and hello.get('isWritablePrimary') is True, 'Observed Mongo server is not a writable primary'
+    own_members = [member for member in status['members'] if member.get('self') is True]
+    assert len(own_members) == 1 and own_members[0].get('state') == 1, 'Mongo primary self identity is missing or ambiguous'
+    host = hello.get('me')
+    assert host == hello.get('primary') == own_members[0].get('name'), 'Mongo writable primary observations disagree'
+    registered = {f'{pod}.mongo.{namespace}.svc.cluster.local:27017': pod for pod in pods}
+    assert host in registered, 'Mongo primary is outside the registered fixture'
+    return registered[host]
+
+
 def main():
     if not __debug__:
         raise RuntimeError('Assertions disabled; run Python without -O')
@@ -280,9 +295,8 @@ const conn=new Mongo('mongodb://admin:'+encodeURIComponent(pw)+'@{seed}/admin?re
         return mongo("const d=conn.getDB('fluxgate');const p=d.rate_limit_rules_policies.findOne({_id:'resilience-limits'});const s=d.rate_limit_rules_revisions.findOne({_id:p.snapshotId});if(!s||String(p.revision)!==String(s.revision)||p.counterEpoch!==s.counterEpoch)quit(2);print(JSON.stringify({revision:String(p.revision),counterEpoch:p.counterEpoch,snapshotId:p.snapshotId,checksum:s.checksum,operationId:s.operationId,rules:s.rules,accessControl:s.accessControl}));")
 
     def mongo_primary():
-        status = mongo('print(JSON.stringify(admin.runCommand({replSetGetStatus:1})));')
-        assert status.get('ok') == 1
-        return next(m['name'].split('.')[0] for m in status['members'] if m['state'] == 1)
+        observation = mongo('const status=admin.runCommand({replSetGetStatus:1});const hello=admin.runCommand({hello:1});print(JSON.stringify({status,hello}));')
+        return verified_mongo_primary(observation, fixture['mongo_pods'], ns)
 
     def request(path, allowed, method='GET', expected_header=None):
         source = '''import json,pathlib,urllib.request,urllib.error,sys

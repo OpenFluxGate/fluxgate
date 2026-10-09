@@ -232,5 +232,63 @@ class RestorationTests(unittest.TestCase):
                     self.restoration(defer, **{drift: True})
 
 
+class MongoPrimaryTests(unittest.TestCase):
+    def observation(self):
+        host = 'mongo-1.mongo.fluxgate-resilience.svc.cluster.local:27017'
+        status = {'ok': 1, 'set': 'rs0', 'myState': 1, 'members': [
+            {'name': 'mongo-0.mongo.fluxgate-resilience.svc.cluster.local:27017', 'state': 1},
+            {'name': host, 'state': 1, 'self': True},
+            {'name': 'mongo-2.mongo.fluxgate-resilience.svc.cluster.local:27017', 'state': 2}]}
+        hello = {'ok': 1, 'setName': 'rs0', 'isWritablePrimary': True, 'me': host, 'primary': host}
+        return {'status': status, 'hello': hello}
+
+    def select(self, observation):
+        return MODULE['verified_mongo_primary'](observation, ['mongo-0', 'mongo-1', 'mongo-2'],
+                                                'fluxgate-resilience')
+
+    def test_stale_old_primary_member_does_not_override_writable_self(self):
+        self.assertEqual(self.select(self.observation()), 'mongo-1')
+
+    def test_foreign_host_secondary_or_ambiguous_identity_rejected(self):
+        cases = [
+            ('hello', 'isWritablePrimary', False), ('hello', 'me', 'foreign:27017'),
+            ('hello', 'primary', 'mongo-0.mongo.fluxgate-resilience.svc.cluster.local:27017'),
+            ('hello', 'setName', 'foreign-set'), ('status', 'myState', 2),
+            ('status', 'ok', 0), ('hello', 'ok', 0)]
+        for section, field, value in cases:
+            with self.subTest(section=section, field=field):
+                observation = self.observation()
+                observation[section][field] = value
+                with self.assertRaises(AssertionError):
+                    self.select(observation)
+        for change in ('duplicate-self', 'secondary-self', 'foreign-self', 'no-self'):
+            with self.subTest(change=change):
+                observation = self.observation()
+                members = observation['status']['members']
+                if change == 'duplicate-self':
+                    members[0]['self'] = True
+                elif change == 'secondary-self':
+                    members[1]['state'] = 2
+                elif change == 'foreign-self':
+                    members[1]['name'] = observation['hello']['me'] = observation['hello']['primary'] = 'foreign:27017'
+                else:
+                    members[1].pop('self')
+                with self.assertRaises(AssertionError):
+                    self.select(observation)
+
+    def test_nested_selector_uses_hello_and_status_in_same_connection(self):
+        observation = self.observation()
+        calls = []
+        environment = {'mongo': lambda source: calls.append(source) or observation,
+                       'fixture': {'mongo_pods': ['mongo-0', 'mongo-1', 'mongo-2']},
+                       'ns': 'fluxgate-resilience',
+                       'verified_mongo_primary': MODULE['verified_mongo_primary']}
+        function = nested_function('mongo_primary')
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(SCRIPT), 'exec'), environment)
+        self.assertEqual(environment['mongo_primary'](), 'mongo-1')
+        self.assertIn('hello:1', calls[0])
+        self.assertIn('replSetGetStatus:1', calls[0])
+
+
 if __name__ == '__main__':
     unittest.main()
