@@ -45,13 +45,18 @@ def main():
     route_restore = None
     route_header = None
     restore_deadline = None
+    fault_deadline = None
+    failure_phase = 'preflight'
+    phase_evidence = {}
+    outage_samples = []
     sentinels = []
 
     def kube(command, stdin=None, timeout=45, binary=False):
-        if restore_deadline is not None:
-            remaining = restore_deadline - time.monotonic()
+        deadlines = [d for d in (restore_deadline, fault_deadline) if d is not None]
+        if deadlines:
+            remaining = min(deadlines) - time.monotonic()
             if remaining <= 0:
-                raise RuntimeError('Whole-fixture restoration exceeded 180s')
+                raise RuntimeError('Command exceeded its shared phase deadline')
             timeout = min(timeout, remaining)
         result = subprocess.run(kube_base + command, input=stdin, env=env, capture_output=True,
                                 text=not binary, timeout=timeout)
@@ -380,10 +385,13 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         record('baseline', policy=baseline, redis=topology(), placement=json.loads((fixture_file.parent / 'placement.json').read_text()))
         request(fixture['load_path'], {200})
         if args.phase in ('all', 'redis'):
+            failure_phase = 'redis-promotion'
+            phase_evidence = {}
             authz_before = authz_processes()
             for _ in range(4):
                 request(fixture['quota_path'], {200})
             key, before = bucket()
+            phase_evidence.update({'bucket_key': key, 'raw_before': before, 'authz_processes_before': authz_before})
             assert before['tokens'] == '1', 'Four consumed permits must leave exactly one'
             old_id, old_primary, nodes = owner(key)
             replicas = [n for n in nodes.values() if n['primary'] == old_id]
@@ -393,7 +401,10 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             for replica in replicas:
                 redis(replica['pod'], ['SCRIPT', 'FLUSH'])
                 assert redis(replica['pod'], ['SCRIPT', 'EXISTS', sha]) == '0'
+            phase_evidence.update({'old_primary_id': old_id, 'old_primary': old_primary})
             fault_started = time.monotonic()
+            fault_deadline = fault_started + 30
+            phase_evidence['fault_started_monotonic'] = fault_started
             signal(old_primary['pod'], 'STOP')
             load_key = 'fluxgate:bucket:{resilience-limits:load-rule:key:' + fixture.get('api_key_id', 'resilience-key') + '}:hourly-fw'
             assert owner(load_key)[0] == old_id, 'Continuous high-capacity load must hit the failed quota primary shard'
@@ -402,25 +413,43 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                 identity, primary, _ = owner(key)
                 assert identity != old_id and 'fail' not in primary['flags']
                 return identity, primary
-            (new_id, new_primary), seconds = wait('Redis actual primary promotion', promoted, 30)
+            (new_id, new_primary), seconds = wait('Redis actual primary promotion', promoted, max(0, fault_deadline - time.monotonic()))
+            phase_evidence.update({'new_primary_id': new_id, 'new_primary': new_primary, 'promotion_seconds': seconds})
             _, after = bucket(key)
+            phase_evidence['raw_after_promotion'] = after
             assert after['tokens'] == before['tokens']
             assert policy() == baseline
+            def unchanged_paused_clients():
+                assert authz_processes() == authz_before, 'Redis recovery changed the application client processes'
+                return task_state(old_primary['pod']) == 'PAUSED'
+            recovery_seconds, sustained = sustained_traffic(fault_started, 30, unchanged_paused_clients)
+            phase_evidence.update({'recovery_seconds': recovery_seconds, 'sustained_gateway': sustained})
+            assert time.monotonic() < fault_deadline
             request(fixture['quota_path'], {200})
+            phase_evidence['last_quota_status'] = 200
+            assert time.monotonic() < fault_deadline
             request(fixture['quota_path'], {429})
+            phase_evidence['exhausted_quota_status'] = 429
             _, exhausted = bucket(key)
+            phase_evidence['raw_exhausted'] = exhausted
             assert exhausted['tokens'] == '0'
             assert redis(new_primary['pod'], ['SCRIPT', 'EXISTS', sha]) == '1'
             assert authz_processes() == authz_before, 'Redis failover must recover within the same authz client processes'
-            recovery_seconds, sustained = sustained_traffic(fault_started, 30, lambda: task_state(old_primary['pod']) == 'PAUSED')
+            assert unchanged_paused_clients()
+            assert time.monotonic() <= fault_deadline, 'Final quota checks exceeded global 30s fault budget'
+            phase_evidence['final_quota_seconds'] = round(time.monotonic() - fault_started, 3)
             stop_sampler()
             assert not any('unexpected' in sample for sample in outage_samples)
             record('redis-promotion', old_primary_id=old_id, new_primary_id=new_id, target_still_paused=old_primary['pod'] in paused,
-                   recovery_seconds=recovery_seconds, identity_promotion_seconds=seconds, sustained_gateway=sustained, task_state=task_state(old_primary['pod']), continuous_outage_samples=outage_samples, load_key_owned_failed_shard=True, bucket_key=key, raw_before=before, raw_after_promotion=after, raw_exhausted=exhausted,
+                   final_quota_seconds=phase_evidence['final_quota_seconds'], recovery_seconds=recovery_seconds, identity_promotion_seconds=seconds, sustained_gateway=sustained, task_state=task_state(old_primary['pod']), continuous_outage_samples=outage_samples, load_key_owned_failed_shard=True, bucket_key=key, raw_before=before, raw_after_promotion=after, raw_exhausted=exhausted,
                    cache_absent_before_promotion=True, cache_loaded_after_real_request=True, authz_processes_unchanged=authz_before, rpo='Observed counter preserved; asynchronous replication is not zero-loss consensus')
+            fault_deadline = None
             signal(old_primary['pod'], 'CONT')
             wait('Redis old member recovery', lambda: request(fixture['load_path'], {200}), 30)
         if args.phase in ('all', 'mongo'):
+            failure_phase = 'mongo-election-publication'
+            phase_evidence = {}
+            outage_samples = []
             prepare_publisher()
             old_primary = mongo_primary()
             fault_started = time.monotonic()
@@ -448,6 +477,9 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             baseline = current
             signal(old_primary, 'CONT')
         if args.phase in ('all', 'pod-restarts'):
+            failure_phase = 'pod-replacement'
+            phase_evidence = {}
+            outage_samples = []
             replacement_targets = [('mongo-2', ns), ('redis-8-0', ns),
                 (obj('pods', selector='app=fluxgate-authz')['items'][0]['metadata']['name'], ns),
                 (obj('pods', selector='app=echo')['items'][0]['metadata']['name'], ns),
@@ -459,6 +491,9 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                 if args.phase == 'all':
                     request(fixture['quota_path'], {429})
         if args.phase in ('all', 'node'):
+            failure_phase = 'worker-stop'
+            phase_evidence = {}
+            outage_samples = []
             controller_ns = fixture['gateway_namespace']
             lease_name = '5b9825d2.gateway.envoyproxy.io'
             old_holder = obj('lease', lease_name, namespace=controller_ns)['spec']['holderIdentity']
@@ -512,6 +547,9 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             route_restore = None
             route_header = None
         if args.phase in ('all', 'no-quorum'):
+            failure_phase = 'no-quorum'
+            phase_evidence = {}
+            outage_samples = []
             prepare_publisher()
             primary = mongo_primary()
             secondaries = [p for p in fixture['mongo_pods'] if p != primary]
@@ -583,7 +621,18 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         result = {'result': 'pass', 'phase': args.phase, 'context': fixture['context'], 'checks': checks,
                   'limits': ['Single Docker Desktop host only', 'AOF everysec and asynchronous replication retain nonzero RPO risk', 'Local PVCs do not prove off-host backup recovery']}
         (proof / 'pending-result.json').write_text(json.dumps({**result, 'complete': False}, indent=2) + '\n')
+    except Exception as error:
+        # Persist public observations before cleanup; failed attempts must remain reviewable.
+        try:
+            stop_sampler()
+        except Exception:
+            phase_evidence['sampler_shutdown_failed'] = True
+        (proof / 'failure.json').write_text(json.dumps({'complete': False, 'phase': failure_phase, 'exception_class': type(error).__name__,
+            'phase_evidence': phase_evidence, 'continuous_outage_samples': outage_samples, 'checks': checks,
+            'paused_tasks': paused, 'stopped_nodes': sorted(stopped_nodes)}, indent=2) + '\n')
+        raise
     finally:
+        fault_deadline = None
         cleanup_started = time.monotonic()
         cleanup_failures = []
         try:
