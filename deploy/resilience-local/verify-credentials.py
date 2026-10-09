@@ -34,6 +34,22 @@ def require(condition, label):
         raise ProofError(label)
 
 
+def credential_runtime():
+    require(ssl.HAS_TLSv1_3,
+            "live credential proof requires a TLS 1.3 capable Python/OpenSSL runtime; macOS LibreSSL is unsupported")
+    return {"python": sys.version.split()[0], "openssl": ssl.OPENSSL_VERSION,
+            "tls13_available": ssl.HAS_TLSv1_3}
+
+
+def validate_certificate_rejection(reason):
+    # Generic alerts, EOF, refused connections and timeouts never establish certificate rejection.
+    require(reason in {"CERTIFICATE_VERIFY_FAILED", "TLSV13_ALERT_CERTIFICATE_REQUIRED",
+                       "TLSV1_ALERT_UNKNOWN_CA", "SSLV3_ALERT_BAD_CERTIFICATE",
+                       "SSLV3_ALERT_CERTIFICATE_EXPIRED", "TLSV1_ALERT_BAD_CERTIFICATE",
+                       "SSLV3_ALERT_CERTIFICATE_UNKNOWN"},
+            "TLS negative lacked explicit certificate rejection")
+
+
 def run(args, data=None, check=True, timeout=120, env=None):
     result = subprocess.run(args, input=data, capture_output=True, timeout=timeout, env=env)
     if check and result.returncode:
@@ -329,15 +345,11 @@ class Proof:
                         response.begin()
                         response.read()
                         require(response.status == expected, "unexpected TLS HTTP status")
-                        return {"http": response.status, "new_connection": True}
+                        return {"http": response.status, "protocol": conn.version(), "new_connection": True}
             except ssl.SSLError as error:
                 require(expected == "tls-reject", "positive TLS probe rejected")
                 # DNS/refused/reset/timeout or generic handshake errors are not certificate controls.
-                require(error.reason in {"CERTIFICATE_VERIFY_FAILED", "TLSV13_ALERT_CERTIFICATE_REQUIRED",
-                                         "TLSV1_ALERT_UNKNOWN_CA", "SSLV3_ALERT_BAD_CERTIFICATE",
-                                         "SSLV3_ALERT_CERTIFICATE_EXPIRED", "TLSV1_ALERT_BAD_CERTIFICATE",
-                                         "SSLV3_ALERT_CERTIFICATE_UNKNOWN"},
-                        "TLS negative lacked explicit certificate rejection")
+                validate_certificate_rejection(error.reason)
                 return {"tls_rejected": True, "reason": error.reason, "new_connection": True}
         raise ProofError("negative TLS probe unexpectedly completed")
 
@@ -1321,8 +1333,33 @@ def backend_body_self_test():
         http.client.HTTPConnection = original
 
 
+def tls_runtime_self_test():
+    original = ssl.HAS_TLSv1_3
+    try:
+        ssl.HAS_TLSv1_3 = False
+        try:
+            credential_runtime()
+        except ProofError:
+            pass
+        else:
+            raise ProofError("unsupported TLS runtime passed live preflight")
+        ssl.HAS_TLSv1_3 = True
+        require(credential_runtime()["tls13_available"], "TLS 1.3 runtime rejected by preflight")
+        for reason in ("SSLV3_ALERT_HANDSHAKE_FAILURE", "UNEXPECTED_EOF_WHILE_READING", "WRONG_VERSION_NUMBER"):
+            try:
+                validate_certificate_rejection(reason)
+            except ProofError:
+                pass
+            else:
+                raise ProofError("generic TLS transport failure passed certificate control")
+        validate_certificate_rejection("TLSV13_ALERT_CERTIFICATE_REQUIRED")
+    finally:
+        ssl.HAS_TLSv1_3 = original
+
+
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
+    tls_runtime_self_test()
     failed_rotation_cleanup_self_test()
     backend_body_self_test()
     sampler_cleanup_self_test()
@@ -1524,6 +1561,7 @@ def main():
         self_test()
         return
     require(bool(args.fixture and args.output), "--fixture and --output required for live proof")
+    runtime = credential_runtime()
     proof = Proof(args.fixture)
     phases = args.phases.split(",")
     try:
@@ -1538,7 +1576,7 @@ def main():
             else:
                 method()
         result = {"passed": True, "complete": set(phases) == {"mtls", "api-key", "stores", "jwt"},
-                  "context": proof.f["context"], "namespace": proof.ns, "results": proof.results,
+                  "context": proof.f["context"], "namespace": proof.ns, "runtime": runtime, "results": proof.results,
                   "limits": ["Local ephemeral fixture only; no external credential authority tested.",
                              "Rotation availability is measured by 100ms in-cluster samples with explicit errors and omissions; no zero-downtime guarantee is inferred.",
                              "JWKS retirement records warm-cache behavior, checks an observed unknown-kid refresh, and checks a fresh decoder; key removal alone is not immediate revocation."]}
