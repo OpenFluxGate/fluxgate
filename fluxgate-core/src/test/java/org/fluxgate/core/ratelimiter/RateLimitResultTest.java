@@ -98,16 +98,17 @@ class RateLimitResultTest {
     }
 
     @Test
-    @DisplayName("allowedWithoutRule() should create unlimited result")
-    void allowedWithoutRule_shouldCreateUnlimitedResult() {
+    @DisplayName("allowedWithoutRule() should report unknown remaining tokens")
+    void allowedWithoutRule_shouldReportUnknownRemainingTokens() {
       // when
       RateLimitResult result = RateLimitResult.allowedWithoutRule();
 
       // then
       assertTrue(result.isAllowed());
       assertNull(result.getMatchedRule());
+      assertFalse(result.hasRule());
       assertNull(result.getKey());
-      assertEquals(Long.MAX_VALUE, result.getRemainingTokens());
+      assertEquals(-1L, result.getRemainingTokens()); // no bucket was consulted
       assertEquals(0, result.getNanosToWaitForRefill());
     }
   }
@@ -315,6 +316,91 @@ class RateLimitResultTest {
       // then
       assertFalse(result.isAllowed());
       assertEquals(0L, result.getNanosToWaitForRefill());
+    }
+  }
+
+  // ==================== Limit / Reset / Policy / Band Label Tests ====================
+
+  @Nested
+  @DisplayName("Limit / Reset / Policy / Band Label Tests")
+  class HeaderMetadataTests {
+
+    @Test
+    @DisplayName("limit, resetTimeMillis and bandLabel should default to unknown")
+    void builder_shouldDefaultHeaderMetadataToUnknown() {
+      // given / when
+      RateLimitResult result = RateLimitResult.builder(createKey("test")).allowed(true).build();
+
+      // then
+      assertEquals(-1L, result.getLimit());
+      assertEquals(-1L, result.getResetTimeMillis());
+      assertNull(result.getBandLabel());
+      assertNull(result.getPolicy());
+      assertFalse(result.hasRule());
+    }
+
+    @Test
+    @DisplayName("policy should default to the matched rule's policy")
+    void builder_shouldDefaultPolicyToMatchedRulePolicy() {
+      // given / when
+      RateLimitResult result =
+          RateLimitResult.allowed(createKey("test"), createRule(), 99, 0, 100, 1_700_000_000_000L);
+
+      // then
+      assertEquals(OnLimitExceedPolicy.REJECT_REQUEST, result.getPolicy());
+      assertTrue(result.hasRule());
+      assertEquals(100L, result.getLimit());
+      assertEquals(1_700_000_000_000L, result.getResetTimeMillis());
+    }
+
+    @Test
+    @DisplayName("explicit policy should win over the matched rule's policy")
+    void builder_shouldPreferExplicitPolicy() {
+      // given / when
+      RateLimitResult result =
+          RateLimitResult.builder(createKey("test"))
+              .allowed(false)
+              .matchedRule(createRule())
+              .policy(OnLimitExceedPolicy.WAIT_FOR_REFILL)
+              .bandLabel("per-minute")
+              .build();
+
+      // then
+      assertEquals(OnLimitExceedPolicy.WAIT_FOR_REFILL, result.getPolicy());
+      assertEquals("per-minute", result.getBandLabel());
+    }
+
+    @Test
+    @DisplayName("rejected() with metadata should carry the real remaining tokens")
+    void rejected_shouldCarryRealRemainingTokens() {
+      // given / when
+      RateLimitResult result =
+          RateLimitResult.rejected(
+              createKey("test"), createRule(), 3L, 1_000_000L, 100L, 1_700_000_000_000L);
+
+      // then
+      assertFalse(result.isAllowed());
+      assertEquals(3L, result.getRemainingTokens());
+      assertEquals(1_000_000L, result.getNanosToWaitForRefill());
+      assertEquals(100L, result.getLimit());
+      assertEquals(1_700_000_000_000L, result.getResetTimeMillis());
+    }
+
+    @Test
+    @DisplayName("equals and hashCode should cover every field")
+    void equals_shouldBeValueBased() {
+      // given
+      RateLimitKey key = createKey("test");
+      RateLimitRule rule = createRule();
+
+      RateLimitResult first = RateLimitResult.allowed(key, rule, 99, 0, 100, 1_700_000_000_000L);
+      RateLimitResult second = RateLimitResult.allowed(key, rule, 99, 0, 100, 1_700_000_000_000L);
+
+      // when / then
+      assertEquals(first, second);
+      assertEquals(first.hashCode(), second.hashCode());
+      assertNotEquals(first, RateLimitResult.allowed(key, rule, 99, 0, 200, 1_700_000_000_000L));
+      assertNotEquals(first, RateLimitResult.allowed(key, rule, 99, 0, 100, 1L));
     }
   }
 }

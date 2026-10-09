@@ -30,6 +30,12 @@
             <artifactId>bucket4j_jdk11-core</artifactId>
         </dependency>
 
+        <!-- Bounded bucket cache for the in-memory rate limiter -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- Logging API (implementation to be provided by consumer) -->
         <dependency>
             <groupId>org.slf4j</groupId>

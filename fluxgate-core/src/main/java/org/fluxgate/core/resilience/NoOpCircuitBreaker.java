@@ -1,5 +1,6 @@
 package org.fluxgate.core.resilience;
 
+import java.util.Objects;
 import java.util.function.Supplier;
 
 /**
@@ -7,6 +8,11 @@ import java.util.function.Supplier;
  *
  * <p>This implementation executes actions directly without any circuit breaker logic. It is useful
  * when circuit breaker functionality is disabled.
+ *
+ * <p>The contract of {@link CircuitBreaker} still holds: the circuit never opens, so {@link
+ * #execute(String, Supplier)} never throws {@link CircuitBreakerOpenException} and {@link
+ * #executeWithFallback(Supplier, Supplier)} only falls back when the action itself fails. Neither
+ * method ever returns {@code null} on behalf of the caller.
  */
 public class NoOpCircuitBreaker implements CircuitBreaker {
 
@@ -37,9 +43,10 @@ public class NoOpCircuitBreaker implements CircuitBreaker {
 
   @Override
   public <T> T executeWithFallback(Supplier<T> action, Supplier<T> fallback) {
+    Objects.requireNonNull(fallback, "fallback must not be null");
     try {
       return action.get();
-    } catch (Exception e) {
+    } catch (RuntimeException e) {
       return fallback.get();
     }
   }

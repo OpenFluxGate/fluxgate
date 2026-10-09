@@ -13,6 +13,7 @@ package org.fluxgate.core.exception;
  */
 public class RedisConnectionException extends FluxgateConnectionException {
 
+  /** The Redis URI that could not be reached. */
   private final String redisUri;
 
   /**
