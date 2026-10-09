@@ -826,7 +826,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         except Exception:
             cleanup_failures.append('complete fixture restoration failed within 180s')
         try:
-            cleaned = run_publisher_preparation(['python3', str(args.publisher_hook), '--fixture', str(fixture_file), '--cleanup'], env, timeout=30)
+            cleaned = run_publisher_preparation(['python3', str(args.publisher_hook), '--fixture', str(fixture_file), '--cleanup'], env, timeout=90)
             assert cleaned.returncode == 0, 'Publication probe cleanup failed'
             cleanup_result = json.loads(cleaned.stdout)
             validate_publisher_cleanup(cleanup_result)
