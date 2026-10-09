@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.fluxgate.testkit.benchmark;
+package org.fluxgate.benchmark;
 
 import org.openjdk.jmh.results.format.ResultFormatType;
 import org.openjdk.jmh.runner.Runner;
@@ -30,16 +30,16 @@ import org.openjdk.jmh.runner.options.TimeValue;
  *
  * <pre>
  * # Build the benchmark jar
- * mvn package -Pbenchmark -pl fluxgate-testkit
+ * mvn package -Pbenchmark -pl fluxgate-benchmarks
  *
  * # Run all benchmarks
- * java -jar fluxgate-testkit/target/benchmarks.jar
+ * java -jar fluxgate-benchmarks/target/benchmarks.jar
  *
  * # Run specific benchmark
- * java -jar fluxgate-testkit/target/benchmarks.jar RedisRateLimiterBenchmark
+ * java -jar fluxgate-benchmarks/target/benchmarks.jar RedisRateLimiterBenchmark
  *
  * # Quick mode (fewer iterations)
- * java -jar fluxgate-testkit/target/benchmarks.jar -wi 1 -i 3 -f 1
+ * java -jar fluxgate-benchmarks/target/benchmarks.jar -wi 1 -i 3 -f 1
  * </pre>
  *
  * <p>Output formats:
@@ -73,7 +73,7 @@ public class BenchmarkRunner {
   public static Options createOptions(String outputFile, boolean quickMode) {
     ChainedOptionsBuilder builder =
         new OptionsBuilder()
-            .include("org.fluxgate.testkit.benchmark.*")
+            .include("org.fluxgate.benchmark.*")
             .resultFormat(ResultFormatType.JSON)
             .result(outputFile);
 
