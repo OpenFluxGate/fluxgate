@@ -125,11 +125,13 @@ while time.monotonic()<deadline:
         except urllib.error.HTTPError as error: response=error
         with response:
             item['status']=response.status
-            item['body_valid']=(response.read().decode().strip()==backend)
+            body=response.read()
+            item['body_valid']=body in (backend.encode(),backend.encode()+b'\n')
+            item['backend_marker_present']=backend.encode() in body
             item['route_marker_valid']='x-ha-controller-proof' not in response.headers
         if item['status']==200 and (not item['body_valid'] or not item['route_marker_valid']):
             item['unexpected']=True
-        if item['status'] not in (200,503) or (item['status']!=200 and item['body_valid']):
+        if item['status'] not in (200,503) or (item['status']!=200 and item['backend_marker_present']):
             item['unexpected']=True
     except Exception as error:
         item['transport_error']=type(error).__name__
@@ -293,7 +295,9 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         response = json.loads(kube(['-n', ns, 'exec', probe, '--', 'python', '-c', source,
                                    host, path, method, fixture['gateway_host'], fixture['load_path']], timeout=12))
         assert response['status'] in allowed, f'Unexpected real Envoy HTTP status {response["status"]}'
-        assert (fixture['backend_body'] in response['body']) == (response['status'] == 200), 'Denied/error request reached backend'
+        expected = fixture['backend_body']
+        valid = response['body'] in (expected, expected + '\n')
+        assert valid if response['status'] == 200 else expected not in response['body'], 'Invalid backend body or denied/error request reached backend'
         if expected_header is not None:
             assert response['headers'].get(expected_header[0]) == expected_header[1]
         return response['status']
