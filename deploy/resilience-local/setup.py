@@ -151,7 +151,7 @@ const conn=new Mongo('mongodb://admin:'+encodeURIComponent(password)+'@127.0.0.1
          'api-key-id': identity, 'attributes': {'tenant': 'resilience'}} for path, identity in api_keys]}}}
     api_mapping = private('application-credentials.yml', json.dumps(mappings))
     mongo_hosts = ','.join(f'mongo-{i}.mongo.{NS}.svc.cluster.local:27017' for i in range(3))
-    options = '?replicaSet=rs0&authSource=admin&w=majority&wtimeoutMS=2000&connectTimeoutMS=2000&serverSelectionTimeoutMS=2000&socketTimeoutMS=2000&heartbeatFrequencyMS=2000'
+    options = '?replicaSet=rs0&authSource=admin&w=majority&wtimeoutMS=2000&connectTimeoutMS=2000&serverSelectionTimeoutMS=2000&socketTimeoutMS=2000&heartbeatFrequencyMS=2000&waitQueueTimeoutMS=2000&minPoolSize=4&maxConnecting=8'
     mongo_uri = private('mongo-uri', f'mongodb://fluxgate:{quote(mongo_app.read_text(), safe="")}@{mongo_hosts}/fluxgate' + options.replace('authSource=admin', 'authSource=fluxgate'))
     mongo_admin_uri = private('mongo-admin-uri', f'mongodb://admin:{quote(mongo_admin.read_text(), safe="")}@{mongo_hosts}/admin' + options)
     redis_uri = private('redis-uri', ','.join(f'redis://:{quote(redis_password.read_text(), safe="")}@redis-{i}-0.redis.{NS}.svc.cluster.local:6379' for i in range(3)))
