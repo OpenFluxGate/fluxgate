@@ -121,6 +121,9 @@ def sampler_worker(config, stop_path):
             sequence += missed
             deadline = start + sequence * .1
         time.sleep(max(0, deadline - time.monotonic()))
+        # A stop may arrive while waiting for the next schedule. Do not dispatch after it.
+        if Path(stop_path).exists():
+            break
         began = time.monotonic()
         sample = {"sequence": sequence, "elapsed_seconds": began - start,
                   "dispatch_lag_ms": max(0, began - deadline) * 1000}
@@ -1035,9 +1038,10 @@ def self_test():
                 self.send_response(status)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                # Publish stop before the final body unblocks the sampler's reader.
                 if len(calls) == 3:
                     private_write(stop, "stop")
+                self.wfile.write(body)
             def log_message(self, *args):
                 pass
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -1049,6 +1053,23 @@ def self_test():
             require(observed["statuses"] == {"200": 2, "503": 1} and observed["unexpected_body_responses"] == 1 and
                     observed["backend_successes"] == 1 and not observed["uninterrupted_observed"],
                     "actual traffic sampler hid status/body failures")
+            stop.unlink()
+            calls.clear()
+            original_sleep = time.sleep
+            def stop_during_wait(delay):
+                if delay > 0:
+                    private_write(stop, "stop")
+                else:
+                    original_sleep(0)
+            time.sleep = stop_during_wait
+            try:
+                stopped = sampler_summary(sampler_worker({"service": "127.0.0.1", "port": server.server_port,
+                    "path": "/load", "host": "local", "api_key": "offline-fixture", "body": "backend-marker",
+                    "positive_path": str(Path(directory) / "positive")}, str(stop)))
+                require(len(calls) == 1 and stopped["scheduled"] == 1 and stopped["omitted_schedules"] == 0,
+                        "sampler dispatched after stop arrived during schedule wait")
+            finally:
+                time.sleep = original_sleep
         finally:
             server.shutdown()
             server.server_close()
