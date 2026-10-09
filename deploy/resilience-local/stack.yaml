@@ -1,0 +1,407 @@
+# Isolated, ephemeral development stack. NetworkPolicy requires an enforcing CNI.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fluxgate-resilience
+  labels: {fluxgate.io/environment: local-ephemeral}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: fluxgate-authz, namespace: fluxgate-resilience}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: fluxgate-authz}
+  template:
+    metadata:
+      labels: {app: fluxgate-authz}
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: fluxgate-authz}}
+              topologyKey: kubernetes.io/hostname
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001}
+      containers:
+        - name: authz
+          image: fluxgate-envoy-extauth:enterprise
+          imagePullPolicy: Never
+          env:
+            - {name: SPRING_CONFIG_ADDITIONAL_LOCATION, value: 'file:/config/application-resilience.yml'}
+            - {name: SPRING_PROFILES_ACTIVE, value: local-enterprise}
+            - {name: JAVA_TOOL_OPTIONS, value: '-XX:MaxRAMPercentage=65 -XX:ActiveProcessorCount=2'}
+          ports: [{name: https, containerPort: 8443}, {name: management, containerPort: 8081}]
+          startupProbe:
+            httpGet: {path: /healthz, port: management}
+            periodSeconds: 3
+            failureThreshold: 60
+          livenessProbe:
+            httpGet: {path: /healthz, port: management}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /readyz, port: management}
+            periodSeconds: 3
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: '1', memory: 384Mi}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: tls, mountPath: /tls, readOnly: true}
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: bootstrap, mountPath: /bootstrap, readOnly: true}
+            - {name: stores, mountPath: /credentials/stores, readOnly: true}
+            - {name: api, mountPath: /credentials/api, readOnly: true}
+      volumes:
+        - name: tls
+          secret: {secretName: fluxgate-authz-server-tls, defaultMode: 288}
+        - name: config
+          configMap: {name: fluxgate-resilience-config}
+        - name: bootstrap
+          configMap: {name: fluxgate-policy-bootstrap}
+        - name: stores
+          secret:
+            secretName: fluxgate-store-credentials
+            defaultMode: 288
+            items:
+              - {key: fluxgate.mongo.uri, path: fluxgate.mongo.uri}
+              - {key: fluxgate.redis.uri, path: fluxgate.redis.uri}
+        - name: api
+          secret: {secretName: fluxgate-api-key-config, defaultMode: 288}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fluxgate-authz, namespace: fluxgate-resilience}
+spec:
+  selector: {app: fluxgate-authz}
+  ports: [{name: https, port: 8443, targetPort: https}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: echo, namespace: fluxgate-resilience}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: echo}
+  template:
+    metadata:
+      labels: {app: echo}
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: echo}}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: echo
+          image: hashicorp/http-echo:1.0.0
+          args: ['-listen=:5678', '-text=fluxgate-resilience-ok']
+          ports: [{containerPort: 5678}]
+          readinessProbe: {tcpSocket: {port: 5678}, periodSeconds: 3}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: echo, namespace: fluxgate-resilience}
+spec:
+  selector: {app: echo}
+  ports: [{port: 5678}]
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata: {name: fluxgate-resilience-proxy, namespace: fluxgate-resilience}
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: 2
+        container:
+          resources:
+            requests: {cpu: 50m, memory: 96Mi}
+            limits: {cpu: '1', memory: 256Mi}
+        pod:
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      gateway.envoyproxy.io/owning-gateway-namespace: fluxgate-resilience
+                      gateway.envoyproxy.io/owning-gateway-name: fluxgate-resilience-gateway
+                  topologyKey: kubernetes.io/hostname
+  backendTLS:
+    clientCertificateRef: {kind: Secret, name: fluxgate-envoy-client-tls}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata: {name: fluxgate-resilience-gateway, namespace: fluxgate-resilience}
+spec:
+  gatewayClassName: eg
+  infrastructure:
+    parametersRef: {group: gateway.envoyproxy.io, kind: EnvoyProxy, name: fluxgate-resilience-proxy}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces: {from: Same}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: resilience-api, namespace: fluxgate-resilience}
+spec:
+  parentRefs: [{name: fluxgate-resilience-gateway}]
+  rules:
+    - matches: [{path: {type: PathPrefix, value: /api}}]
+      backendRefs: [{name: echo, port: 5678}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata: {name: authz-backend-tls, namespace: fluxgate-resilience}
+spec:
+  targetRefs: [{group: '', kind: Service, name: fluxgate-authz, sectionName: https}]
+  validation:
+    caCertificateRefs: [{group: '', kind: ConfigMap, name: fluxgate-authz-server-ca}]
+    hostname: fluxgate-authz.fluxgate-resilience.svc.cluster.local
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata: {name: resilience-ext-auth, namespace: fluxgate-resilience}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: resilience-api}]
+  extAuth:
+    http:
+      backendRefs: [{name: fluxgate-authz, port: 8443}]
+      path: /authz
+    headersToExtAuth: [content-type, x-forwarded-for, x-api-key]
+    timeout: 5s
+    failOpen: false
+    statusOnError: 503
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: fluxgate-resilience}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: gateway-to-authz-and-backend, namespace: fluxgate-resilience}
+spec:
+  podSelector:
+    matchExpressions: [{key: app, operator: In, values: [fluxgate-authz, echo]}]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: envoy-gateway-system}}
+          podSelector:
+            matchLabels:
+              gateway.envoyproxy.io/owning-gateway-namespace: fluxgate-resilience
+              gateway.envoyproxy.io/owning-gateway-name: fluxgate-resilience-gateway
+      ports: [{port: 8443}, {port: 5678}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: authz-to-stores-and-dns, namespace: fluxgate-resilience}
+spec:
+  podSelector: {matchLabels: {app: fluxgate-authz}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: mongo}}}]
+      ports: [{port: 27017}]
+    - to: [{podSelector: {matchLabels: {app: redis}}}]
+      ports: [{port: 6379}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: stores-from-authz, namespace: fluxgate-resilience}
+spec:
+  podSelector:
+    matchExpressions: [{key: app, operator: In, values: [mongo, redis]}]
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: fluxgate-authz}}}]
+      ports: [{port: 27017}, {port: 6379}]
+
+---
+apiVersion: v1
+kind: Service
+metadata: {name: mongo, namespace: fluxgate-resilience}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: {app: mongo}
+  ports: [{port: 27017}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: mongo, namespace: fluxgate-resilience}
+spec:
+  serviceName: mongo
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: {app: mongo}
+  template:
+    metadata:
+      labels: {app: mongo}
+    spec:
+      securityContext: {fsGroup: 999}
+      tolerations:
+        - {key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: {matchLabels: {app: mongo}}
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: mongo
+          image: mongo:7
+          command: [/bin/bash, -c]
+          args:
+            - |
+              install -m 600 -o 999 -g 999 /admin/mongo-keyfile /cluster-key/key
+              exec docker-entrypoint.sh mongod --replSet rs0 --auth --keyFile /cluster-key/key --bind_ip_all --wiredTigerCacheSizeGB 0.25
+          env:
+            - {name: MONGO_INITDB_ROOT_USERNAME, value: admin}
+            - {name: MONGO_INITDB_ROOT_PASSWORD_FILE, value: /admin/mongo-admin-password}
+          ports: [{containerPort: 27017}]
+          readinessProbe: {tcpSocket: {port: 27017}, periodSeconds: 3}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: '1', memory: 640Mi}
+          volumeMounts:
+            - {name: data, mountPath: /data/db}
+            - {name: key, mountPath: /cluster-key}
+            - {name: admin, mountPath: /admin, readOnly: true}
+            - {name: app, mountPath: /app-credentials, readOnly: true}
+      volumes:
+        - {name: key, emptyDir: {}}
+        - name: admin
+          secret: {secretName: fluxgate-mongo-admin, defaultMode: 288}
+        - name: app
+          secret:
+            secretName: fluxgate-store-credentials
+            defaultMode: 288
+            items: [{key: mongo-app-password, path: mongo-app-password}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: standard
+        resources:
+          requests: {storage: 1Gi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: redis, namespace: fluxgate-resilience}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: {app: redis}
+  ports: [{name: client, port: 6379}, {name: bus, port: 16379}]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: redis, namespace: fluxgate-resilience}
+spec:
+  serviceName: redis
+  replicas: 1
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      tolerations:
+        - {key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector: {matchLabels: {app: redis}}
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          command: [/bin/sh, -c]
+          args:
+            - |
+              umask 077
+              password=$(cat /credentials/redis-password)
+              cat > /run-config/redis.conf <<EOF
+              bind 0.0.0.0
+              protected-mode yes
+              requirepass $password
+              masterauth $password
+              cluster-enabled yes
+              cluster-config-file /data/nodes.conf
+              cluster-node-timeout 3000
+              cluster-announce-ip $POD_IP
+              cluster-announce-hostname $HOSTNAME.redis.fluxgate-resilience.svc.cluster.local
+              cluster-preferred-endpoint-type hostname
+              cluster-require-full-coverage yes
+              min-replicas-to-write 1
+              min-replicas-max-lag 1
+              appendonly yes
+              appendfsync everysec
+              maxmemory 64mb
+              maxmemory-policy noeviction
+              dir /data
+              EOF
+              exec redis-server /run-config/redis.conf
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef: {fieldPath: status.podIP}
+          ports: [{name: client, containerPort: 6379}, {name: bus, containerPort: 16379}]
+          readinessProbe: {tcpSocket: {port: client}, periodSeconds: 3}
+          resources:
+            requests: {cpu: 25m, memory: 48Mi}
+            limits: {cpu: 500m, memory: 128Mi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: config, mountPath: /run-config}
+            - {name: credentials, mountPath: /credentials, readOnly: true}
+      volumes:
+        - {name: config, emptyDir: {}}
+        - name: credentials
+          secret:
+            secretName: fluxgate-store-credentials
+            defaultMode: 256
+            items: [{key: redis-password, path: redis-password}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: standard
+        resources:
+          requests: {storage: 512Mi}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: store-replication, namespace: fluxgate-resilience}
+spec:
+  podSelector:
+    matchExpressions: [{key: app, operator: In, values: [mongo, redis]}]
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions: [{key: app, operator: In, values: [mongo, redis]}]
+      ports: [{port: 27017}, {port: 6379}, {port: 16379}]
+  egress:
+    - to:
+        - podSelector:
+            matchExpressions: [{key: app, operator: In, values: [mongo, redis]}]
+      ports: [{port: 27017}, {port: 6379}, {port: 16379}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]

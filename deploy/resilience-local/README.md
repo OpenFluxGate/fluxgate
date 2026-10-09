@@ -1,0 +1,31 @@
+# Isolated local resilience fixture
+
+This fixture runs the existing Java FluxGate engine behind Envoy Gateway 1.9.2, with authenticated MongoDB 7 and Redis 7.4 Cluster. It creates only `kind-fluxgate-resilience`; existing pilot clusters are preserved. Kubernetes 1.35.0 and Calico 3.33.0 are pinned in the setup sources. The machine needs Docker, kind, kubectl, Helm, OpenSSL and Python 3; no application libraries are added.
+
+The three kind nodes host MongoDB's three voting data members and Redis's three primaries with two replicas each. Every Redis shard spans all three nodes. Redis requires one replica within one second before accepting writes; asynchronous replication and AOF `everysec` still permit acknowledged data loss. Mongo publication uses majority reads/writes. Authz, echo backend, Envoy data plane and Envoy Gateway controllers each have two replicas with hostname anti-affinity. Controller leader election uses its normal shared Lease. A single Kubernetes control plane and Docker host remain failure domains.
+
+Build the current application JAR first, then build `fluxgate-envoy-extauth:resilience` with `deploy/envoy-gateway-local/Dockerfile` from the main Envoy worktree. Setup loads that image into this cluster. On the local Apple Silicon host, stalled registry pulls can be avoided by importing cached store images with `docker save --platform linux/arm64 mongo:7 redis:7.4-alpine | docker exec -i NODE ctr -n k8s.io images import --platform linux/arm64 -` for each of the three fixture nodes.
+
+```sh
+python3 deploy/resilience-local/setup.py --fixture /tmp/fluxgate-resilience-private --image fluxgate-envoy-extauth:resilience
+```
+
+The fixture directory is private (0700); keys, credentials, URIs and metadata files are 0600. `fixture.json` contains credential **filenames**, never raw passwords or API keys. Separate client/server CAs enforce Envoy-to-authz mutual TLS, with exact gateway certificate subject matching. API key mappings are a mounted Secret; verified identities retain stable logical IDs. App Pods receive only app store credentials, not Mongo administrator material. Calico policies restrict direct access to authz, backend and stores; probe allowances are explicit and removed after each run. Health checks use management port 8081; authz TLS remains 8443.
+
+Both rules belong to one published `resilience-limits` snapshot: `/api/load` uses a supported fixed window with ten million permits/hour; `/api/quota` uses a five-permit/day bucket. Load/rotation (`resilience-key`), HA (`resilience-ha-key`) and quota boundary (`resilience-quota-key`) identities are separate. Bootstrap is opt-in and idempotent using the private stable operation UUID. Setup waits for authenticated Mongo quorum, all Redis slots/nine members and two linked replicas per primary, app readiness, two Envoy/controller placements and current route/policy conditions. Kind's missing external LoadBalancer address is expected; listener Programmed and actual service traffic provide the usable condition.
+
+Run load, HA and credentials proofs **serially**, with one mutation owner. Do not rerun setup during a fault: it scales authz to zero while checking bootstrap dependencies. Root's actual repository publisher helper must be placed alongside these scripts (or passed explicitly):
+
+```sh
+python3 deploy/resilience-local/verify-ha.py --fixture /tmp/fluxgate-resilience-private --publisher-hook deploy/resilience-local/publish-hook.py --proof /tmp/fluxgate-ha-proof
+```
+
+The HA script verifies four consumed quota permits, freezes the actual owning Redis primary through containerd, observes promotion, verifies one permit remains, then requires exactly one success and a 429. Replica script caches are flushed to prove real NOSCRIPT recovery. Authz process identities must stay unchanged during promotion. Continuous high-capacity traffic targets the same shard. Mongo primary freezing invokes the actual publication helper during election and verifies majority-visible metadata-only publication with unchanged epoch, quota and ACL. A timed-out no-quorum publication remains an **unknown outcome** until majority recovery explicitly resolves its operation ID and unchanged active pointer.
+
+Pod replacement requires a genuinely new controller-owned UID, all desired replicas Ready, exact StatefulSet ordinal and unchanged PVC UID/mount. A small random sentinel on the actual mounted data volume proves content continuity; it is removed independently during cleanup. Worker testing stops the node hosting the active Envoy Gateway controller leader, requires a new Lease holder, patches the existing protected route with a unique response header, and requires new xDS configuration plus three consecutive real backend responses while Docker still reports the node stopped. The route is restored exactly. Redis `NOREPLICAS` write guard and whole-shard `CLUSTERDOWN` are separate failure checks. Mongo no-quorum publication is checked independently; previously committed reads need not fail.
+
+Promotion and Mongo recovery gates are 30 seconds; worker/Pod service recovery gates are 90 seconds. These are test acceptance bounds, not vendor RTO guarantees. Only `ha.json` with `complete: true` **and process exit 0** is completed evidence; it is written after independent task/node/route/probe cleanup. An exception leaves progress evidence and fails the run. Python optimization is rejected because proof assertions must execute.
+
+The first full HA run consumes its dedicated five-permit bucket. A full rerun requires a fresh private HA key and logical identity appended to the existing mapping, preserving load/quota/rotation identities. Coordinate that healthy preparation and authz rollout before taking the new baseline, update `ha_api_key_file` and `ha_api_key_id`, then retain the same authz UIDs throughout Redis failover. There is no hidden Redis deletion, WAIT workaround or counter reset. Do not interpret a partial phase as the full five-permit sequence.
+
+PVCs protect local Pod replacement only; no off-host backup, whole-host resilience or production availability claim is made. Proof JSON records observed timing, placements, policy identity, raw bucket fields and restoration. Credentials must never be passed as shell literals, printed or committed.
