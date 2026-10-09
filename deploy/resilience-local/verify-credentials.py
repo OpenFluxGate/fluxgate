@@ -1352,9 +1352,15 @@ def strict_tls_self_test():
         client, client_key = proof.certificate("strict-client", ca, key, "trusted-gateway")
         wrong, wrong_key = proof.certificate("strict-wrong", ca, key, "wrong-gateway")
         expired, expired_key = proof.certificate("strict-expired", ca, key, "trusted-gateway", expired=True)
-        for cert in (server_cert, client, wrong):
-            checked = run([proof.openssl, "verify", "-x509_strict", "-CAfile", str(ca), str(cert)], check=False)
-            require(checked.returncode == 0, "generated chain failed strict verification: " + checked.stderr.decode())
+        for cert, purpose in ((server_cert, "sslserver"), (client, "sslclient"), (wrong, "sslclient")):
+            checked = run([proof.openssl, "verify", "-x509_strict", "-purpose", purpose,
+                           "-CAfile", str(ca), str(cert)], check=False)
+            require(checked.returncode == 0, "generated chain failed strict purpose verification: " + checked.stderr.decode())
+            opposite = "sslclient" if purpose == "sslserver" else "sslserver"
+            checked = run([proof.openssl, "verify", "-x509_strict", "-purpose", opposite,
+                           "-CAfile", str(ca), str(cert)], check=False)
+            require(checked.returncode != 0 and b"unsuitable certificate purpose" in checked.stderr.lower(),
+                    "rotated certificate accepted opposite TLS purpose")
         checked = run([proof.openssl, "verify", "-x509_strict", "-CAfile", str(ca), str(expired)], check=False)
         require(checked.returncode != 0 and b"expired" in checked.stderr.lower(), "strict expired control accepted")
         spec = importlib.util.spec_from_file_location("credential_setup", Path(__file__).with_name("setup.py"))
@@ -1366,8 +1372,13 @@ def strict_tls_self_test():
             return run([proof.openssl] + args[1:]).stdout
         initial.generate_tls(initial_dir, "localhost", initial_run)
         for role in ("server", "client"):
-            run([proof.openssl, "verify", "-x509_strict", "-CAfile", str(initial_dir / (role + "-ca.crt")),
-                 str(initial_dir / (role + ".crt"))])
+            run([proof.openssl, "verify", "-x509_strict", "-purpose", "ssl" + role,
+                 "-CAfile", str(initial_dir / (role + "-ca.crt")), str(initial_dir / (role + ".crt"))])
+            opposite = "sslclient" if role == "server" else "sslserver"
+            checked = run([proof.openssl, "verify", "-x509_strict", "-purpose", opposite,
+                           "-CAfile", str(initial_dir / (role + "-ca.crt")), str(initial_dir / (role + ".crt"))], check=False)
+            require(checked.returncode != 0 and b"unsuitable certificate purpose" in checked.stderr.lower(),
+                    "initial certificate accepted opposite TLS purpose")
         if not ssl.HAS_TLSv1_3:
             return
         class Handler(http.server.BaseHTTPRequestHandler):
