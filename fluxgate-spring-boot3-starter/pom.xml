@@ -24,9 +24,8 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <spring-boot.version>3.3.5</spring-boot.version>
-        <!-- Lower coverage thresholds for this module due to many excluded auto-config classes -->
-        <jacoco.line.coverage>0.75</jacoco.line.coverage>
-        <jacoco.branch.coverage>0.65</jacoco.branch.coverage>
+        <!-- Spring Framework version of Spring Boot ${spring-boot.version} -->
+        <spring.version>6.1.14</spring.version>
         <skipJacocoForPom>false</skipJacocoForPom>
     </properties>
 
@@ -98,19 +97,17 @@
             <version>7.4</version>
         </dependency>
 
-        <!-- Micrometer for Prometheus metrics (optional) -->
+        <!-- Micrometer for Prometheus metrics (optional) - version from root dependencyManagement -->
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-core</artifactId>
-            <version>1.13.6</version>
             <optional>true</optional>
         </dependency>
 
-        <!-- Caffeine cache for rule caching (optional) -->
+        <!-- Caffeine cache for rule caching (optional) - version from root dependencyManagement -->
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
-            <version>3.1.8</version>
             <optional>true</optional>
         </dependency>
 
@@ -122,12 +119,21 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- AspectJ Weaver (for @Aspect support, optional) -->
+        <!-- AspectJ Weaver (for @Aspect support, optional) - version from root dependencyManagement -->
         <dependency>
             <groupId>org.aspectj</groupId>
             <artifactId>aspectjweaver</artifactId>
-            <version>1.9.7</version>
             <optional>true</optional>
+        </dependency>
+
+        <!-- Spring Security for principal based identity resolution (optional, C-4).
+             provided: needed to compile PrincipalIdentityResolver and to test both code paths,
+             never forced onto applications that do not use Spring Security. -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-core</artifactId>
+            <version>6.3.4</version>
+            <scope>provided</scope>
         </dependency>
 
         <!-- Spring Boot Actuator (optional) -->

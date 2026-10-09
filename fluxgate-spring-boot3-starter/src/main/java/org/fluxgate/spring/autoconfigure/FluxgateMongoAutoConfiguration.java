@@ -1,15 +1,23 @@
 package org.fluxgate.spring.autoconfigure;
 
+import com.mongodb.ConnectionString;
+import com.mongodb.MongoException;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.IndexOptions;
+import com.mongodb.client.model.Indexes;
+import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 import org.bson.Document;
 import org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder;
 import org.fluxgate.adapter.mongo.health.MongoHealthCheckerImpl;
 import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
 import org.fluxgate.adapter.mongo.rule.MongoRuleSetProvider;
 import org.fluxgate.core.key.KeyResolver;
+import org.fluxgate.core.key.LimitScopeKeyResolver;
+import org.fluxgate.core.key.MissingKeyBehavior;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.spi.RateLimitRuleRepository;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
@@ -102,7 +110,38 @@ public class FluxgateMongoAutoConfiguration {
     }
 
     log.info("Using FluxGate rule collection: {}", collectionName);
-    return fluxgateMongoDatabase.getCollection(collectionName);
+    MongoCollection<Document> collection = fluxgateMongoDatabase.getCollection(collectionName);
+
+    if (ddlAuto == FluxgateProperties.DdlAuto.CREATE) {
+      createRuleIndexes(collection);
+    }
+
+    return collection;
+  }
+
+  /**
+   * Creates the indexes the rule lookups depend on.
+   *
+   * <p>Every request resolves its rule set through {@code findByRuleSetId}, so without an index on
+   * {@code ruleSetId} that lookup is a collection scan on the hot path. The compound {@code
+   * {ruleSetId, id}} index is unique because a rule id must not appear twice inside one rule set.
+   */
+  private void createRuleIndexes(MongoCollection<Document> collection) {
+    try {
+      String ruleSetIdIndex = collection.createIndex(Indexes.ascending("ruleSetId"));
+      String uniqueIndex =
+          collection.createIndex(
+              Indexes.ascending("ruleSetId", "id"),
+              new IndexOptions().unique(true).name("ruleSetId_1_id_1_unique"));
+      log.info("Ensured FluxGate rule indexes: {}, {}", ruleSetIdIndex, uniqueIndex);
+    } catch (MongoException e) {
+      // Duplicate rules or a conflicting existing index must not stop the application: the rules
+      // still load, only more slowly.
+      log.warn(
+          "Could not create the FluxGate rule indexes. Rule lookups fall back to a collection "
+              + "scan; create {{ruleSetId: 1}} manually. Cause: {}",
+          e.getMessage());
+    }
   }
 
   /**
@@ -132,13 +171,18 @@ public class FluxgateMongoAutoConfiguration {
    *   <li>CUSTOM - Custom resolution via attributes
    * </ul>
    *
+   * <p>The behavior when the value a scope needs is missing from the request comes from {@code
+   * fluxgate.ratelimit.missing-key-behavior}: {@code FALLBACK_TO_IP} (default) limits by client IP
+   * instead, {@code REJECT} rejects the request rather than limiting a broader key.
+   *
    * <p>Users can override this bean with a custom KeyResolver.
    */
   @Bean(name = "fluxgateKeyResolver")
   @ConditionalOnMissingBean(KeyResolver.class)
   public KeyResolver fluxgateKeyResolver() {
-    log.info("Creating default LimitScopeKeyResolver (resolves key based on rule's LimitScope)");
-    return new org.fluxgate.core.key.LimitScopeKeyResolver();
+    MissingKeyBehavior missingKeyBehavior = properties.getRatelimit().getMissingKeyBehavior();
+    log.info("Creating default LimitScopeKeyResolver (missingKeyBehavior={})", missingKeyBehavior);
+    return new LimitScopeKeyResolver(missingKeyBehavior);
   }
 
   /**
@@ -154,6 +198,11 @@ public class FluxgateMongoAutoConfiguration {
    *   <li>{@code MongoRateLimitMetricsRecorder} - Created when event-collection is configured
    *   <li>{@code CompositeMetricsRecorder} - Wraps multiple recorders when both are enabled
    * </ul>
+   *
+   * <p>When rule sets are also declared under {@code fluxgate.ratelimit.rule-sets}, {@link
+   * FluxgateRateLimiterAutoConfiguration#fluxgateYamlRuleSetComposer} composes them with this bean
+   * (YAML first, MongoDB as fallback), exactly as it does for an application-defined {@code
+   * delegateRuleSetProvider}.
    *
    * @param repository the rule repository for fetching rate limit rules
    * @param fluxgateKeyResolver the key resolver for generating rate limit keys
@@ -192,7 +241,50 @@ public class FluxgateMongoAutoConfiguration {
     }
 
     log.info("Using FluxGate event collection: {}", collectionName);
-    return fluxgateMongoDatabase.getCollection(collectionName);
+    MongoCollection<Document> collection = fluxgateMongoDatabase.getCollection(collectionName);
+    createEventRetentionIndex(collection);
+
+    return collection;
+  }
+
+  /**
+   * Creates the TTL index that expires recorded rate limit events.
+   *
+   * <p>Created regardless of {@code ddl-auto}: retention is a data protection control, not a schema
+   * convenience. Every event document carries a client IP, a user id and an API key fingerprint, so
+   * an event collection without a retention window turns any old backup into a lasting disclosure -
+   * and it grows until the disk does not.
+   *
+   * <p>The index is on {@code createdAt}, the BSON date {@code MongoRateLimitMetricsRecorder}
+   * writes; MongoDB's TTL monitor ignores an index on a string, so indexing {@code timestampIso}
+   * would have looked configured and expired nothing.
+   */
+  private void createEventRetentionIndex(MongoCollection<Document> collection) {
+    Duration retention = properties.getMongo().getEventRetention();
+    if (retention == null || retention.isZero() || retention.isNegative()) {
+      log.warn(
+          "fluxgate.mongo.event-retention is disabled: the event collection grows without bound and "
+              + "keeps client IPs, user ids and API key fingerprints forever. Expire the documents "
+              + "yourself, or set a retention period.");
+      return;
+    }
+
+    try {
+      String indexName =
+          collection.createIndex(
+              Indexes.ascending("createdAt"),
+              new IndexOptions()
+                  .name("createdAt_ttl")
+                  .expireAfter(retention.getSeconds(), TimeUnit.SECONDS));
+      log.info("Ensured FluxGate event retention index {} (retention={})", indexName, retention);
+    } catch (MongoException e) {
+      // A conflicting index (usually one created with a different retention) must not stop the
+      // application, but it does mean nothing is expiring.
+      log.warn(
+          "Could not create the FluxGate event retention index on 'createdAt'. Events are NOT being "
+              + "expired; drop the conflicting index or expire the documents yourself. Cause: {}",
+          e.getMessage());
+    }
   }
 
   /**
@@ -245,13 +337,26 @@ public class FluxgateMongoAutoConfiguration {
     };
   }
 
-  /** Masks sensitive parts of the URI for logging. */
+  /**
+   * Renders the hosts (and database) of a MongoDB URI for logging.
+   *
+   * <p>The driver's own parser is used rather than a regex over the URI: a password containing an
+   * {@code @} or a {@code :} defeats the regex and leaves its tail in the log, and a URI the driver
+   * cannot parse is not logged at all, because whatever is unparseable about it may still be a
+   * credential.
+   */
   private String maskUri(String uri) {
     if (uri == null) {
       return "null";
     }
-    // Simple masking: hide password
-    return uri.replaceAll("://([^:]+):([^@]+)@", "://$1:****@");
+    try {
+      ConnectionString connectionString = new ConnectionString(uri);
+      String hosts = String.join(",", connectionString.getHosts());
+      String database = connectionString.getDatabase();
+      return database != null ? hosts + "/" + database : hosts;
+    } catch (IllegalArgumentException e) {
+      return "<unparseable mongodb uri>";
+    }
   }
 
   /** Creates collection if it doesn't exist (ddl-auto: create). */

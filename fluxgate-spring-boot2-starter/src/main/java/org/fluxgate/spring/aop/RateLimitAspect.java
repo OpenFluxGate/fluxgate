@@ -3,6 +3,7 @@ package org.fluxgate.spring.aop;
 import static org.fluxgate.core.constants.FluxgateConstants.Headers;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import javax.servlet.http.HttpServletRequest;
@@ -14,13 +15,16 @@ import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.handler.FluxgateRateLimitHandler;
 import org.fluxgate.core.handler.RateLimitResponse;
 import org.fluxgate.spring.annotation.RateLimit;
+import org.fluxgate.spring.filter.ProblemDetailRateLimitResponseWriter;
+import org.fluxgate.spring.filter.RateLimitDurationRecorder;
+import org.fluxgate.spring.filter.RateLimitHeaderWriter;
+import org.fluxgate.spring.filter.RateLimitResponseWriter;
 import org.fluxgate.spring.filter.RequestContextCustomizer;
-import org.fluxgate.spring.util.ClientIpExtractor;
+import org.fluxgate.spring.filter.RequestContextFactory;
+import org.fluxgate.spring.util.RequestPathResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
-import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -29,31 +33,83 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  * Aspect that applies rate limiting to methods annotated with {@link RateLimit}.
  *
  * <p>This aspect intercepts method calls and checks rate limits before execution. If the rate limit
- * is exceeded, it returns a 429 Too Many Requests response.
+ * is exceeded it writes a 429 Too Many Requests response, or throws {@link
+ * RateLimitExceededException} when there is no servlet response to write to or the annotation asks
+ * for it via {@link RateLimit#throwOnReject()}.
+ *
+ * <p>The intercepted method is invoked <b>exactly once</b> and always outside the rate limiter's
+ * try/catch, so a business exception is never mistaken for a rate limiter failure and never causes
+ * the method to run twice.
+ *
+ * <p>The request context is built by the same {@link RequestContextFactory} the filter uses, so
+ * {@code PER_USER}, {@code PER_API_KEY} and {@code CUSTOM} scopes resolve identically in both
+ * modes.
  *
  * @see RateLimit
  * @see FluxgateRateLimitHandler
  */
 @Aspect
-@Component
 public class RateLimitAspect {
 
   private static final Logger log = LoggerFactory.getLogger(RateLimitAspect.class);
 
-  private final FluxgateRateLimitHandler handler;
-  private final RequestContextCustomizer contextCustomizer;
-  private final String clientIpHeader;
-  private final boolean trustClientIpHeader;
-  private final boolean failOpenOnError;
-  private final String defaultRuleSetId;
-  private final boolean denyWhenRuleMissing;
+  /** Method marker used in place of an HTTP method for invocations without a request. */
+  private static final String INVOCATION_METHOD = "INTERNAL";
 
+  private static final long SINGLE_PERMIT = 1L;
+
+  private final FluxgateRateLimitHandler handler;
+  private final String defaultRuleSetId;
+  private final boolean failOpenOnError;
+  private final boolean denyWhenRuleMissing;
+  private final boolean waitForRefillEnabled;
+
+  /**
+   * Global upper bound on a WAIT_FOR_REFILL wait, from {@code
+   * fluxgate.ratelimit.wait-for-refill.max-wait-time-ms}. The effective bound is the smaller of
+   * this and {@link RateLimit#maxWaitTimeMs()}.
+   */
+  private final long maxWaitTimeMs;
+
+  /**
+   * Bounds how many threads may be parked waiting for a refill.
+   *
+   * <p>C1: this used to be created per invocation, so {@code tryAcquire()} always succeeded and
+   * every worker thread could sleep. One aspect-wide semaphore is the only version of this that
+   * limits anything.
+   */
+  private final Semaphore waitSemaphore;
+
+  /** Default of {@code fluxgate.ratelimit.wait-for-refill.max-wait-time-ms}. */
+  private static final long DEFAULT_MAX_WAIT_TIME_MS = 5000L;
+
+  private final RequestContextFactory contextFactory;
+  private final RateLimitHeaderWriter headerWriter;
+  private final RateLimitResponseWriter responseWriter;
+  private final RateLimitDurationRecorder durationRecorder;
+
+  /**
+   * Creates an aspect with legacy defaults.
+   *
+   * @param handler the rate limit handler
+   * @param contextCustomizer optional request context customizer
+   */
   public RateLimitAspect(
       FluxgateRateLimitHandler handler,
       @Autowired(required = false) RequestContextCustomizer contextCustomizer) {
     this(handler, contextCustomizer, Headers.X_FORWARDED_FOR, true, true, "", false);
   }
 
+  /**
+   * Creates an aspect with security-sensitive settings.
+   *
+   * @param handler the rate limit handler
+   * @param contextCustomizer optional request context customizer
+   * @param clientIpHeader forwarding header to inspect when trusted
+   * @param trustClientIpHeader whether forwarding headers are trusted
+   * @param failOpenOnError allow the invocation when the rate limiter fails
+   * @param defaultRuleSetId rule set used when the annotation does not name one
+   */
   public RateLimitAspect(
       FluxgateRateLimitHandler handler,
       @Autowired(required = false) RequestContextCustomizer contextCustomizer,
@@ -71,6 +127,17 @@ public class RateLimitAspect {
         false);
   }
 
+  /**
+   * Creates an aspect with security-sensitive settings.
+   *
+   * @param handler the rate limit handler
+   * @param contextCustomizer optional request context customizer
+   * @param clientIpHeader forwarding header to inspect when trusted
+   * @param trustClientIpHeader whether forwarding headers are trusted
+   * @param failOpenOnError allow the invocation when the rate limiter fails
+   * @param defaultRuleSetId rule set used when the annotation does not name one
+   * @param denyWhenRuleMissing reject when no rule set is configured at all
+   */
   public RateLimitAspect(
       FluxgateRateLimitHandler handler,
       @Autowired(required = false) RequestContextCustomizer contextCustomizer,
@@ -79,15 +146,113 @@ public class RateLimitAspect {
       boolean failOpenOnError,
       String defaultRuleSetId,
       boolean denyWhenRuleMissing) {
+    this(
+        handler,
+        defaultRuleSetId,
+        failOpenOnError,
+        denyWhenRuleMissing,
+        false,
+        50,
+        new RequestContextFactory(
+            clientIpHeader, trustClientIpHeader, null, false, null, contextCustomizer),
+        new RateLimitHeaderWriter(true, true),
+        new ProblemDetailRateLimitResponseWriter(),
+        null);
+  }
+
+  /**
+   * Creates an aspect whose waits are capped at the default {@code
+   * fluxgate.ratelimit.wait-for-refill.max-wait-time-ms} (5000 ms).
+   *
+   * @param handler the rate limit handler (required)
+   * @param defaultRuleSetId rule set used when the annotation does not name one (nullable)
+   * @param failOpenOnError allow the invocation when the rate limiter fails
+   * @param denyWhenRuleMissing reject when no rule set is configured at all
+   * @param waitForRefillEnabled honour a rule's WAIT_FOR_REFILL policy
+   * @param maxConcurrentWaits permits of the aspect-wide wait semaphore
+   * @param contextFactory factory building the {@link RequestContext} (required)
+   * @param headerWriter writer for rate limit headers (required)
+   * @param responseWriter writer for the 429 body (required)
+   * @param durationRecorder optional recorder for the invocation duration timer (nullable)
+   */
+  public RateLimitAspect(
+      FluxgateRateLimitHandler handler,
+      String defaultRuleSetId,
+      boolean failOpenOnError,
+      boolean denyWhenRuleMissing,
+      boolean waitForRefillEnabled,
+      int maxConcurrentWaits,
+      RequestContextFactory contextFactory,
+      RateLimitHeaderWriter headerWriter,
+      RateLimitResponseWriter responseWriter,
+      RateLimitDurationRecorder durationRecorder) {
+    this(
+        handler,
+        defaultRuleSetId,
+        failOpenOnError,
+        denyWhenRuleMissing,
+        waitForRefillEnabled,
+        maxConcurrentWaits,
+        DEFAULT_MAX_WAIT_TIME_MS,
+        contextFactory,
+        headerWriter,
+        responseWriter,
+        durationRecorder);
+  }
+
+  /**
+   * Creates a fully configured aspect. This is the constructor the auto-configuration uses; the
+   * others delegate to it with legacy defaults.
+   *
+   * <p>Waiting for a refill blocks the calling thread: an aspect cannot hand the invocation back to
+   * the container, so {@code maxWaitTimeMs} and {@code maxConcurrentWaits} are the only bounds on
+   * how many threads are parked and for how long. Prefer rejecting with {@code Retry-After} and
+   * letting the client back off.
+   *
+   * @param handler the rate limit handler (required)
+   * @param defaultRuleSetId rule set used when the annotation does not name one (nullable)
+   * @param failOpenOnError allow the invocation when the rate limiter fails
+   * @param denyWhenRuleMissing reject when no rule set is configured at all
+   * @param waitForRefillEnabled honour a rule's WAIT_FOR_REFILL policy
+   * @param maxConcurrentWaits permits of the aspect-wide wait semaphore
+   * @param maxWaitTimeMs global upper bound on a wait; the annotation can only lower it
+   * @param contextFactory factory building the {@link RequestContext} (required)
+   * @param headerWriter writer for rate limit headers (required)
+   * @param responseWriter writer for the 429 body (required)
+   * @param durationRecorder optional recorder for the invocation duration timer (nullable)
+   */
+  public RateLimitAspect(
+      FluxgateRateLimitHandler handler,
+      String defaultRuleSetId,
+      boolean failOpenOnError,
+      boolean denyWhenRuleMissing,
+      boolean waitForRefillEnabled,
+      int maxConcurrentWaits,
+      long maxWaitTimeMs,
+      RequestContextFactory contextFactory,
+      RateLimitHeaderWriter headerWriter,
+      RateLimitResponseWriter responseWriter,
+      RateLimitDurationRecorder durationRecorder) {
+    this.maxWaitTimeMs = maxWaitTimeMs;
     this.handler = handler;
-    this.contextCustomizer =
-        contextCustomizer != null ? contextCustomizer : RequestContextCustomizer.identity();
-    this.clientIpHeader =
-        StringUtils.hasText(clientIpHeader) ? clientIpHeader : Headers.X_FORWARDED_FOR;
-    this.trustClientIpHeader = trustClientIpHeader;
-    this.failOpenOnError = failOpenOnError;
     this.defaultRuleSetId = defaultRuleSetId;
+    this.failOpenOnError = failOpenOnError;
     this.denyWhenRuleMissing = denyWhenRuleMissing;
+    this.waitForRefillEnabled = waitForRefillEnabled;
+    this.waitSemaphore = new Semaphore(Math.max(1, maxConcurrentWaits));
+    this.contextFactory = contextFactory;
+    this.headerWriter = headerWriter;
+    this.responseWriter = responseWriter;
+    this.durationRecorder = durationRecorder;
+  }
+
+  /**
+   * Returns the global upper bound on a WAIT_FOR_REFILL wait.
+   *
+   * @return the bound in milliseconds
+   */
+  public long getMaxWaitTimeMs() {
+    return maxWaitTimeMs;
   }
 
   /**
@@ -95,7 +260,7 @@ public class RateLimitAspect {
    *
    * @param joinPoint the join point
    * @param rateLimit the rate limit annotation
-   * @return the method result if allowed, null if rate limited
+   * @return the method result if allowed, null if rate limited and the response was written
    * @throws Throwable if the method throws an exception
    */
   @Around("@annotation(rateLimit)")
@@ -108,7 +273,7 @@ public class RateLimitAspect {
    *
    * @param joinPoint the join point
    * @param rateLimit the rate limit annotation on the class
-   * @return the method result if allowed, null if rate limited
+   * @return the method result if allowed, null if rate limited and the response was written
    * @throws Throwable if the method throws an exception
    */
   @Around("@within(rateLimit) && !@annotation(org.fluxgate.spring.annotation.RateLimit)")
@@ -119,160 +284,208 @@ public class RateLimitAspect {
   private Object doRateLimit(ProceedingJoinPoint joinPoint, RateLimit rateLimit) throws Throwable {
     HttpServletRequest request = getCurrentRequest();
     HttpServletResponse response = getCurrentResponse();
-
-    if (request == null || response == null) {
-      log.warn("No HTTP context available, skipping rate limiting");
-      return joinPoint.proceed();
-    }
+    long startTimeMs = System.currentTimeMillis();
 
     String ruleSetId =
         StringUtils.hasText(rateLimit.ruleSetId()) ? rateLimit.ruleSetId() : defaultRuleSetId;
     if (!StringUtils.hasText(ruleSetId)) {
       if (denyWhenRuleMissing) {
-        log.warn("No ruleSetId specified, rejecting request");
-        handleRateLimitExceeded(response, RateLimitResponse.rejected(0));
-        return null;
+        log.warn("No ruleSetId specified, rejecting invocation");
+        return reject(request, response, RateLimitResponse.rejected(0), rateLimit);
       }
       log.warn("No ruleSetId specified, skipping rate limiting");
       return joinPoint.proceed();
     }
 
-    // Build request context
-    RequestContext context = buildRequestContext(request);
+    String endpoint = endpointOf(joinPoint, request);
+    RequestContext context =
+        request != null
+            ? contextFactory.create(request, endpoint)
+            : contextFactory.createForInvocation(endpoint, INVOCATION_METHOD);
 
+    Decision decision = decide(context, ruleSetId, rateLimit);
+
+    // C2: the target method runs exactly once, outside the rate limiter's try/catch.
     try {
-      // Check rate limit
-      RateLimitResponse result = handler.tryConsume(context, ruleSetId);
-
-      // Add rate limit headers
-      addRateLimitHeaders(response, result);
-
-      if (result.isAllowed()) {
+      if (decision.allowed) {
+        headerWriter.write(response, decision.result);
         return joinPoint.proceed();
       }
-
-      // Handle wait for refill if enabled
-      if (rateLimit.waitForRefill()) {
-        return handleWaitForRefill(joinPoint, rateLimit, context, response, result);
-      }
-
-      // Rate limit exceeded
-      handleRateLimitExceeded(response, result);
-      return null;
-
-    } catch (Exception e) {
-      if (failOpenOnError) {
-        log.error("Error during rate limiting, allowing request", e);
-        return joinPoint.proceed();
-      }
-      log.error("Error during rate limiting, rejecting request", e);
-      handleRateLimitExceeded(response, RateLimitResponse.rejected(0));
-      return null;
+      return reject(request, response, decision.result, rateLimit);
+    } finally {
+      recordDuration(ruleSetId, endpoint, request, startTimeMs);
     }
   }
 
-  private Object handleWaitForRefill(
-      ProceedingJoinPoint joinPoint,
-      RateLimit rateLimit,
+  /** Runs the rate limiter and decides whether the invocation may proceed. */
+  private Decision decide(RequestContext context, String ruleSetId, RateLimit rateLimit) {
+    long permits = Math.max(SINGLE_PERMIT, rateLimit.permits());
+    try {
+      RateLimitResponse result = tryConsume(context, ruleSetId, permits);
+
+      if (!result.isAllowed() && shouldWaitForRefill(rateLimit, result)) {
+        result = waitForRefill(context, ruleSetId, permits, rateLimit, result);
+      }
+
+      if (result.isAllowed()) {
+        return Decision.allowed(result);
+      }
+      return Decision.rejected(result);
+    } catch (Exception e) {
+      if (failOpenOnError) {
+        log.error("Error during rate limiting, allowing invocation", e);
+        return Decision.allowed(null);
+      }
+      log.error("Error during rate limiting, rejecting invocation", e);
+      return Decision.rejected(RateLimitResponse.rejected(0));
+    }
+  }
+
+  /**
+   * Whether this rejection should wait for a refill instead of failing immediately.
+   *
+   * <p>H11: the rule's own {@code OnLimitExceedPolicy} decides, which is what the filter does.
+   * {@code @RateLimit(waitForRefill = true)} is an explicit per-method override and always wins;
+   * otherwise the rule is followed, gated by the global {@code
+   * fluxgate.ratelimit.wait-for-refill.enabled} switch.
+   */
+  private boolean shouldWaitForRefill(RateLimit rateLimit, RateLimitResponse result) {
+    if (rateLimit.waitForRefill()) {
+      return true;
+    }
+    return waitForRefillEnabled && result.shouldWaitForRefill();
+  }
+
+  private RateLimitResponse waitForRefill(
       RequestContext context,
-      HttpServletResponse response,
-      RateLimitResponse result)
-      throws Throwable {
+      String ruleSetId,
+      long permits,
+      RateLimit rateLimit,
+      RateLimitResponse result) {
 
     long waitTimeMs = result.getRetryAfterMillis();
-    long maxWaitTimeMs = rateLimit.maxWaitTimeMs();
-    int maxConcurrentWaits = rateLimit.maxConcurrentWaits();
-
-    // Check if wait time exceeds maximum allowed
-    if (waitTimeMs > maxWaitTimeMs) {
-      log.info("Wait time {} ms exceeds max {} ms, rejecting request", waitTimeMs, maxWaitTimeMs);
-      handleRateLimitExceeded(response, result);
-      return null;
+    // H11: the wait blocks this thread, so the global property is a hard ceiling; the annotation
+    // can only lower it.
+    long effectiveMaxWaitMs = Math.min(rateLimit.maxWaitTimeMs(), maxWaitTimeMs);
+    if (waitTimeMs > effectiveMaxWaitMs) {
+      log.debug("Wait time {} ms exceeds max {} ms, rejecting", waitTimeMs, effectiveMaxWaitMs);
+      return result;
     }
 
-    // Use semaphore to limit concurrent waits
-    Semaphore waitSemaphore = new Semaphore(maxConcurrentWaits);
-
     if (!waitSemaphore.tryAcquire()) {
-      log.info("Too many concurrent waits, rejecting request");
-      handleRateLimitExceeded(response, result);
-      return null;
+      log.debug("Too many concurrent waits, rejecting");
+      return result;
     }
 
     try {
       log.debug("Waiting {} ms for token refill", waitTimeMs);
-      TimeUnit.MILLISECONDS.sleep(waitTimeMs);
+      TimeUnit.MILLISECONDS.sleep(Math.max(0L, waitTimeMs));
 
-      // Retry rate limit check after waiting
-      RateLimitResponse retryResult = handler.tryConsume(context, rateLimit.ruleSetId());
-      addRateLimitHeaders(response, retryResult);
-
-      if (retryResult.isAllowed()) {
-        log.debug("Request allowed after wait");
-        return joinPoint.proceed();
+      RateLimitResponse retryResult = tryConsume(context, ruleSetId, permits);
+      if (!retryResult.isAllowed()) {
+        log.debug("Invocation still rate limited after wait");
       }
-
-      // Still rejected after waiting
-      log.info("Request still rate limited after wait");
-      handleRateLimitExceeded(response, retryResult);
-      return null;
-
+      return retryResult;
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      log.warn("Wait interrupted");
-      handleRateLimitExceeded(response, result);
-      return null;
+      log.debug("Wait for token refill interrupted");
+      return result;
     } finally {
       waitSemaphore.release();
     }
   }
 
-  private RequestContext buildRequestContext(HttpServletRequest request) {
-    RequestContext.Builder builder =
-        RequestContext.builder()
-            .clientIp(extractClientIp(request))
-            .endpoint(request.getRequestURI())
-            .method(request.getMethod());
-
-    return contextCustomizer.customize(builder, request).build();
+  private RateLimitResponse tryConsume(RequestContext context, String ruleSetId, long permits) {
+    // The 3-arg form is optional for handlers, so only use it for a weighted invocation.
+    return permits == SINGLE_PERMIT
+        ? handler.tryConsume(context, ruleSetId)
+        : handler.tryConsume(context, ruleSetId, permits);
   }
 
-  private String extractClientIp(HttpServletRequest request) {
-    return ClientIpExtractor.extract(request, clientIpHeader, trustClientIpHeader);
-  }
-
-  /** Adds standard rate limit headers to the response. */
-  private void addRateLimitHeaders(HttpServletResponse response, RateLimitResponse result) {
-    if (result.getRemainingTokens() >= 0) {
-      response.setHeader(Headers.RATE_LIMIT_REMAINING, String.valueOf(result.getRemainingTokens()));
-    }
-  }
-
-  /** Handles a rate limit exceeded response. */
-  private void handleRateLimitExceeded(HttpServletResponse response, RateLimitResponse result)
+  /**
+   * Renders the rejection.
+   *
+   * @return always null, so the intercepted method's caller sees no value
+   */
+  private Object reject(
+      HttpServletRequest request,
+      HttpServletResponse response,
+      RateLimitResponse result,
+      RateLimit rateLimit)
       throws IOException {
-    long retryAfterSeconds = (result.getRetryAfterMillis() + 999) / 1000;
-    response.setHeader(Headers.RETRY_AFTER, String.valueOf(retryAfterSeconds));
-    response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
-    response.setContentType("application/json");
-    response
-        .getWriter()
-        .write(
-            String.format(
-                "{\"error\":\"Rate limit exceeded\",\"retryAfter\":%d}", retryAfterSeconds));
+    if (response == null || rateLimit.throwOnReject()) {
+      throw new RateLimitExceededException(result);
+    }
+    headerWriter.write(response, result);
+    log.debug("Invocation rate limited");
+    responseWriter.write(request, response, result);
+    return null;
   }
 
-  /** Gets the current HttpServletRequest from RequestContextHolder. */
-  private HttpServletRequest getCurrentRequest() {
-    ServletRequestAttributes attrs =
-        (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+  private void recordDuration(
+      String ruleSetId, String endpoint, HttpServletRequest request, long startTimeMs) {
+    if (durationRecorder == null) {
+      return;
+    }
+    durationRecorder.recordDuration(
+        ruleSetId,
+        endpoint,
+        request != null ? request.getMethod() : INVOCATION_METHOD,
+        Duration.ofMillis(System.currentTimeMillis() - startTimeMs));
+  }
+
+  /**
+   * Endpoint identifier for the invocation: the request path in a web context, otherwise the
+   * intercepted signature so non-web invocations still produce a stable, low cardinality value.
+   */
+  private static String endpointOf(ProceedingJoinPoint joinPoint, HttpServletRequest request) {
+    if (request != null) {
+      return RequestPathResolver.resolve(request);
+    }
+    return joinPoint.getSignature().getDeclaringType().getSimpleName()
+        + "."
+        + joinPoint.getSignature().getName();
+  }
+
+  /** Gets the current HttpServletRequest from RequestContextHolder, or null outside a request. */
+  private static HttpServletRequest getCurrentRequest() {
+    ServletRequestAttributes attrs = currentAttributes();
     return attrs != null ? attrs.getRequest() : null;
   }
 
-  /** Gets the current HttpServletResponse from RequestContextHolder. */
-  private HttpServletResponse getCurrentResponse() {
-    ServletRequestAttributes attrs =
-        (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+  /** Gets the current HttpServletResponse from RequestContextHolder, or null outside a request. */
+  private static HttpServletResponse getCurrentResponse() {
+    ServletRequestAttributes attrs = currentAttributes();
     return attrs != null ? attrs.getResponse() : null;
+  }
+
+  private static ServletRequestAttributes currentAttributes() {
+    try {
+      return RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes
+          ? (ServletRequestAttributes) RequestContextHolder.getRequestAttributes()
+          : null;
+    } catch (IllegalStateException e) {
+      return null;
+    }
+  }
+
+  /** Outcome of the rate limit evaluation: either proceed, or reject with this response. */
+  private static final class Decision {
+
+    private final boolean allowed;
+    private final RateLimitResponse result;
+
+    private Decision(boolean allowed, RateLimitResponse result) {
+      this.allowed = allowed;
+      this.result = result;
+    }
+
+    static Decision allowed(RateLimitResponse result) {
+      return new Decision(true, result);
+    }
+
+    static Decision rejected(RateLimitResponse result) {
+      return new Decision(false, result);
+    }
   }
 }

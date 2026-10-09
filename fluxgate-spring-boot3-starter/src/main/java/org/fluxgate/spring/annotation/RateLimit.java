@@ -60,7 +60,9 @@ public @interface RateLimit {
   /**
    * Maximum time to wait for token refill in milliseconds.
    *
-   * <p>Only applies when {@link #waitForRefill()} is true.
+   * <p>Only applies when {@link #waitForRefill()} is true. Capped by {@code
+   * fluxgate.ratelimit.wait-for-refill.max-wait-time-ms}: the effective limit is the smaller of the
+   * two. The wait blocks the calling thread.
    *
    * @return maximum wait time in milliseconds
    */
@@ -69,10 +71,40 @@ public @interface RateLimit {
   /**
    * Maximum number of concurrent requests that can wait for refill.
    *
-   * <p>Only applies when {@link #waitForRefill()} is true. Prevents resource exhaustion from too
-   * many waiting requests.
+   * <p><b>Ignored since 0.4.0.</b> The wait semaphore became aspect-wide, because a semaphore
+   * created per invocation limited nothing at all; this attribute is read nowhere. Configure {@code
+   * fluxgate.ratelimit.wait-for-refill.max-concurrent-waits} instead.
    *
-   * @return maximum concurrent waiting requests
+   * @return maximum concurrent waiting requests (not honoured)
+   * @deprecated ignored since 0.4.0; configure {@code
+   *     fluxgate.ratelimit.wait-for-refill.max-concurrent-waits}
    */
+  @Deprecated
   int maxConcurrentWaits() default 100;
+
+  /**
+   * Number of permits this invocation consumes.
+   *
+   * <p>Use a value above 1 for expensive operations so a single call counts as several against the
+   * quota, for example a bulk export that costs as much as 10 ordinary reads. Values below 1 are
+   * treated as 1.
+   *
+   * <p>The configured {@link org.fluxgate.core.handler.FluxgateRateLimitHandler} must support
+   * weighted permits; the default single-permit path is used when {@code permits} is 1.
+   *
+   * @return the permit count, default 1
+   */
+  long permits() default 1;
+
+  /**
+   * Whether to throw {@link org.fluxgate.spring.aop.RateLimitExceededException} instead of writing
+   * the 429 response directly.
+   *
+   * <p>Enable this to render the error with a {@code @ControllerAdvice} in the application's own
+   * format. The exception is thrown regardless of this flag when the invocation has no servlet
+   * response to write to, such as a scheduled task or a message listener.
+   *
+   * @return true to throw on rejection, false to write the response
+   */
+  boolean throwOnReject() default false;
 }

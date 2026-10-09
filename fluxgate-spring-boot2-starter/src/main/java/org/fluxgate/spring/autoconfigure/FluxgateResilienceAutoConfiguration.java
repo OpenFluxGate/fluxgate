@@ -49,6 +49,8 @@ public class FluxgateResilienceAutoConfiguration {
             .initialBackoff(retryProps.getInitialBackoff())
             .multiplier(retryProps.getMultiplier())
             .maxBackoff(retryProps.getMaxBackoff())
+            .jitterFactor(retryProps.getJitterFactor())
+            .retryOnTimeout(retryProps.isRetryOnTimeout())
             .build();
 
     log.info(
@@ -72,22 +74,32 @@ public class FluxgateResilienceAutoConfiguration {
       FluxgateResilienceProperties properties) {
     FluxgateResilienceProperties.CircuitBreaker cbProps = properties.getCircuitBreaker();
 
-    CircuitBreakerConfig config =
+    CircuitBreakerConfig.Builder builder =
         CircuitBreakerConfig.builder()
             .enabled(cbProps.isEnabled())
-            .failureThreshold(cbProps.getFailureThreshold())
+            .slidingWindowSize(cbProps.getSlidingWindowSize())
+            .failureRateThreshold(cbProps.getFailureRateThreshold())
+            .minimumNumberOfCalls(cbProps.getMinimumNumberOfCalls())
             .waitDurationInOpenState(cbProps.getWaitDurationInOpenState())
             .permittedCallsInHalfOpenState(cbProps.getPermittedCallsInHalfOpenState())
-            .fallbackStrategy(cbProps.getFallback())
-            .build();
+            .fallbackStrategy(cbProps.getFallback());
+
+    // Only set explicitly: passing a value forces the legacy consecutive-failure rule and disables
+    // the sliding-window failure rate.
+    if (cbProps.getFailureThreshold() != null) {
+      builder.failureThreshold(cbProps.getFailureThreshold());
+    }
+
+    CircuitBreakerConfig config = builder.build();
 
     log.info(
         "FluxGate circuit breaker configured: enabled={}, failureThreshold={}, "
-            + "waitDuration={}s, fallback={}",
+            + "failureRate={}% over {} calls, waitDuration={}s",
         cbProps.isEnabled(),
-        cbProps.getFailureThreshold(),
-        cbProps.getWaitDurationInOpenState().toSeconds(),
-        cbProps.getFallback());
+        cbProps.getFailureThreshold() != null ? cbProps.getFailureThreshold() : "(sliding window)",
+        cbProps.getFailureRateThreshold(),
+        cbProps.getSlidingWindowSize(),
+        cbProps.getWaitDurationInOpenState().toSeconds());
 
     return config;
   }
@@ -126,7 +138,7 @@ public class FluxgateResilienceAutoConfiguration {
   }
 
   /**
-   * Creates a CircuitBreaker bean when enabled.
+   * Creates a CircuitBreaker bean when enabled, which is the default.
    *
    * @param config the circuit breaker configuration
    * @return the circuit breaker
@@ -136,13 +148,14 @@ public class FluxgateResilienceAutoConfiguration {
   @ConditionalOnProperty(
       prefix = "fluxgate.resilience.circuit-breaker",
       name = "enabled",
-      havingValue = "true")
+      havingValue = "true",
+      matchIfMissing = true)
   public CircuitBreaker fluxgateCircuitBreaker(CircuitBreakerConfig config) {
     return new DefaultCircuitBreaker("fluxgate", config);
   }
 
   /**
-   * Creates a no-op CircuitBreaker when disabled.
+   * Creates a no-op CircuitBreaker when explicitly disabled.
    *
    * @return the no-op circuit breaker
    */
@@ -151,8 +164,7 @@ public class FluxgateResilienceAutoConfiguration {
   @ConditionalOnProperty(
       prefix = "fluxgate.resilience.circuit-breaker",
       name = "enabled",
-      havingValue = "false",
-      matchIfMissing = true)
+      havingValue = "false")
   public CircuitBreaker fluxgateNoOpCircuitBreaker() {
     log.debug("FluxGate circuit breaker is disabled");
     return NoOpCircuitBreaker.getInstance();
