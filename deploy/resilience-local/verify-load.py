@@ -153,7 +153,7 @@ class GatewayClient:
             remaining = getattr(response, "length", None)
             if remaining is not None and remaining != 0:
                 raise http.client.IncompleteRead(bytes(prefix), remaining)
-            backend_body = total_bytes <= 1024 and bytes(prefix).strip() == BACKEND_BODY
+            backend_body = total_bytes <= 1024 and bytes(prefix) in (BACKEND_BODY, BACKEND_BODY + b"\n")
             body_valid = backend_body if status == 200 else not backend_body
             if response.will_close:
                 connection.close()
@@ -563,6 +563,50 @@ def self_check():
     client.local.connection = connection
     truncated = client.request(0, time.monotonic(), "GET", "/fixture", None, 200)
     assert truncated["status"] == "ERROR" and truncated["error"] == "transport-error"
+    # Exercise actual HTTP parsing and GatewayClient.request against isolated
+    # loopback fixtures; no live Gateway credentials or policy state are used.
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    bodies = {"/exact": BACKEND_BODY, "/lf": BACKEND_BODY + b"\n",
+              "/space-prefix": b" " + BACKEND_BODY, "/space-suffix": BACKEND_BODY + b" ",
+              "/tab-prefix": b"\t" + BACKEND_BODY, "/crlf": BACKEND_BODY + b"\r\n",
+              "/double-lf": BACKEND_BODY + b"\n\n", "/prefix": b"prefix" + BACKEND_BODY,
+              "/suffix": BACKEND_BODY + b"suffix", "/oversized": BACKEND_BODY + b"x" * 1024,
+              "/truncated": BACKEND_BODY}
+    class BodyFixture(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = bodies[self.path]
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body) + (7 if self.path == "/truncated" else 0)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *arguments):
+            pass
+    server = HTTPServer(("127.0.0.1", 0), BodyFixture)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    body_checks = 0
+    client = GatewayClient({"service": "127.0.0.1", "port": server.server_port, "host": "offline.invalid"})
+    try:
+        for path in bodies:
+            response = client.request(0, time.monotonic(), "GET", path, None, 200)
+            if path in ("/exact", "/lf"):
+                assert response["status"] == 200 and response["backend_body"] and response["body_valid"]
+            elif path == "/truncated":
+                assert response["status"] == "ERROR" and response["error"] == "transport-error"
+                assert not response["backend_body"] and client.local.connection is None
+            else:
+                assert response["status"] == 200 and response["error"] is None
+                assert response["backend_body"] is False and response["body_valid"] is False, path
+                assert aggregate([response], 1, 1, 1, 0, 0)["unexpected_body_responses"] == 1
+            body_checks += 1
+    finally:
+        connection = getattr(client.local, "connection", None)
+        if connection is not None:
+            connection.close()
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=2)
+        assert not server_thread.is_alive()
     original_client = GatewayClient
 
     class FailedControlClient:
@@ -635,7 +679,7 @@ def self_check():
     finally:
         globals()["READY_MARKER"] = original_marker
     assert percentile([1, 2, 3, 4, 5], 0.95) == 5
-    print(json.dumps({"result": "PASS", "self_checks": 21}))
+    print(json.dumps({"result": "PASS", "self_checks": 21 + body_checks}))
 
 
 def main():
