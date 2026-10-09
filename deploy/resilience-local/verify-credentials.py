@@ -75,6 +75,7 @@ class Proof:
         self.results = {}
         self.backups = {}
         self.store_rollback = None
+        self.tls_rollback = None
         self.ns = self.f["namespace"]
         self.api_key = self.read("api_key_file")
 
@@ -259,6 +260,9 @@ class Proof:
 
     def tls(self):
         tls = Path(self.f["tls_dir"])
+        self.tls_rollback = {tls / name: (tls / name).read_bytes() for name in (
+            "server-ca.crt", "server-ca.key", "client-ca.crt", "client-ca.key",
+            "server.crt", "server.key", "client.crt", "client.key")}
         old_server_ca, old_client_ca = tls / "server-ca.crt", tls / "client-ca.crt"
         old_client, old_client_key = tls / "client.crt", tls / "client.key"
         subject = self.f.get("client_subject", "fluxgate-resilience-gateway").removeprefix("CN=")
@@ -312,6 +316,7 @@ class Proof:
             private_write(tls / name, source.read_bytes())
         self.results["mtls"] = controls
         self.backups.clear()
+        self.tls_rollback = None
 
     def api_mapping(self, mappings):
         content = json.dumps({"fluxgate": {"envoy": {"api-keys": mappings}}})
@@ -677,6 +682,12 @@ class Proof:
 
     def cleanup_failed(self):
         failures = []
+        if self.tls_rollback:
+            for path, contents in self.tls_rollback.items():
+                try:
+                    private_write(path, contents)
+                except Exception:
+                    failures.append("private-tls-file-restore")
         if self.store_rollback:
             state = self.store_rollback
             for path, contents in state["files"].items():
@@ -732,6 +743,19 @@ def self_test():
     with tempfile.TemporaryDirectory(prefix="fluxgate-credential-unit-") as directory:
         proof = Proof.__new__(Proof)
         proof.work, proof.openssl = Path(directory), "openssl"
+        proof.backups, proof.store_rollback = {}, None
+        originals = {Path(directory) / "tls" / name: ("original-" + name).encode()
+                     for name in ("server-ca.crt", "server-ca.key", "client-ca.crt", "client-ca.key",
+                                  "server.crt", "server.key", "client.crt", "client.key")}
+        for path, content in originals.items():
+            private_write(path, content)
+        proof.tls_rollback = originals
+        # Reproduce a failed copy after only some new TLS files have reached disk.
+        for path in list(originals)[:3]:
+            private_write(path, b"partial-new-certificate")
+        proof.cleanup_failed()
+        require(all(path.read_bytes() == content for path, content in originals.items()),
+                "partial TLS copy rollback left mixed CA/certificate generations")
         ca, key = proof.ca("unit-ca")
         cert, cert_key = proof.certificate("expired", ca, key, "gateway", expired=True)
         result = run([proof.openssl, "verify", "-CAfile", str(ca), str(cert)], check=False)
@@ -787,7 +811,7 @@ def self_test():
         proof.redis_check("unused", None, False)
         thread.join(timeout=5)
         require(not thread.is_alive() and not failures, "RESP regression server failed")
-    print("Offline credential regressions passed: valid/expired X.509 and fresh RESP valid/wrong/missing authentication")
+    print("Offline credential regressions passed: partial TLS copy rollback, valid/expired X.509 and fresh RESP valid/wrong/missing authentication")
 
 
 def main():
@@ -815,7 +839,7 @@ def main():
         result = {"passed": True, "complete": set(phases) == {"mtls", "api-key", "stores", "jwt"},
                   "context": proof.f["context"], "namespace": proof.ns, "results": proof.results,
                   "limits": ["Local ephemeral fixture only; no external credential authority tested.",
-                             "JWKS retirement is checked with a fresh decoder, not a warm cache."]}
+                             "JWKS retirement records warm-cache behavior, checks an observed unknown-kid refresh, and checks a fresh decoder; key removal alone is not immediate revocation."]}
         private_write(args.output, json.dumps(result, indent=2) + "\n")
         print("Credential proof passed; evidence: " + str(Path(args.output).resolve()))
     except Exception as error:
