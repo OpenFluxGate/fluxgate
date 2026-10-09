@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "FluxGate와 Envoy Gateway: 목표 구조",
+    "quality_profile": "showcase",
+    "views": [
+      {"id": "traffic", "label": "사용자 요청", "focus": ["client", "gateway", "application"], "note": "허용된 요청만 Envoy가 실제 서비스로 전달합니다."},
+      {"id": "decision", "label": "제한 판정", "focus": ["gateway", "decisionService", "ruleStore", "counterStore"], "note": "Java FluxGate가 규칙을 읽고 제한 카운터를 집행합니다."},
+      {"id": "management", "label": "정책 관리", "focus": ["adminStudio", "ruleStore", "decisionService"], "note": "관리 도구와 판정 서비스는 같은 규칙 저장소를 사용합니다."}
+    ]
+  },
+  "components": [
+    {"id": "client", "type": "external", "label": "사용자", "sublabel": "HTTP 요청", "pos": [35, 310], "size": [120, 64]},
+    {"id": "gateway", "type": "security", "label": "Envoy Gateway", "sublabel": "SecurityPolicy extAuth", "pos": [285, 310], "size": [170, 76]},
+    {"id": "application", "type": "backend", "label": "실제 서비스 Pod", "sublabel": "Java · Go · Rust", "pos": [760, 310], "size": [170, 76]},
+    {"id": "decisionService", "type": "backend", "label": "Java FluxGate", "sublabel": "기존 엔진 · ACL · 키 해석", "pos": [520, 135], "size": [180, 76]},
+    {"id": "ruleStore", "type": "database", "label": "MongoDB", "sublabel": "규칙 · 판정 이벤트", "pos": [790, 70], "size": [150, 72]},
+    {"id": "counterStore", "type": "database", "label": "Redis", "sublabel": "제한 카운터 · 변경 알림", "pos": [790, 170], "size": [150, 72]},
+    {"id": "adminStudio", "type": "frontend", "label": "FluxGate Studio", "sublabel": "규칙 관리", "pos": [520, 35], "size": [180, 70]}
+  ],
+  "connections": [
+    {"id": "request", "from": "client", "to": "gateway", "label": "요청", "variant": "emphasis"},
+    {"id": "forward", "from": "gateway", "to": "application", "label": "허용 시 전달", "variant": "emphasis"},
+    {"id": "authorize", "from": "gateway", "to": "decisionService", "label": "판정 요청 · 결과", "variant": "security"},
+    {"id": "rules", "from": "decisionService", "to": "ruleStore"},
+    {"id": "limits", "from": "decisionService", "to": "counterStore", "label": "카운터 소비"},
+    {"id": "editing", "from": "adminStudio", "to": "ruleStore", "label": "규칙 변경", "variant": "dashed"}
+  ],
+  "cards": [
+    {"dot": "cyan", "title": "요청 경로", "items": ["Envoy는 허용된 요청만 서비스 Pod로 전달", "거부 요청은 서비스 Pod에 도달하지 않음"]},
+    {"dot": "emerald", "title": "판정 경로", "items": ["Java FluxGate가 MongoDB 규칙을 조회", "기존 엔진이 Redis 카운터를 집행"]},
+    {"dot": "amber", "title": "운영 경계", "items": ["MongoDB와 Redis는 Envoy가 아닌 Java 서비스의 의존성", "신뢰된 사용자 식별과 규칙 변경 알림은 추가 설계 대상"]}
+  ]
+}
