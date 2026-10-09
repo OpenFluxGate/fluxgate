@@ -7,6 +7,7 @@ import io.lettuce.core.ScanCursor;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.SocketOptions;
 import io.lettuce.core.cluster.ClusterClientOptions;
+import io.lettuce.core.cluster.ClusterTopologyRefreshOptions;
 import io.lettuce.core.cluster.RedisClusterClient;
 import io.lettuce.core.cluster.api.StatefulRedisClusterConnection;
 import io.lettuce.core.cluster.api.sync.RedisAdvancedClusterCommands;
@@ -68,10 +69,22 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
     log.info("Creating Redis Cluster connection to {} nodes", nodeUris.size());
 
     List<RedisURI> redisUris = nodeUris.stream().map(RedisURI::create).collect(Collectors.toList());
+    // Lettuce cluster commands and topology discovery read the seed URI timeout;
+    // the deprecated client default alone leaves plain URIs at sixty seconds.
+    redisUris.forEach(uri -> uri.setTimeout(timeout));
 
     this.clusterClient = RedisClusterClient.create(redisUris);
+    // A failed cached master cannot send MOVED. Refresh from surviving members
+    // as well as redirect/reconnect events so a promoted replica is discoverable.
+    ClusterTopologyRefreshOptions refresh =
+        ClusterTopologyRefreshOptions.builder()
+            .enableAllAdaptiveRefreshTriggers()
+            .adaptiveRefreshTriggersTimeout(Duration.ofSeconds(2))
+            .enablePeriodicRefresh(Duration.ofSeconds(5))
+            .build();
     this.clusterClient.setOptions(
         ClusterClientOptions.builder()
+            .topologyRefreshOptions(refresh)
             .socketOptions(SocketOptions.builder().connectTimeout(timeout).build())
             .build());
     this.clusterClient.setDefaultTimeout(timeout);
