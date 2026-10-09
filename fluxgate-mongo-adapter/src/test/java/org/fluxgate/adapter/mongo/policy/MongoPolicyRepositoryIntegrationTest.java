@@ -2,9 +2,17 @@ package org.fluxgate.adapter.mongo.policy;
 
 import static org.assertj.core.api.Assertions.*;
 
+import com.mongodb.ConnectionString;
+import com.mongodb.MongoClientSettings;
+import com.mongodb.WriteConcern;
 import com.mongodb.client.*;
+import com.mongodb.event.CommandListener;
+import com.mongodb.event.CommandStartedEvent;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import org.bson.BsonDocument;
 import org.bson.Document;
 import org.fluxgate.adapter.mongo.converter.RateLimitRuleMongoConverter;
 import org.fluxgate.adapter.mongo.support.MongoContainerSupport;
@@ -52,6 +60,68 @@ class MongoPolicyRepositoryIntegrationTest {
   Document publish(long expected, long capacity, String op) {
     return repository.publish(
         "s", expected, List.of(rule(capacity)), new Document(), false, null, op, "admin");
+  }
+
+  @Test
+  void firstPublicationCreatesAllSecondaryIndexesInOneMajorityCommand() {
+    List<BsonDocument> commands = new CopyOnWriteArrayList<>();
+    MongoClientSettings settings =
+        MongoClientSettings.builder()
+            .applyConnectionString(new ConnectionString(MongoContainerSupport.mongoUri()))
+            .addCommandListener(
+                new CommandListener() {
+                  @Override
+                  public void commandStarted(CommandStartedEvent event) {
+                    if (event.getCommandName().equals("createIndexes")) {
+                      commands.add(event.getCommand().clone());
+                    }
+                  }
+                })
+            .build();
+    try (MongoClient observedClient = MongoClients.create(settings)) {
+      MongoDatabase observedDatabase =
+          observedClient
+              .getDatabase(MongoContainerSupport.databaseName())
+              .withWriteConcern(WriteConcern.W1.withWTimeout(2000, TimeUnit.MILLISECONDS));
+      MongoPolicyRepository observed = new MongoPolicyRepository(observedDatabase, collection);
+      Document first =
+          observed.publish("s", 0, List.of(rule(100)), new Document(), false, null, "batch", "admin");
+      assertThat(commands).hasSize(1);
+      BsonDocument command = commands.get(0);
+      assertThat(command.getString("createIndexes").getValue())
+          .isEqualTo(collection + "_revisions");
+      assertThat(command.getDocument("writeConcern").getString("w").getValue())
+          .isEqualTo("majority");
+      assertThat(command.getDocument("writeConcern").getNumber("wtimeout").longValue())
+          .isEqualTo(2000);
+      List<BsonDocument> expectedKeys =
+          List.of(
+              BsonDocument.parse("{ruleSetId: 1, operationId: 1, revision: 1}"),
+              BsonDocument.parse("{ruleSetId: 1, 'rules.id': 1, revision: 1}"),
+              BsonDocument.parse("{ruleSetId: 1, revision: 1}"));
+      assertThat(command.getArray("indexes")).hasSize(3);
+      assertThat(command.getArray("indexes").stream().map(v -> v.asDocument().getDocument("key")))
+          .containsExactlyInAnyOrderElementsOf(expectedKeys);
+      command
+          .getArray("indexes")
+          .forEach(v -> assertThat(v.asDocument().keySet()).containsOnly("key", "name"));
+      assertThat(
+              observedDatabase
+                  .getCollection(collection + "_revisions")
+                  .listIndexes()
+                  .into(new java.util.ArrayList<>())
+                  .stream()
+                  .filter(index -> !"_id_".equals(index.getString("name")))
+                  .map(index -> BsonDocument.parse(index.get("key", Document.class).toJson())))
+          .containsExactlyInAnyOrderElementsOf(expectedKeys);
+      assertThat(
+              observed
+                  .publish("s", 0, List.of(rule(100)), new Document(), false, null, "batch", "admin")
+              .getString("snapshotId"))
+          .isEqualTo(first.getString("snapshotId"));
+      assertThat(observed.history("s", 10)).hasSize(1);
+      assertThat(commands).hasSize(1);
+    }
   }
 
   @Test
