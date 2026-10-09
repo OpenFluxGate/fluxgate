@@ -6,6 +6,8 @@ import com.mongodb.ReadPreference;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.IndexModel;
+import com.mongodb.client.model.Indexes;
 import com.mongodb.client.model.ReplaceOptions;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -51,15 +53,11 @@ public final class MongoPolicyRepository {
 
   private synchronized void ensurePublicationIndexes() {
     if (indexesReady) return;
-    revisions.createIndex(
-        com.mongodb.client.model.Indexes.compoundIndex(
-            com.mongodb.client.model.Indexes.ascending("ruleSetId", "operationId", "revision")));
-    revisions.createIndex(
-        com.mongodb.client.model.Indexes.compoundIndex(
-            com.mongodb.client.model.Indexes.ascending("ruleSetId", "rules.id", "revision")));
-    revisions.createIndex(
-        com.mongodb.client.model.Indexes.compoundIndex(
-            com.mongodb.client.model.Indexes.ascending("ruleSetId", "revision")));
+    revisions.createIndexes(
+        List.of(
+            new IndexModel(Indexes.ascending("ruleSetId", "operationId", "revision")),
+            new IndexModel(Indexes.ascending("ruleSetId", "rules.id", "revision")),
+            new IndexModel(Indexes.ascending("ruleSetId", "revision"))));
     indexesReady = true;
   }
 
