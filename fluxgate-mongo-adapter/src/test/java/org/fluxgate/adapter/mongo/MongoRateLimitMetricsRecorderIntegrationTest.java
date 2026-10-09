@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.Map;
 import org.bson.Document;
 import org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder;
+import org.fluxgate.adapter.mongo.support.MongoContainerSupport;
 import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.fluxgate.core.config.RateLimitBand;
@@ -20,21 +21,14 @@ import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.junit.jupiter.api.*;
 
+/**
+ * Integration tests for {@link MongoRateLimitMetricsRecorder} against a real MongoDB.
+ *
+ * <p>The target comes from {@link MongoContainerSupport}: a supplied {@code FLUXGATE_MONGO_URI}, a
+ * Testcontainers {@code mongo:7.0}, or the test is skipped. Each test gets its own collection, so
+ * nothing a shared MongoDB already holds is dropped.
+ */
 class MongoRateLimitMetricsRecorderIntegrationTest {
-
-  private static final String MONGO_URI =
-      System.getProperty(
-          "fluxgate.mongo.uri",
-          System.getenv()
-              .getOrDefault(
-                  "FLUXGATE_MONGO_URI",
-                  "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin"));
-
-  private static final String DB_NAME =
-      System.getProperty(
-          "fluxgate.mongo.db", System.getenv().getOrDefault("FLUXGATE_MONGO_DB", "fluxgate"));
-
-  private static final String EVENT_COLLECTION = "rate_limit_events";
 
   private MongoClient client;
   private MongoDatabase database;
@@ -43,18 +37,21 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
   @BeforeEach
   void setUp() {
-    client = MongoClients.create(MONGO_URI);
-    database = client.getDatabase(DB_NAME);
-    eventCollection = database.getCollection(EVENT_COLLECTION);
+    client = MongoClients.create(MongoContainerSupport.mongoUri());
+    database = client.getDatabase(MongoContainerSupport.databaseName());
 
-    // Start with a clean state
-    eventCollection.drop();
+    // A collection of this test's own, so a shared MongoDB keeps its data
+    eventCollection =
+        database.getCollection(MongoContainerSupport.uniqueCollectionName("rate_limit_events"));
 
     recorder = new MongoRateLimitMetricsRecorder(eventCollection);
   }
 
   @AfterEach
   void tearDown() {
+    if (eventCollection != null) {
+      eventCollection.drop();
+    }
     if (client != null) {
       client.close();
     }
@@ -321,5 +318,281 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
     assertNotNull(attributes);
     assertEquals("value1", attributes.get("custom1"));
     assertEquals(42, attributes.get("custom2"));
+  }
+
+  @Test
+  @DisplayName("Should record HTTP headers from RequestContext")
+  void record_shouldIncludeHttpHeaders() {
+    // given
+    RequestContext context =
+        RequestContext.builder()
+            .clientIp("10.0.0.10")
+            .endpoint("/api/headers")
+            .method("GET")
+            .header("User-Agent", "Mozilla/5.0 Test Browser")
+            .header("Accept", "application/json")
+            .header("X-Request-Id", "req-12345")
+            .header("X-Forwarded-For", "192.168.1.1, 10.0.0.1")
+            .build();
+
+    RateLimitKey key = new RateLimitKey("headers-key");
+    RateLimitResult result = RateLimitResult.allowed(key, null, 50L, 0L);
+
+    // when
+    recorder.record(context, result);
+
+    // then
+    Document doc = eventCollection.find().first();
+    assertNotNull(doc);
+
+    Document headers = doc.get("headers", Document.class);
+    assertNotNull(headers, "Headers document should exist");
+    assertEquals("Mozilla/5.0 Test Browser", headers.getString("User-Agent"));
+    assertEquals("application/json", headers.getString("Accept"));
+    assertEquals("req-12345", headers.getString("X-Request-Id"));
+    assertEquals("192.168.1.1, 10.0.0.1", headers.getString("X-Forwarded-For"));
+  }
+
+  @Test
+  @DisplayName("Should record onLimitExceedPolicy from matched rule")
+  void record_shouldIncludeOnLimitExceedPolicy() {
+    // given
+    RateLimitRule rule =
+        RateLimitRule.builder("wait-rule")
+            .name("Wait For Refill Rule")
+            .enabled(true)
+            .scope(LimitScope.PER_IP)
+            .keyStrategyId("ip")
+            .onLimitExceedPolicy(OnLimitExceedPolicy.WAIT_FOR_REFILL)
+            .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).label("per-minute").build())
+            .ruleSetId("wait-ruleset")
+            .build();
+
+    RequestContext context =
+        RequestContext.builder().clientIp("10.0.0.11").endpoint("/api/wait").method("POST").build();
+
+    RateLimitKey key = new RateLimitKey("wait-key");
+    RateLimitResult result =
+        RateLimitResult.builder(key)
+            .allowed(false)
+            .remainingTokens(0)
+            .nanosToWaitForRefill(5000000000L)
+            .matchedRule(rule)
+            .build();
+
+    // when
+    recorder.record(context, result);
+
+    // then
+    Document doc = eventCollection.find().first();
+    assertNotNull(doc);
+    assertEquals("WAIT_FOR_REFILL", doc.getString("onLimitExceedPolicy"));
+    assertEquals("wait-ruleset", doc.getString("ruleSetId"));
+    assertEquals("wait-rule", doc.getString("ruleId"));
+    assertEquals("Wait For Refill Rule", doc.getString("ruleName"));
+    assertEquals("ip", doc.getString("keyStrategyId"));
+  }
+
+  @Test
+  @DisplayName("Should record retryAfterMs calculated from nanosToWaitForRefill")
+  void record_shouldIncludeRetryAfterMs() {
+    // given
+    RequestContext context =
+        RequestContext.builder().clientIp("10.0.0.12").endpoint("/api/retry").method("GET").build();
+
+    RateLimitKey key = new RateLimitKey("retry-key");
+    // 3.5 seconds in nanoseconds
+    RateLimitResult result = RateLimitResult.rejected(key, null, 3500000000L);
+
+    // when
+    recorder.record(context, result);
+
+    // then
+    Document doc = eventCollection.find().first();
+    assertNotNull(doc);
+    assertEquals(3500000000L, doc.getLong("nanosToWaitForRefill"));
+    assertEquals(3500L, doc.getLong("retryAfterMs"));
+  }
+
+  @Test
+  @DisplayName("Should record timestampIso in ISO format")
+  void record_shouldIncludeTimestampIso() {
+    // given
+    RequestContext context =
+        RequestContext.builder().clientIp("10.0.0.13").endpoint("/api/iso").method("GET").build();
+
+    RateLimitKey key = new RateLimitKey("iso-key");
+    RateLimitResult result = RateLimitResult.allowed(key, null, 100L, 0L);
+
+    // when
+    recorder.record(context, result);
+
+    // then
+    Document doc = eventCollection.find().first();
+    assertNotNull(doc);
+    String timestampIso = doc.getString("timestampIso");
+    assertNotNull(timestampIso, "timestampIso should be present");
+    assertTrue(timestampIso.contains("T"), "timestampIso should be in ISO format");
+    assertTrue(timestampIso.endsWith("Z"), "timestampIso should end with Z (UTC)");
+  }
+
+  @Test
+  @DisplayName("Should handle empty headers gracefully")
+  void record_shouldHandleEmptyHeaders() {
+    // given
+    RequestContext context =
+        RequestContext.builder()
+            .clientIp("10.0.0.14")
+            .endpoint("/api/no-headers")
+            .method("GET")
+            .build();
+
+    RateLimitKey key = new RateLimitKey("no-headers-key");
+    RateLimitResult result = RateLimitResult.allowed(key, null, 100L, 0L);
+
+    // when
+    recorder.record(context, result);
+
+    // then
+    Document doc = eventCollection.find().first();
+    assertNotNull(doc);
+    Document headers = doc.get("headers", Document.class);
+    assertNotNull(headers, "Headers document should exist even if empty");
+    assertTrue(headers.isEmpty(), "Headers should be empty");
+  }
+
+  @Test
+  @DisplayName("Should handle empty attributes gracefully")
+  void record_shouldHandleEmptyAttributes() {
+    // given
+    RequestContext context =
+        RequestContext.builder()
+            .clientIp("10.0.0.15")
+            .endpoint("/api/no-attrs")
+            .method("GET")
+            .build();
+
+    RateLimitKey key = new RateLimitKey("no-attrs-key");
+    RateLimitResult result = RateLimitResult.allowed(key, null, 100L, 0L);
+
+    // when
+    recorder.record(context, result);
+
+    // then
+    Document doc = eventCollection.find().first();
+    assertNotNull(doc);
+    Document attributes = doc.get("attributes", Document.class);
+    assertNotNull(attributes, "Attributes document should exist even if empty");
+    assertTrue(attributes.isEmpty(), "Attributes should be empty");
+  }
+
+  @Test
+  @DisplayName("Should filter out null values from headers")
+  void record_shouldFilterNullValuesFromHeaders() {
+    // given
+    // Note: RequestContext.Builder.header() ignores null values,
+    // so this test verifies the convertHeaders() behavior indirectly
+    RequestContext context =
+        RequestContext.builder()
+            .clientIp("10.0.0.21")
+            .endpoint("/api/filter-null")
+            .method("GET")
+            .header("Valid-Header", "valid-value")
+            .header("Null-Header", null) // this should be ignored by builder
+            .build();
+
+    RateLimitKey key = new RateLimitKey("filter-null-key");
+    RateLimitResult result = RateLimitResult.allowed(key, null, 100L, 0L);
+
+    // when
+    recorder.record(context, result);
+
+    // then
+    Document doc = eventCollection.find().first();
+    assertNotNull(doc);
+    Document headers = doc.get("headers", Document.class);
+    assertNotNull(headers);
+    assertEquals("valid-value", headers.getString("Valid-Header"));
+    assertFalse(headers.containsKey("Null-Header"), "Null header should not be stored");
+  }
+
+  @Test
+  @DisplayName("Should store the API key as a fingerprint and createdAt as a BSON date (N-12)")
+  void record_shouldStoreAFingerprintedApiKeyAndADateForTheTtlIndex() {
+    // given
+    RequestContext context =
+        RequestContext.builder()
+            .clientIp("198.51.100.7")
+            .userId("user-fingerprint")
+            .apiKey("it-test-only-api-key")
+            .endpoint("/api/fingerprint")
+            .method("GET")
+            .build();
+
+    RateLimitResult result = RateLimitResult.allowed(new RateLimitKey("fp-key"), null, 10L, 0L);
+
+    // when
+    recorder.record(context, result);
+
+    // then
+    Document doc = eventCollection.find().first();
+    assertNotNull(doc);
+    String storedApiKey = doc.getString("apiKey");
+    assertNotNull(storedApiKey, "The apiKey field is still recorded");
+    assertNotEquals(
+        "it-test-only-api-key", storedApiKey, "A credential must not be stored in clear");
+    assertTrue(storedApiKey.startsWith("sha256:"), "The apiKey is a fingerprint");
+    assertEquals("user-fingerprint", doc.getString("userId"), "userId stays readable by default");
+    assertEquals("198.51.100.7", doc.getString("clientIp"));
+
+    // A TTL index only expires a BSON date; the ISO string would look configured and expire
+    // nothing.
+    assertTrue(doc.get("createdAt") instanceof java.util.Date, "createdAt must be a BSON date");
+  }
+
+  @Test
+  @DisplayName("Should fingerprint the user id when the recorder is configured to")
+  void record_shouldFingerprintTheUserIdWhenConfigured() {
+    // given
+    MongoRateLimitMetricsRecorder fingerprinting =
+        new MongoRateLimitMetricsRecorder(eventCollection, true);
+    RequestContext context =
+        RequestContext.builder().clientIp("198.51.100.8").userId("user-secret").build();
+
+    // when
+    fingerprinting.record(context, RateLimitResult.allowedWithoutRule());
+
+    // then
+    Document doc = eventCollection.find().first();
+    assertNotNull(doc);
+    assertNotEquals("user-secret", doc.getString("userId"));
+    assertTrue(doc.getString("userId").startsWith("sha256:"));
+  }
+
+  @Test
+  @DisplayName("Should let MongoDB expire the events through a TTL index on createdAt")
+  void record_shouldBeExpirableByATtlIndexOnCreatedAt() {
+    // given
+    eventCollection.createIndex(
+        com.mongodb.client.model.Indexes.ascending("createdAt"),
+        new com.mongodb.client.model.IndexOptions()
+            .name("createdAt_ttl")
+            .expireAfter(3600L, java.util.concurrent.TimeUnit.SECONDS));
+
+    // when
+    recorder.record(
+        RequestContext.builder().clientIp("198.51.100.9").build(),
+        RateLimitResult.allowedWithoutRule());
+
+    // then: the index MongoDB accepted is a TTL index, and the field it covers is present
+    boolean ttlIndexPresent = false;
+    for (Document index : eventCollection.listIndexes()) {
+      if ("createdAt_ttl".equals(index.getString("name"))) {
+        ttlIndexPresent = true;
+        assertEquals(3600L, index.get("expireAfterSeconds", Number.class).longValue());
+      }
+    }
+    assertTrue(ttlIndexPresent, "MongoDB should have accepted the TTL index");
+    assertNotNull(eventCollection.find().first().get("createdAt"));
   }
 }

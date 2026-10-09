@@ -8,8 +8,10 @@ import org.slf4j.LoggerFactory;
 /**
  * Default implementation of {@link RetryExecutor}.
  *
- * <p>This implementation provides exponential backoff retry with configurable parameters. It logs
- * retry attempts and respects the configured retry policy.
+ * <p>This implementation provides jittered exponential backoff retry with configurable parameters.
+ * It logs retry attempts and respects the configured retry policy - in particular {@link
+ * RetryConfig#shouldRetry(Exception)}, which by default refuses to retry timeouts because a
+ * timed-out consume may already have been applied by the server.
  */
 public class DefaultRetryExecutor implements RetryExecutor {
 

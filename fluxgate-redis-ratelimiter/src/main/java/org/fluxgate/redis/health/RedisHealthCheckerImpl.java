@@ -79,10 +79,8 @@ public class RedisHealthCheckerImpl {
         addClusterDetails(details);
       }
 
-      // Check if connection is truly healthy
-      if (!connectionProvider.isConnected()) {
-        return HealthCheckResult.down("Connection is not active", details);
-      }
+      // A successful PONG above is the liveness proof; calling isConnected() here would issue a
+      // second PING per health check (four round trips in cluster mode).
 
       String message =
           connectionProvider.getMode() == RedisMode.CLUSTER
@@ -109,21 +107,25 @@ public class RedisHealthCheckerImpl {
       List<String> nodes = connectionProvider.clusterNodes();
       details.put("cluster_nodes", nodes.size());
 
-      // Count master and slave nodes
+      // Count master and replica nodes. CLUSTER NODES is space separated and the role lives in
+      // the third column (flags), so the flags are read from there rather than matched against the
+      // whole line - a node id or hostname containing "master" no longer inflates the count.
       int masters = 0;
-      int slaves = 0;
+      int replicas = 0;
       for (String node : nodes) {
-        if (node.contains("master")) {
+        String[] flags = nodeFlags(node);
+        if (containsFlag(flags, "master")) {
           masters++;
-        } else if (node.contains("slave") || node.contains("replica")) {
-          slaves++;
+        } else if (containsFlag(flags, "slave") || containsFlag(flags, "replica")) {
+          replicas++;
         }
       }
       details.put("cluster_masters", masters);
-      details.put("cluster_replicas", slaves);
+      details.put("cluster_replicas", replicas);
 
       // Parse cluster info for more details
-      if (connectionProvider instanceof ClusterRedisConnection clusterConnection) {
+      if (connectionProvider instanceof ClusterRedisConnection) {
+        ClusterRedisConnection clusterConnection = (ClusterRedisConnection) connectionProvider;
         parseClusterInfo(clusterConnection.getClusterInfo(), details);
       }
 
@@ -131,6 +133,28 @@ public class RedisHealthCheckerImpl {
       log.warn("Failed to get cluster details: {}", e.getMessage());
       details.put("cluster_error", e.getMessage());
     }
+  }
+
+  /**
+   * Extracts the comma-separated flags column of one {@code CLUSTER NODES} line.
+   *
+   * <p>Line layout: {@code <id> <ip:port@cport> <flags> <master> <ping-sent> ...}
+   *
+   * @param node one line of CLUSTER NODES output
+   * @return the individual flags, empty when the line is too short to carry any
+   */
+  private static String[] nodeFlags(String node) {
+    String[] columns = node.trim().split("\\s+");
+    return columns.length >= 3 ? columns[2].split(",") : new String[0];
+  }
+
+  private static boolean containsFlag(String[] flags, String flag) {
+    for (String candidate : flags) {
+      if (flag.equals(candidate.trim())) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -151,16 +175,27 @@ public class RedisHealthCheckerImpl {
         String value = parts[1].trim();
 
         switch (key) {
-          case "cluster_state" -> details.put("cluster_state", value);
-          case "cluster_slots_ok" -> details.put("cluster_slots_ok", parseIntSafe(value));
-          case "cluster_slots_fail" -> details.put("cluster_slots_fail", parseIntSafe(value));
-          case "cluster_slots_assigned" ->
-              details.put("cluster_slots_assigned", parseIntSafe(value));
-          case "cluster_known_nodes" -> details.put("cluster_known_nodes", parseIntSafe(value));
-          case "cluster_size" -> details.put("cluster_size", parseIntSafe(value));
-          default -> {
+          case "cluster_state":
+            details.put("cluster_state", value);
+            break;
+          case "cluster_slots_ok":
+            details.put("cluster_slots_ok", parseIntSafe(value));
+            break;
+          case "cluster_slots_fail":
+            details.put("cluster_slots_fail", parseIntSafe(value));
+            break;
+          case "cluster_slots_assigned":
+            details.put("cluster_slots_assigned", parseIntSafe(value));
+            break;
+          case "cluster_known_nodes":
+            details.put("cluster_known_nodes", parseIntSafe(value));
+            break;
+          case "cluster_size":
+            details.put("cluster_size", parseIntSafe(value));
+            break;
+          default:
             // Skip other fields
-          }
+            break;
         }
       }
     }
@@ -175,8 +210,20 @@ public class RedisHealthCheckerImpl {
   }
 
   /** Health check result with status and details. */
-  public record HealthCheckResult(
-      String status, String message, boolean isHealthy, Map<String, Object> details) {
+  public static final class HealthCheckResult {
+
+    private final String status;
+    private final String message;
+    private final boolean isHealthy;
+    private final Map<String, Object> details;
+
+    public HealthCheckResult(
+        String status, String message, boolean isHealthy, Map<String, Object> details) {
+      this.status = status;
+      this.message = message;
+      this.isHealthy = isHealthy;
+      this.details = details;
+    }
 
     public static HealthCheckResult up(String message, Map<String, Object> details) {
       return new HealthCheckResult("UP", message, true, details);
@@ -184,6 +231,54 @@ public class RedisHealthCheckerImpl {
 
     public static HealthCheckResult down(String message, Map<String, Object> details) {
       return new HealthCheckResult("DOWN", message, false, details);
+    }
+
+    public String status() {
+      return status;
+    }
+
+    public String message() {
+      return message;
+    }
+
+    public boolean isHealthy() {
+      return isHealthy;
+    }
+
+    public Map<String, Object> details() {
+      return details;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (!(o instanceof HealthCheckResult)) return false;
+      HealthCheckResult that = (HealthCheckResult) o;
+      return isHealthy == that.isHealthy
+          && Objects.equals(status, that.status)
+          && Objects.equals(message, that.message)
+          && Objects.equals(details, that.details);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(status, message, isHealthy, details);
+    }
+
+    @Override
+    public String toString() {
+      return "HealthCheckResult{"
+          + "status='"
+          + status
+          + '\''
+          + ", message='"
+          + message
+          + '\''
+          + ", isHealthy="
+          + isHealthy
+          + ", details="
+          + details
+          + '}';
     }
   }
 }

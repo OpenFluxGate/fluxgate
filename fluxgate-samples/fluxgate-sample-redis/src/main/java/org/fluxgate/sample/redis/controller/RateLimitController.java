@@ -12,8 +12,7 @@ import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
-import org.fluxgate.core.key.KeyResolver;
-import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.key.LimitScopeKeyResolver;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.ratelimiter.RateLimiter;
@@ -114,17 +113,19 @@ public class RateLimitController {
   }
 
   private RateLimitRuleSet buildRuleSet(RuleSetData data, RateLimitCheckRequest request) {
-    // Create a KeyResolver based on the keyStrategyId
-    KeyResolver keyResolver =
-        context -> {
-          String keyValue =
-              switch (data.getKeyStrategyId()) {
-                case "userId" -> context.getUserId() != null ? context.getUserId() : "anonymous";
-                case "apiKey" -> context.getApiKey() != null ? context.getApiKey() : "default";
-                default -> context.getClientIp() != null ? context.getClientIp() : "unknown";
-              };
-          return new RateLimitKey(keyValue);
-        };
+    // Determine LimitScope based on keyStrategyId
+    LimitScope scope;
+    switch (data.getKeyStrategyId()) {
+      case "userId":
+        scope = LimitScope.PER_USER;
+        break;
+      case "apiKey":
+        scope = LimitScope.PER_API_KEY;
+        break;
+      default:
+        scope = LimitScope.PER_IP;
+        break;
+    }
 
     // Build a rate limit rule from the RuleSetData
     RateLimitRule rule =
@@ -132,7 +133,7 @@ public class RateLimitController {
             .name("Dynamic Rule - " + data.getCapacity() + " per " + data.getWindowSeconds() + "s")
             .enabled(true)
             .ruleSetId(data.getRuleSetId())
-            .scope(LimitScope.PER_IP)
+            .scope(scope)
             .keyStrategyId(data.getKeyStrategyId())
             .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
             .addBand(
@@ -144,7 +145,7 @@ public class RateLimitController {
 
     return RateLimitRuleSet.builder(data.getRuleSetId())
         .rules(List.of(rule))
-        .keyResolver(keyResolver)
+        .keyResolver(new LimitScopeKeyResolver())
         .build();
   }
 

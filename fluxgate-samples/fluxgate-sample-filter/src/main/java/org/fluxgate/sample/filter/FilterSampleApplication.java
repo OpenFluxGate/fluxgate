@@ -24,7 +24,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *
  * <ul>
  *   <li><b>HttpRateLimitHandler</b> (current) - Calls external FluxGate API server
- *   <li><b>RedisRateLimitHandler</b> (commented) - Direct Redis access
+ *   <li><b>EngineBackedRateLimitHandler</b> - the starter's default handler, registered
+ *       automatically for direct Redis access (see README)
  * </ul>
  *
  * <p>Prerequisites:

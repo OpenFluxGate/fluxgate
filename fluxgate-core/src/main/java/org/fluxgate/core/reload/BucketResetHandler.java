@@ -11,21 +11,19 @@ package org.fluxgate.core.reload;
  *
  * <p>Example implementation for Redis:
  *
- * <pre>{@code
+ * <pre>
  * public class RedisBucketResetHandler implements BucketResetHandler {
  *     private final RedisTokenBucketStore store;
  *
- *     @Override
  *     public void resetBuckets(String ruleSetId) {
  *         store.deleteBucketsByRuleSetId(ruleSetId);
  *     }
  *
- *     @Override
  *     public void resetAllBuckets() {
  *         store.deleteAllBuckets();
  *     }
  * }
- * }</pre>
+ * </pre>
  */
 public interface BucketResetHandler {
 

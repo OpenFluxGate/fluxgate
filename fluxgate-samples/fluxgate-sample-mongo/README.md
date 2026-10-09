@@ -92,7 +92,7 @@ fluxgate:
   redis:
     enabled: false
   ratelimit:
-    filter-enabled: false  # No rate limiting in control-plane
+    enabled: false  # No rate limiting in the control-plane (filter-enabled is deprecated)
 ```
 
 ## REST API

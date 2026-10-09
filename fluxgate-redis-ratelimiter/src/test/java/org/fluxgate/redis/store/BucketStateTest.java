@@ -9,7 +9,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Unit tests for {@link BucketState}.
  *
- * <p>BucketState is a record that represents the result of a token bucket consume operation.
+ * <p>BucketState is an immutable class that represents the result of a token bucket consume
+ * operation.
  */
 @DisplayName("BucketState Tests")
 class BucketStateTest {
@@ -54,13 +55,48 @@ class BucketStateTest {
       assertEquals(nanosToWait, state.nanosToWaitForRefill());
       assertEquals(resetTimeMillis, state.resetTimeMillis());
     }
+
+    @Test
+    @DisplayName("allowed() should default limit and band index to unknown")
+    void allowed_shouldDefaultBindingBandToUnknown() {
+      // when
+      BucketState state = BucketState.allowed(7, 1_000L);
+
+      // then
+      assertEquals(-1L, state.limit());
+      assertEquals(BucketState.UNKNOWN_BAND_INDEX, state.bandIndex());
+    }
+
+    @Test
+    @DisplayName("allowed() should carry the binding band's capacity and index")
+    void allowed_shouldCarryBindingBand() {
+      // when
+      BucketState state = BucketState.allowed(7, 1_000L, 100L, 2);
+
+      // then
+      assertTrue(state.consumed());
+      assertEquals(100L, state.limit());
+      assertEquals(2, state.bandIndex());
+    }
+
+    @Test
+    @DisplayName("rejected() should carry the rejecting band's capacity and index")
+    void rejected_shouldCarryRejectingBand() {
+      // when
+      BucketState state = BucketState.rejected(0, 5_000L, 1_000L, 10L, 1);
+
+      // then
+      assertFalse(state.consumed());
+      assertEquals(10L, state.limit());
+      assertEquals(1, state.bandIndex());
+    }
   }
 
-  // ==================== Record Accessor Tests ====================
+  // ==================== Accessor Tests ====================
 
   @Nested
-  @DisplayName("Record Accessor Tests")
-  class RecordAccessorTests {
+  @DisplayName("Accessor Tests")
+  class AccessorTests {
 
     @Test
     @DisplayName("consumed() should return true for allowed state")
@@ -119,84 +155,6 @@ class BucketStateTest {
     }
   }
 
-  // ==================== getRetryAfterSeconds Tests ====================
-
-  @Nested
-  @DisplayName("getRetryAfterSeconds Tests")
-  class GetRetryAfterSecondsTests {
-
-    @Test
-    @DisplayName("should return 0 for allowed state")
-    void getRetryAfterSeconds_shouldReturnZeroForAllowed() {
-      // given
-      BucketState state = BucketState.allowed(100, System.currentTimeMillis());
-
-      // when / then
-      assertEquals(0, state.getRetryAfterSeconds());
-    }
-
-    @Test
-    @DisplayName("should return 1 second for 1 nano")
-    void getRetryAfterSeconds_shouldRoundUpForSmallNanos() {
-      // given: 1 nanosecond should round up to 1 second
-      BucketState state = BucketState.rejected(0, 1, System.currentTimeMillis());
-
-      // when / then
-      assertEquals(1, state.getRetryAfterSeconds());
-    }
-
-    @Test
-    @DisplayName("should return 1 second for 999_999_999 nanos")
-    void getRetryAfterSeconds_shouldRoundUpForAlmostOneSecond() {
-      // given: just under 1 second should still be 1 second
-      BucketState state = BucketState.rejected(0, 999_999_999L, System.currentTimeMillis());
-
-      // when / then
-      assertEquals(1, state.getRetryAfterSeconds());
-    }
-
-    @Test
-    @DisplayName("should return 1 second for exactly 1_000_000_000 nanos")
-    void getRetryAfterSeconds_shouldReturnOneForExactlyOneSecond() {
-      // given
-      BucketState state = BucketState.rejected(0, 1_000_000_000L, System.currentTimeMillis());
-
-      // when / then
-      assertEquals(1, state.getRetryAfterSeconds());
-    }
-
-    @Test
-    @DisplayName("should return 2 seconds for 1_000_000_001 nanos")
-    void getRetryAfterSeconds_shouldRoundUpToTwoSeconds() {
-      // given: just over 1 second should round up to 2 seconds
-      BucketState state = BucketState.rejected(0, 1_000_000_001L, System.currentTimeMillis());
-
-      // when / then
-      assertEquals(2, state.getRetryAfterSeconds());
-    }
-
-    @Test
-    @DisplayName("should return correct value for 5 seconds")
-    void getRetryAfterSeconds_shouldReturnFiveSeconds() {
-      // given
-      BucketState state = BucketState.rejected(0, 5_000_000_000L, System.currentTimeMillis());
-
-      // when / then
-      assertEquals(5, state.getRetryAfterSeconds());
-    }
-
-    @Test
-    @DisplayName("should handle large nanos values")
-    void getRetryAfterSeconds_shouldHandleLargeValues() {
-      // given: 1 hour = 3600 seconds = 3_600_000_000_000 nanos
-      long oneHourNanos = 3_600_000_000_000L;
-      BucketState state = BucketState.rejected(0, oneHourNanos, System.currentTimeMillis());
-
-      // when / then
-      assertEquals(3600, state.getRetryAfterSeconds());
-    }
-  }
-
   // ==================== Edge Case Tests ====================
 
   @Nested
@@ -232,12 +190,11 @@ class BucketStateTest {
 
       // then
       assertEquals(0, state.nanosToWaitForRefill());
-      assertEquals(0, state.getRetryAfterSeconds());
     }
 
     @Test
-    @DisplayName("should support record equality")
-    void shouldSupportRecordEquality() {
+    @DisplayName("should support equality")
+    void shouldSupportEquality() {
       // given
       long resetTime = System.currentTimeMillis();
       BucketState state1 = new BucketState(true, 50, 0, resetTime);
@@ -249,8 +206,82 @@ class BucketStateTest {
     }
 
     @Test
-    @DisplayName("should support record toString")
-    void shouldSupportRecordToString() {
+    @DisplayName("equals should return true for same instance")
+    void equalsShouldReturnTrueForSameInstance() {
+      // given
+      BucketState state = new BucketState(true, 50, 0, 12345L);
+
+      // when / then
+      assertEquals(state, state);
+    }
+
+    @Test
+    @DisplayName("equals should return false for null")
+    void equalsShouldReturnFalseForNull() {
+      // given
+      BucketState state = new BucketState(true, 50, 0, 12345L);
+
+      // when / then
+      assertNotEquals(state, null);
+    }
+
+    @Test
+    @DisplayName("equals should return false for different type")
+    void equalsShouldReturnFalseForDifferentType() {
+      // given
+      BucketState state = new BucketState(true, 50, 0, 12345L);
+
+      // when / then
+      assertNotEquals(state, "not a BucketState");
+    }
+
+    @Test
+    @DisplayName("equals should return false for different consumed")
+    void equalsShouldReturnFalseForDifferentConsumed() {
+      // given
+      BucketState state1 = new BucketState(true, 50, 0, 12345L);
+      BucketState state2 = new BucketState(false, 50, 0, 12345L);
+
+      // when / then
+      assertNotEquals(state1, state2);
+    }
+
+    @Test
+    @DisplayName("equals should return false for different remainingTokens")
+    void equalsShouldReturnFalseForDifferentRemainingTokens() {
+      // given
+      BucketState state1 = new BucketState(true, 50, 0, 12345L);
+      BucketState state2 = new BucketState(true, 100, 0, 12345L);
+
+      // when / then
+      assertNotEquals(state1, state2);
+    }
+
+    @Test
+    @DisplayName("equals should return false for different nanosToWaitForRefill")
+    void equalsShouldReturnFalseForDifferentNanosToWait() {
+      // given
+      BucketState state1 = new BucketState(false, 0, 1000L, 12345L);
+      BucketState state2 = new BucketState(false, 0, 2000L, 12345L);
+
+      // when / then
+      assertNotEquals(state1, state2);
+    }
+
+    @Test
+    @DisplayName("equals should return false for different resetTimeMillis")
+    void equalsShouldReturnFalseForDifferentResetTime() {
+      // given
+      BucketState state1 = new BucketState(true, 50, 0, 12345L);
+      BucketState state2 = new BucketState(true, 50, 0, 67890L);
+
+      // when / then
+      assertNotEquals(state1, state2);
+    }
+
+    @Test
+    @DisplayName("should support toString")
+    void shouldSupportToString() {
       // given
       BucketState state = new BucketState(true, 100, 0, 1234567890L);
 

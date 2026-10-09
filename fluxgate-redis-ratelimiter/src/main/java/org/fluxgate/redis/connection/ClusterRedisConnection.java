@@ -1,12 +1,18 @@
 package org.fluxgate.redis.connection;
 
+import io.lettuce.core.KeyScanCursor;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.ScanArgs;
+import io.lettuce.core.ScanCursor;
 import io.lettuce.core.ScriptOutputType;
+import io.lettuce.core.SocketOptions;
+import io.lettuce.core.cluster.ClusterClientOptions;
 import io.lettuce.core.cluster.RedisClusterClient;
 import io.lettuce.core.cluster.api.StatefulRedisClusterConnection;
 import io.lettuce.core.cluster.api.sync.RedisAdvancedClusterCommands;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -42,7 +48,7 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
    * @param nodeUris list of cluster node URIs (e.g., ["redis://node1:6379", "redis://node2:6379"])
    */
   public ClusterRedisConnection(List<String> nodeUris) {
-    this(nodeUris, Duration.ofSeconds(5));
+    this(nodeUris, RedisUriUtils.DEFAULT_TIMEOUT);
   }
 
   /**
@@ -64,6 +70,10 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
     List<RedisURI> redisUris = nodeUris.stream().map(RedisURI::create).collect(Collectors.toList());
 
     this.clusterClient = RedisClusterClient.create(redisUris);
+    this.clusterClient.setOptions(
+        ClusterClientOptions.builder()
+            .socketOptions(SocketOptions.builder().connectTimeout(timeout).build())
+            .build());
     this.clusterClient.setDefaultTimeout(timeout);
 
     try {
@@ -77,7 +87,8 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
           "Redis Cluster connection established: {} nodes discovered, ping={}", nodeCount, pong);
     } catch (Exception e) {
       clusterClient.close();
-      throw new RedisConnectionException("Failed to connect to Redis Cluster", e);
+      throw new org.fluxgate.core.exception.RedisConnectionException(
+          "Failed to connect to Redis Cluster", RedisUriUtils.mask(String.join(",", nodeUris)), e);
     }
   }
 
@@ -95,6 +106,19 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
     log.debug("Cluster Redis connection created from existing commands");
   }
 
+  /**
+   * Visible for testing: wraps Lettuce objects that were created elsewhere, so that shutdown
+   * behaviour can be exercised without a Redis cluster.
+   */
+  ClusterRedisConnection(
+      RedisClusterClient clusterClient,
+      StatefulRedisClusterConnection<String, String> connection,
+      RedisAdvancedClusterCommands<String, String> commands) {
+    this.clusterClient = clusterClient;
+    this.connection = connection;
+    this.commands = commands;
+  }
+
   @Override
   public RedisMode getMode() {
     return RedisMode.CLUSTER;
@@ -103,9 +127,11 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
   @Override
   public boolean isConnected() {
     try {
-      return connection != null && connection.isOpen() && "PONG".equals(commands.ping());
+      // connection == null means the commands were supplied from outside and this class does not
+      // own a StatefulRedisClusterConnection to inspect; PING alone is then the whole answer.
+      return (connection == null || connection.isOpen()) && "PONG".equals(commands.ping());
     } catch (Exception e) {
-      log.warn("Cluster connection check failed: {}", e.getMessage());
+      log.warn("Cluster connection check failed", e);
       return false;
     }
   }
@@ -134,6 +160,18 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
   }
 
   @Override
+  @SuppressWarnings("unchecked")
+  public <T> T eval(String script, String[] keys, String[] args) {
+    Objects.requireNonNull(script, "script must not be null");
+    Objects.requireNonNull(keys, "keys must not be null");
+    Objects.requireNonNull(args, "args must not be null");
+
+    // Lettuce cluster client automatically routes EVAL to the correct node
+    // based on the key's slot
+    return (T) commands.eval(script, ScriptOutputType.MULTI, keys, args);
+  }
+
+  @Override
   public boolean hset(String key, String field, String value) {
     return commands.hset(key, field, value);
   }
@@ -151,6 +189,11 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
   @Override
   public long del(String... keys) {
     return commands.del(keys);
+  }
+
+  @Override
+  public long unlink(String... keys) {
+    return commands.unlink(keys);
   }
 
   @Override
@@ -185,6 +228,24 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
   }
 
   @Override
+  public List<String> scanKeys(String pattern, long count) {
+    Objects.requireNonNull(pattern, "pattern must not be null");
+    if (count <= 0) {
+      throw new IllegalArgumentException("count must be > 0");
+    }
+
+    List<String> keys = new ArrayList<>();
+    ScanArgs scanArgs = ScanArgs.Builder.matches(pattern).limit(count);
+    ScanCursor cursor = ScanCursor.INITIAL;
+    do {
+      KeyScanCursor<String> result = commands.scan(cursor, scanArgs);
+      keys.addAll(result.getKeys());
+      cursor = result;
+    } while (!cursor.isFinished());
+    return keys;
+  }
+
+  @Override
   public String flushdb() {
     // In cluster mode, this flushes all nodes
     return commands.flushdb();
@@ -208,24 +269,33 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
       return nodes;
     } catch (Exception e) {
       log.warn("Failed to get cluster nodes: {}", e.getMessage());
-      return List.of();
+      return Collections.emptyList();
     }
   }
 
   @Override
   public void close() {
     log.info("Closing Redis Cluster connection");
+
+    // Independent blocks: a connection that fails to close must not leak the client's Netty
+    // event loop group along with it.
     try {
       if (connection != null) {
         connection.close();
       }
+    } catch (Exception e) {
+      log.warn("Error closing cluster connection", e);
+    }
+
+    try {
       if (clusterClient != null) {
         clusterClient.shutdown();
       }
-      log.info("Redis Cluster connection closed");
     } catch (Exception e) {
-      log.warn("Error closing cluster connection: {}", e.getMessage());
+      log.warn("Error shutting down Redis Cluster client", e);
     }
+
+    log.info("Redis Cluster connection closed");
   }
 
   /**

@@ -19,6 +19,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -90,7 +94,8 @@ class DefaultCircuitBreakerTest {
       // Wait for transition
       Thread.sleep(150);
 
-      // Next state check should transition to HALF_OPEN
+      // The transition happens on the execute path, not when the state is merely observed
+      assertThat(circuitBreaker.tryTransitionToHalfOpen()).isTrue();
       assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.HALF_OPEN);
     }
 
@@ -135,6 +140,7 @@ class DefaultCircuitBreakerTest {
 
       // Wait for transition to HALF_OPEN
       Thread.sleep(150);
+      assertThat(circuitBreaker.tryTransitionToHalfOpen()).isTrue();
       assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.HALF_OPEN);
 
       // Failure in HALF_OPEN
@@ -182,8 +188,8 @@ class DefaultCircuitBreakerTest {
     }
 
     @Test
-    @DisplayName("should return null when OPEN with FAIL_OPEN")
-    void shouldReturnNullWhenOpenWithFailOpen() throws Exception {
+    @DisplayName("should throw instead of returning null when OPEN with FAIL_OPEN")
+    void shouldThrowWhenOpenWithFailOpen() {
       CircuitBreakerConfig failOpenConfig =
           CircuitBreakerConfig.builder()
               .enabled(true)
@@ -204,9 +210,9 @@ class DefaultCircuitBreakerTest {
         }
       }
 
-      // Should return null (fail-open behavior)
-      String result = failOpenCb.execute(() -> "should not execute");
-      assertThat(result).isNull();
+      // execute() never hands a null result to a caller expecting a value
+      assertThatThrownBy(() -> failOpenCb.execute(() -> "should not execute"))
+          .isInstanceOf(CircuitBreakerOpenException.class);
     }
 
     @Test
@@ -282,6 +288,239 @@ class DefaultCircuitBreakerTest {
   }
 
   @Nested
+  @DisplayName("getState")
+  class GetStateTests {
+
+    @Test
+    @DisplayName("should not advance the state machine when polled")
+    void shouldNotTransitionWhenPolled() throws Exception {
+      // Open the circuit
+      for (int i = 0; i < 3; i++) {
+        try {
+          circuitBreaker.execute(
+              () -> {
+                throw new RuntimeException("failure");
+              });
+        } catch (Exception ignored) {
+        }
+      }
+
+      Thread.sleep(150);
+
+      // A monitoring endpoint polling the state must not consume the OPEN -> HALF_OPEN transition
+      for (int i = 0; i < 5; i++) {
+        assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+      }
+
+      // The trial call still gets through afterwards
+      assertThat(circuitBreaker.execute(() -> "trial")).isEqualTo("trial");
+      assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.HALF_OPEN);
+    }
+  }
+
+  @Nested
+  @DisplayName("HALF_OPEN trial permits")
+  class HalfOpenPermitTests {
+
+    @Test
+    @DisplayName("should admit at most permittedCallsInHalfOpenState concurrent trials")
+    void shouldLimitConcurrentTrialCalls() throws Exception {
+      CircuitBreakerConfig cbConfig =
+          CircuitBreakerConfig.builder()
+              .enabled(true)
+              .failureThreshold(2)
+              .waitDurationInOpenState(Duration.ofMillis(50))
+              .permittedCallsInHalfOpenState(2)
+              .build();
+      DefaultCircuitBreaker breaker = new DefaultCircuitBreaker("half-open-permits", cbConfig);
+
+      for (int i = 0; i < 2; i++) {
+        breaker.executeWithFallback(
+            () -> {
+              throw new RuntimeException("failure");
+            },
+            () -> "fallback");
+      }
+      assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+      Thread.sleep(80);
+
+      int callers = 6;
+      AtomicInteger admitted = new AtomicInteger(0);
+      CountDownLatch trialsEntered = new CountDownLatch(2);
+      CountDownLatch rejectedCalls = new CountDownLatch(callers - 2);
+      CountDownLatch holdTrials = new CountDownLatch(1);
+      CountDownLatch allDone = new CountDownLatch(callers);
+
+      ExecutorService pool = Executors.newFixedThreadPool(callers);
+      try {
+        for (int i = 0; i < callers; i++) {
+          pool.execute(
+              () -> {
+                try {
+                  breaker.executeWithFallback(
+                      () -> {
+                        admitted.incrementAndGet();
+                        trialsEntered.countDown();
+                        await(holdTrials);
+                        return "trial";
+                      },
+                      () -> {
+                        rejectedCalls.countDown();
+                        return "fallback";
+                      });
+                } finally {
+                  allDone.countDown();
+                }
+              });
+        }
+
+        // Exactly two callers hold a trial permit; every other caller is served the fallback
+        assertThat(trialsEntered.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(rejectedCalls.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(admitted.get()).isEqualTo(2);
+
+        holdTrials.countDown();
+        assertThat(allDone.await(5, TimeUnit.SECONDS)).isTrue();
+      } finally {
+        holdTrials.countDown();
+        pool.shutdownNow();
+      }
+
+      // Two successful trials are enough to close the circuit again
+      assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+    }
+
+    @Test
+    @DisplayName("should reopen and hand out fresh permits after a failed trial")
+    void shouldReopenAndResetPermitsAfterFailedTrial() throws Exception {
+      // Open the circuit
+      for (int i = 0; i < 3; i++) {
+        try {
+          circuitBreaker.execute(
+              () -> {
+                throw new RuntimeException("failure");
+              });
+        } catch (Exception ignored) {
+        }
+      }
+
+      Thread.sleep(150);
+      assertThat(circuitBreaker.tryTransitionToHalfOpen()).isTrue();
+
+      // One failing trial reopens the circuit even though a second permit was still free
+      try {
+        circuitBreaker.execute(
+            () -> {
+              throw new RuntimeException("still broken");
+            });
+      } catch (Exception ignored) {
+      }
+      assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+      assertThatThrownBy(() -> circuitBreaker.execute(() -> "should not execute"))
+          .isInstanceOf(CircuitBreakerOpenException.class);
+
+      // After the next wait duration the full set of permits is available again
+      Thread.sleep(150);
+      assertThat(circuitBreaker.execute(() -> "trial-1")).isEqualTo("trial-1");
+      assertThat(circuitBreaker.execute(() -> "trial-2")).isEqualTo("trial-2");
+      assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+    }
+
+    private void await(CountDownLatch latch) {
+      try {
+        if (!latch.await(5, TimeUnit.SECONDS)) {
+          throw new IllegalStateException("latch was not released in time");
+        }
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(e);
+      }
+    }
+  }
+
+  @Nested
+  @DisplayName("Sliding window failure rate")
+  class SlidingWindowTests {
+
+    private DefaultCircuitBreaker rateBreaker() {
+      return new DefaultCircuitBreaker(
+          "rate",
+          CircuitBreakerConfig.builder()
+              .enabled(true)
+              .slidingWindowSize(10)
+              .minimumNumberOfCalls(10)
+              .failureRateThreshold(50)
+              .build());
+    }
+
+    @Test
+    @DisplayName("should open on intermittent failures that a consecutive counter would miss")
+    void shouldOpenOnIntermittentFailures() {
+      DefaultCircuitBreaker breaker = rateBreaker();
+
+      // Alternating success/failure: the consecutive counter never exceeds 1, and the window needs
+      // 10 recorded calls before the 50% rate is evaluated on the next failure
+      for (int i = 0; i < 12; i++) {
+        boolean fail = i % 2 == 0;
+        breaker.executeWithFallback(
+            () -> {
+              if (fail) {
+                throw new RuntimeException("intermittent failure");
+              }
+              return "ok";
+            },
+            () -> "fallback");
+      }
+
+      assertThat(breaker.getFailureCount()).isLessThanOrEqualTo(1);
+      assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+    }
+
+    @Test
+    @DisplayName("should not open before minimumNumberOfCalls is reached")
+    void shouldNotOpenBeforeMinimumNumberOfCalls() {
+      DefaultCircuitBreaker breaker = rateBreaker();
+
+      // 100% failure rate, but only 9 recorded calls
+      for (int i = 0; i < 9; i++) {
+        breaker.executeWithFallback(
+            () -> {
+              throw new RuntimeException("failure");
+            },
+            () -> "fallback");
+      }
+
+      assertThat(breaker.getRecordedCalls()).isEqualTo(9);
+      assertThat(breaker.getFailureRate()).isEqualTo(100.0);
+      assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+
+      breaker.executeWithFallback(
+          () -> {
+            throw new RuntimeException("failure");
+          },
+          () -> "fallback");
+
+      assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+    }
+
+    @Test
+    @DisplayName("should keep the legacy absolute threshold when set explicitly")
+    void shouldHonourExplicitAbsoluteThreshold() {
+      // failureThreshold(3) with a window that would need 10 calls: the absolute rule wins
+      for (int i = 0; i < 3; i++) {
+        circuitBreaker.executeWithFallback(
+            () -> {
+              throw new RuntimeException("failure");
+            },
+            () -> "fallback");
+      }
+
+      assertThat(circuitBreaker.getConfig().isFailureThresholdExplicit()).isTrue();
+      assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+    }
+  }
+
+  @Nested
   @DisplayName("reset")
   class ResetTests {
 
@@ -338,6 +577,65 @@ class DefaultCircuitBreakerTest {
                       }))
           .isInstanceOf(RuntimeException.class)
           .hasMessage("test");
+    }
+  }
+
+  @Nested
+  @DisplayName("CircuitBreakerConfig")
+  class ConfigTests {
+
+    @Test
+    @DisplayName("should expose sliding window defaults")
+    void shouldExposeSlidingWindowDefaults() {
+      CircuitBreakerConfig defaults = CircuitBreakerConfig.defaults();
+
+      assertThat(defaults.getSlidingWindowSize()).isEqualTo(20);
+      assertThat(defaults.getFailureRateThreshold()).isEqualTo(50);
+      assertThat(defaults.getMinimumNumberOfCalls()).isEqualTo(10);
+      assertThat(defaults.isFailureThresholdExplicit()).isFalse();
+    }
+
+    @Test
+    @DisplayName("should reject a null waitDurationInOpenState")
+    void shouldRejectNullWaitDuration() {
+      assertThatThrownBy(() -> CircuitBreakerConfig.builder().waitDurationInOpenState(null))
+          .isInstanceOf(NullPointerException.class)
+          .hasMessageContaining("waitDurationInOpenState must not be null");
+    }
+
+    @Test
+    @DisplayName("should reject a negative waitDurationInOpenState")
+    void shouldRejectNegativeWaitDuration() {
+      assertThatThrownBy(
+              () -> CircuitBreakerConfig.builder().waitDurationInOpenState(Duration.ofSeconds(-1)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("must not be negative");
+    }
+
+    @Test
+    @DisplayName("should reject minimumNumberOfCalls larger than the window")
+    void shouldRejectMinimumLargerThanWindow() {
+      assertThatThrownBy(
+              () ->
+                  CircuitBreakerConfig.builder()
+                      .slidingWindowSize(5)
+                      .minimumNumberOfCalls(6)
+                      .build())
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("minimumNumberOfCalls must not exceed slidingWindowSize");
+    }
+
+    @Test
+    @DisplayName("should compare by value")
+    void shouldCompareByValue() {
+      CircuitBreakerConfig left = CircuitBreakerConfig.builder().enabled(true).build();
+      CircuitBreakerConfig right = CircuitBreakerConfig.builder().enabled(true).build();
+      CircuitBreakerConfig other =
+          CircuitBreakerConfig.builder().enabled(true).failureRateThreshold(90).build();
+
+      assertThat(left).isEqualTo(right).hasSameHashCodeAs(right);
+      assertThat(left).isNotEqualTo(other);
+      assertThat(left.toString()).contains("slidingWindowSize=20", "failureRateThreshold=50");
     }
   }
 

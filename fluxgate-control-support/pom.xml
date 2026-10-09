@@ -9,7 +9,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.1.4</version>
+        <version>0.3.7</version>
     </parent>
 
     <artifactId>fluxgate-control-support</artifactId>
@@ -18,19 +18,28 @@
     <name>FluxGate Control Support</name>
     <description>Support library for FluxGate Control Plane (Admin/Studio) - provides rule change notification capabilities</description>
 
+    <properties>
+        <skipJacocoForPom>false</skipJacocoForPom>
+    </properties>
+
     <dependencies>
-        <!-- Lettuce Redis Client -->
+        <!-- FluxGate Core (shared constants such as the Pub/Sub channel name) -->
+        <dependency>
+            <groupId>io.github.openfluxgate</groupId>
+            <artifactId>fluxgate-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Lettuce Redis Client; version managed in the root pom -->
         <dependency>
             <groupId>io.lettuce</groupId>
             <artifactId>lettuce-core</artifactId>
-            <version>6.3.2.RELEASE</version>
         </dependency>
 
-        <!-- Jackson for JSON serialization -->
+        <!-- Jackson for JSON serialization; version managed in the root pom -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>2.17.2</version>
         </dependency>
 
         <!-- SLF4J Logging -->
@@ -65,7 +74,14 @@
         <dependency>
             <groupId>org.aspectj</groupId>
             <artifactId>aspectjweaver</artifactId>
-            <version>1.9.22</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Spring TX (optional, to defer notifications until after commit) -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-tx</artifactId>
+            <version>6.1.14</version>
             <optional>true</optional>
         </dependency>
 
@@ -73,6 +89,14 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- ApplicationContextRunner, to assert what the auto-configuration wires -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-test</artifactId>
+            <version>3.3.5</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -86,6 +110,16 @@
             <version>1.5.6</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -93,6 +127,11 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- Keep parameter names: SpEL expressions such as "#ruleSetId" resolve
+                         through them, and Spring 6 no longer reads the local variable table. -->
+                    <parameters>true</parameters>
+                </configuration>
             </plugin>
 
             <plugin>

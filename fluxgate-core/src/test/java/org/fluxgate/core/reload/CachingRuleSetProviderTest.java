@@ -98,7 +98,7 @@ class CachingRuleSetProviderTest {
     RateLimitRule rule = RateLimitRule.builder("rule-1").addBand(band).build();
     return RateLimitRuleSet.builder(id)
         .rules(List.of(rule))
-        .keyResolver(ctx -> new RateLimitKey(ctx.getClientIp()))
+        .keyResolver((ctx, r) -> new RateLimitKey(ctx.getClientIp()))
         .build();
   }
 

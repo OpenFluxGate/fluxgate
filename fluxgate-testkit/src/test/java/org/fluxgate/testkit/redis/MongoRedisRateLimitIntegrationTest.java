@@ -26,13 +26,14 @@ import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
-import org.fluxgate.core.key.KeyResolver;
-import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.key.LimitScopeKeyResolver;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.redis.RedisRateLimiter;
 import org.fluxgate.redis.config.RedisRateLimiterConfig;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
+import org.fluxgate.testkit.support.MongoContainerSupport;
+import org.fluxgate.testkit.support.RedisContainerSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -44,35 +45,26 @@ import org.junit.jupiter.api.Test;
  * <p>This test uses: - MongoDB to store and load rate limit rules - Redis as the runtime token
  * bucket storage - RedisRateLimiter as the RateLimiter implementation
  *
- * <p>Prerequisites: - MongoDB running at:
- * mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin - Redis running at:
- * redis://localhost:6379
+ * <p>The MongoDB and Redis targets come from {@link MongoContainerSupport} and {@link
+ * RedisContainerSupport}: supplied {@code FLUXGATE_MONGO_URI} / {@code FLUXGATE_REDIS_URI},
+ * Testcontainers, or the test is skipped. The rule set ids carry a run id so Redis buckets are
+ * never inherited from an earlier run, and only those keys are deleted afterwards.
  */
 class MongoRedisRateLimitIntegrationTest {
 
   // ========================================================================
-  // Configuration (supports environment variables for CI)
+  // Configuration (resolved by the container support classes)
   // ========================================================================
 
-  private static final String MONGO_URI =
-      System.getenv()
-          .getOrDefault(
-              "FLUXGATE_MONGO_URI",
-              "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin");
-
-  private static final String MONGO_DB =
-      System.getenv().getOrDefault("FLUXGATE_MONGO_DB", "fluxgate");
-
-  private static final String REDIS_URI =
-      System.getenv().getOrDefault("FLUXGATE_REDIS_URI", "redis://localhost:6379");
+  /** Makes every rule set id - and therefore every Redis bucket key - unique to this JVM run. */
+  private static final String RUN_ID = RedisContainerSupport.newRunId();
 
   // Test constants as specified in the requirements
-  private static final String RULE_SET_ID = "mongo-redis-per-ip-1m-100";
+  private static final String RULE_SET_ID = "mongo-redis-per-ip-1m-100-" + RUN_ID;
   private static final String RULE_ID = "per-ip-100-per-minute-rule";
   private static final String TEST_CLIENT_IP = "203.0.113.10";
   private static final String TEST_ENDPOINT = "/api/test/redis";
   private static final String TEST_METHOD = "GET";
-  private static final String RULE_COLLECTION = "rate_limit_rules";
 
   // ========================================================================
   // Components
@@ -81,6 +73,7 @@ class MongoRedisRateLimitIntegrationTest {
   // MongoDB
   private MongoClient mongoClient;
   private MongoDatabase mongoDatabase;
+  private MongoCollection<Document> ruleCollection;
   private MongoRateLimitRuleRepository ruleRepository;
   private MongoRuleSetProvider ruleSetProvider;
 
@@ -100,35 +93,30 @@ class MongoRedisRateLimitIntegrationTest {
     System.out.println("=".repeat(70));
 
     // 1. Connect to MongoDB
-    System.out.println("\n[MongoDB] Connecting to: " + MONGO_URI);
-    mongoClient = MongoClients.create(MONGO_URI);
-    mongoDatabase = mongoClient.getDatabase(MONGO_DB);
+    mongoClient = MongoClients.create(MongoContainerSupport.mongoUri());
+    mongoDatabase = mongoClient.getDatabase(MongoContainerSupport.databaseName());
 
-    MongoCollection<Document> ruleCollection = mongoDatabase.getCollection(RULE_COLLECTION);
-
-    // Clean state: drop collection to ensure fresh start
-    System.out.println("[MongoDB] Dropping collection: " + RULE_COLLECTION);
-    ruleCollection.drop();
+    // A collection of this test's own, so a shared MongoDB keeps its data
+    ruleCollection =
+        mongoDatabase.getCollection(MongoContainerSupport.uniqueCollectionName("rate_limit_rules"));
+    System.out.println(
+        "[MongoDB] Using collection: " + ruleCollection.getNamespace().getCollectionName());
 
     // Create repository and provider
     ruleRepository = new MongoRateLimitRuleRepository(ruleCollection);
 
-    // KeyResolver: extracts client IP from RequestContext
-    // NOTE: If your KeyResolver interface is different, adjust accordingly
-    KeyResolver ipKeyResolver = context -> new RateLimitKey(context.getClientIp());
-    ruleSetProvider = new MongoRuleSetProvider(ruleRepository, ipKeyResolver);
+    // KeyResolver: uses LimitScopeKeyResolver for scope-based key resolution
+    ruleSetProvider = new MongoRuleSetProvider(ruleRepository, new LimitScopeKeyResolver());
 
     System.out.println("[MongoDB] Connected successfully");
 
     // 2. Connect to Redis
-    System.out.println("\n[Redis] Connecting to: " + REDIS_URI);
-    redisConfig = new RedisRateLimiterConfig(REDIS_URI);
+    redisConfig = new RedisRateLimiterConfig(RedisContainerSupport.redisUri());
     connectionProvider = redisConfig.getConnectionProvider();
     redisRateLimiter = new RedisRateLimiter(redisConfig.getTokenBucketStore());
 
-    // Clean state: flush Redis DB
-    System.out.println("[Redis] Flushing database");
-    connectionProvider.flushdb();
+    // Clean state: this run's own keys only - never flushdb, the target may be shared
+    RedisContainerSupport.deleteKeys(connectionProvider, runKeyPattern());
 
     System.out.println("[Redis] Connected successfully");
 
@@ -144,8 +132,14 @@ class MongoRedisRateLimitIntegrationTest {
     System.out.println("=".repeat(70));
 
     if (redisConfig != null) {
+      RedisContainerSupport.deleteKeys(connectionProvider, runKeyPattern());
       redisConfig.close();
       System.out.println("[Redis] Connection closed");
+    }
+
+    if (ruleCollection != null) {
+      ruleCollection.drop();
+      System.out.println("[MongoDB] Test collection dropped");
     }
 
     if (mongoClient != null) {
@@ -154,6 +148,11 @@ class MongoRedisRateLimitIntegrationTest {
     }
 
     System.out.println("TEARDOWN COMPLETE\n");
+  }
+
+  /** Matches only the FluxGate keys this JVM run created. */
+  private static String runKeyPattern() {
+    return RedisContainerSupport.KEY_PREFIX + "*" + RUN_ID + "*";
   }
 
   // ========================================================================
@@ -338,7 +337,7 @@ class MongoRedisRateLimitIntegrationTest {
     final int TOTAL_REQUESTS = THREAD_COUNT * REQUESTS_PER_THREAD;
     final int CAPACITY = 100;
     final String CONCURRENCY_TEST_IP = "203.0.113.20";
-    final String CONCURRENCY_RULE_SET_ID = "concurrency-stress-test";
+    final String CONCURRENCY_RULE_SET_ID = "concurrency-stress-test-" + RUN_ID;
     final String CONCURRENCY_RULE_ID = "concurrency-per-ip-100";
 
     // ====================================================================

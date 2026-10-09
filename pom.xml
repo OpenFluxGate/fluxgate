@@ -9,7 +9,7 @@
 
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate</artifactId>
-    <version>0.1.4</version>
+    <version>0.3.7</version>
     <packaging>pom</packaging>
 
     <name>FluxGate</name>
@@ -21,27 +21,53 @@
         <module>fluxgate-core</module>
         <module>fluxgate-mongo-adapter</module>
         <module>fluxgate-redis-ratelimiter</module>
-        <module>fluxgate-spring-boot-starter</module>
+        <module>fluxgate-spring-boot2-starter</module>
+        <module>fluxgate-spring-boot3-starter</module>
         <module>fluxgate-control-support</module>
         <module>fluxgate-testkit</module>
+        <module>fluxgate-benchmarks</module>
         <module>fluxgate-samples</module>
     </modules>
 
-    <!-- Java 21 -->
+    <!-- Java 11 -->
     <properties>
-        <java.version>21</java.version>
+        <java.version>11</java.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>
 
         <!-- dependency versions -->
-        <spring.version>6.1.14</spring.version>
+        <!--
+          No spring.version here on purpose: the root is the parent of Java 11 modules, and a Spring 6
+          default would leak into anything that forgets to override it. Each starter pins its own
+          spring.version (boot2: 5.3.x, boot3: 6.1.x) next to its spring-boot.version.
+        -->
         <bucket4j.version>8.15.0</bucket4j.version>
+        <caffeine.version>3.1.8</caffeine.version>
         <slf4j.version>2.0.16</slf4j.version>
+        <lettuce.version>6.4.0.RELEASE</lettuce.version>
+        <aspectj.version>1.9.22</aspectj.version>
+        <!-- Matches the jackson-bom of the Spring Boot 3.3.5 BOM used by the boot3 starter -->
+        <jackson.version>2.17.2</jackson.version>
+        <micrometer.version>1.13.6</micrometer.version>
         <junit.jupiter.version>5.11.3</junit.jupiter.version>
         <assertj.version>3.26.3</assertj.version>
+        <mockito.version>5.14.2</mockito.version>
+        <testcontainers.version>1.20.4</testcontainers.version>
         <jacoco.version>0.8.12</jacoco.version>
         <checkstyle.version>3.3.1</checkstyle.version>
         <spotless.version>2.43.0</spotless.version>
+        <surefire.version>3.2.5</surefire.version>
+        <failsafe.version>3.2.5</failsafe.version>
+
+        <!--
+          Test tiers:
+            ./mvnw test      -> unit tier only (surefire; no Docker, no Redis/Mongo required)
+            ./mvnw verify    -> unit tier + integration tier (failsafe runs *IntegrationTest / *IT)
+            ./mvnw verify -DskipITs  -> unit tier only, still packaging/verifying
+          Integration tests skip themselves (JUnit Assumptions) when neither a supplied
+          FLUXGATE_REDIS_URI / FLUXGATE_MONGO_URI nor a usable Docker daemon is available.
+        -->
+        <skipITs>false</skipITs>
 
         <!-- encoding & build defaults -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -50,6 +76,9 @@
         <!-- Code coverage settings -->
         <jacoco.line.coverage>0.80</jacoco.line.coverage>
         <jacoco.branch.coverage>0.70</jacoco.branch.coverage>
+
+        <!-- Skip JaCoCo for pom packaging modules (default: true for parent pom) -->
+        <skipJacocoForPom>true</skipJacocoForPom>
     </properties>
 
     <licenses>
@@ -80,8 +109,15 @@
             <!-- Core rate limiting -->
             <dependency>
                 <groupId>com.bucket4j</groupId>
-                <artifactId>bucket4j_jdk17-core</artifactId>
+                <artifactId>bucket4j_jdk11-core</artifactId>
                 <version>${bucket4j.version}</version>
+            </dependency>
+
+            <!-- Bounded in-memory caches (bucket cache, rule cache) -->
+            <dependency>
+                <groupId>com.github.ben-manes.caffeine</groupId>
+                <artifactId>caffeine</artifactId>
+                <version>${caffeine.version}</version>
             </dependency>
 
             <!-- Logging API -->
@@ -89,6 +125,37 @@
                 <groupId>org.slf4j</groupId>
                 <artifactId>slf4j-api</artifactId>
                 <version>${slf4j.version}</version>
+            </dependency>
+
+            <!--
+              Single point of truth for the dependencies several modules declare. Before this,
+              fluxgate-redis-ratelimiter asked for lettuce 6.4.0 and fluxgate-control-support for
+              6.3.2: an application using both got whichever Maven's nearest-wins picked, so the
+              fixes in the newer one were silently absent. jackson-databind matters most here - it
+              is the one with a CVE every few months.
+            -->
+            <dependency>
+                <groupId>io.lettuce</groupId>
+                <artifactId>lettuce-core</artifactId>
+                <version>${lettuce.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.aspectj</groupId>
+                <artifactId>aspectjweaver</artifactId>
+                <version>${aspectj.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-core</artifactId>
+                <version>${micrometer.version}</version>
             </dependency>
 
             <!-- Test dependencies -->
@@ -105,13 +172,55 @@
                 <version>${assertj.version}</version>
                 <scope>test</scope>
             </dependency>
+
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-core</artifactId>
+                <version>${mockito.version}</version>
+                <scope>test</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-junit-jupiter</artifactId>
+                <version>${mockito.version}</version>
+                <scope>test</scope>
+            </dependency>
+
+            <!-- Testcontainers: disposable Redis/MongoDB for the integration tier -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers</artifactId>
+                <version>${testcontainers.version}</version>
+                <scope>test</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>${testcontainers.version}</version>
+                <scope>test</scope>
+            </dependency>
+
+            <!--
+              Version-managed but not used by any module today: the MongoDB integration tier
+              runs mongo:7.0 through GenericContainer so the container is authenticated the same
+              way CI's service container is. Declare this in a module to use MongoDBContainer
+              (replica set, no auth) instead.
+            -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>mongodb</artifactId>
+                <version>${testcontainers.version}</version>
+                <scope>test</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
     <build>
         <pluginManagement>
             <plugins>
-                <!-- Java 21 compiler -->
+                <!-- Compiler: Java ${java.version} baseline -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
@@ -160,14 +269,42 @@
                     </executions>
                 </plugin>
 
-                <!-- JUnit 5 -->
+                <!-- JUnit 5 - unit tier only (no Docker, no Redis/Mongo) -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.2.5</version>
+                    <version>${surefire.version}</version>
                     <configuration>
                         <useModulePath>false</useModulePath>
+                        <!-- The integration tier belongs to failsafe; see <skipITs> above. -->
+                        <excludes>
+                            <exclude>**/*IntegrationTest.java</exclude>
+                            <exclude>**/*IT.java</exclude>
+                        </excludes>
                     </configuration>
+                </plugin>
+
+                <!-- JUnit 5 - integration tier (Testcontainers or supplied Redis/Mongo) -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>${failsafe.version}</version>
+                    <configuration>
+                        <useModulePath>false</useModulePath>
+                        <includes>
+                            <include>**/*IntegrationTest.java</include>
+                            <include>**/*IT.java</include>
+                        </includes>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <id>integration-tests</id>
+                            <goals>
+                                <goal>integration-test</goal>
+                                <goal>verify</goal>
+                            </goals>
+                        </execution>
+                    </executions>
                 </plugin>
 
                 <!-- Deploy -->
@@ -177,7 +314,17 @@
                     <version>3.1.2</version>
                 </plugin>
 
-                <!-- GPG Signing -->
+                <!--
+                  GPG Signing.
+
+                  The passphrase must never be passed as a command line argument: process
+                  arguments show up in `ps` output and in plugin debug logs. Version 3.2.x reads
+                  it from the MAVEN_GPG_PASSPHRASE environment variable by default
+                  (passphraseEnvName) and passes the loopback pinentry mode and passphrase file
+                  descriptor to gpg itself, so batch signing needs neither a gpg.passphrase
+                  property, nor gpgArguments, nor a passphraseServerId.
+                  See .github/workflows/release.yml.
+                -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-gpg-plugin</artifactId>
@@ -210,8 +357,10 @@
                             <artifact>fluxgate-sample-redis</artifact>
                             <artifact>fluxgate-sample-api</artifact>
                             <artifact>fluxgate-sample-filter</artifact>
-                            <artifact>fluxgate-sample-standalone</artifact>
+                            <artifact>fluxgate-sample-standalone-java21</artifact>
+                            <artifact>fluxgate-sample-standalone-java11</artifact>
                             <artifact>fluxgate-testkit</artifact>
+                            <artifact>fluxgate-benchmarks</artifact>
                         </excludeArtifacts>
                     </configuration>
                 </plugin>
@@ -253,6 +402,17 @@
                                 <goal>report</goal>
                             </goals>
                         </execution>
+                        <!--
+                          Regenerate the report after the integration tier so the published
+                          coverage also reflects the failsafe run (both tiers append to jacoco.exec).
+                        -->
+                        <execution>
+                            <id>report-integration</id>
+                            <phase>verify</phase>
+                            <goals>
+                                <goal>report</goal>
+                            </goals>
+                        </execution>
                         <execution>
                             <id>check</id>
                             <goals>
@@ -289,15 +449,114 @@
                 <groupId>com.diffplug.spotless</groupId>
                 <artifactId>spotless-maven-plugin</artifactId>
             </plugin>
+            <!-- Integration tier runs for every module; skip with -DskipITs -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+            </plugin>
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
+                <configuration>
+                    <!-- Skip JaCoCo for pom packaging modules (parent/aggregator) -->
+                    <skip>${skipJacocoForPom}</skip>
+                    <!-- Rules for check goal - same as pluginManagement -->
+                    <rules>
+                        <rule>
+                            <element>BUNDLE</element>
+                            <limits>
+                                <limit>
+                                    <counter>LINE</counter>
+                                    <value>COVEREDRATIO</value>
+                                    <minimum>${jacoco.line.coverage}</minimum>
+                                </limit>
+                                <limit>
+                                    <counter>BRANCH</counter>
+                                    <value>COVEREDRATIO</value>
+                                    <minimum>${jacoco.branch.coverage}</minimum>
+                                </limit>
+                            </limits>
+                        </rule>
+                    </rules>
+                </configuration>
+            </plugin>
+            <!--
+              CycloneDX SBOM — runs only at the reactor root (inherited=false).
+              Generates target/bom.json bound to the package phase and attaches it
+              as a secondary artifact so the release workflow can upload it.
+            -->
+            <plugin>
+                <groupId>org.cyclonedx</groupId>
+                <artifactId>cyclonedx-maven-plugin</artifactId>
+                <version>2.9.1</version>
+                <inherited>false</inherited>
+                <executions>
+                    <execution>
+                        <id>make-aggregate-bom</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>makeAggregateBom</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <outputFormat>json</outputFormat>
+                    <outputName>bom</outputName>
+                    <schemaVersion>1.5</schemaVersion>
+                    <includeLicenseText>false</includeLicenseText>
+                </configuration>
             </plugin>
         </plugins>
     </build>
 
     <!-- Profiles -->
     <profiles>
+        <!--
+          Enables Redis Cluster integration tests that require a cluster on localhost:7100-7105.
+          The tests still skip themselves when no cluster answers, so enabling the profile on a
+          machine without one is harmless.
+        -->
+        <profile>
+            <id>redis-cluster-it</id>
+            <properties>
+                <fluxgate.redis.cluster.tests>true</fluxgate.redis.cluster.tests>
+            </properties>
+            <build>
+                <pluginManagement>
+                    <plugins>
+                        <plugin>
+                            <groupId>org.apache.maven.plugins</groupId>
+                            <artifactId>maven-surefire-plugin</artifactId>
+                            <configuration>
+                                <useModulePath>false</useModulePath>
+                                <excludes>
+                                    <exclude>**/*IntegrationTest.java</exclude>
+                                    <exclude>**/*IT.java</exclude>
+                                </excludes>
+                                <systemPropertyVariables>
+                                    <fluxgate.redis.cluster.tests>${fluxgate.redis.cluster.tests}</fluxgate.redis.cluster.tests>
+                                </systemPropertyVariables>
+                            </configuration>
+                        </plugin>
+                        <plugin>
+                            <groupId>org.apache.maven.plugins</groupId>
+                            <artifactId>maven-failsafe-plugin</artifactId>
+                            <configuration>
+                                <useModulePath>false</useModulePath>
+                                <includes>
+                                    <include>**/*IntegrationTest.java</include>
+                                    <include>**/*IT.java</include>
+                                </includes>
+                                <systemPropertyVariables>
+                                    <fluxgate.redis.cluster.tests>${fluxgate.redis.cluster.tests}</fluxgate.redis.cluster.tests>
+                                </systemPropertyVariables>
+                            </configuration>
+                        </plugin>
+                    </plugins>
+                </pluginManagement>
+            </build>
+        </profile>
+
         <!-- Release profile for Maven Central deployment -->
         <profile>
             <id>release</id>

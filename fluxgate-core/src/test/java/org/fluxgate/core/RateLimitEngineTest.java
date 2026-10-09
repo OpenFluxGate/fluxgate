@@ -112,6 +112,64 @@ class RateLimitEngineTest {
     assertThat(result.getMatchedRule()).isNull();
   }
 
+  @Test
+  void should_deny_when_rule_set_not_found_and_strategy_deny() {
+    // given
+    RateLimitRuleSetProvider emptyProvider = id -> Optional.empty();
+
+    AtomicBoolean limiterCalled = new AtomicBoolean(false);
+    RateLimiter dummyLimiter =
+        (context, ruleSet, permits) -> {
+          limiterCalled.set(true);
+          throw new IllegalStateException("Should not be called in DENY mode");
+        };
+
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(emptyProvider)
+            .rateLimiter(dummyLimiter)
+            .onMissingRuleSetStrategy(OnMissingRuleSetStrategy.DENY)
+            .build();
+
+    RequestContext context =
+        RequestContext.builder().endpoint("/api/test").method("GET").clientIp("127.0.0.1").build();
+
+    // when
+    RateLimitResult result = engine.check("unknown-rule-set", context);
+
+    // then
+    assertThat(limiterCalled.get()).isFalse();
+    assertThat(result.isAllowed()).isFalse();
+    assertThat(result.getMatchedRule()).isNull();
+    assertThat(result.hasRule()).isFalse();
+    assertThat(result.getNanosToWaitForRefill()).isZero();
+    assertThat(result.getRemainingTokens()).isZero();
+    assertThat(result.getKey().value()).isEqualTo("missing-rule-set:unknown-rule-set");
+  }
+
+  @Test
+  void should_throw_when_rate_limiter_returns_null() {
+    // given
+    String ruleSetId = "auth-api-default";
+    StubRuleSetProvider ruleSetProvider = new StubRuleSetProvider(ruleSetId);
+    RateLimiter nullLimiter = (context, ruleSet, permits) -> null;
+
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(ruleSetProvider)
+            .rateLimiter(nullLimiter)
+            .onMissingRuleSetStrategy(OnMissingRuleSetStrategy.THROW)
+            .build();
+
+    RequestContext context =
+        RequestContext.builder().endpoint("/api/test").method("GET").clientIp("127.0.0.1").build();
+
+    // expect - check() never hands a null result to callers
+    assertThatThrownBy(() -> engine.check(ruleSetId, context))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("returned null");
+  }
+
   // ---- Test stubs ----
 
   private static class StubRuleSetProvider implements RateLimitRuleSetProvider {
@@ -122,7 +180,7 @@ class RateLimitEngineTest {
     private StubRuleSetProvider(String expectedId) {
       this.expectedId = expectedId;
 
-      KeyResolver keyResolver = context -> RateLimitKey.of("stub");
+      KeyResolver keyResolver = (context, rule) -> RateLimitKey.of("stub");
 
       RateLimitBand dummyBand =
           RateLimitBand.builder(java.time.Duration.ofMinutes(1), 100).label("dummy-band").build();

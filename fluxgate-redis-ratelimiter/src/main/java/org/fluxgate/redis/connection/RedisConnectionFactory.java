@@ -28,7 +28,7 @@ public final class RedisConnectionFactory {
    * @return the appropriate Redis connection provider
    */
   public static RedisConnectionProvider create(String uri) {
-    return create(uri, Duration.ofSeconds(5));
+    return create(uri, RedisUriUtils.DEFAULT_TIMEOUT);
   }
 
   /**
@@ -42,8 +42,8 @@ public final class RedisConnectionFactory {
     Objects.requireNonNull(uri, "uri must not be null");
 
     // Check if it's a cluster configuration (comma-separated nodes)
-    if (uri.contains(",")) {
-      List<String> nodes = parseClusterNodes(uri);
+    if (RedisUriUtils.detectMode(uri) == RedisConnectionProvider.RedisMode.CLUSTER) {
+      List<String> nodes = RedisUriUtils.splitNodes(uri);
       log.info("Detected cluster mode with {} nodes", nodes.size());
       return new ClusterRedisConnection(nodes, timeout);
     }
@@ -69,25 +69,17 @@ public final class RedisConnectionFactory {
       throw new IllegalArgumentException("At least one Redis URI is required");
     }
 
-    return switch (mode) {
-      case STANDALONE -> {
+    switch (mode) {
+      case STANDALONE:
         if (uris.size() > 1) {
           log.warn("Multiple URIs provided for standalone mode, using first: {}", uris.get(0));
         }
-        yield new StandaloneRedisConnection(uris.get(0), timeout);
-      }
-      case CLUSTER -> new ClusterRedisConnection(uris, timeout);
-    };
-  }
-
-  /**
-   * Parses comma-separated cluster node URIs.
-   *
-   * @param uri comma-separated URIs
-   * @return list of individual URIs
-   */
-  private static List<String> parseClusterNodes(String uri) {
-    return List.of(uri.split(",")).stream().map(String::trim).filter(s -> !s.isEmpty()).toList();
+        return new StandaloneRedisConnection(uris.get(0), timeout);
+      case CLUSTER:
+        return new ClusterRedisConnection(uris, timeout);
+      default:
+        throw new IllegalArgumentException("Unknown Redis mode: " + mode);
+    }
   }
 
   /**
@@ -95,13 +87,9 @@ public final class RedisConnectionFactory {
    *
    * @param uri the URI to check
    * @return the detected Redis mode
+   * @see RedisUriUtils#detectMode(String)
    */
   public static RedisConnectionProvider.RedisMode detectMode(String uri) {
-    if (uri == null || uri.isBlank()) {
-      return RedisConnectionProvider.RedisMode.STANDALONE;
-    }
-    return uri.contains(",")
-        ? RedisConnectionProvider.RedisMode.CLUSTER
-        : RedisConnectionProvider.RedisMode.STANDALONE;
+    return RedisUriUtils.detectMode(uri);
   }
 }

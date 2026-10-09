@@ -82,7 +82,7 @@ class FluxgateMongoConfigTest {
   void ruleSetProvider_shouldCreateRuleSetProvider() {
     // given
     when(mongoDatabase.getCollection("rules")).thenReturn(ruleCollection);
-    KeyResolver keyResolver = context -> new RateLimitKey(context.getClientIp());
+    KeyResolver keyResolver = (context, rule) -> new RateLimitKey(context.getClientIp());
 
     // when
     RateLimitRuleSetProvider provider = config.ruleSetProvider(keyResolver);

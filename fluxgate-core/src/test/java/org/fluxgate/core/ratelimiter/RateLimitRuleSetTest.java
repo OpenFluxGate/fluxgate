@@ -8,6 +8,7 @@ import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
+import org.fluxgate.core.exception.InvalidRuleConfigException;
 import org.fluxgate.core.key.KeyResolver;
 import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
@@ -35,7 +36,7 @@ class RateLimitRuleSetTest {
   }
 
   private KeyResolver createKeyResolver() {
-    return context -> RateLimitKey.of(context.getClientIp());
+    return (context, rule) -> RateLimitKey.of(context.getClientIp());
   }
 
   private RateLimitMetricsRecorder createMetricsRecorder() {
@@ -144,12 +145,12 @@ class RateLimitRuleSetTest {
     }
 
     @Test
-    @DisplayName("should throw IllegalArgumentException when rules is empty")
+    @DisplayName("should throw InvalidRuleConfigException when rules is empty")
     void build_shouldThrowWhenRulesIsEmpty() {
       // given / when / then
-      IllegalArgumentException exception =
+      InvalidRuleConfigException exception =
           assertThrows(
-              IllegalArgumentException.class,
+              InvalidRuleConfigException.class,
               () ->
                   RateLimitRuleSet.builder("test-set")
                       .rules(List.of())
@@ -159,12 +160,12 @@ class RateLimitRuleSetTest {
     }
 
     @Test
-    @DisplayName("should throw IllegalStateException when keyResolver is null")
+    @DisplayName("should throw InvalidRuleConfigException when keyResolver is null")
     void build_shouldThrowWhenKeyResolverIsNull() {
       // given / when / then
-      IllegalStateException exception =
+      InvalidRuleConfigException exception =
           assertThrows(
-              IllegalStateException.class,
+              InvalidRuleConfigException.class,
               () ->
                   RateLimitRuleSet.builder("test-set")
                       .rules(List.of(createRule("rule-1")))
@@ -174,12 +175,64 @@ class RateLimitRuleSetTest {
     }
 
     @Test
-    @DisplayName("should throw IllegalStateException when keyResolver not set")
+    @DisplayName("should throw InvalidRuleConfigException when keyResolver not set")
     void build_shouldThrowWhenKeyResolverNotSet() {
       // given / when / then
       assertThrows(
-          IllegalStateException.class,
+          InvalidRuleConfigException.class,
           () -> RateLimitRuleSet.builder("test-set").rules(List.of(createRule("rule-1"))).build());
+    }
+  }
+
+  // ==================== Equality Tests ====================
+
+  @Nested
+  @DisplayName("Equality Tests")
+  class EqualityTests {
+
+    @Test
+    @DisplayName("independently built identical rule sets should be equal")
+    void equals_shouldBeValueBased() {
+      // given - the same resolver instance, two independently built rule sets
+      KeyResolver keyResolver = createKeyResolver();
+
+      RateLimitRuleSet first =
+          RateLimitRuleSet.builder("auth-api-default")
+              .description("auth limits")
+              .rules(List.of(createRule("rule-1")))
+              .keyResolver(keyResolver)
+              .build();
+      RateLimitRuleSet second =
+          RateLimitRuleSet.builder("auth-api-default")
+              .description("auth limits")
+              .rules(List.of(createRule("rule-1")))
+              .keyResolver(keyResolver)
+              .build();
+
+      // when / then
+      assertEquals(first, second);
+      assertEquals(first.hashCode(), second.hashCode());
+    }
+
+    @Test
+    @DisplayName("rule sets with different rules should not be equal")
+    void equals_shouldDistinguishDifferentRules() {
+      // given
+      KeyResolver keyResolver = createKeyResolver();
+
+      RateLimitRuleSet first =
+          RateLimitRuleSet.builder("set")
+              .rules(List.of(createRule("rule-1")))
+              .keyResolver(keyResolver)
+              .build();
+      RateLimitRuleSet second =
+          RateLimitRuleSet.builder("set")
+              .rules(List.of(createRule("rule-2")))
+              .keyResolver(keyResolver)
+              .build();
+
+      // when / then
+      assertNotEquals(first, second);
     }
   }
 
@@ -308,19 +361,17 @@ class RateLimitRuleSetTest {
     void keyResolver_shouldResolveKeyFromContext() {
       // given
       String clientIp = "10.0.0.1";
-      KeyResolver resolver = context -> RateLimitKey.of(context.getClientIp());
+      KeyResolver resolver = (context, rule) -> RateLimitKey.of(context.getClientIp());
 
+      RateLimitRule rule = createRule("rule-1");
       RateLimitRuleSet ruleSet =
-          RateLimitRuleSet.builder("test-set")
-              .rules(List.of(createRule("rule-1")))
-              .keyResolver(resolver)
-              .build();
+          RateLimitRuleSet.builder("test-set").rules(List.of(rule)).keyResolver(resolver).build();
 
       RequestContext context =
           RequestContext.builder().clientIp(clientIp).endpoint("/api/test").method("GET").build();
 
       // when
-      RateLimitKey resolvedKey = ruleSet.getKeyResolver().resolve(context);
+      RateLimitKey resolvedKey = ruleSet.getKeyResolver().resolve(context, rule);
 
       // then
       assertEquals(clientIp, resolvedKey.value());
@@ -330,11 +381,12 @@ class RateLimitRuleSetTest {
     @DisplayName("keyResolver should handle different key strategies")
     void keyResolver_shouldHandleDifferentStrategies() {
       // given - API key strategy
-      KeyResolver apiKeyResolver = context -> RateLimitKey.of(context.getApiKey());
+      KeyResolver apiKeyResolver = (context, rule) -> RateLimitKey.of(context.getApiKey());
 
+      RateLimitRule rule = createRule("rule-1");
       RateLimitRuleSet apiKeySet =
           RateLimitRuleSet.builder("api-key-set")
-              .rules(List.of(createRule("rule-1")))
+              .rules(List.of(rule))
               .keyResolver(apiKeyResolver)
               .build();
 
@@ -346,7 +398,7 @@ class RateLimitRuleSetTest {
               .build();
 
       // when
-      RateLimitKey resolvedKey = apiKeySet.getKeyResolver().resolve(context);
+      RateLimitKey resolvedKey = apiKeySet.getKeyResolver().resolve(context, rule);
 
       // then
       assertEquals("my-api-key-123", resolvedKey.value());

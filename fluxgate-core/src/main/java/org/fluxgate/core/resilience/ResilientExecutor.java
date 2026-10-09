@@ -1,8 +1,7 @@
 package org.fluxgate.core.resilience;
 
+import java.util.Objects;
 import java.util.function.Supplier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Combines retry and circuit breaker patterns for resilient operation execution.
@@ -16,10 +15,12 @@ import org.slf4j.LoggerFactory;
  * <p>The circuit breaker is checked first to prevent unnecessary retries when the circuit is open.
  * If the circuit is closed or half-open, the retry executor handles the actual execution with
  * retries.
+ *
+ * <p>An exhausted retry chain is a failure of the guarded operation, so it is propagated to the
+ * circuit breaker rather than being converted into a fallback value here. Only the circuit breaker
+ * decides when to fall back, which is what lets it count failures and eventually open.
  */
 public class ResilientExecutor {
-
-  private static final Logger log = LoggerFactory.getLogger(ResilientExecutor.class);
 
   private final RetryExecutor retryExecutor;
   private final CircuitBreaker circuitBreaker;
@@ -108,15 +109,7 @@ public class ResilientExecutor {
    * @throws Exception if the action fails after all retry attempts or circuit is open
    */
   public <T> T execute(String operationName, Supplier<T> action) throws Exception {
-    return circuitBreaker.execute(
-        operationName,
-        () -> {
-          try {
-            return retryExecutor.execute(operationName, action);
-          } catch (Exception e) {
-            throw new RuntimeException(e);
-          }
-        });
+    return circuitBreaker.execute(operationName, () -> retrying(operationName, action));
   }
 
   /**
@@ -137,20 +130,29 @@ public class ResilientExecutor {
    * @param <T> the return type
    * @param operationName the name of the operation for logging
    * @param action the action to execute
-   * @param fallback the fallback supplier
+   * @param fallback the fallback supplier; must not be null
    * @return the result of the action or fallback
    */
   public <T> T executeWithFallback(String operationName, Supplier<T> action, Supplier<T> fallback) {
-    return circuitBreaker.executeWithFallback(
-        () -> {
-          try {
-            return retryExecutor.execute(operationName, action);
-          } catch (Exception e) {
-            log.debug("Operation '{}' failed, using fallback: {}", operationName, e.getMessage());
-            return fallback.get();
-          }
-        },
-        fallback);
+    Objects.requireNonNull(fallback, "fallback must not be null");
+    return circuitBreaker.executeWithFallback(() -> retrying(operationName, action), fallback);
+  }
+
+  /**
+   * Runs the action through the retry executor, keeping the original failure visible.
+   *
+   * <p>{@link RetryExecutor#execute(String, Supplier)} is declared to throw checked exceptions even
+   * though a {@link Supplier} can only raise unchecked ones, so the unchecked failure is rethrown
+   * as-is and only a genuinely checked exception is wrapped.
+   */
+  private <T> T retrying(String operationName, Supplier<T> action) {
+    try {
+      return retryExecutor.execute(operationName, action);
+    } catch (RuntimeException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new IllegalStateException("Operation '" + operationName + "' failed", e);
+    }
   }
 
   /**

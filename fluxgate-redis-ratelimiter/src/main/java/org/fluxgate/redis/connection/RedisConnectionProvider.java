@@ -44,8 +44,22 @@ public interface RedisConnectionProvider extends AutoCloseable {
    * @param args the arguments passed to the script
    * @param <T> the return type
    * @return the script execution result
+   * @throws io.lettuce.core.RedisNoScriptException if the script is not cached in Redis
    */
   <T> T evalsha(String sha, String[] keys, String[] args);
+
+  /**
+   * Executes a Lua script using EVAL.
+   *
+   * <p>This is less efficient than EVALSHA but useful as a fallback when the script is not cached.
+   *
+   * @param script the Lua script content
+   * @param keys the keys used by the script
+   * @param args the arguments passed to the script
+   * @param <T> the return type
+   * @return the script execution result
+   */
+  <T> T eval(String script, String[] keys, String[] args);
 
   /**
    * Sets a hash field value.
@@ -81,6 +95,21 @@ public interface RedisConnectionProvider extends AutoCloseable {
    * @return the number of keys deleted
    */
   long del(String... keys);
+
+  /**
+   * Deletes one or more keys, reclaiming the memory in a background thread where the server
+   * supports it.
+   *
+   * <p>{@code UNLINK} keeps a bulk delete off the Redis event loop, which matters when a rule
+   * reload drops a large number of buckets at once. The default implementation delegates to {@link
+   * #del(String...)} so that providers talking to a server older than Redis 4 keep working.
+   *
+   * @param keys the keys to delete
+   * @return the number of keys deleted
+   */
+  default long unlink(String... keys) {
+    return del(keys);
+  }
 
   /**
    * Adds members to a set.
@@ -133,6 +162,20 @@ public interface RedisConnectionProvider extends AutoCloseable {
    * @return list of matching keys
    */
   java.util.List<String> keys(String pattern);
+
+  /**
+   * Incrementally scans keys matching the given pattern.
+   *
+   * <p>Unlike {@link #keys(String)}, this method is safe for production-sized keyspaces because it
+   * uses Redis SCAN semantics instead of blocking the server for a full keyspace scan.
+   *
+   * @param pattern the pattern to match (e.g., "fluxgate:*")
+   * @param count scan batch size hint
+   * @return list of matching keys
+   */
+  default java.util.List<String> scanKeys(String pattern, long count) {
+    return keys(pattern);
+  }
 
   /**
    * Flushes the current database (deletes all keys).

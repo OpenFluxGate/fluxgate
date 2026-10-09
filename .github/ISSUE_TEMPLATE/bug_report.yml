@@ -1,0 +1,92 @@
+name: Bug Report
+description: Something is not working as documented.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a bug.
+        Please fill out every required field. Issues without enough information to reproduce may be closed.
+
+  - type: input
+    id: fluxgate-version
+    attributes:
+      label: FluxGate version
+      description: "e.g. `0.3.7` — from `pom.xml` or `build.gradle`"
+      placeholder: "0.3.7"
+    validations:
+      required: true
+
+  - type: input
+    id: java-version
+    attributes:
+      label: Java version
+      description: Output of `java -version`
+      placeholder: "openjdk 21.0.4"
+    validations:
+      required: true
+
+  - type: input
+    id: spring-boot-version
+    attributes:
+      label: Spring Boot version
+      description: "e.g. `3.3.5`"
+      placeholder: "3.3.5"
+    validations:
+      required: true
+
+  - type: input
+    id: redis-version
+    attributes:
+      label: Redis version (if using the Redis limiter)
+      description: "e.g. `7.4.0 standalone` or `7.0.10 cluster`. Leave blank if using the in-memory limiter only."
+      placeholder: "7.4.0 standalone"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: starter
+    attributes:
+      label: Which starter are you using?
+      options:
+        - "fluxgate-spring-boot3-starter"
+        - "fluxgate-spring-boot2-starter"
+        - "fluxgate-core directly"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly. Include the actual behaviour and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal reproducer
+      description: |
+        The smallest configuration / code that demonstrates the problem.
+        A unit test, a GitHub repo, or a docker-compose + application.yml snippet all work.
+        Issues that cannot be reproduced are very difficult to fix.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: relevant-config
+    attributes:
+      label: Relevant `fluxgate.ratelimit.*` properties
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: stack-trace
+    attributes:
+      label: Stack trace or error log
+      render: text
+    validations:
+      required: false

@@ -2,19 +2,48 @@ package org.fluxgate.core.key;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.time.Duration;
+import org.fluxgate.core.config.LimitScope;
+import org.fluxgate.core.config.RateLimitBand;
+import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
+import org.fluxgate.core.exception.MissingRateLimitKeyException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 /**
- * Unit tests for {@link KeyResolver} interface.
+ * Unit tests for {@link KeyResolver} interface and {@link LimitScopeKeyResolver} implementation.
  *
- * <p>KeyResolver is a functional interface that resolves a RateLimitKey from a RequestContext.
- * Tests include various implementation strategies.
+ * <p>KeyResolver resolves a RateLimitKey from a RequestContext and RateLimitRule. The key is
+ * determined by the rule's LimitScope.
  */
 @DisplayName("KeyResolver Tests")
 class KeyResolverTest {
+
+  private final KeyResolver resolver = new LimitScopeKeyResolver();
+
+  // Helper method to create a rule with specified scope
+  private RateLimitRule createRule(String id, LimitScope scope) {
+    return RateLimitRule.builder(id)
+        .name("Test Rule")
+        .enabled(true)
+        .scope(scope)
+        .ruleSetId("test-rules")
+        .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).label("per-minute").build())
+        .build();
+  }
+
+  private RateLimitRule createCustomRule(String id, String keyStrategyId) {
+    return RateLimitRule.builder(id)
+        .name("Custom Rule")
+        .enabled(true)
+        .scope(LimitScope.CUSTOM)
+        .keyStrategyId(keyStrategyId)
+        .ruleSetId("test-rules")
+        .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).label("per-minute").build())
+        .build();
+  }
 
   // ==================== Basic Contract Tests ====================
 
@@ -23,67 +52,39 @@ class KeyResolverTest {
   class BasicContractTests {
 
     @Test
-    @DisplayName("should resolve key from context")
-    void resolve_shouldResolveKeyFromContext() {
+    @DisplayName("should resolve key from context and rule")
+    void resolve_shouldResolveKeyFromContextAndRule() {
       // given
-      KeyResolver resolver = context -> RateLimitKey.of(context.getClientIp());
       RequestContext context = RequestContext.builder().clientIp("192.168.1.1").build();
+      RateLimitRule rule = createRule("test-rule", LimitScope.PER_IP);
 
       // when
-      RateLimitKey key = resolver.resolve(context);
+      RateLimitKey key = resolver.resolve(context, rule);
 
       // then
       assertNotNull(key);
-      assertEquals("192.168.1.1", key.value());
-    }
-
-    @Test
-    @DisplayName("should be functional interface")
-    void shouldBeFunctionalInterface() {
-      // KeyResolver should work with lambda expressions
-      // given
-      KeyResolver ipResolver = ctx -> RateLimitKey.of(ctx.getClientIp());
-      KeyResolver userResolver = ctx -> RateLimitKey.of(ctx.getUserId());
-      KeyResolver apiKeyResolver = ctx -> RateLimitKey.of(ctx.getApiKey());
-
-      RequestContext context =
-          RequestContext.builder()
-              .clientIp("10.0.0.1")
-              .userId("user-123")
-              .apiKey("api-key-456")
-              .build();
-
-      // when / then
-      assertEquals("10.0.0.1", ipResolver.resolve(context).value());
-      assertEquals("user-123", userResolver.resolve(context).value());
-      assertEquals("api-key-456", apiKeyResolver.resolve(context).value());
+      assertEquals("ip:192.168.1.1", key.value());
     }
   }
 
-  // ==================== IP-based Resolver Tests ====================
+  // ==================== PER_IP Scope Tests ====================
 
   @Nested
-  @DisplayName("IP-based Resolver Tests")
-  class IpBasedResolverTests {
-
-    // Safe resolver that handles null client IP with a fallback
-    private final KeyResolver ipResolver =
-        context -> {
-          String ip = context.getClientIp();
-          return RateLimitKey.of(ip != null ? ip : "unknown");
-        };
+  @DisplayName("PER_IP Scope Tests")
+  class PerIpScopeTests {
 
     @Test
     @DisplayName("should resolve IPv4 address")
     void resolve_shouldResolveIpv4Address() {
       // given
       RequestContext context = RequestContext.builder().clientIp("192.168.1.100").build();
+      RateLimitRule rule = createRule("ip-rule", LimitScope.PER_IP);
 
       // when
-      RateLimitKey key = ipResolver.resolve(context);
+      RateLimitKey key = resolver.resolve(context, rule);
 
       // then
-      assertEquals("192.168.1.100", key.value());
+      assertEquals("ip:192.168.1.100", key.value());
     }
 
     @Test
@@ -92,145 +93,113 @@ class KeyResolverTest {
       // given
       RequestContext context =
           RequestContext.builder().clientIp("2001:0db8:85a3:0000:0000:8a2e:0370:7334").build();
+      RateLimitRule rule = createRule("ip-rule", LimitScope.PER_IP);
 
       // when
-      RateLimitKey key = ipResolver.resolve(context);
+      RateLimitKey key = resolver.resolve(context, rule);
 
       // then
-      assertEquals("2001:0db8:85a3:0000:0000:8a2e:0370:7334", key.value());
+      assertEquals("ip:2001:0db8:85a3:0000:0000:8a2e:0370:7334", key.value());
     }
 
     @Test
-    @DisplayName("should use fallback when client IP is null")
-    void resolve_shouldUseFallbackWhenClientIpIsNull() {
+    @DisplayName("should use 'ip:unknown' when client IP is null")
+    void resolve_shouldUseUnknownWhenClientIpIsNull() {
       // given
       RequestContext context = RequestContext.builder().endpoint("/api/test").build();
+      RateLimitRule rule = createRule("ip-rule", LimitScope.PER_IP);
 
       // when
-      RateLimitKey key = ipResolver.resolve(context);
+      RateLimitKey key = resolver.resolve(context, rule);
 
       // then
-      assertEquals("unknown", key.value());
+      assertEquals("ip:unknown", key.value());
     }
   }
 
-  // ==================== User-based Resolver Tests ====================
+  // ==================== PER_USER Scope Tests ====================
 
   @Nested
-  @DisplayName("User-based Resolver Tests")
-  class UserBasedResolverTests {
-
-    // Safe resolver that handles null user ID with a fallback
-    private final KeyResolver userResolver =
-        context -> {
-          String userId = context.getUserId();
-          return RateLimitKey.of(userId != null ? userId : "anonymous");
-        };
+  @DisplayName("PER_USER Scope Tests")
+  class PerUserScopeTests {
 
     @Test
     @DisplayName("should resolve user ID")
     void resolve_shouldResolveUserId() {
       // given
-      RequestContext context = RequestContext.builder().userId("user-abc-123").build();
+      RequestContext context =
+          RequestContext.builder().userId("user-abc-123").clientIp("10.0.0.1").build();
+      RateLimitRule rule = createRule("user-rule", LimitScope.PER_USER);
 
       // when
-      RateLimitKey key = userResolver.resolve(context);
+      RateLimitKey key = resolver.resolve(context, rule);
 
       // then
-      assertEquals("user-abc-123", key.value());
+      assertEquals("user:user-abc-123", key.value());
     }
 
     @Test
-    @DisplayName("should use fallback when user ID is null")
-    void resolve_shouldUseFallbackWhenUserIdIsNull() {
+    @DisplayName("should fallback to clientIp when userId is null")
+    void resolve_shouldFallbackWhenUserIdIsNull() {
       // given
       RequestContext context = RequestContext.builder().clientIp("10.0.0.1").build();
+      RateLimitRule rule = createRule("user-rule", LimitScope.PER_USER);
 
       // when
-      RateLimitKey key = userResolver.resolve(context);
+      RateLimitKey key = resolver.resolve(context, rule);
 
       // then
-      assertEquals("anonymous", key.value());
+      assertEquals("ip:10.0.0.1", key.value());
     }
   }
 
-  // ==================== API Key Resolver Tests ====================
+  // ==================== PER_API_KEY Scope Tests ====================
 
   @Nested
-  @DisplayName("API Key Resolver Tests")
-  class ApiKeyResolverTests {
-
-    private final KeyResolver apiKeyResolver = context -> RateLimitKey.of(context.getApiKey());
+  @DisplayName("PER_API_KEY Scope Tests")
+  class PerApiKeyScopeTests {
 
     @Test
     @DisplayName("should resolve API key")
     void resolve_shouldResolveApiKey() {
       // given
-      RequestContext context = RequestContext.builder().apiKey("sk-live-abc123xyz").build();
+      RequestContext context =
+          RequestContext.builder().apiKey("sk-live-abc123xyz").clientIp("10.0.0.1").build();
+      RateLimitRule rule = createRule("api-key-rule", LimitScope.PER_API_KEY);
 
       // when
-      RateLimitKey key = apiKeyResolver.resolve(context);
+      RateLimitKey key = resolver.resolve(context, rule);
 
       // then
-      assertEquals("sk-live-abc123xyz", key.value());
+      assertEquals("key:sk-live-abc123xyz", key.value());
+    }
+
+    @Test
+    @DisplayName("should fallback to clientIp when apiKey is null")
+    void resolve_shouldFallbackWhenApiKeyIsNull() {
+      // given
+      RequestContext context = RequestContext.builder().clientIp("10.0.0.1").build();
+      RateLimitRule rule = createRule("api-key-rule", LimitScope.PER_API_KEY);
+
+      // when
+      RateLimitKey key = resolver.resolve(context, rule);
+
+      // then
+      assertEquals("ip:10.0.0.1", key.value());
     }
   }
 
-  // ==================== Composite Key Resolver Tests ====================
+  // ==================== GLOBAL Scope Tests ====================
 
   @Nested
-  @DisplayName("Composite Key Resolver Tests")
-  class CompositeKeyResolverTests {
+  @DisplayName("GLOBAL Scope Tests")
+  class GlobalScopeTests {
 
     @Test
-    @DisplayName("should create composite key from multiple fields")
-    void resolve_shouldCreateCompositeKey() {
-      // given - composite key: user + endpoint
-      KeyResolver compositeResolver =
-          context -> RateLimitKey.of(context.getUserId() + ":" + context.getEndpoint());
-
-      RequestContext context =
-          RequestContext.builder().userId("user-100").endpoint("/api/orders").build();
-
-      // when
-      RateLimitKey key = compositeResolver.resolve(context);
-
-      // then
-      assertEquals("user-100:/api/orders", key.value());
-    }
-
-    @Test
-    @DisplayName("should create key with multiple segments")
-    void resolve_shouldCreateKeyWithMultipleSegments() {
-      // given - composite key: ip + user + method
-      KeyResolver multiResolver =
-          context ->
-              RateLimitKey.of(
-                  String.format(
-                      "%s:%s:%s", context.getClientIp(), context.getUserId(), context.getMethod()));
-
-      RequestContext context =
-          RequestContext.builder().clientIp("10.0.0.1").userId("admin").method("POST").build();
-
-      // when
-      RateLimitKey key = multiResolver.resolve(context);
-
-      // then
-      assertEquals("10.0.0.1:admin:POST", key.value());
-    }
-  }
-
-  // ==================== Global Key Resolver Tests ====================
-
-  @Nested
-  @DisplayName("Global Key Resolver Tests")
-  class GlobalKeyResolverTests {
-
-    @Test
-    @DisplayName("should return constant key for global scope")
-    void resolve_shouldReturnConstantKeyForGlobalScope() {
-      // given - global scope uses a constant key
-      KeyResolver globalResolver = context -> RateLimitKey.of("GLOBAL");
+    @DisplayName("should return 'global' key for all requests")
+    void resolve_shouldReturnGlobalKey() {
+      // given
+      RateLimitRule rule = createRule("global-rule", LimitScope.GLOBAL);
 
       RequestContext context1 =
           RequestContext.builder().clientIp("192.168.1.1").userId("user-1").build();
@@ -239,86 +208,328 @@ class KeyResolverTest {
           RequestContext.builder().clientIp("10.0.0.1").userId("user-2").build();
 
       // when
-      RateLimitKey key1 = globalResolver.resolve(context1);
-      RateLimitKey key2 = globalResolver.resolve(context2);
+      RateLimitKey key1 = resolver.resolve(context1, rule);
+      RateLimitKey key2 = resolver.resolve(context2, rule);
 
       // then
       assertEquals(key1, key2);
-      assertEquals("GLOBAL", key1.value());
+      assertEquals("global", key1.value());
     }
   }
 
-  // ==================== Custom Attribute Resolver Tests ====================
+  // ==================== CUSTOM Scope Tests ====================
 
   @Nested
-  @DisplayName("Custom Attribute Resolver Tests")
-  class CustomAttributeResolverTests {
+  @DisplayName("CUSTOM Scope Tests")
+  class CustomScopeTests {
 
     @Test
-    @DisplayName("should resolve from custom attribute")
+    @DisplayName("should resolve from custom attribute using keyStrategyId")
     void resolve_shouldResolveFromCustomAttribute() {
       // given
-      KeyResolver tenantResolver =
-          context -> {
-            Object tenantId = context.getAttributes().get("tenantId");
-            return RateLimitKey.of(tenantId != null ? tenantId.toString() : "default-tenant");
-          };
-
-      RequestContext context = RequestContext.builder().attribute("tenantId", "tenant-xyz").build();
+      RequestContext context =
+          RequestContext.builder().clientIp("10.0.0.1").attribute("tenantId", "tenant-xyz").build();
+      RateLimitRule rule = createCustomRule("custom-rule", "tenantId");
 
       // when
-      RateLimitKey key = tenantResolver.resolve(context);
+      RateLimitKey key = resolver.resolve(context, rule);
 
       // then
-      assertEquals("tenant-xyz", key.value());
+      assertEquals("custom:tenant-xyz", key.value());
     }
 
     @Test
-    @DisplayName("should handle missing custom attribute")
-    void resolve_shouldHandleMissingCustomAttribute() {
+    @DisplayName("should fallback to clientIp when custom attribute is missing")
+    void resolve_shouldFallbackWhenCustomAttributeMissing() {
       // given
-      KeyResolver tenantResolver =
-          context -> {
-            Object tenantId = context.getAttributes().get("tenantId");
-            return RateLimitKey.of(tenantId != null ? tenantId.toString() : "default");
-          };
-
       RequestContext context = RequestContext.builder().clientIp("10.0.0.1").build();
+      RateLimitRule rule = createCustomRule("custom-rule", "tenantId");
 
       // when
-      RateLimitKey key = tenantResolver.resolve(context);
+      RateLimitKey key = resolver.resolve(context, rule);
 
       // then
-      assertEquals("default", key.value());
+      assertEquals("ip:10.0.0.1", key.value());
+    }
+
+    @Test
+    @DisplayName("should fallback to clientIp when keyStrategyId is null")
+    void resolve_shouldFallbackWhenKeyStrategyIdIsNull() {
+      // given
+      RequestContext context =
+          RequestContext.builder().clientIp("10.0.0.1").attribute("tenantId", "tenant-xyz").build();
+      RateLimitRule rule =
+          RateLimitRule.builder("custom-rule")
+              .name("Custom Rule")
+              .enabled(true)
+              .scope(LimitScope.CUSTOM)
+              // keyStrategyId not set
+              .ruleSetId("test-rules")
+              .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).label("per-minute").build())
+              .build();
+
+      // when
+      RateLimitKey key = resolver.resolve(context, rule);
+
+      // then
+      assertEquals("ip:10.0.0.1", key.value());
     }
   }
 
-  // ==================== Fallback Strategy Tests ====================
+  // ==================== Multiple Scopes Tests ====================
 
   @Nested
-  @DisplayName("Fallback Strategy Tests")
-  class FallbackStrategyTests {
+  @DisplayName("Multiple Scopes Tests")
+  class MultipleScopesTests {
 
     @Test
-    @DisplayName("should use fallback when primary key is null")
-    void resolve_shouldUseFallbackWhenPrimaryKeyIsNull() {
-      // given - prefer userId, fallback to clientIp
-      KeyResolver fallbackResolver =
-          context -> {
-            if (context.getUserId() != null) {
-              return RateLimitKey.of("user:" + context.getUserId());
-            }
-            return RateLimitKey.of("ip:" + context.getClientIp());
-          };
+    @DisplayName("different scopes should produce different keys for same context")
+    void resolve_differentScopesShouldProduceDifferentKeys() {
+      // given
+      RequestContext context =
+          RequestContext.builder()
+              .clientIp("192.168.1.1")
+              .userId("user-123")
+              .apiKey("api-key-abc")
+              .build();
 
-      RequestContext withUser =
-          RequestContext.builder().userId("user-123").clientIp("10.0.0.1").build();
+      RateLimitRule ipRule = createRule("ip-rule", LimitScope.PER_IP);
+      RateLimitRule userRule = createRule("user-rule", LimitScope.PER_USER);
+      RateLimitRule apiKeyRule = createRule("api-key-rule", LimitScope.PER_API_KEY);
+      RateLimitRule globalRule = createRule("global-rule", LimitScope.GLOBAL);
 
-      RequestContext withoutUser = RequestContext.builder().clientIp("10.0.0.2").build();
+      // when
+      RateLimitKey ipKey = resolver.resolve(context, ipRule);
+      RateLimitKey userKey = resolver.resolve(context, userRule);
+      RateLimitKey apiKeyKey = resolver.resolve(context, apiKeyRule);
+      RateLimitKey globalKey = resolver.resolve(context, globalRule);
+
+      // then
+      assertEquals("ip:192.168.1.1", ipKey.value());
+      assertEquals("user:user-123", userKey.value());
+      assertEquals("key:api-key-abc", apiKeyKey.value());
+      assertEquals("global", globalKey.value());
+
+      // All keys should be different
+      assertNotEquals(ipKey, userKey);
+      assertNotEquals(userKey, apiKeyKey);
+      assertNotEquals(apiKeyKey, globalKey);
+    }
+  }
+
+  // ==================== Scope Prefix Tests ====================
+
+  @Nested
+  @DisplayName("Scope Prefix Tests")
+  class ScopePrefixTests {
+
+    @Test
+    @DisplayName("a userId that looks like an IP should not collide with the IP bucket")
+    void resolve_scopePrefixShouldPreventNamespaceCollision() {
+      // given - the userId is literally an IP address
+      RequestContext userContext =
+          RequestContext.builder().clientIp("203.0.113.9").userId("10.0.0.5").build();
+      RequestContext ipContext = RequestContext.builder().clientIp("10.0.0.5").build();
+
+      // when
+      RateLimitKey userKey =
+          resolver.resolve(userContext, createRule("user-rule", LimitScope.PER_USER));
+      RateLimitKey ipKey = resolver.resolve(ipContext, createRule("ip-rule", LimitScope.PER_IP));
+
+      // then
+      assertEquals("user:10.0.0.5", userKey.value());
+      assertEquals("ip:10.0.0.5", ipKey.value());
+      assertNotEquals(userKey, ipKey);
+    }
+
+    @Test
+    @DisplayName("fallback keys should carry the prefix of their actual source")
+    void resolve_fallbackShouldCarryIpPrefix() {
+      // given - no userId, so the key falls back to the client IP
+      RequestContext context = RequestContext.builder().clientIp("10.0.0.5").build();
+
+      // when
+      RateLimitKey key = resolver.resolve(context, createRule("user-rule", LimitScope.PER_USER));
+
+      // then - "ip:" and not "user:", otherwise an anonymous caller could squat a user bucket
+      assertEquals("ip:10.0.0.5", key.value());
+    }
+
+    @Test
+    @DisplayName("GLOBAL scope should need no prefix")
+    void resolve_globalScopeShouldNeedNoPrefix() {
+      // given
+      RequestContext context = RequestContext.builder().clientIp("10.0.0.5").build();
 
       // when / then
-      assertEquals("user:user-123", fallbackResolver.resolve(withUser).value());
-      assertEquals("ip:10.0.0.2", fallbackResolver.resolve(withoutUser).value());
+      assertEquals(
+          "global",
+          resolver.resolve(context, createRule("global-rule", LimitScope.GLOBAL)).value());
+    }
+  }
+
+  // ==================== Composite Key Tests ====================
+
+  @Nested
+  @DisplayName("Composite Key Tests")
+  class CompositeKeyTests {
+
+    @Test
+    @DisplayName("composite custom values should keep their separators under the custom prefix")
+    void resolve_compositeCustomValueShouldKeepSeparators() {
+      // given - the customizer composed a prefixed IP + user key
+      RequestContext context =
+          RequestContext.builder()
+              .clientIp("10.0.0.1")
+              .attribute("ipUser", "ip:10.0.0.1:user:user-123")
+              .build();
+      RateLimitRule rule = createCustomRule("composite-rule", "ipUser");
+
+      // when
+      RateLimitKey key = resolver.resolve(context, rule);
+
+      // then
+      assertEquals("custom:ip:10.0.0.1:user:user-123", key.value());
+    }
+
+    @Test
+    @DisplayName("composite custom values for different components should produce different keys")
+    void resolve_compositeCustomValuesShouldBeDistinct() {
+      // given
+      RateLimitRule rule = createCustomRule("composite-rule", "ipUser");
+      RequestContext first =
+          RequestContext.builder().attribute("ipUser", "ip:10.0.0.1:user:user-1").build();
+      RequestContext second =
+          RequestContext.builder().attribute("ipUser", "ip:10.0.0.1:user:user-2").build();
+
+      // when / then
+      assertNotEquals(resolver.resolve(first, rule), resolver.resolve(second, rule));
+    }
+  }
+
+  // ==================== Sanitisation Tests ====================
+
+  @Nested
+  @DisplayName("Sanitisation Tests")
+  class SanitisationTests {
+
+    @Test
+    @DisplayName("disallowed characters in a key value should be replaced")
+    void resolve_shouldSanitiseDisallowedCharacters() {
+      // given - a forwarded header value carrying Redis glob metacharacters and whitespace
+      RequestContext context = RequestContext.builder().clientIp("10.0.0.1 */?[]").build();
+
+      // when
+      RateLimitKey key = resolver.resolve(context, createRule("ip-rule", LimitScope.PER_IP));
+
+      // then
+      assertEquals("ip:10.0.0.1______", key.value());
+    }
+
+    @Test
+    @DisplayName("over-long key values should be hashed but keep their scope prefix")
+    void resolve_shouldHashOverLongKeyValues() {
+      // given
+      String longUserId = repeat("u", 300);
+      RequestContext context = RequestContext.builder().userId(longUserId).build();
+
+      // when
+      RateLimitKey key = resolver.resolve(context, createRule("user-rule", LimitScope.PER_USER));
+
+      // then
+      assertTrue(key.value().startsWith("user:"));
+      assertEquals("user:".length() + 64, key.value().length());
+      assertTrue(key.value().substring("user:".length()).matches("[0-9a-f]{64}"));
+    }
+
+    private String repeat(String value, int times) {
+      StringBuilder sb = new StringBuilder(value.length() * times);
+      for (int i = 0; i < times; i++) {
+        sb.append(value);
+      }
+      return sb.toString();
+    }
+  }
+
+  // ==================== MissingKeyBehavior Tests ====================
+
+  @Nested
+  @DisplayName("MissingKeyBehavior Tests")
+  class MissingKeyBehaviorTests {
+
+    private final KeyResolver rejectingResolver =
+        new LimitScopeKeyResolver(MissingKeyBehavior.REJECT);
+
+    @Test
+    @DisplayName("no-arg constructor should default to FALLBACK_TO_IP")
+    void constructor_shouldDefaultToFallbackToIp() {
+      // given / when / then
+      assertEquals(
+          MissingKeyBehavior.FALLBACK_TO_IP, new LimitScopeKeyResolver().getMissingKeyBehavior());
+    }
+
+    @Test
+    @DisplayName("REJECT should throw when userId is missing")
+    void resolve_shouldRejectMissingUserId() {
+      // given
+      RequestContext context = RequestContext.builder().clientIp("10.0.0.1").build();
+      RateLimitRule rule = createRule("user-rule", LimitScope.PER_USER);
+
+      // when / then
+      MissingRateLimitKeyException exception =
+          assertThrows(
+              MissingRateLimitKeyException.class, () -> rejectingResolver.resolve(context, rule));
+      assertEquals("user-rule", exception.getRuleId());
+      assertEquals(LimitScope.PER_USER, exception.getScope());
+    }
+
+    @Test
+    @DisplayName("REJECT should throw when apiKey is missing")
+    void resolve_shouldRejectMissingApiKey() {
+      // given
+      RequestContext context = RequestContext.builder().clientIp("10.0.0.1").build();
+      RateLimitRule rule = createRule("api-key-rule", LimitScope.PER_API_KEY);
+
+      // when / then
+      MissingRateLimitKeyException exception =
+          assertThrows(
+              MissingRateLimitKeyException.class, () -> rejectingResolver.resolve(context, rule));
+      assertEquals(LimitScope.PER_API_KEY, exception.getScope());
+    }
+
+    @Test
+    @DisplayName("REJECT should throw when the custom attribute is missing")
+    void resolve_shouldRejectMissingCustomAttribute() {
+      // given
+      RequestContext context = RequestContext.builder().clientIp("10.0.0.1").build();
+      RateLimitRule rule = createCustomRule("custom-rule", "tenantId");
+
+      // when / then
+      assertThrows(
+          MissingRateLimitKeyException.class, () -> rejectingResolver.resolve(context, rule));
+    }
+
+    @Test
+    @DisplayName("REJECT should throw when clientIp is missing")
+    void resolve_shouldRejectMissingClientIp() {
+      // given
+      RequestContext context = RequestContext.builder().endpoint("/api/test").build();
+      RateLimitRule rule = createRule("ip-rule", LimitScope.PER_IP);
+
+      // when / then
+      assertThrows(
+          MissingRateLimitKeyException.class, () -> rejectingResolver.resolve(context, rule));
+    }
+
+    @Test
+    @DisplayName("REJECT should resolve normally when the value is present")
+    void resolve_shouldResolveWhenValuePresent() {
+      // given
+      RequestContext context = RequestContext.builder().userId("user-123").build();
+      RateLimitRule rule = createRule("user-rule", LimitScope.PER_USER);
+
+      // when / then
+      assertEquals("user:user-123", rejectingResolver.resolve(context, rule).value());
     }
   }
 }

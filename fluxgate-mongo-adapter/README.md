@@ -197,6 +197,51 @@ MongoDB
 }
 ```
 
+There is no `path`, `method` or `priority` field: a rule has a scope and bands, and every enabled rule
+of a rule set is evaluated. See [Engine Layer](../docs/en/architecture/engine-layer.md).
+
+### Indexes
+
+`fluxgate.mongo.ddl-auto=create` creates the collections **and** these indexes:
+
+```javascript
+db.rate_limit_rules.createIndex({ "ruleSetId": 1 })
+db.rate_limit_rules.createIndex({ "ruleSetId": 1, "id": 1 }, { unique: true })
+```
+
+The first serves the only query on the hot path (`findByRuleSetId`); the second makes a duplicate rule
+id inside one rule set a write error rather than a silently shadowed rule.
+
+Index creation failures are logged at WARN and are **not** fatal — a replica set that is mid-election,
+or a user without `createIndex` rights, should not stop the application from starting. Check the log
+on first start and create the indexes manually if you run with `ddl-auto=validate`:
+
+| `ddl-auto` | Behaviour |
+|------------|-----------|
+| `validate` (default) | Verifies the collections exist. Throws if one is missing. Creates no indexes |
+| `create` | Creates missing collections, then the two indexes above |
+
+`create` is a convenience for development. In production, create the collections and indexes with your
+migration tooling and keep `validate`.
+
+### Error semantics
+
+A failing query no longer looks like "no rules exist". That distinction is the point:
+
+| Situation | Result |
+|-----------|--------|
+| Socket error, timeout, or not-primary | `org.fluxgate.core.exception.MongoConnectionException` |
+| Any other `MongoException` | `FluxgateOperationException`, marked retryable |
+| Query succeeded and matched nothing | `Optional.empty()`, WARNed once per rule set id |
+
+Before this, a connection failure returned `Optional.empty()`, which the engine read as "no rule set"
+and turned into a global allow or a global deny depending on
+`fluxgate.ratelimit.missing-rule-behavior`. An outage silently became an availability or a security
+incident, with nothing in the logs to say which.
+
+`MongoRuleSetProvider` WARNs **once per rule set id** for a genuinely missing rule set, then falls
+silent, so a misconfigured id is visible without flooding the log on the hot path.
+
 ### Rate Limit Event Collection (Metrics)
 
 ```json
@@ -269,40 +314,63 @@ upsert(rule);
 
 ## Testing
 
-### Run Unit Tests
+FluxGate has two test tiers, so a clean checkout tests fully with no infrastructure.
+
+### Unit tier — no MongoDB, no Docker
 
 ```bash
-mvn test -pl fluxgate-mongo-adapter
+./mvnw test -pl fluxgate-mongo-adapter
 ```
 
-### Run Integration Tests
-
-Integration tests require a running MongoDB instance:
+### Integration tier
 
 ```bash
-# Using Docker
-docker run -d -p 27017:27017 \
-  -e MONGO_INITDB_ROOT_USERNAME=fluxgate \
-  -e MONGO_INITDB_ROOT_PASSWORD=fluxgate123 \
-  mongo:latest
+# Unit tier + integration tier (failsafe runs *IntegrationTest / *IT)
+./mvnw verify -pl fluxgate-mongo-adapter
 
-# Run tests
-mvn test -pl fluxgate-mongo-adapter
+# Integration tier skipped explicitly
+./mvnw verify -pl fluxgate-mongo-adapter -DskipITs
+
+# One class
+./mvnw verify -pl fluxgate-mongo-adapter -Dit.test=MongoRuleSetProviderIntegrationTest
 ```
 
-### Configure MongoDB Connection
+`./mvnw test` no longer runs the integration tests. This module's integration classes are
+`MongoRuleSetProviderIntegrationTest` and `MongoRateLimitMetricsRecorderIntegrationTest`.
 
-Set MongoDB connection via environment variables or system properties:
+### How the integration tier finds MongoDB
+
+In this order:
+
+1. a URI supplied through the environment or a system property,
+2. a disposable [Testcontainers](https://testcontainers.com/) `mongo:7.0`,
+3. **skip** — a JUnit assumption aborts the test. Integration tests never *fail* for want of a
+   database.
+
+| Variable | Purpose |
+|----------|---------|
+| `FLUXGATE_MONGO_URI` (or `-Dfluxgate.mongo.uri`) | Use an existing MongoDB |
+| `FLUXGATE_MONGO_DB` (or `-Dfluxgate.mongo.db`) | Database name to use with that URI |
 
 ```bash
-# Environment variables
-export FLUXGATE_MONGO_URI="mongodb://localhost:27017/fluxgate"
-export FLUXGATE_MONGO_DB="fluxgate"
-
-# Or system properties
-mvn test -Dfluxgate.mongo.uri="mongodb://localhost:27017/fluxgate" \
-         -Dfluxgate.mongo.db="fluxgate"
+FLUXGATE_MONGO_URI='mongodb://fluxgate:secret@localhost:27017/fluxgate?authSource=admin' \
+FLUXGATE_MONGO_DB=fluxgate \
+  ./mvnw verify -pl fluxgate-mongo-adapter
 ```
+
+Local MongoDB if you want it — this compose file binds the port to `127.0.0.1` and is labelled local
+development only:
+
+```bash
+docker compose -f ../docker/mongo.yml up -d
+```
+
+### Pointing the tests at a shared database is safe
+
+Each test creates its **own** uniquely named collection and drops only that collection in
+`@AfterEach`. No test drops a collection it did not create, and no test issues
+`deleteMany(new Document())`. Earlier versions called `ruleCollection.drop()` against `localhost` with
+no guard, which destroyed developer and CI data.
 
 ## Advanced Usage
 
@@ -313,10 +381,12 @@ import org.fluxgate.core.key.KeyResolver;
 import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.context.RequestContext;
 
-KeyResolver customResolver = (RequestContext context) -> {
+// KeyResolver takes (context, rule) - context first.
+KeyResolver customResolver = (RequestContext context, RateLimitRule rule) -> {
     String apiKey = context.getApiKey();
     String clientIp = context.getClientIp();
-    return new RateLimitKey(apiKey + ":" + clientIp);
+    // Prefix each component so the parts stay unambiguous after sanitisation.
+    return RateLimitKey.of("key:" + apiKey + ":ip:" + clientIp);
 };
 
 RateLimitRuleSetProvider provider = config.ruleSetProvider(customResolver);
@@ -358,7 +428,7 @@ println("Rejected: "+event.getString("clientIp"));
 
 ## Requirements
 
-- Java 21+
+- Java 11+
 - MongoDB 4.0+
 - Maven 3.8+
 
@@ -368,8 +438,11 @@ Licensed under the MIT License. See [LICENSE](../LICENSE) for details.
 
 ## Related Projects
 
-- [fluxgate-core](../fluxgate-core) - Core rate limiting engine
-- [FluxGate](../) - Parent project
+- [fluxgate-core](../fluxgate-core/README.md) - Core rate limiting engine
+- [fluxgate-redis-ratelimiter](../fluxgate-redis-ratelimiter/README.md) - Distributed bucket storage
+- [fluxgate-spring-boot3-starter](../fluxgate-spring-boot3-starter/README.md) - Auto-configuration
+- [Storage Layer](../docs/en/architecture/storage-layer.md) - How this module fits the architecture
+- [FluxGate](../README.md) - Parent project
 
 ## Contributing
 

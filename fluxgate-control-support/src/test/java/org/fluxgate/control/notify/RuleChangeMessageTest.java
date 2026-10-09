@@ -4,9 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.fluxgate.core.util.HmacSigner;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 class RuleChangeMessageTest {
+
+  private static final String SECRET = "unit-test-only-secret";
 
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -78,5 +82,113 @@ class RuleChangeMessageTest {
 
     assertThat(str).contains("fullReload=true");
     assertThat(str).contains("source");
+  }
+
+  @Test
+  @DisplayName("An unsigned message carries no signature and omits the field from the JSON")
+  void shouldStayUnsignedByDefault() throws Exception {
+    RuleChangeMessage message = RuleChangeMessage.forRuleSet("orders", "studio");
+
+    assertThat(message.getSignature()).isNull();
+    assertThat(objectMapper.writeValueAsString(message)).doesNotContain("signature");
+  }
+
+  @Test
+  @DisplayName("A signed message verifies against the same secret")
+  void shouldSignWithTheSharedSecret() {
+    RuleChangeMessage signed = RuleChangeMessage.forRuleSet("orders", "studio").signed(SECRET);
+
+    assertThat(signed.getSignature()).isNotNull();
+    assertThat(HmacSigner.verify(SECRET, signed.canonicalForm(), signed.getSignature())).isTrue();
+    assertThat(HmacSigner.verify("another-secret", signed.canonicalForm(), signed.getSignature()))
+        .isFalse();
+  }
+
+  @Test
+  @DisplayName("Signing keeps every other field, so the canonical form round-trips through JSON")
+  void shouldKeepTheSignatureThroughSerialization() throws Exception {
+    RuleChangeMessage original = RuleChangeMessage.fullReload("studio").signed(SECRET);
+
+    String json = objectMapper.writeValueAsString(original);
+    RuleChangeMessage deserialized = objectMapper.readValue(json, RuleChangeMessage.class);
+
+    assertThat(deserialized.getSignature()).isEqualTo(original.getSignature());
+    assertThat(deserialized.canonicalForm()).isEqualTo(original.canonicalForm());
+    assertThat(HmacSigner.verify(SECRET, deserialized.canonicalForm(), deserialized.getSignature()))
+        .isTrue();
+  }
+
+  @Test
+  @DisplayName("Changing a signed field invalidates the signature")
+  void shouldNotVerifyATamperedMessage() {
+    RuleChangeMessage signed = RuleChangeMessage.forRuleSet("orders", "studio").signed(SECRET);
+
+    RuleChangeMessage tampered =
+        new RuleChangeMessage(
+            signed.getVersion(),
+            null,
+            true,
+            signed.getTimestamp(),
+            signed.getSource(),
+            signed.getSignature());
+
+    assertThat(HmacSigner.verify(SECRET, tampered.canonicalForm(), tampered.getSignature()))
+        .isFalse();
+  }
+
+  @Test
+  void shouldRejectSigningWithoutASecret() {
+    RuleChangeMessage message = RuleChangeMessage.forRuleSet("orders", "studio");
+
+    assertThatThrownBy(() -> message.signed(null)).isInstanceOf(NullPointerException.class);
+  }
+
+  @Test
+  @DisplayName("A payload from an older publisher that carries no version is read as version 1")
+  void shouldDefaultTheVersionWhenThePayloadHasNone() throws Exception {
+    String legacyJson =
+        "{\"ruleSetId\":\"orders\",\"fullReload\":false,\"timestamp\":1,\"source\":\"studio\"}";
+
+    RuleChangeMessage deserialized = objectMapper.readValue(legacyJson, RuleChangeMessage.class);
+
+    assertThat(deserialized.getVersion()).isEqualTo(RuleChangeMessage.SCHEMA_VERSION);
+    assertThat(deserialized.getRuleSetId()).isEqualTo("orders");
+    assertThat(deserialized.getSignature()).isNull();
+  }
+
+  @Test
+  @DisplayName("A non-positive version is not trusted either and falls back to the current one")
+  void shouldDefaultTheVersionWhenItIsNotPositive() {
+    RuleChangeMessage zero = new RuleChangeMessage(0, "orders", false, 1L, "studio");
+    RuleChangeMessage negative = new RuleChangeMessage(-7, "orders", false, 1L, "studio");
+
+    assertThat(zero.getVersion()).isEqualTo(RuleChangeMessage.SCHEMA_VERSION);
+    assertThat(negative.getVersion()).isEqualTo(RuleChangeMessage.SCHEMA_VERSION);
+    assertThat(zero.getSignature()).isNull();
+  }
+
+  @Test
+  @DisplayName("An explicit future version is kept, so a consumer can drop what it cannot read")
+  void shouldKeepAnExplicitVersion() {
+    RuleChangeMessage future = new RuleChangeMessage(99, "orders", false, 1L, "studio");
+
+    assertThat(future.getVersion()).isEqualTo(99);
+    assertThat(future.canonicalForm()).contains("99");
+  }
+
+  @Test
+  @DisplayName("toString says whether the message is signed, for both message shapes")
+  void shouldReportSignednessInToString() {
+    RuleChangeMessage ruleSet = RuleChangeMessage.forRuleSet("orders", "studio");
+    RuleChangeMessage fullReload = RuleChangeMessage.fullReload("studio");
+
+    assertThat(ruleSet.toString()).contains("ruleSetId='orders'").contains("signed=false");
+    assertThat(ruleSet.signed(SECRET).toString())
+        .contains("ruleSetId='orders'")
+        .contains("signed=true");
+    assertThat(fullReload.toString()).contains("fullReload=true").contains("signed=false");
+    assertThat(fullReload.signed(SECRET).toString())
+        .contains("fullReload=true")
+        .contains("signed=true");
   }
 }

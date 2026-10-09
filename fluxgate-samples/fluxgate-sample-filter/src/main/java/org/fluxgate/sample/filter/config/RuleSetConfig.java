@@ -1,14 +1,16 @@
 package org.fluxgate.sample.filter.config;
 
 // =============================================================================
-// NOTE: This config is for Redis direct mode (RedisRateLimitHandler).
+// NOTE: This config is for Redis direct mode (library-provided handler).
 //       Currently using HTTP API mode (HttpRateLimitHandler).
 //
 // To enable this config:
 //   1. Uncomment this class
 //   2. Add fluxgate-redis-ratelimiter dependency to pom.xml
 //   3. Set fluxgate.redis.enabled=true in application.yml
-//   4. Change @EnableFluxgateFilter handler to RedisRateLimitHandler.class
+//   4. Drop the @EnableFluxgateFilter handler attribute: the starter registers
+//      EngineBackedRateLimitHandler automatically once a RateLimiter and a
+//      RateLimitRuleSetProvider bean exist
 // =============================================================================
 
 /*
@@ -53,7 +55,7 @@ public class RuleSetConfig {
         }
 
         // KeyResolver that extracts client IP
-        KeyResolver ipKeyResolver = context -> {
+        KeyResolver ipKeyResolver = (context, rule) -> {
             String ip = context.getClientIp();
             return new RateLimitKey(ip != null ? ip : "unknown");
         };

@@ -109,5 +109,42 @@ public class RuleAdminController {
   }
 
   /** Request body for creating a RuleSet. */
-  public record CreateRuleSetRequest(String ruleSetId, long capacity, long windowSeconds) {}
+  public static class CreateRuleSetRequest {
+
+    private String ruleSetId;
+    private long capacity;
+    private long windowSeconds;
+
+    public CreateRuleSetRequest() {}
+
+    public CreateRuleSetRequest(String ruleSetId, long capacity, long windowSeconds) {
+      this.ruleSetId = ruleSetId;
+      this.capacity = capacity;
+      this.windowSeconds = windowSeconds;
+    }
+
+    public String ruleSetId() {
+      return ruleSetId;
+    }
+
+    public void setRuleSetId(String ruleSetId) {
+      this.ruleSetId = ruleSetId;
+    }
+
+    public long capacity() {
+      return capacity;
+    }
+
+    public void setCapacity(long capacity) {
+      this.capacity = capacity;
+    }
+
+    public long windowSeconds() {
+      return windowSeconds;
+    }
+
+    public void setWindowSeconds(long windowSeconds) {
+      this.windowSeconds = windowSeconds;
+    }
+  }
 }
