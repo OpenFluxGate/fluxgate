@@ -140,9 +140,14 @@ def sampler_worker(config, stop_path):
             connection.close()
         sample["latency_ms"] = (time.monotonic() - began) * 1000
         samples.append(sample)
+        sequence += 1
+        if len(samples) == 1 or sequence % 10 == 1:
+            private_write(config.get("progress_path", "/tmp/sampler-progress.json"), json.dumps({
+                "interval_ms": 100, "scheduled": sequence, "omitted_schedules": omitted,
+                "samples": samples, "duration_seconds": time.monotonic() - start,
+                "transport": "in-cluster Gateway Service; fresh connection per sample"}))
         if sample["status"] == 200 and sample["body_valid"]:
             private_write(config.get("positive_path", "/tmp/sampler-positive"), "yes")
-        sequence += 1
     return {"interval_ms": 100, "scheduled": sequence, "omitted_schedules": omitted,
             "samples": samples, "duration_seconds": time.monotonic() - start,
             "transport": "in-cluster Gateway Service; fresh connection per sample"}
@@ -550,6 +555,49 @@ class Proof:
                     "Mongo negative did not explicitly reject authentication")
         return result.stdout
 
+    def preserve_sampler_progress(self, name, phase):
+        try:
+            result = self.kube("exec", name, "--request-timeout=10s", "--", "cat", "/tmp/sampler-progress.json", check=False)
+            require(result.returncode == 0, "sampler progress unavailable")
+            require(self.api_key.encode() not in result.stdout, "sampler progress contains a secret")
+            report = sampler_summary(json.loads(result.stdout))
+            report["partial_failed_phase"] = True
+            private_write(self.work / (phase + "-traffic-partial.json"), json.dumps(report, indent=2) + "\n")
+        except Exception:
+            # Failure to preserve diagnostics cannot prevent either resource's cleanup attempt.
+            private_write(self.work / (phase + "-traffic-partial-unavailable.json"),
+                          json.dumps({"partial_failed_phase": True, "progress_available": False}) + "\n")
+
+    def cleanup_sampler_resources(self, name, expected_uids):
+        failures = []
+        for kind in ("pod", "networkpolicy"):
+            resource = kind + "/" + name
+            try:
+                current = self.kube("get", resource, "--ignore-not-found=true", "-o", "json",
+                                    "--request-timeout=10s", check=False)
+                require(current.returncode == 0, "sampler cleanup cannot inspect " + kind)
+                if not current.stdout.strip():
+                    continue
+                obj = json.loads(current.stdout)
+                metadata = obj["metadata"]
+                require(metadata.get("labels", {}).get("fluxgate.io/credential-sampler") == name,
+                        "sampler cleanup ownership mismatch: " + kind)
+                require(kind not in expected_uids or metadata["uid"] == expected_uids[kind],
+                        "sampler cleanup UID mismatch: " + kind)
+                deleted = self.kube("delete", resource, "--ignore-not-found=true", "--wait=true",
+                                    "--timeout=30s", "--request-timeout=10s", check=False)
+                require(deleted.returncode == 0, "sampler deletion failed: " + kind)
+                absent = self.kube("get", resource, "--ignore-not-found=true", "-o", "json",
+                                   "--request-timeout=10s", check=False)
+                require(absent.returncode == 0 and not absent.stdout.strip(), "sampler resource remains: " + kind)
+            except Exception:
+                # Each resource is attempted independently, including after stop/deletion failure.
+                failures.append(kind)
+        if failures:
+            private_write(self.work / (name + "-cleanup-failed.json"), json.dumps({"failed": failures}) + "\n")
+            raise ProofError("sampler cleanup failed: " + ",".join(failures))
+        return {"pod_absent": True, "networkpolicy_absent": True, "ownership_checked": True}
+
     @contextlib.contextmanager
     def traffic_sampler(self, phase):
         name = "credential-traffic-" + secrets.token_hex(6)
@@ -558,7 +606,7 @@ class Proof:
         require(len(ports) == 1 and isinstance(ports[0]["targetPort"], int), "numeric Gateway sampler port required")
         labels = {"fluxgate.io/credential-sampler": name}
         policy = {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
-                  "metadata": {"name": name, "namespace": self.ns},
+                  "metadata": {"name": name, "namespace": self.ns, "labels": labels},
                   "spec": {"podSelector": {"matchLabels": labels}, "policyTypes": ["Egress"], "egress": [
                       {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
                                "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
@@ -574,9 +622,12 @@ class Proof:
                                         "resources": {"requests": {"cpu": "25m", "memory": "32Mi"},
                                                       "limits": {"cpu": "250m", "memory": "128Mi"}}}]}}
         process = None
+        traffic_complete = False
+        expected_uids = {}
         try:
-            self.kube("create", "-f", "-", data=json.dumps(policy).encode())
-            self.kube("create", "-f", "-", data=json.dumps(pod).encode())
+            for kind, resource in (("networkpolicy", policy), ("pod", pod)):
+                created = self.kube("create", "-f", "-", "-o", "json", data=json.dumps(resource).encode())
+                expected_uids[kind] = json.loads(created.stdout)["metadata"]["uid"]
             self.kube("wait", "--for=condition=Ready", "pod/" + name, "--timeout=180s")
             code = Path(__file__).read_text().rsplit('\nif __name__ == "__main__":', 1)[0]
             code += "\nconfig=json.loads(sys.stdin.readline());private_write('/tmp/sampler-started','yes');print(json.dumps(sampler_worker(config,'/tmp/sampler-stop')),flush=True)\n"
@@ -601,7 +652,7 @@ class Proof:
         finally:
             try:
                 if process:
-                    self.kube("exec", name, "--", "touch", "/tmp/sampler-stop", check=False)
+                    self.kube("exec", name, "--", "touch", "/tmp/sampler-stop")
                     output, _ = process.communicate(timeout=15)
                     require(process.returncode == 0, "credential sampler failed")
                     require(self.api_key.encode() not in output, "credential sampler leaked secret; evidence suppressed")
@@ -609,11 +660,24 @@ class Proof:
                     self.results.setdefault("rotation_traffic", {})[phase] = report
                     # Retain failed-phase observations privately even when no complete proof is emitted.
                     private_write(self.work / (phase + "-traffic.json"), json.dumps(report, indent=2) + "\n")
+                    traffic_complete = True
             finally:
-                if process and process.poll() is None:
-                    process.terminate()
-                    process.wait(timeout=5)
-                self.kube("delete", "pod/" + name, "networkpolicy/" + name, "--ignore-not-found=true", check=False)
+                try:
+                    if process and not traffic_complete:
+                        self.preserve_sampler_progress(name, phase)
+                    if process and process.poll() is None:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait(timeout=5)
+                finally:
+                    cleanup = self.cleanup_sampler_resources(name, expected_uids)
+                    if phase in self.results.get("rotation_traffic", {}):
+                        self.results["rotation_traffic"][phase]["cleanup"] = cleanup
+                        private_write(self.work / (phase + "-traffic.json"),
+                                      json.dumps(self.results["rotation_traffic"][phase], indent=2) + "\n")
 
     def redis_cold_restart(self, password, retired_password):
         chosen = None
@@ -1003,8 +1067,87 @@ class Proof:
             print("Cleanup incomplete: " + ",".join(failures), flush=True)
 
 
+def sampler_cleanup_self_test():
+    import io
+    with tempfile.TemporaryDirectory(prefix="credential-cleanup-unit-") as directory:
+        for pod_delete_fails, stop_fails, retained_pod in ((True, False, False), (False, True, False), (False, False, True)):
+            proof = Proof.__new__(Proof)
+            proof.ns, proof.work, proof.api_key = "fluxgate-resilience", Path(directory), "offline-only-key"
+            proof.results = {}
+            proof.f = {"gateway_service": "gateway", "gateway_namespace": "envoy-gateway-system",
+                       "kubeconfig": "offline", "context": "kind-fluxgate-resilience",
+                       "gateway_host": "local", "load_path": "/load", "backend_body": "marker"}
+            proof.get = lambda *args: {"spec": {"ports": [{"port": 80, "targetPort": 10080}], "selector": {"app": "gateway"}}}
+            resources = {}
+            deletions = []
+            baseline = {"scheduled": 1, "omitted_schedules": 0,
+                        "samples": [{"status": 200, "body_valid": True}]}
+            def kube(*args, data=None, check=True, **kwargs):
+                status, output = 0, b""
+                if args[0] == "create":
+                    obj = json.loads(data)
+                    kind = "pod" if obj["kind"] == "Pod" else "networkpolicy"
+                    obj["metadata"]["uid"] = kind + "-uid"
+                    resources[kind] = obj
+                    output = json.dumps(obj).encode()
+                elif args[0] == "get":
+                    kind = args[1].split("/")[0]
+                    output = json.dumps(resources[kind]).encode() if kind in resources else b""
+                elif args[0] == "delete":
+                    kind = args[1].split("/")[0]
+                    deletions.append(kind)
+                    if kind == "pod" and pod_delete_fails:
+                        status = 1
+                    elif not (kind == "pod" and retained_pod):
+                        resources.pop(kind, None)
+                elif args[0] == "exec" and "touch" in args and stop_fails:
+                    status = 1
+                elif args[0] == "exec" and "cat" in args:
+                    output = json.dumps(baseline).encode()
+                if status and check:
+                    raise ProofError("offline sampler stop failure")
+                return subprocess.CompletedProcess(args, status, output, b"")
+            proof.kube = kube
+            class Process:
+                def __init__(self, *args, **kwargs):
+                    self.stdin, self.returncode = io.BytesIO(), None
+                def poll(self):
+                    return self.returncode
+                def communicate(self, **kwargs):
+                    self.returncode = 0
+                    return json.dumps(baseline).encode(), b""
+                def terminate(self):
+                    self.returncode = -15
+                def wait(self, **kwargs):
+                    return self.returncode
+                def kill(self):
+                    self.returncode = -9
+            original_popen = subprocess.Popen
+            subprocess.Popen = Process
+            passed = False
+            try:
+                try:
+                    with proof.traffic_sampler("unit"):
+                        pass
+                    passed = True
+                except ProofError:
+                    pass
+            finally:
+                subprocess.Popen = original_popen
+            require(not passed, "sampler stop/cleanup failure permitted PASS")
+            require(deletions == ["pod", "networkpolicy"], "cleanup did not attempt both resources independently")
+            require("networkpolicy" not in resources, "policy cleanup was skipped after failure")
+            if stop_fails:
+                require((Path(directory) / "unit-traffic-partial.json").exists(), "failed sampler lost private progress")
+                require("pod" not in resources, "stop failure blocked Pod cleanup")
+            else:
+                require("pod" in resources, "offline deletion failure was not exercised")
+                require(bool(list(Path(directory).glob("*-cleanup-failed.json"))), "cleanup failure diagnostics missing")
+
+
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
+    sampler_cleanup_self_test()
     require(redis_hash_contents(b"revision\n1\nepoch\nstable") ==
             redis_hash_contents(b"epoch\nstable\nrevision\n1"), "Redis metadata compared hash iteration order")
     worker_source = Path(__file__).read_text().rsplit('\nif __name__ == "__main__":', 1)[0]
@@ -1049,7 +1192,8 @@ def self_test():
         try:
             observed = sampler_summary(sampler_worker({"service": "127.0.0.1", "port": server.server_port,
                 "path": "/load", "host": "local", "api_key": "offline-fixture", "body": "backend-marker",
-                "positive_path": str(Path(directory) / "positive")}, str(stop)))
+                "positive_path": str(Path(directory) / "positive"),
+                "progress_path": str(Path(directory) / "progress.json")}, str(stop)))
             require(observed["statuses"] == {"200": 2, "503": 1} and observed["unexpected_body_responses"] == 1 and
                     observed["backend_successes"] == 1 and not observed["uninterrupted_observed"],
                     "actual traffic sampler hid status/body failures")
@@ -1065,7 +1209,8 @@ def self_test():
             try:
                 stopped = sampler_summary(sampler_worker({"service": "127.0.0.1", "port": server.server_port,
                     "path": "/load", "host": "local", "api_key": "offline-fixture", "body": "backend-marker",
-                    "positive_path": str(Path(directory) / "positive")}, str(stop)))
+                    "positive_path": str(Path(directory) / "positive"),
+                "progress_path": str(Path(directory) / "progress.json")}, str(stop)))
                 require(len(calls) == 1 and stopped["scheduled"] == 1 and stopped["omitted_schedules"] == 0,
                         "sampler dispatched after stop arrived during schedule wait")
             finally:
@@ -1184,7 +1329,7 @@ def self_test():
         proof.redis_check("unused", None, False)
         thread.join(timeout=5)
         require(not thread.is_alive() and not failures, "RESP regression server failed")
-    print("Offline credential regressions passed: cold UID/PVC checks, actual traffic sampler, strict Mongo markers, TLS rollback, X.509/JWT and fresh RESP authentication")
+    print("Offline credential regressions passed: checked sampler cleanup failures, cold UID/PVC, actual traffic sampler, Mongo markers, TLS rollback, X.509/JWT and fresh RESP")
 
 
 def main():
