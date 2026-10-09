@@ -34,7 +34,7 @@ docker run -d --name redis -p 6379:6379 redis:latest
 ## Running the Application
 
 ```bash
-./mvnw spring-boot:run -pl fluxgate-samples/fluxgate-sample-standalone
+./mvnw spring-boot:run -pl fluxgate-samples/fluxgate-sample-standalone-java21
 ```
 
 The application starts on port **8085**.
@@ -484,10 +484,15 @@ curl http://localhost:8085/actuator/prometheus | grep fluxgate
 ```
 
 Key metrics:
-- `fluxgate_requests_total` - Total rate limit requests
-- `fluxgate_requests_allowed_total` - Allowed requests
-- `fluxgate_requests_rejected_total` - Rejected requests (429)
-- `fluxgate_request_duration_seconds` - Request processing time
+- `fluxgate_requests_total{result="allowed"}` - Allowed requests
+- `fluxgate_requests_total{result="rejected"}` - Rejected requests (429)
+- `fluxgate_requests_duration_seconds` - Request processing time
+- `fluxgate_limiter_failures_total` - Limiter failures, tagged with the action taken
+- `fluxgate_tokens_remaining` - Remaining tokens per rule set
+
+`fluxgate.requests.total` (an untagged counter that older versions also registered) was removed
+because it exported under the same Prometheus name as `fluxgate.requests`. Sum over the `result` tag
+instead.
 
 ## Swagger UI
 

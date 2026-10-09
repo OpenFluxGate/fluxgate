@@ -16,7 +16,7 @@ This sample supports two handler modes:
 | Mode | Handler | Description |
 |------|---------|-------------|
 | **HTTP API** (default) | `HttpRateLimitHandler` | Calls external FluxGate API server |
-| **Redis Direct** | `RedisRateLimitHandler` | Direct Redis access (requires additional setup) |
+| **Redis Direct** | `EngineBackedRateLimitHandler` (library default) | Direct Redis access; the starter registers the handler automatically |
 
 ## Prerequisites
 
@@ -88,16 +88,27 @@ fluxgate-sample-filter/
 ├── src/main/java/org/fluxgate/sample/filter/
 │   ├── FilterSampleApplication.java    # Main app with @EnableFluxgateFilter
 │   ├── handler/
-│   │   ├── HttpRateLimitHandler.java   # HTTP API handler (active)
-│   │   └── RedisRateLimitHandler.java  # Redis handler (commented)
+│   │   └── HttpRateLimitHandler.java   # HTTP API handler (active)
 │   ├── config/
-│   │   └── RuleSetConfig.java          # Redis config (commented)
+│   │   └── RuleSetConfig.java          # Redis direct mode (commented out)
 │   └── controller/
 │       ├── ApiController.java          # Rate-limited API endpoints
-│       └── RuleSetAdminController.java # Admin API (commented)
+│       └── RuleSetAdminController.java # Admin API for Redis mode (commented out)
 └── src/main/resources/
     └── application.yml                 # Configuration
 ```
+
+This sample keeps a **custom handler on purpose**, to demonstrate the HTTP API pattern. Most
+applications no longer need one: with `fluxgate.redis.enabled=true` (or
+`fluxgate.ratelimit.mode=IN_MEMORY`) and a `RateLimitRuleSetProvider` bean, the starter registers
+`EngineBackedRateLimitHandler` automatically, and `@EnableFluxgateFilter` takes no `handler`
+attribute. The earlier commented-out `RedisRateLimitHandler` in this sample was deleted for that
+reason.
+
+The two commented-out classes above show the Redis-direct alternative. Note that they store rules
+through `RedisRuleSetStore` / `RuleSetData`, which are **deprecated since 0.4.0** — prefer MongoDB
+behind a `RateLimitRuleSetProvider`, or a provider bean of your own, as
+`fluxgate-sample-standalone-java21` does.
 
 ## How It Works
 
@@ -185,19 +196,18 @@ fluxgate:
     uri: redis://localhost:6379
 ```
 
-### 3. Change handler in `FilterSampleApplication.java`
+### 3. Drop the handler attribute in `FilterSampleApplication.java`
 
 ```java
 @EnableFluxgateFilter(
-    handler = RedisRateLimitHandler.class,  // Change from HttpRateLimitHandler
+    // No handler attribute: the starter registers EngineBackedRateLimitHandler
     ruleSetId = "api-limits",
     // ...
 )
 ```
 
-### 4. Uncomment Redis-related classes
+### 4. Uncomment the Redis-related classes
 
-- `RedisRateLimitHandler.java`
 - `RuleSetConfig.java`
 - `RuleSetAdminController.java`
 

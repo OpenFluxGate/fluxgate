@@ -1,18 +1,22 @@
-# FluxGate Sample - Redis (Data-plane)
+# FluxGate Sample - Redis (Raw RateLimiter API)
 
-This sample demonstrates **Redis-based rate limiting** using the token bucket algorithm. It represents the **data-plane** component that handles high-throughput rate limiting decisions.
+This sample demonstrates **Redis-backed rate limiting using the raw `RateLimiter` API** — the
+controller calls `rateLimiter.tryConsume()` directly and crafts its own response, rather than
+delegating to the FluxGate servlet filter.  Use
+[`fluxgate-sample-filter`](../fluxgate-sample-filter) if you want the filter mode with
+automatic `X-RateLimit-*` / `RateLimit-*` headers.
 
 ## Key Features
 
-- **High-performance rate limiting** - Redis-backed token bucket algorithm
-- **Distributed rate limiting** - Share limits across multiple application instances
-- **Atomic operations** - Lua scripts ensure consistency
-- **Configuration-based rules** - Define rules in application.yml
+- **High-performance rate limiting** — Redis-backed token bucket algorithm
+- **Distributed rate limiting** — limits shared across multiple application instances
+- **Atomic operations** — Lua scripts ensure consistency
+- **Programmatic API** — direct `RateLimiter.tryConsume()` usage, full control of the response
 
 ## Prerequisites
 
 ```bash
-# Start Redis
+# Start Redis (single-node, no auth)
 docker run -d --name redis -p 6379:6379 redis:latest
 ```
 
@@ -26,11 +30,16 @@ docker run -d --name redis -p 6379:6379 redis:latest
 
 The application starts on port **8082**.
 
-### 2. Test Rate Limiting
+### 2. Seed a Rule
+
+The sample ships with a programmatic `RateLimitConfig` that registers the `api-limits` rule set
+at startup — no manual seeding required.
+
+### 3. Test Rate Limiting
 
 ```bash
-# Send 15 requests rapidly
-for i in {1..15}; do
+# Send 12 requests rapidly (limit: 10 per minute)
+for i in {1..12}; do
   echo -n "Request $i: "
   curl -s -o /dev/null -w "%{http_code}" http://localhost:8082/api/hello
   echo ""
@@ -45,20 +54,44 @@ Request 2: 200
 Request 10: 200
 Request 11: 429  # Rate limited!
 Request 12: 429
-...
 ```
 
-### 3. Check Rate Limit Headers
+### 4. Inspect the 429 Response
 
 ```bash
 curl -i http://localhost:8082/api/hello
 ```
 
-Response headers:
+When rate-limited, the controller returns **only `Retry-After`** (set manually); it does **not**
+emit `X-RateLimit-*` or `RateLimit-*` headers because those are added by the FluxGate filter,
+which this sample bypasses.
+
 ```
-X-RateLimit-Limit: 10
-X-RateLimit-Remaining: 9
-X-RateLimit-Reset: 1701234567
+HTTP/1.1 429 Too Many Requests
+Retry-After: 60
+Content-Type: application/json
+
+{
+  "status": "REJECTED",
+  "error": "Rate limit exceeded",
+  "requestNumber": 11,
+  "ruleSetId": "api-limits",
+  "retryAfterSeconds": 60,
+  "clientIp": "127.0.0.1",
+  "timestamp": "2026-10-01T00:00:00Z"
+}
+```
+
+A 200 response body looks like:
+```json
+{
+  "status": "ALLOWED",
+  "requestNumber": 1,
+  "ruleSetId": "api-limits",
+  "remainingTokens": 9,
+  "clientIp": "127.0.0.1",
+  "timestamp": "2026-10-01T00:00:00Z"
+}
 ```
 
 ## Project Structure
@@ -66,13 +99,14 @@ X-RateLimit-Reset: 1701234567
 ```
 fluxgate-sample-redis/
 ├── src/main/java/org/fluxgate/sample/redis/
-│   ├── RedisSampleApplication.java      # Main application
+│   ├── RedisSampleApplication.java          # Main application
 │   ├── config/
-│   │   └── RateLimitConfig.java         # RuleSet configuration
+│   │   ├── RateLimitConfig.java             # RuleSet registration bean
+│   │   └── DynamicRuleSetProvider.java      # In-memory RuleSet registry
 │   └── controller/
-│       └── ApiController.java           # Rate-limited endpoints
+│       └── ApiController.java               # Raw-API endpoints
 └── src/main/resources/
-    └── application.yml                  # Configuration
+    └── application.yml                      # Configuration
 ```
 
 ## Configuration
@@ -85,20 +119,18 @@ server:
 
 fluxgate:
   mongo:
-    enabled: false  # No MongoDB in data-plane
+    enabled: false
   redis:
     enabled: true
     uri: redis://localhost:6379
   ratelimit:
     enabled: true
-    filter-enabled: true
     default-rule-set-id: api-limits
     include-patterns:
       - /api/**
     exclude-patterns:
       - /actuator/**
       - /health
-    client-ip-header: X-Forwarded-For
     trust-client-ip-header: true
     include-headers: true
 ```
@@ -177,23 +209,28 @@ Multiple instances share the same Redis, enabling distributed rate limiting:
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `fluxgate.redis.enabled` | `false` | Enable Redis |
-| `fluxgate.redis.uri` | - | Redis URI |
-| `fluxgate.ratelimit.filter-enabled` | `false` | Enable HTTP filter |
-| `fluxgate.ratelimit.default-rule-set-id` | - | Default RuleSet |
-| `fluxgate.ratelimit.include-patterns` | `[]` | URLs to rate limit |
-| `fluxgate.ratelimit.exclude-patterns` | `[]` | URLs to exclude |
-| `fluxgate.ratelimit.client-ip-header` | - | Header for client IP |
-| `fluxgate.ratelimit.trust-client-ip-header` | `false` | Trust proxy header |
-| `fluxgate.ratelimit.include-headers` | `true` | Add rate limit headers |
+| `fluxgate.redis.enabled` | `false` | Enable Redis backend |
+| `fluxgate.redis.uri` | - | Redis URI (standalone or cluster) |
+| `fluxgate.ratelimit.enabled` | `true` | Master switch |
+| `fluxgate.ratelimit.default-rule-set-id` | - | Default RuleSet ID |
+| `fluxgate.ratelimit.include-patterns` | `[]` | URL patterns to rate-limit |
+| `fluxgate.ratelimit.exclude-patterns` | `[]` | URL patterns to exclude |
+| `fluxgate.ratelimit.trust-client-ip-header` | `false` | Trust `X-Forwarded-For` |
+| `fluxgate.ratelimit.include-headers` | `true` | Emit rate-limit headers (filter mode only) |
+| `fluxgate.reload.enabled` | `true` | Enable hot-reload |
 
 ## API Endpoints
 
 | Method | Path | Description | Rate Limited |
 |--------|------|-------------|:------------:|
-| GET | `/api/hello` | Hello endpoint | ✅ |
-| GET | `/api/users` | Users endpoint | ✅ |
+| GET | `/api/hello` | Hello endpoint (default `api-limits` rule) | via raw API |
+| GET | `/api/test` | Test endpoint (ruleSetId query param) | via raw API |
+| GET | `/api/status` | Service status + available rule sets | ❌ |
 | GET | `/health` | Health check | ❌ |
+
+> **Note:** Rate limiting here is enforced in-controller, not by the FluxGate filter.
+> The `X-RateLimit-*` and `RateLimit-*` response headers (RFC 6585 / IETF draft) are therefore
+> **absent**. To see those headers, use [`fluxgate-sample-filter`](../fluxgate-sample-filter).
 
 ## Production Considerations
 
@@ -224,17 +261,6 @@ else
 end
 ```
 
-### Redis Connection Pool
-
-```yaml
-# For production, consider connection pooling
-fluxgate:
-  redis:
-    enabled: true
-    uri: redis://localhost:6379
-    # Connection pool settings are managed by Lettuce
-```
-
 ### High Availability
 
 ```yaml
@@ -251,22 +277,22 @@ fluxgate:
 
 ## Comparison with Other Samples
 
-| Feature | Redis (this) | Filter | Mongo | API |
-|---------|:------------:|:------:|:-----:|:---:|
+| Feature | Redis (this) | Filter | Mongo | Standalone |
+|---------|:------------:|:------:|:-----:|:----------:|
 | Rate limiting | ✅ | ✅ | ❌ | ✅ |
 | Dynamic rules | ❌ | ✅ | ✅ | ✅ |
 | Rule storage | Config | Redis | MongoDB | Both |
-| Use case | Data-plane | Simple | Control | Full |
+| Standard headers | ❌ | ✅ | ❌ | ✅ |
+| Use case | Raw API demo | Simple filter | Control-plane | Full stack |
 
 ## When to Use This Sample
 
-- **High-throughput rate limiting** without dynamic rule management
-- **Microservices** that need distributed rate limiting
-- **Standalone data-plane** deployment
-- **Configuration-driven** rule definitions
+- Learning the **programmatic `RateLimiter` API** directly
+- Building custom response shapes or async flows
+- **Microservices** that already have their own HTTP middleware
 
 ## Next Steps
 
 - [FluxGate Samples Overview](../README.md)
-- [fluxgate-sample-filter](../fluxgate-sample-filter) - For dynamic Redis-backed rules
-- [fluxgate-sample-mongo](../fluxgate-sample-mongo) - For control-plane functionality
+- [fluxgate-sample-filter](../fluxgate-sample-filter) — For filter mode with standard rate-limit headers
+- [fluxgate-sample-mongo](../fluxgate-sample-mongo) — For MongoDB control-plane functionality

@@ -22,7 +22,7 @@ fluxgate:
     # mode: cluster
   ratelimit:
     enabled: true
-    filter-enabled: true
+    filter-enabled: false
     default-rule-set-id: api-limits
     include-patterns:
       - /api/**
@@ -31,7 +31,6 @@ fluxgate:
       - /health
     client-ip-header: X-Forwarded-For
     trust-client-ip-header: true
-    include-headers: true
 
 logging:
   level:

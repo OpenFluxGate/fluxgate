@@ -172,7 +172,7 @@ fluxgate:
   # Rate limiting configuration
   ratelimit:
     enabled: true
-    filter-enabled: true
+    enabled: true      # filter-enabled is deprecated and inert
     default-rule-set-id: api-limits
     include-patterns:
       - /api/**
