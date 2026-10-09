@@ -60,6 +60,18 @@ def b64url(data):
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
+def mongo_marker(output, marker):
+    """Accept exactly one known marker, with mongosh's optional exact prompt prefix."""
+    values = []
+    for line in output.decode().splitlines():
+        if line.startswith("> "):
+            line = line[2:]
+        if line.startswith(marker):
+            values.append(line[len(marker):].strip())
+    require(len(values) == 1 and bool(values[0]), "Mongo marker missing or ambiguous: " + marker)
+    return values[0]
+
+
 def signed_jwt(openssl, private_key, kid, issuer, audience, expiry, algorithm="RS256"):
     """Sign explicit claims; negative fixtures change one trust input at a time."""
     now = int(time.time())
@@ -345,9 +357,7 @@ class Proof:
                             "const p=c.getDB('fluxgate').getCollection('rate_limit_rules_policies').findOne({_id:" +
                             json.dumps(self.f.get("rule_set_id", "resilience-limits")) +
                             "}); if(!p) throw Error('missing pointer'); print('POLICY:'+JSON.stringify(p))")
-        stamp = next((line[len("POLICY:"):] for line in output.decode().splitlines()
-                      if line.startswith("POLICY:")), "")
-        require(bool(stamp), "published policy pointer missing")
+        stamp = mongo_marker(output, "POLICY:")
         return json.loads(stamp)
 
     def api_keys(self):
@@ -585,8 +595,7 @@ class Proof:
         old_token, new_token = token(0), token(1)
         admin = self.read("mongo_admin_uri_file")
         output = self.mongo(admin, "print('PRIMARY:'+c.getDB('admin').hello().primary)")
-        primary_host = next((line.removeprefix("PRIMARY:") for line in output.decode().splitlines()
-                             if line.startswith("PRIMARY:")), "")
+        primary_host = mongo_marker(output, "PRIMARY:")
         primary = primary_host.split(".")[0]
         require(primary in self.f["mongo_pods"], "Mongo primary does not belong to isolated fixture")
         events = {}
@@ -760,6 +769,18 @@ class Proof:
 
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
+    require(mongo_marker(b'POLICY:{"revision":1}\nAUTH_PROBE_OK\n', "POLICY:") == '{"revision":1}',
+            "direct Mongo marker parsing failed")
+    require(mongo_marker(b'> PRIMARY:mongo-0.mongo.local:27017\nAUTH_PROBE_OK\n', "PRIMARY:") ==
+            'mongo-0.mongo.local:27017', "prompt-prefixed Mongo marker parsing failed")
+    for output in (b'AUTH_PROBE_OK\n', b'POLICY:\n', b'POLICY:one\n> POLICY:two\n',
+                   b'noise POLICY:one\n', b'>> POLICY:one\n'):
+        try:
+            mongo_marker(output, "POLICY:")
+        except ProofError:
+            pass
+        else:
+            raise ProofError("missing/ambiguous Mongo marker was accepted")
     with tempfile.TemporaryDirectory(prefix="fluxgate-credential-unit-") as directory:
         proof = Proof.__new__(Proof)
         proof.work, proof.openssl = Path(directory), "openssl"
@@ -859,7 +880,7 @@ def self_test():
         proof.redis_check("unused", None, False)
         thread.join(timeout=5)
         require(not thread.is_alive() and not failures, "RESP regression server failed")
-    print("Offline credential regressions passed: partial TLS copy rollback, X.509, cryptographic JWT negative fixtures and fresh RESP authentication")
+    print("Offline credential regressions passed: strict Mongo markers, partial TLS copy rollback, X.509, cryptographic JWT negative fixtures and fresh RESP authentication")
 
 
 def main():
