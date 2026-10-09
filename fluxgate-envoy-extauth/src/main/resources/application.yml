@@ -1,0 +1,30 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: fluxgate-envoy-extauth
+fluxgate:
+  reload:
+    enabled: false
+  envoy:
+    rule-set-id: gateway-pilot
+  redis:
+    enabled: true
+    uri: ${FLUXGATE_REDIS_URI:redis://localhost:6379}
+  ratelimit:
+    mode: REDIS
+    missing-rule-behavior: DENY
+    missing-key-behavior: REJECT
+    failure-behavior: DENY
+    filter-enabled: false
+    fallback:
+      mode: NONE
+    rule-sets:
+      - id: gateway-pilot
+        rules:
+          - id: pilot-global
+            scope: GLOBAL
+            key-strategy-id: global
+            bands:
+              - capacity: 2
+                window: 60s

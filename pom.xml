@@ -25,6 +25,7 @@
         <module>fluxgate-spring-boot3-starter</module>
         <module>fluxgate-control-support</module>
         <module>fluxgate-testkit</module>
+        <module>fluxgate-envoy-extauth</module>
         <module>fluxgate-samples</module>
     </modules>
 

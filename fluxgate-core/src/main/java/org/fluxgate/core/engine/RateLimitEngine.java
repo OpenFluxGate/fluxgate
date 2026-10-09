@@ -11,6 +11,7 @@ import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.match.PathPatternMatcher;
 import org.fluxgate.core.match.SimpleAntPathMatcher;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
+import org.fluxgate.core.ratelimiter.RateLimitResult.DecisionReason;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.ratelimiter.RateLimiter;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
@@ -128,10 +129,16 @@ public final class RateLimitEngine {
             .allowed(false)
             .remainingTokens(0L)
             .nanosToWaitForRefill(0L)
+            .decisionReason(DecisionReason.ACCESS_DENIED)
             .build();
       }
       if (decision == AccessControl.Decision.ALLOW_BYPASS) {
-        return RateLimitResult.allowedWithoutRule();
+        return RateLimitResult.builder(null)
+            .allowed(true)
+            .remainingTokens(-1L)
+            .nanosToWaitForRefill(0L)
+            .decisionReason(DecisionReason.ACCESS_BYPASS)
+            .build();
       }
     }
 
@@ -218,6 +225,7 @@ public final class RateLimitEngine {
             .allowed(false)
             .remainingTokens(0L)
             .nanosToWaitForRefill(0L)
+            .decisionReason(DecisionReason.MISSING_RULE_SET)
             .build();
       case ALLOW:
       default:

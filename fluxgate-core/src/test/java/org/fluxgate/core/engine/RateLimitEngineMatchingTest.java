@@ -91,6 +91,8 @@ class RateLimitEngineMatchingTest {
 
       assertThat(result.isAllowed()).isTrue();
       assertThat(result.hasRule()).isFalse();
+      assertThat(result.getDecisionReason())
+          .isEqualTo(RateLimitResult.DecisionReason.ACCESS_BYPASS);
     }
 
     @Test
@@ -137,6 +139,8 @@ class RateLimitEngineMatchingTest {
       RateLimitResult result = engine(rs, limiter).check("test", ctx);
 
       assertThat(result.isAllowed()).isFalse();
+      assertThat(result.getDecisionReason())
+          .isEqualTo(RateLimitResult.DecisionReason.ACCESS_DENIED);
       assertThat(result.getNanosToWaitForRefill()).isEqualTo(0L);
       assertThat(result.getKey()).isNotNull();
       assertThat(result.getKey().value()).isEqualTo("denied:ip:172.16.1.5");

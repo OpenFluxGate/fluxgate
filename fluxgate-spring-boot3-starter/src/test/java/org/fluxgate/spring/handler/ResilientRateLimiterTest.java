@@ -107,6 +107,8 @@ class ResilientRateLimiterTest {
 
       assertThat(result.isAllowed()).isFalse();
       assertThat(result.getNanosToWaitForRefill()).isZero();
+      assertThat(result.getDecisionReason())
+          .isEqualTo(RateLimitResult.DecisionReason.BACKEND_FAILURE);
       assertThat(result.getKey().value()).contains("orders");
       assertThat(action).hasValue("fail_closed");
       assertThat(reportedCause.get()).isInstanceOf(RedisConnectionException.class);

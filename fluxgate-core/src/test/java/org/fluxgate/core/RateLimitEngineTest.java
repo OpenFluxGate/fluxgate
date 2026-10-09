@@ -145,6 +145,8 @@ class RateLimitEngineTest {
     assertThat(result.getNanosToWaitForRefill()).isZero();
     assertThat(result.getRemainingTokens()).isZero();
     assertThat(result.getKey().value()).isEqualTo("missing-rule-set:unknown-rule-set");
+    assertThat(result.getDecisionReason())
+        .isEqualTo(RateLimitResult.DecisionReason.MISSING_RULE_SET);
   }
 
   @Test

@@ -35,6 +35,12 @@ class RateLimitResultTest {
         .build();
   }
 
+  @Test
+  void rejectedRuleHasQuotaDecisionReason() {
+    RateLimitResult result = RateLimitResult.rejected(createKey("ip:1"), createRule(), 1L);
+    assertEquals(RateLimitResult.DecisionReason.QUOTA, result.getDecisionReason());
+  }
+
   // ==================== Factory Method Tests ====================
 
   @Nested

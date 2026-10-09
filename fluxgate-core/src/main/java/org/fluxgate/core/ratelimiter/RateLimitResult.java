@@ -15,6 +15,16 @@ import org.fluxgate.core.key.RateLimitKey;
  */
 public final class RateLimitResult {
 
+  /** Why a decision was made, independent of any synthetic key used for metrics. */
+  public enum DecisionReason {
+    UNSPECIFIED,
+    QUOTA,
+    ACCESS_DENIED,
+    ACCESS_BYPASS,
+    MISSING_RULE_SET,
+    BACKEND_FAILURE
+  }
+
   private final boolean allowed;
   private final long remainingTokens;
   private final long nanosToWaitForRefill;
@@ -24,6 +34,7 @@ public final class RateLimitResult {
   private final long resetTimeMillis;
   private final OnLimitExceedPolicy policy;
   private final String bandLabel;
+  private final DecisionReason decisionReason;
 
   private RateLimitResult(Builder builder) {
     this.allowed = builder.allowed;
@@ -38,6 +49,12 @@ public final class RateLimitResult {
             ? builder.policy
             : (builder.matchedRule != null ? builder.matchedRule.getOnLimitExceedPolicy() : null);
     this.bandLabel = builder.bandLabel;
+    this.decisionReason =
+        builder.decisionReason != null
+            ? builder.decisionReason
+            : (!builder.allowed && builder.matchedRule != null
+                ? DecisionReason.QUOTA
+                : DecisionReason.UNSPECIFIED);
   }
 
   /**
@@ -133,6 +150,11 @@ public final class RateLimitResult {
    */
   public String getBandLabel() {
     return bandLabel;
+  }
+
+  /** Returns the typed cause of this decision. */
+  public DecisionReason getDecisionReason() {
+    return decisionReason;
   }
 
   /**
@@ -271,6 +293,7 @@ public final class RateLimitResult {
     private long resetTimeMillis = -1L;
     private OnLimitExceedPolicy policy;
     private String bandLabel;
+    private DecisionReason decisionReason;
 
     private Builder(RateLimitKey key) {
       this.key = key;
@@ -364,6 +387,13 @@ public final class RateLimitResult {
       return this;
     }
 
+    /** Sets a cause that cannot be inferred from the matched rule. */
+    public Builder decisionReason(DecisionReason decisionReason) {
+      this.decisionReason =
+          Objects.requireNonNull(decisionReason, "decisionReason must not be null");
+      return this;
+    }
+
     /**
      * Builds the result.
      *
@@ -391,6 +421,7 @@ public final class RateLimitResult {
         && Objects.equals(key, that.key)
         && Objects.equals(matchedRule, that.matchedRule)
         && policy == that.policy
+        && decisionReason == that.decisionReason
         && Objects.equals(bandLabel, that.bandLabel);
   }
 
@@ -405,6 +436,7 @@ public final class RateLimitResult {
         limit,
         resetTimeMillis,
         policy,
+        decisionReason,
         bandLabel);
   }
 
@@ -427,6 +459,8 @@ public final class RateLimitResult {
         + resetTimeMillis
         + ", policy="
         + policy
+        + ", decisionReason="
+        + decisionReason
         + ", bandLabel='"
         + bandLabel
         + '\''
