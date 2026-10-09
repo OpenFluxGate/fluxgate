@@ -1,63 +1,64 @@
 # Redis RateLimiter Module Deep Dive
 
-> 이 문서는 FluxGate **0.4**의 코드를 기준으로 합니다. 0.3.x에서 무엇이 바뀌었는지는
-> [0.4 마이그레이션](../../operations/migration-0.4.ko.md)에, 전체 계층을 한 문서로 훑는 서술은
-> [아키텍처 Deep Dive](../../../ARCHITECTURE_DEEP_DIVE.ko.md)에 있습니다.
+> This document reflects FluxGate **0.4**. For what changed from 0.3.x see the
+> [0.4 migration guide](../operations/migration-0.4.md); for a walk-through of every layer in a single
+> document see [Architecture Deep Dive (한국어)](../../ARCHITECTURE_DEEP_DIVE.ko.md).
 
-이 문서는 `fluxgate-redis-ratelimiter` 모듈을 **실제 소스코드**와 함께 상세히 설명합니다.
+This document explains the `fluxgate-redis-ratelimiter` module in detail, with the **actual source
+code**.
 
-[< 아키텍처 개요로 돌아가기](../README.ko.md) | [English](../../../en/architecture/redis-ratelimiter.md)
+[< Back to Architecture Overview](README.md) | [한국어 (deep dive)](../../ko/architecture/deep-dive/redis-ratelimiter.ko.md)
 
 ---
 
-## 목차
+## Table of Contents
 
-1. [모듈 구조](#1-모듈-구조)
+1. [Module Structure](#1-module-structure)
 2. [RedisRateLimiter](#2-redisratelimiter)
-3. [버킷 키 레이아웃](#3-버킷-키-레이아웃)
+3. [Bucket Key Layout](#3-bucket-key-layout)
 4. [Redis Connection Layer](#4-redis-connection-layer)
 5. [RedisRateLimiterConfig](#5-redisratelimiterconfig)
-6. [사용 예제](#6-사용-예제)
+6. [Usage Examples](#6-usage-examples)
 
 ---
 
-## 1. 모듈 구조
+## 1. Module Structure
 
 ```
 fluxgate-redis-ratelimiter/src/main/java/org/fluxgate/redis/
-├── RedisRateLimiter.java              # RateLimiter 인터페이스 구현
+├── RedisRateLimiter.java              # RateLimiter interface implementation
 ├── config/
-│   └── RedisRateLimiterConfig.java    # 설정 및 초기화
+│   └── RedisRateLimiterConfig.java    # configuration and initialization
 ├── connection/
-│   ├── RedisConnectionProvider.java   # 연결 추상화 인터페이스
-│   ├── StandaloneRedisConnection.java # Standalone 모드 구현
-│   ├── ClusterRedisConnection.java    # Cluster 모드 구현
-│   ├── RedisConnectionFactory.java    # 연결 팩토리
-│   ├── RedisUriUtils.java             # URI 비밀정보 마스킹
-│   └── RedisConnectionException.java  # 예외 클래스
+│   ├── RedisConnectionProvider.java   # connection abstraction interface
+│   ├── StandaloneRedisConnection.java # Standalone mode implementation
+│   ├── ClusterRedisConnection.java    # Cluster mode implementation
+│   ├── RedisConnectionFactory.java    # connection factory
+│   ├── RedisUriUtils.java             # URI secret masking
+│   └── RedisConnectionException.java  # exception class
 ├── store/
-│   ├── RedisTokenBucketStore.java     # 토큰 버킷 저장소
-│   ├── BucketState.java               # 버킷 상태 객체
-│   ├── RedisRuleSetStore.java         # RuleSet 저장소 (@Deprecated 0.4.0)
-│   └── RuleSetData.java               # RuleSet 데이터 객체
+│   ├── RedisTokenBucketStore.java     # token bucket store
+│   ├── BucketState.java               # bucket state object
+│   ├── RedisRuleSetStore.java         # RuleSet store (@Deprecated 0.4.0)
+│   └── RuleSetData.java               # RuleSet data object
 ├── script/
-│   ├── LuaScriptRegistry.java         # 스토어별 스크립트 본문 + SHA
-│   ├── LuaScriptLoader.java           # @Deprecated 0.4.0 (호환용)
-│   └── LuaScripts.java                # @Deprecated 0.4.0 (호환용)
+│   ├── LuaScriptRegistry.java         # per-store script body + SHA
+│   ├── LuaScriptLoader.java           # @Deprecated 0.4.0 (compatibility)
+│   └── LuaScripts.java                # @Deprecated 0.4.0 (compatibility)
 └── health/
-    └── RedisHealthCheckerImpl.java    # 헬스체크 구현
+    └── RedisHealthCheckerImpl.java    # health check implementation
 
 fluxgate-redis-ratelimiter/src/main/resources/lua/
-└── token_bucket_consume.lua           # 다중 대역 토큰 버킷 스크립트
+└── token_bucket_consume.lua           # multi-band token bucket script
 ```
 
-### 0.4에서 사라진 것: 프로세스 전역 스크립트 SHA
+### What disappeared in 0.4: the process-global script SHA
 
-`LuaScripts`와 `LuaScriptLoader`는 `static volatile` 슬롯에 스크립트 본문과 SHA를 담고 있었습니다.
-한 JVM 안에서 서로 다른 Redis를 가리키는 스토어가 둘 있으면 **서로의 SHA를 덮어씁니다.**
+`LuaScripts` and `LuaScriptLoader` held the script body and SHA in `static volatile` slots. With two
+stores in one JVM pointing at different Redis deployments, they **overwrote each other's SHAs.**
 
 ```java
-// LuaScripts.java - 실제 코드
+// LuaScripts.java - actual code
 /**
  * @deprecated Use {@link LuaScriptRegistry} instead. The static slots here are process-wide, so two
  *     {@code RedisTokenBucketStore} instances pointing at different Redis deployments overwrite
@@ -68,26 +69,26 @@ fluxgate-redis-ratelimiter/src/main/resources/lua/
 public final class LuaScripts {
 ```
 
-두 클래스는 **FluxGate 내부에서 더 이상 읽히지 않습니다.** 기존 호출자의 컴파일 호환을 위해 남아
-있을 뿐이며, 자리를 이어받은 것이 인스턴스 상태를 갖는 `LuaScriptRegistry`입니다.
+Neither class is **read anywhere inside FluxGate any more.** They remain only so existing callers
+keep compiling; the replacement carrying instance state is `LuaScriptRegistry`.
 
-### 의존성 관계
+### Dependency graph
 
 ```
 +-------------------+
-|  RedisRateLimiter |  ← RateLimiter 인터페이스 구현
+|  RedisRateLimiter |  ← RateLimiter interface implementation
 +-------------------+
          |
-         | uses (규칙 단위로 1회 호출)
+         | uses (one call per rule)
          v
 +------------------------+       +---------------------+
-|  RedisTokenBucketStore |-owns->|  LuaScriptRegistry  |  ← 스토어마다 독립적인 SHA
+|  RedisTokenBucketStore |-owns->|  LuaScriptRegistry  |  ← independent SHA per store
 +------------------------+       +---------------------+
          |
          | uses
          v
 +-------------------------+
-| RedisConnectionProvider |  ← Standalone/Cluster 추상화
+| RedisConnectionProvider |  ← Standalone/Cluster abstraction
 +-------------------------+
          |
     +----+----+
@@ -100,7 +101,7 @@ public final class LuaScripts {
 ```
 
 ```java
-// RedisTokenBucketStore.java - 실제 코드 주석
+// RedisTokenBucketStore.java - actual code comment
 /**
  * <p>Each store owns its own {@link LuaScriptRegistry}, so two stores pointing at different Redis
  * deployments in one JVM keep independent script SHAs.
@@ -116,10 +117,10 @@ fluxgate-redis-ratelimiter/src/main/java/org/fluxgate/redis/
 └── RedisRateLimiter.java
 ```
 
-`RateLimiter` 인터페이스의 Redis 기반 구현입니다.
+The Redis-backed implementation of the `RateLimiter` interface.
 
 ```java
-// RedisRateLimiter.java - 실제 코드
+// RedisRateLimiter.java - actual code
 /**
  * Redis-backed distributed rate limiter implementation.
  *
@@ -232,20 +233,20 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
 }
 ```
 
-### 0.4에서 달라진 흐름: 대역마다 왕복 → 규칙마다 한 번
+### What changed in 0.4: one round trip per band → one per rule
 
-0.3.x의 루프는 **대역마다** `tokenBucketStore.tryConsume(bucketKey, band, permits)`를 호출했습니다.
-그 결과가 다음 두 가지 문제였습니다.
+The 0.3.x loop called `tokenBucketStore.tryConsume(bucketKey, band, permits)` **per band.** That
+produced two problems.
 
-**문제 1: 다중 대역 규칙이 명목 한도보다 낮게 동작.**
-"초당 10개 AND 분당 100개" 규칙에서 분당 대역이 거부하는 순간에도, 그 앞의 초당 대역은 이미 토큰을
-차감한 상태였습니다. 거부된 요청이 허용했을 대역의 토큰을 계속 빨아먹으므로 실효 한도가 설정값보다
-낮아집니다.
+**Problem 1: multi-band rules enforced less than their nominal limit.** In a "10/sec AND 100/min"
+rule, the moment the per-minute band rejected, the per-second band before it had already charged
+tokens. Rejected requests kept draining the bands that would have allowed them, so the effective
+limit landed below the configured one.
 
-**문제 2: 왕복 횟수.** 대역 3개 규칙이면 Redis 왕복이 3번이었습니다.
+**Problem 2: round trips.** A three-band rule meant three Redis round trips.
 
-0.4는 한 규칙의 **모든 대역 키를 한 번의 Lua 호출**에 넘깁니다. 스크립트가 2패스로 처리하므로
-전부 차감하거나 전무입니다.
+0.4 passes **every band key of one rule in a single Lua call.** The script processes them in two
+passes, so the outcome is all-or-nothing.
 
 ```java
 List<String> bucketKeys = new ArrayList<>(bands.size());
@@ -256,49 +257,31 @@ for (RateLimitBand band : bands) {
 BucketState state = tokenBucketStore.tryConsume(bucketKeys, bands, permits);
 ```
 
-### 규칙 간: 한 번의 호출, 아니면 보상
+### Still not atomic across rules
 
-클래스 Javadoc의 제목이 **"Atomicity, honestly"** 인 이유입니다. 규칙마다 키가 다르고, 클러스터에서
-다른 키는 다른 해시 슬롯에 살 수 있기 때문에 항상 하나의 Lua 호출에 넣을 수는 없습니다. 0.4는 두
-전략을 씁니다. 어느 쪽이든 **모든 규칙의 키를 먼저 해석**하므로, 뒤 규칙의 키가 없어 거부되는 요청도
-앞 규칙을 차감하지 않습니다.
-
-**1. 한 번의 호출 (all-or-nothing).** 모든 규칙의 키가 한 스크립트 호출에 들어갈 수 있으면
-(단독 Redis는 항상, 클러스터는 모든 키가 같은 슬롯일 때 - `RedisTokenBucketStore.canEvaluateAtomically`)
-모든 규칙의 대역을 이어 붙여 한 번의 `token_bucket_consume.lua` 호출로 평가합니다. 스크립트의
-2패스가 그대로 규칙 간 원자성이 됩니다. 결과의 대역 인덱스는 규칙별로 되돌려 매핑합니다.
-
-**2. 보상 (compensation).** 그렇지 않으면 규칙을 하나씩 차감하고, 거부(또는 Redis 장애)가 나면 이미
-차감한 규칙을 `token_bucket_refund.lua`로 환불합니다.
+That is why the class Javadoc's headline is **"Atomicity, honestly."** Each rule resolves a
+different key, and in a cluster different keys live in different hash slots, so they cannot go into
+one Lua call.
 
 ```
-규칙 3개 룰셋, 서로 다른 슬롯, 세 번째 규칙이 거부하는 경우:
+A three-rule rule set where the third rule rejects:
 
-Rule 1 (PER_IP)      → 허용, 토큰 1개 차감  → 환불됨
-Rule 2 (PER_USER)    → 허용, 토큰 1개 차감  → 환불됨
-Rule 3 (GLOBAL)      → 거부 → 앞선 규칙 환불 후 반환
+Rule 1 (PER_IP)      → allowed, 1 token charged   ← not rolled back
+Rule 2 (PER_USER)    → allowed, 1 token charged   ← not rolled back
+Rule 3 (GLOBAL)      → rejected → immediate return (fail-fast)
 
-요청은 429를 받고, Rule 1, 2의 남은 토큰은 요청 전과 같습니다.
+The request gets a 429, but Rule 1 and 2 have already charged their tokens.
 ```
 
-환불은 차감한 상태만 되돌립니다. TOKEN_BUCKET은 용량을 넘지 않게 더하고, SLIDING_WINDOW는 차감 시각
-(consume 스크립트가 돌려주는 Redis TIME, `BucketState.redisTimeMicros()`)의 서브 버킷을 0 아래로
-내려가지 않게 줄이며, FIXED_WINDOW는 카운터가 아직 차감한 그 윈도를 셀 때만 줄입니다.
+The Javadoc offers two responses:
 
-**보상의 남은 비원자성 (솔직하게):**
+1. **Put the rules most likely to reject first.** Fewer wasted charges.
+2. **If you need strict atomicity, use one rule with several bands.** Within a rule it is atomic.
 
-1. 차감과 환불 사이(규칙당 한 번의 왕복) 동시 요청은 앞선 규칙을 한 개 적게 봅니다. 엄격한 쪽으로
-   틀리고, 환불로 스스로 회복됩니다.
-2. 환불이 실행되지 못하면(프로세스 종료, 그 사이 Redis 장애) 토큰은 소비된 채 남습니다. 0.3.x와 같은
-   결과입니다.
-3. 차감과 환불 사이에 고정 윈도가 넘어가거나 슬라이딩 서브 버킷이 윈도 밖으로 나가면 되돌릴 것이
-   없습니다.
+### Choosing the binding band
 
-클러스터에서 엄격한 원자성이 필요하면 **대역 여러 개를 가진 규칙 하나**를 쓰세요.
-
-### binding 대역 선택
-
-허용 경로에서는 모든 규칙을 평가한 뒤 **토큰이 가장 적게 남은** 결과를 고릅니다.
+On the allowed path, all rules are evaluated and the result with the **fewest remaining tokens** is
+chosen.
 
 ```java
 if (binding == null || state.remainingTokens() < binding.state.remainingTokens()) {
@@ -306,10 +289,10 @@ if (binding == null || state.remainingTokens() < binding.state.remainingTokens()
 }
 ```
 
-`Binding`은 그 순간 가장 제약이 큰 (규칙, 키, 대역, 상태) 묶음입니다.
+A `Binding` is the (rule, key, band, state) tuple that is most restrictive at that moment.
 
 ```java
-// RedisRateLimiter.java - 실제 코드
+// RedisRateLimiter.java - actual code
 /** The (rule, key, band, state) tuple currently considered the most restrictive. */
 private static final class Binding {
   private final RateLimitKey key;
@@ -319,13 +302,13 @@ private static final class Binding {
 }
 ```
 
-HTTP 헤더에 나가는 `X-RateLimit-Remaining`은 이 값입니다. 가장 여유 있는 대역을 보고하면 클라이언트가
-실제보다 훨씬 큰 quota를 믿게 됩니다.
+The `X-RateLimit-Remaining` that goes out in the HTTP headers is this value. Reporting the most
+generous band would make clients believe in a far larger quota than they have.
 
-### 버킷 TTL 상한이 윈도보다 짧을 때 경고
+### Warning when the bucket TTL cap is shorter than the window
 
 ```java
-// RedisRateLimiter.java - 실제 코드
+// RedisRateLimiter.java - actual code
 /**
  * Warns once per rule when the bucket TTL cap is shorter than one of its windows.
  *
@@ -358,14 +341,14 @@ private void warnOnceIfBucketTtlClampsWindow(RateLimitRule rule, List<RateLimitB
 }
 ```
 
-30일 윈도 규칙을 기본 상한(7일)으로 돌리면 버킷이 7일마다 만료되고, 만료된 버킷은 다음 요청에서
-**가득 찬 상태로 재생성됩니다.** 즉 규칙이 실제로 강제하는 것은 30일 한도가 아닙니다. 조용히 넘어가지
-않고 규칙마다 한 번 WARN을 남기는 이유입니다.
+Run a 30-day-window rule with the default cap (7 days) and the bucket expires every 7 days; an
+expired bucket is **re-created full** on the next request. What the rule actually enforces is
+therefore not a 30-day limit — which is why this logs one WARN per rule instead of passing silently.
 
-### 로그에 키가 평문으로 남지 않습니다
+### Keys never appear in plaintext in logs
 
 ```java
-// RedisRateLimiter.java - 실제 코드
+// RedisRateLimiter.java - actual code
 /** Masks a resolved key for logging: the first few characters, then {@code ***}. */
 private static String mask(RateLimitKey key) {
   String value = key.value();
@@ -376,10 +359,10 @@ private static String mask(RateLimitKey key) {
 }
 ```
 
-### close()는 아무것도 닫지 않습니다
+### close() closes nothing
 
 ```java
-// RedisRateLimiter.java - 실제 코드
+// RedisRateLimiter.java - actual code
 /**
  * No-op, kept so that the limiter can be used in try-with-resources and as a Spring bean without
  * surprises.
@@ -395,15 +378,16 @@ public void close() {
 }
 ```
 
-소유하지 않은 자원을 닫는 것이 더 위험합니다. `@Bean`으로 등록된 limiter가 컨텍스트 종료 시
-다른 빈이 여전히 쓰는 Lettuce 연결을 내려버리면 종료 순서에 따라 예외가 쏟아집니다.
+Closing resources you do not own is the more dangerous failure. If a limiter registered as a
+`@Bean` tore down the Lettuce connection other beans still use at context shutdown, exceptions
+would pour out depending on destruction order.
 
 ---
 
-## 3. 버킷 키 레이아웃
+## 3. Bucket Key Layout
 
 ```java
-// RedisRateLimiter.java - 실제 코드
+// RedisRateLimiter.java - actual code
 /**
  * Build the Redis key for a token bucket.
  *
@@ -434,21 +418,22 @@ private static String buildBucketKey(
 }
 ```
 
-### 키 형태
+### Key shape
 
 ```
 fluxgate:bucket:{api-limits:per-ip-rule:ip:192.168.1.100}:100-per-60s
-└──── 접두사 ───┘└──────────── 해시 태그 ────────────────┘└─ 대역 라벨 ┘
+└──── prefix ───┘└──────────── hash tag ────────────────┘└─ band label ─┘
 ```
 
-세 부분 각각에 이유가 있습니다.
+Each of the three parts exists for a reason.
 
-#### (1) `fluxgate:bucket:` 접두사
+#### (1) The `fluxgate:bucket:` prefix
 
-버킷 키 공간이 룰셋 정의(`fluxgate:ruleset:*`, `fluxgate:rulesets`)와 **서로 겹치지 않습니다.**
+The bucket key space **does not overlap** with rule set definitions (`fluxgate:ruleset:*`,
+`fluxgate:rulesets`).
 
 ```java
-// RedisTokenBucketStore.java - 실제 코드 주석
+// RedisTokenBucketStore.java - actual code comment
 /**
  * Deletes all token buckets (full reset).
  *
@@ -458,26 +443,27 @@ fluxgate:bucket:{api-limits:per-ip-rule:ip:192.168.1.100}:100-per-60s
  */
 ```
 
-0.3.x의 전체 리셋 패턴은 `fluxgate:*`였고, 그것은 **Redis에 저장한 룰셋 정의까지 삭제했습니다.**
+The 0.3.x full-reset pattern was `fluxgate:*`, which **also deleted rule set definitions stored in
+Redis.**
 
-#### (2) `{...}` 해시 태그
+#### (2) The `{...}` hash tag
 
-Redis Cluster는 중괄호 안의 내용만 해싱합니다. `ruleSetId:ruleId:keyValue`를 태그로 묶으면 한
-규칙+키의 **모든 대역이 같은 슬롯**에 들어갑니다. 다중 키 Lua 스크립트가 클러스터에서 동작하기 위한
-전제 조건입니다.
+Redis Cluster hashes only what is inside the braces. Tagging `ruleSetId:ruleId:keyValue` puts
+**every band of one rule + key into the same slot** — the precondition for a multi-key Lua script
+to work in a cluster.
 
 ```java
-// RedisTokenBucketStore.java - 실제 코드 주석
+// RedisTokenBucketStore.java - actual code comment
 /**
  * <p>In cluster mode all keys must live in the same hash slot; {@link RedisRateLimiter} pins them
  * with a hash tag over {@code ruleSetId:ruleId:keyValue}.
  */
 ```
 
-#### (3) `band.getKeyLabel()` 대역 세그먼트
+#### (3) The `band.getKeyLabel()` segment
 
 ```java
-// RateLimitBand.java - 실제 코드
+// RateLimitBand.java - actual code
 public String getKeyLabel() {
   if (label != null && !label.trim().isEmpty()) {
     return label;
@@ -493,16 +479,17 @@ public String getKeyLabel() {
 }
 ```
 
-라벨이 없으면 **설정에서 파생**됩니다. 0.3.x는 라벨이 없는 대역에 `"default"`를 썼기 때문에,
-한 규칙에 라벨 없는 대역이 둘 있으면 **같은 버킷을 공유**했습니다. 초당 10개와 분당 100개가
-하나의 버킷에서 서로를 덮어썼다는 뜻입니다.
+Without a label it is **derived from the configuration.** 0.3.x used `"default"` for unlabelled
+bands, so two unlabelled bands of one rule **shared the same bucket** — meaning a 10/sec and a
+100/min band overwrote each other in a single bucket.
 
-### 세그먼트 정규화
+### Segment sanitisation
 
-`ruleSetId`와 `ruleId`는 운영자가 정하는 문자열이며, 거기에 `:`나 `{`가 들어가면 키 구조가 바뀝니다.
+`ruleSetId` and `ruleId` are operator-chosen strings; a `:` or `{` inside them would change the key
+structure.
 
 ```java
-// RedisRateLimiter.java - 실제 코드
+// RedisRateLimiter.java - actual code
 /**
  * Replaces characters that are unsafe in a bucket-key segment with underscores.
  *
@@ -536,13 +523,14 @@ static String sanitizeSegment(String value) {
 }
 ```
 
-**거부가 아니라 치환**인 것이 의도입니다. 예외를 던지면 이전 버전에서 만든 id를 가진 배포가 업그레이드
-직후 전부 실패합니다. 치환하면 계속 동작하며, 같은 id는 항상 같은 버킷으로 갑니다.
+**Replacing rather than rejecting** is deliberate. Throwing would fail every deployment carrying an
+id created by an earlier version right after upgrading. With replacement they keep working, and the
+same id always maps to the same bucket.
 
-### SCAN 패턴
+### The SCAN pattern
 
 ```java
-// RedisRateLimiter.java - 실제 코드
+// RedisRateLimiter.java - actual code
 /**
  * Returns the {@code SCAN MATCH} pattern that selects every token bucket of one rule set.
  *
@@ -559,51 +547,51 @@ public static String bucketKeyPattern(String ruleSetId) {
 }
 ```
 
-정규화 후 **다시 글로브 이스케이프**를 거치는 이중 방어입니다. 패턴이 `BUCKET_KEY_PREFIX`에
-고정되어 있으므로 룰셋 정의 키와 절대 겹치지 않습니다.
+Sanitise, then **escape the glob again** — defense in depth. Because the pattern is anchored on
+`BUCKET_KEY_PREFIX`, it can never overlap the rule set definition keys.
 
 ---
 
 ## 4. Redis Connection Layer
 
-### RedisConnectionProvider (인터페이스)
+### RedisConnectionProvider (interface)
 
 ```
 fluxgate-redis-ratelimiter/src/main/java/org/fluxgate/redis/connection/
 └── RedisConnectionProvider.java
 ```
 
-Standalone과 Cluster 모드를 통합하는 추상화 레이어입니다.
+The abstraction layer unifying Standalone and Cluster modes.
 
 ```java
-// RedisConnectionProvider.java - 실제 코드 (메서드 목록)
+// RedisConnectionProvider.java - actual code (method list)
 public interface RedisConnectionProvider extends AutoCloseable {
 
     RedisMode getMode();
     boolean isConnected();
 
-    /** Lua 스크립트 로드 (Cluster: Lettuce가 모든 마스터 노드에 브로드캐스트) */
+    /** Load a Lua script (cluster: Lettuce broadcasts to every master node) */
     String scriptLoad(String script);
 
-    /** EVALSHA로 스크립트 실행 (효율적, 캐시된 스크립트 사용) */
+    /** Run a script with EVALSHA (efficient, uses the cached script) */
     <T> T evalsha(String sha, String[] keys, String[] args);
 
-    /** EVAL로 스크립트 실행 (NOSCRIPT 폴백용) */
+    /** Run a script with EVAL (for the NOSCRIPT fallback) */
     <T> T eval(String script, String[] keys, String[] args);
 
-    // Hash 명령어
+    // Hash commands
     boolean hset(String key, String field, String value);
     long hset(String key, Map<String, String> map);
     Map<String, String> hgetall(String key);
 
     long del(String... keys);
 
-    /** UNLINK (Redis 4+). 기본 구현은 del()로 위임 */
+    /** UNLINK (Redis 4+). The default implementation delegates to del() */
     default long unlink(String... keys) {
         return del(keys);
     }
 
-    // Set 명령어
+    // Set commands
     long sadd(String key, String... members);
     Set<String> smembers(String key);
     long srem(String key, String... members);
@@ -611,10 +599,10 @@ public interface RedisConnectionProvider extends AutoCloseable {
     boolean exists(String key);
     long ttl(String key);
 
-    /** KEYS. 큰 키스페이스에서 위험 */
+    /** KEYS. Dangerous on a large keyspace */
     java.util.List<String> keys(String pattern);
 
-    /** SCAN. 기본 구현은 keys()로 위임 */
+    /** SCAN. The default implementation delegates to keys() */
     default java.util.List<String> scanKeys(String pattern, long count) {
         return keys(pattern);
     }
@@ -622,7 +610,7 @@ public interface RedisConnectionProvider extends AutoCloseable {
     String flushdb();
     String ping();
 
-    /** Cluster 전용 */
+    /** Cluster only */
     List<String> clusterNodes();
 
     @Override
@@ -635,12 +623,12 @@ public interface RedisConnectionProvider extends AutoCloseable {
 }
 ```
 
-### 0.4에서 추가된 두 메서드: scanKeys와 unlink
+### Two methods added in 0.4: scanKeys and unlink
 
-버킷 리셋 경로가 `KEYS`와 `DEL`을 쓰던 것이 문제였습니다.
+The bucket-reset path used to use `KEYS` and `DEL`, which was the problem.
 
 ```java
-// RedisConnectionProvider.java - 실제 코드 Javadoc
+// RedisConnectionProvider.java - actual code Javadoc
 /**
  * Incrementally scans keys matching the given pattern.
  *
@@ -653,7 +641,7 @@ default java.util.List<String> scanKeys(String pattern, long count) {
 ```
 
 ```java
-// RedisConnectionProvider.java - 실제 코드 Javadoc
+// RedisConnectionProvider.java - actual code Javadoc
 /**
  * Deletes one or more keys, reclaiming the memory in a background thread where the server
  * supports it.
@@ -667,13 +655,13 @@ default long unlink(String... keys) {
 }
 ```
 
-| 명령어 | 문제 | 대체 |
-|-------|------|------|
-| `KEYS pattern` | 단일 스레드 Redis를 전체 키스페이스 스캔 동안 **블로킹** | `SCAN` (커서 기반, 배치 단위) |
-| `DEL k1..kn` | 대량 삭제 시 메모리 회수가 **이벤트 루프에서** 일어남 | `UNLINK` (백그라운드 회수) |
+| Command | Problem | Replacement |
+|---------|---------|-------------|
+| `KEYS pattern` | **blocks** single-threaded Redis for a full keyspace scan | `SCAN` (cursor-based, in batches) |
+| `DEL k1..kn` | bulk delete reclaims memory **on the event loop** | `UNLINK` (background reclaim) |
 
-둘 다 `default` 메서드이므로, 두 메서드를 오버라이드하지 않은 커스텀 프로바이더나 Redis 4 미만
-서버와 이야기하는 프로바이더도 계속 동작합니다.
+Both are `default` methods, so a custom provider that overrides neither — or one talking to a server
+older than Redis 4 — keeps working.
 
 ### StandaloneRedisConnection
 
@@ -682,10 +670,10 @@ fluxgate-redis-ratelimiter/src/main/java/org/fluxgate/redis/connection/
 └── StandaloneRedisConnection.java
 ```
 
-단일 Redis 노드 연결을 처리합니다. Lettuce 기반이며 동기 커맨드를 사용합니다.
+Handles the connection to a single Redis node. Lettuce-based, using synchronous commands.
 
 ```java
-// StandaloneRedisConnection.java - 실제 코드 (요지)
+// StandaloneRedisConnection.java - actual code (gist)
 public class StandaloneRedisConnection implements RedisConnectionProvider {
 
     private final RedisClient redisClient;
@@ -716,7 +704,8 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
 }
 ```
 
-`ScriptOutputType.MULTI`는 Lua가 배열을 돌려주기 때문입니다. 0.4 스크립트는 정수 7개를 반환합니다.
+`ScriptOutputType.MULTI` because the Lua script returns an array. The 0.4 script returns seven
+integers.
 
 ### ClusterRedisConnection
 
@@ -726,7 +715,7 @@ fluxgate-redis-ratelimiter/src/main/java/org/fluxgate/redis/connection/
 ```
 
 ```java
-// ClusterRedisConnection.java - 실제 코드 (요지)
+// ClusterRedisConnection.java - actual code (gist)
 public class ClusterRedisConnection implements RedisConnectionProvider {
 
     private final RedisClusterClient clusterClient;
@@ -740,7 +729,7 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
 
     @Override
     public String scriptLoad(String script) {
-        // Cluster 모드: Lettuce가 모든 마스터 노드에 자동 브로드캐스트
+        // Cluster mode: Lettuce broadcasts to every master node automatically
         String sha = commands.scriptLoad(script);
         log.debug("Lua script loaded to cluster, SHA: {}", sha);
         return sha;
@@ -749,25 +738,25 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
     @Override
     @SuppressWarnings("unchecked")
     public <T> T evalsha(String sha, String[] keys, String[] args) {
-        // Lettuce가 키의 해시 슬롯에 따라 올바른 노드로 자동 라우팅
+        // Lettuce routes automatically to the right node by the key's hash slot
         return (T) commands.evalsha(sha, ScriptOutputType.MULTI, keys, args);
     }
 }
 ```
 
-클러스터 모드에서 다중 키 `EVALSHA`가 성립하려면 모든 키가 같은 슬롯이어야 합니다. 그것을 보장하는
-것이 위의 해시 태그입니다.
+For a multi-key `EVALSHA` to hold in cluster mode, every key must live in the same slot. The hash
+tag above is what guarantees that.
 
 ### RedisConnectionFactory
 
 ```java
-// RedisConnectionFactory.java - 실제 코드 (요지)
+// RedisConnectionFactory.java - actual code (gist)
 public final class RedisConnectionFactory {
 
     /**
-     * URI에서 모드를 자동 감지하여 연결 생성
-     * - 쉼표가 있으면 Cluster 모드
-     * - 없으면 Standalone 모드
+     * Creates a connection, auto-detecting the mode from the URI
+     * - a comma means Cluster mode
+     * - otherwise Standalone mode
      */
     public static RedisConnectionProvider create(String uri, Duration timeout) {
         Objects.requireNonNull(uri, "uri must not be null");
@@ -782,26 +771,26 @@ public final class RedisConnectionFactory {
         return new StandaloneRedisConnection(uri, timeout);
     }
 
-    /** 명시적 모드 선택으로 연결 생성 */
+    /** Creates a connection with an explicitly selected mode */
     public static RedisConnectionProvider create(
             RedisConnectionProvider.RedisMode mode, List<String> uris, Duration timeout) { ... }
 }
 ```
 
-### RedisUriUtils: URI 마스킹
+### RedisUriUtils: URI masking
 
-연결 실패 메시지와 초기화 로그에는 URI가 그대로 실립니다. `redis://user:secret@host`의 자격 증명이
-로그로 새지 않도록 전용 유틸을 통과시킵니다.
+Connection failure messages and initialization logs otherwise carry the URI verbatim. A dedicated
+utility keeps the credentials of `redis://user:secret@host` from leaking into logs.
 
 ```java
-// RedisRateLimiterConfig.java - 실제 코드
+// RedisRateLimiterConfig.java - actual code
 logInitialized(RedisUriUtils.mask(redisUri));
 ```
 
-`LazyRedisRateLimiter`도 같은 문제를 다룹니다.
+`LazyRedisRateLimiter` addresses the same concern.
 
 ```java
-// LazyRedisRateLimiter.java - 실제 코드
+// LazyRedisRateLimiter.java - actual code
 /**
  * Returns the most specific message available for a connection failure, with credentials removed.
  *
@@ -818,17 +807,17 @@ private static String mask(String message) {
 }
 ```
 
-### Standalone vs Cluster 비교
+### Standalone vs Cluster comparison
 
-| 항목 | Standalone | Cluster |
-|-----|-----------|---------|
-| 노드 수 | 1개 | 3개 이상 (권장 6개) |
-| 데이터 분산 | 없음 | 해시 슬롯 기반 (16384개) |
-| 고가용성 | 수동 Failover | 자동 Failover |
-| 스크립트 로드 | 단일 노드 | 모든 마스터 노드 (Lettuce 브로드캐스트) |
-| EVALSHA 라우팅 | 해당 없음 | 키 해시 슬롯 기반 자동 라우팅 |
-| 다중 키 스크립트 | 제약 없음 | 모든 키가 같은 슬롯이어야 함 → 해시 태그 필수 |
-| URI 형식 | `redis://host:6379` | `redis://node1:6379,redis://node2:6379,...` |
+| Aspect | Standalone | Cluster |
+|--------|-----------|---------|
+| Nodes | 1 | 3+ (6 recommended) |
+| Data distribution | none | hash slots (16384) |
+| High availability | manual failover | automatic failover |
+| Script load | a single node | every master node (Lettuce broadcast) |
+| EVALSHA routing | n/a | automatic, by the key's hash slot |
+| Multi-key scripts | unconstrained | all keys in one slot → hash tag required |
+| URI form | `redis://host:6379` | `redis://node1:6379,redis://node2:6379,...` |
 
 ---
 
@@ -840,7 +829,7 @@ fluxgate-redis-ratelimiter/src/main/java/org/fluxgate/redis/config/
 ```
 
 ```java
-// RedisRateLimiterConfig.java - 실제 코드
+// RedisRateLimiterConfig.java - actual code
 /**
  * Configuration entry point for the Redis-based rate limiter.
  *
@@ -910,62 +899,62 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
 }
 ```
 
-### 0.4에서 달라진 초기화 흐름
+### The initialization flow changed in 0.4
 
-0.3.x는 `LuaScriptLoader.loadScripts(connectionProvider)`를 **명시적으로 호출**한 뒤
-`RedisTokenBucketStore`를 만들었고, 스토어 생성자는 "스크립트가 로드되었는지" 검사해
-`IllegalStateException`을 던졌습니다. 순서를 틀리면 런타임에 터졌습니다.
+0.3.x required **explicitly calling** `LuaScriptLoader.loadScripts(connectionProvider)` before
+creating the `RedisTokenBucketStore`, and the store constructor checked "were the scripts loaded?"
+and threw `IllegalStateException`. Get the order wrong and it blew up at runtime.
 
-0.4에서는 스토어가 자기 스크립트를 직접 챙깁니다.
+In 0.4 the store loads its own scripts.
 
 ```java
-// RedisTokenBucketStore.java - 실제 코드 (생성자 끝부분)
+// RedisTokenBucketStore.java - actual code (end of the constructor)
 if (!scripts.isLoaded()) {
   scripts.loadInto(connectionProvider);
 }
 ```
 
 ```
-RedisRateLimiterConfig 생성
+RedisRateLimiterConfig created
          |
          v
 +--------------------------------------+
 | (1) RedisConnectionFactory.create    |
-|     - URI 파싱 / 쉼표로 모드 감지      |
-|     - Standalone 또는 Cluster 연결     |
+|     - parse URI / detect mode by ',' |
+|     - Standalone or Cluster connect  |
 +--------------------------------------+
          |
          v
 +--------------------------------------+
 | (2) new RedisTokenBucketStore(...)   |
-|     - LuaScriptRegistry 생성          |
-|       (classpath에서 .lua 읽기)       |
-|     - isLoaded()가 false면 loadInto() |
-|       → SCRIPT LOAD → SHA 보관        |
-|     - maxBucketTtl 검증 (>= 1s)       |
+|     - create LuaScriptRegistry       |
+|       (reads .lua from the classpath)|
+|     - if isLoaded() is false,        |
+|       loadInto() → SCRIPT LOAD → SHA |
+|     - validate maxBucketTtl (>= 1s)  |
 +--------------------------------------+
          |
          v
 +--------------------------------------+
 | (3) new RedisRuleSetStore(...)       |
-|     - @Deprecated 0.4.0               |
+|     - @Deprecated 0.4.0              |
 +--------------------------------------+
 ```
 
-### ownsConnectionProvider: 소유권의 명시화
+### ownsConnectionProvider: ownership made explicit
 
-| 생성 경로 | `ownsConnectionProvider` | `close()` 동작 |
-|----------|--------------------------|----------------|
-| URI 또는 mode+uris로 생성 | `true` | 연결도 닫음 |
-| 기존 `RedisConnectionProvider`를 받음 | `false` | 연결은 **남겨둠** |
+| Construction path | `ownsConnectionProvider` | `close()` behavior |
+|-------------------|--------------------------|-------------------|
+| created from a URI or mode+uris | `true` | also closes the connection |
+| handed an existing `RedisConnectionProvider` | `false` | leaves the connection **open** |
 
-이 구분이 없으면, 외부에서 관리하는 Lettuce 클라이언트를 넘겨준 뒤 config를 닫는 순간 다른 빈들이
-쓰던 연결이 사라집니다.
+Without this distinction, closing a config after handing it an externally managed Lettuce client
+would destroy the connection other beans were still using.
 
 ### maxBucketTtl
 
 ```java
-// RedisTokenBucketStore.java - 실제 코드
+// RedisTokenBucketStore.java - actual code
 /**
  * Default upper bound on a bucket TTL.
  *
@@ -978,7 +967,8 @@ RedisRateLimiterConfig 생성
 public static final Duration DEFAULT_MAX_BUCKET_TTL = Duration.ofDays(7);
 ```
 
-`null`을 넘기면 기본값 7일이고, 1초 미만은 생성자에서 거부됩니다.
+Pass `null` and the 7-day default applies; anything under one second is rejected by the
+constructor.
 
 ```java
 Duration effectiveTtl = maxBucketTtl != null ? maxBucketTtl : DEFAULT_MAX_BUCKET_TTL;
@@ -987,10 +977,10 @@ if (effectiveTtl.getSeconds() < 1) {
 }
 ```
 
-### RedisRuleSetStore는 폐기 예정입니다
+### RedisRuleSetStore is on its way out
 
 ```java
-// RedisRateLimiterConfig.java - 실제 코드
+// RedisRateLimiterConfig.java - actual code
 /**
  * @deprecated the Redis rule set store cannot express the core rule model; see {@link
  *     RedisRuleSetStore}
@@ -1001,101 +991,101 @@ public RedisRuleSetStore getRuleSetStore() {
 }
 ```
 
-룰셋은 MongoDB 어댑터(또는 직접 구현한 `RateLimitRuleSetProvider`)로 관리하세요.
+Manage rule sets with the MongoDB adapter (or a `RateLimitRuleSetProvider` you implement yourself).
 
 ---
 
-## 6. 사용 예제
+## 6. Usage Examples
 
-### Standalone 모드
+### Standalone mode
 
 ```java
-// 단일 Redis 서버 연결 (timeout 5s, 버킷 TTL 상한 7일)
+// Connect to a single Redis server (timeout 5s, bucket TTL cap 7 days)
 RedisRateLimiterConfig config =
     new RedisRateLimiterConfig("redis://localhost:6379", Duration.ofSeconds(5), null);
 
-// RateLimiter 생성
+// Create the RateLimiter
 RedisRateLimiter rateLimiter = new RedisRateLimiter(config.getTokenBucketStore());
 
-// Rate Limiting 수행
+// Rate limit
 RateLimitResult result = rateLimiter.tryConsume(context, ruleSet, 1);
 
 if (result.isAllowed()) {
-    // 요청 허용. result.getRemainingTokens()는 binding 대역의 남은 토큰
+    // request allowed. result.getRemainingTokens() is the binding band's remaining tokens
 } else {
-    // 요청 거부. result.getNanosToWaitForRefill() 후 재시도
+    // request rejected. Retry after result.getNanosToWaitForRefill()
 }
 
-// 종료 시 리소스 정리 (이 config가 연결을 소유하므로 연결도 닫힘)
+// Clean up on shutdown (this config owns the connection, so it is closed too)
 config.close();
 ```
 
-### Cluster 모드
+### Cluster mode
 
 ```java
-// 쉼표로 구분된 노드 URI (자동 Cluster 모드 감지)
+// Comma-separated node URIs (Cluster mode auto-detected)
 String clusterUri = "redis://node1:6379,redis://node2:6379,redis://node3:6379";
 RedisRateLimiterConfig autoDetected =
     new RedisRateLimiterConfig(clusterUri, Duration.ofSeconds(5), null);
 
-// 또는 명시적 Cluster 모드
+// Or explicit Cluster mode
 RedisRateLimiterConfig explicit = new RedisRateLimiterConfig(
     RedisMode.CLUSTER,
     List.of("redis://node1:6379", "redis://node2:6379", "redis://node3:6379"),
     Duration.ofSeconds(5),
     null);
 
-// 이후 사용법은 동일
+// Usage from here is identical
 RedisRateLimiter rateLimiter = new RedisRateLimiter(explicit.getTokenBucketStore());
 ```
 
-### 버킷 리셋 (룰 변경 시)
+### Bucket reset (on rule changes)
 
 ```java
 RedisTokenBucketStore store = config.getTokenBucketStore();
 
-// 한 룰셋의 버킷만 (SCAN + UNLINK, 패턴은 RedisRateLimiter.bucketKeyPattern)
+// Only one rule set's buckets (SCAN + UNLINK, pattern from RedisRateLimiter.bucketKeyPattern)
 long deleted = store.deleteBucketsByRuleSetId("api-limits");
 
-// 전체 버킷 (패턴 "fluxgate:bucket:*" — 룰셋 정의는 건드리지 않음)
+// Every bucket (pattern "fluxgate:bucket:*" — rule set definitions untouched)
 long allDeleted = store.deleteAllBuckets();
 ```
 
-### Spring Boot 통합
+### Spring Boot integration
 
 ```yaml
 # application.yml
 fluxgate:
   redis:
     enabled: true
-    mode: auto             # auto | standalone | cluster (auto는 URI에서 감지)
+    mode: auto             # auto | standalone | cluster (auto detects from the URI)
     uri: redis://localhost:6379  # Standalone
     # uri: redis://node1:6379,redis://node2:6379,redis://node3:6379  # Cluster
     timeout-ms: 5000
-    fail-fast: false      # true면 부팅 시 Redis 미가용을 실패로 처리
-    max-bucket-ttl: 7d    # 모든 버킷 TTL의 상한
+    fail-fast: false      # true fails the boot when Redis is unavailable
+    max-bucket-ttl: 7d    # cap on every bucket TTL
 ```
 
 ```java
-// Spring Boot AutoConfiguration이 자동으로 빈 생성
+// Spring Boot auto-configuration creates the beans
 @Autowired
-private RateLimiter rateLimiter;  // ResilientRateLimiter(@Primary)가 주입됩니다
+private RateLimiter rateLimiter;  // the ResilientRateLimiter (@Primary) is injected
 ```
 
-주입되는 `RateLimiter`는 **원시 `RedisRateLimiter`가 아닙니다.** 스타터는 다음 체인을 세웁니다.
+The injected `RateLimiter` is **not the raw `RedisRateLimiter`.** The starter wires this chain:
 
 ```
-ResilientRateLimiter        @Primary  — 재시도 + 서킷 브레이커 + 강등
+ResilientRateLimiter        @Primary  — retry + circuit breaker + degradation
         v
-LazyRedisRateLimiter                  — 요청 스레드가 절대 연결하지 않음
+LazyRedisRateLimiter                  — request threads never connect
         v
 RedisRateLimiter → RedisTokenBucketStore → Lua
 ```
 
-### fail-fast=false가 기본인 이유
+### Why fail-fast=false is the default
 
 ```java
-// LazyRedisRateLimiter.java - 실제 코드 Javadoc
+// LazyRedisRateLimiter.java - actual code Javadoc
 /**
  * <p>Rate limiting is an auxiliary concern, so a Redis outage during a rollout must not turn into
  * an application crash loop. One connection attempt is made when this limiter is created; if it
@@ -1114,11 +1104,11 @@ RedisRateLimiter → RedisTokenBucketStore → Lua
  */
 ```
 
-요청 스레드가 연결을 시도하지 않는다는 점이 핵심입니다. Redis 하나가 닿지 않는 상황이
-**스레드 풀 고갈**로 번지지 않습니다.
+The key point is that request threads never attempt to connect. One unreachable Redis no longer
+escalates into **thread pool exhaustion.**
 
 ```java
-// LazyRedisRateLimiter.java - 실제 코드
+// LazyRedisRateLimiter.java - actual code
 @Override
 public RateLimitResult tryConsume(
     RequestContext context, RateLimitRuleSet ruleSet, long permits) {
@@ -1133,14 +1123,14 @@ public RateLimitResult tryConsume(
 }
 ```
 
-연결 상태는 `RedisConnectionState`로 공개되어, 헬스 엔드포인트가 limiter를 DEGRADED로 보고할 수
-있습니다.
+Connection state is exposed through `RedisConnectionState`, so the health endpoint can report the
+limiter as DEGRADED.
 
 ---
 
-## 관련 문서
+## Related Documentation
 
-- [Storage Layer Deep Dive](storage-layer.ko.md) - RedisTokenBucketStore, Lua 스크립트 상세
-- [RateLimiter Layer Deep Dive](ratelimiter-layer.ko.md) - 알고리즘과 Lua 전체 분석
-- [Handler Layer Deep Dive](handler-layer.ko.md) - resilience 체인 배선
-- [아키텍처 개요](../README.ko.md)
+- [Storage Layer](storage-layer.md) - RedisTokenBucketStore, the Lua script in detail
+- [RateLimiter Layer](ratelimiter-layer.md) - algorithm and full Lua analysis
+- [Handler Layer](handler-layer.md) - wiring of the resilience chain
+- [Architecture Overview](README.md)

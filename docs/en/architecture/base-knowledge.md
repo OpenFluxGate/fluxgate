@@ -1,198 +1,198 @@
-# FluxGate 기반 지식
+# FluxGate Base Knowledge
 
-이 문서는 FluxGate를 이해하기 위해 필요한 기반 지식을 설명합니다.
+This document explains the foundational knowledge you need to understand FluxGate.
 
-[< 아키텍처 개요로 돌아가기](README.ko.md) | [English](../../en/architecture/base-knowledge.md)
+[< Back to Architecture Overview](README.md) | [한국어](../../ko/architecture/base-knowledge.ko.md)
 
 ---
 
-## 목차
+## Table of Contents
 
-1. [Rate Limiting 알고리즘](#1-rate-limiting-알고리즘)
-2. [Redis Lua 스크립트](#2-redis-lua-스크립트)
+1. [Rate Limiting Algorithms](#1-rate-limiting-algorithms)
+2. [Redis Lua Scripts](#2-redis-lua-scripts)
 3. [Redis Pub/Sub](#3-redis-pubsub)
-4. [Caffeine 캐시](#4-caffeine-캐시)
-5. [Spring Filter 아키텍처](#5-spring-filter-아키텍처)
+4. [Caffeine Cache](#4-caffeine-cache)
+5. [Spring Filter Architecture](#5-spring-filter-architecture)
 6. [Token Bucket vs Leaky Bucket](#6-token-bucket-vs-leaky-bucket)
 
 ---
 
-## 1. Rate Limiting 알고리즘
+## 1. Rate Limiting Algorithms
 
-### 1.1 왜 Rate Limiting이 필요한가?
+### 1.1 Why Rate Limiting?
 
 ```
-문제 상황:
+The problem:
 ─────────────────────────────────────────────────
-악성 사용자 or 버그 있는 클라이언트
+Malicious user or buggy client
     │
-    ▼ 초당 10,000 요청
+    ▼ 10,000 requests per second
 ┌─────────────────┐
-│   API Server    │ ← 과부하로 다운!
+│   API Server    │ ← overloaded and down!
 └─────────────────┘
     │
-    ▼ 정상 사용자도 서비스 불가
+    ▼ legitimate users lose service too
 
-해결:
+The solution:
 ─────────────────────────────────────────────────
-모든 요청
+Every request
     │
     ▼
 ┌─────────────────┐
-│  Rate Limiter   │ ← 초당 100개만 허용
+│  Rate Limiter   │ ← allow only 100 per second
 └─────────────────┘
     │
-    ├─ 허용 → API Server
-    └─ 거부 → 429 Too Many Requests
+    ├─ allowed → API Server
+    └─ rejected → 429 Too Many Requests
 ```
 
-### 1.2 주요 알고리즘 비교
+### 1.2 Comparison of the Major Algorithms
 
-#### Fixed Window (고정 윈도우)
+#### Fixed Window
 
 ```
-시간: 00:00 ──────────────────────────────────► 02:00
+Time: 00:00 ──────────────────────────────────► 02:00
       │      Window 1      │      Window 2      │
       │    00:00-01:00     │    01:00-02:00     │
       │                    │                    │
-      │  요청 100개 허용   │  요청 100개 허용   │
-      │  101번째 → 거부    │  101번째 → 거부    │
+      │  100 requests OK   │  100 requests OK   │
+      │  101st → rejected  │  101st → rejected  │
 ```
 
-**장점:** 구현 단순, 메모리 효율적
+**Pros:** simple to implement, memory efficient
 
-**단점:** 경계 문제 (Boundary Problem)
+**Cons:** boundary problem
 ```
-      00:59에 100개 + 01:00에 100개
+      100 requests at 00:59 + 100 requests at 01:00
            │              │
            ▼              ▼
       ┌─────────────────────────┐
-      │  1분 동안 200개 통과!   │ ← 의도한 제한의 2배
+      │  200 requests in 1 min! │ ← twice the intended limit
       └─────────────────────────┘
 ```
 
 ---
 
-#### Sliding Window Log (슬라이딩 윈도우 로그)
+#### Sliding Window Log
 
 ```
-현재 시간: 01:30
-윈도우 크기: 1시간
+Current time: 01:30
+Window size: 1 hour
 ──────────────────────────────────────────────────►
     │                                        │
   00:30                                    01:30
-    └─────── 이 구간의 요청만 카운트 ────────┘
+    └───── count only requests in this range ─┘
 
-저장된 타임스탬프:
+Stored timestamps:
 [00:25, 00:45, 01:00, 01:15, 01:25]
     │
-    ▼ 00:30 이전은 제거
-[01:00, 01:15, 01:25] → 현재 카운트: 3
+    ▼ drop everything before 00:30
+[01:00, 01:15, 01:25] → current count: 3
 ```
 
-**장점:** 정확한 Rate Limiting
+**Pros:** exact rate limiting
 
-**단점:** 메모리 사용량 높음 (모든 요청 타임스탬프 저장)
+**Cons:** high memory usage (stores every request timestamp)
 
 ---
 
-#### Sliding Window Counter (슬라이딩 윈도우 카운터)
+#### Sliding Window Counter
 
 ```
-현재: 01:15 (현재 윈도우의 25% 지점)
+Now: 01:15 (25% into the current window)
 
 ┌─────────────────┬─────────────────┐
-│  이전 윈도우    │  현재 윈도우    │
+│  Previous window│  Current window │
 │  00:00-01:00    │  01:00-02:00    │
 │                 │                 │
-│  80개 요청      │  20개 요청      │
-│  × 75% = 60개   │  × 100% = 20개  │
+│  80 requests    │  20 requests    │
+│  × 75% = 60     │  × 100% = 20    │
 └─────────────────┴─────────────────┘
                   ▲
                01:15
 
-예상 카운트 = 60 + 20 = 80개
+Estimated count = 60 + 20 = 80
 ```
 
-**장점:** 정확도와 효율성의 균형
+**Pros:** balances accuracy and efficiency
 
-**단점:** 완벽히 정확하지는 않음 (근사치)
+**Cons:** not perfectly exact (an approximation)
 
 ---
 
-#### Token Bucket (토큰 버킷) ⭐ FluxGate 채택
+#### Token Bucket ⭐ chosen by FluxGate
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   Token Bucket                       │
 │                                                      │
-│   용량 (Capacity): 100개                             │
-│   리필 속도: 10개/초                                  │
+│   Capacity: 100 tokens                               │
+│   Refill rate: 10 tokens/sec                         │
 │                                                      │
 │   ┌───────────────────────────────────────────┐     │
-│   │ ● ● ● ● ● ● ● ○ ○ ○   (현재 70개)        │     │
+│   │ ● ● ● ● ● ● ● ○ ○ ○   (70 right now)     │     │
 │   └───────────────────────────────────────────┘     │
 │            │                      ▲                  │
 │            ▼                      │                  │
-│       요청 시 1개 소비        시간 지나면 리필       │
+│   consume 1 per request      refills over time       │
 │                                                      │
-│   토큰 > 0  → 허용 ✓                                │
-│   토큰 = 0  → 거부 ✗                                │
+│   tokens > 0  → allowed ✓                            │
+│   tokens = 0  → rejected ✗                           │
 └─────────────────────────────────────────────────────┘
 ```
 
-**특징:**
-- **버스트 허용**: 순간적으로 용량만큼 요청 가능
-- **평균 속도 제한**: 장기적으로 리필 속도로 수렴
-- **메모리 효율적**: 토큰 수 + 마지막 리필 시간만 저장
+**Characteristics:**
+- **Allows bursts**: up to capacity can be spent at once
+- **Limits the average rate**: converges to the refill rate over time
+- **Memory efficient**: stores only the token count and the last refill time
 
 ---
 
-#### Leaky Bucket (누수 버킷)
+#### Leaky Bucket
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                   Leaky Bucket                       │
 │                                                      │
-│   요청 들어옴                                        │
+│   Request arrives                                    │
 │       ↓                                              │
 │   ┌───────────────────────────────────────────┐     │
-│   │ ▣ ▣ ▣ ▣ ▣ ▣ ▣ ▣   (큐에 대기 중)          │     │
+│   │ ▣ ▣ ▣ ▣ ▣ ▣ ▣ ▣   (queued)                │     │
 │   └───────────────────────────────────────────┘     │
 │                       │                              │
-│                       ↓ 일정한 속도로 처리 (leak)    │
+│                       ↓ processed at a steady rate   │
 │                   ─────────                          │
-│                    처리됨                            │
+│                    processed                         │
 │                                                      │
-│   큐 가득 참 → 새 요청 거부                          │
+│   queue full → new requests rejected                 │
 └─────────────────────────────────────────────────────┘
 ```
 
-**특징:**
-- **출력 속도 일정**: 트래픽 성형 (Traffic Shaping)
-- **지연 발생**: 큐에서 대기해야 함
+**Characteristics:**
+- **Constant output rate**: traffic shaping
+- **Adds latency**: requests must wait in the queue
 
 ---
 
-### 1.3 알고리즘 선택 가이드
+### 1.3 Algorithm Selection Guide
 
-| 상황 | 추천 알고리즘 | 이유 |
-|------|-------------|------|
-| API 과금 (정확한 카운트) | Sliding Window Log | 정확도 최우선 |
-| 일반 API Rate Limit | **Token Bucket** | 버스트 허용 + 간단 |
-| DB 보호, 트래픽 평탄화 | Leaky Bucket | 일정한 처리량 |
-| 단순한 구현 필요 | Fixed Window | 구현 쉬움 |
+| Situation | Recommended | Why |
+|-----------|-------------|-----|
+| API billing (exact counts) | Sliding Window Log | accuracy first |
+| General API rate limiting | **Token Bucket** | bursts allowed + simple |
+| Protecting a DB, flattening traffic | Leaky Bucket | constant throughput |
+| Simplest possible implementation | Fixed Window | easy to build |
 
 ---
 
-## 2. Redis Lua 스크립트
+## 2. Redis Lua Scripts
 
-### 2.1 왜 Lua 스크립트인가?
+### 2.1 Why Lua Scripts?
 
-**문제: Race Condition**
+**The problem: race conditions**
 
 ```
-서버 A                          서버 B
+Server A                        Server B
    │                               │
    ├─ GET tokens → 5               │
    │                               ├─ GET tokens → 5
@@ -202,35 +202,35 @@
    │                               ├─ SET tokens 4
    ▼                               ▼
 
-결과: 2번 소비했는데 1개만 감소! (버그)
+Result: two consumed but only one deducted! (bug)
 ```
 
-**해결: Lua 스크립트 = 원자적 실행**
+**The solution: a Lua script = atomic execution**
 
 ```
-서버 A                          Redis (싱글 스레드)
+Server A                        Redis (single-threaded)
    │                               │
-   ├─ EVALSHA script ─────────────▶│ 스크립트 전체 실행
-   │                               │ (중간에 끊기지 않음)
-   │◀─────────── 결과 ─────────────┤
+   ├─ EVALSHA script ─────────────▶│ runs the whole script
+   │                               │ (nothing interleaves)
+   │◀─────────── result ───────────┤
    │                               │
-서버 B                              │
-   ├─ EVALSHA script ─────────────▶│ 다음 스크립트 실행
+Server B                           │
+   ├─ EVALSHA script ─────────────▶│ next script runs
    │                               │
 ```
 
-Redis는 **싱글 스레드**이므로 Lua 스크립트는 **원자적(Atomic)**으로 실행됩니다.
+Redis is **single-threaded**, so a Lua script executes **atomically**.
 
 ---
 
-### 2.2 Lua 기본 문법
+### 2.2 Basic Lua Syntax
 
 ```lua
--- 변수 선언
+-- variable declaration
 local count = 10
 local name = "fluxgate"
 
--- 조건문
+-- conditionals
 if count > 5 then
     return "high"
 elseif count > 0 then
@@ -239,40 +239,40 @@ else
     return "zero"
 end
 
--- 반복문
+-- loops
 for i = 1, 10 do
     print(i)
 end
 
--- 함수
+-- functions
 local function add(a, b)
     return a + b
 end
 
--- 테이블 (배열/맵)
-local arr = {1, 2, 3}           -- 배열 (1부터 시작!)
-local map = {name = "flux"}     -- 맵
+-- tables (arrays/maps)
+local arr = {1, 2, 3}           -- array (1-indexed!)
+local map = {name = "flux"}     -- map
 
-print(arr[1])      -- 1 (Lua는 1부터!)
+print(arr[1])      -- 1 (Lua starts at 1!)
 print(map.name)    -- "flux"
 ```
 
 ---
 
-### 2.3 Redis에서 Lua 사용
+### 2.3 Using Lua in Redis
 
 ```lua
--- KEYS: 스크립트에서 사용하는 Redis 키
--- ARGV: 스크립트에 전달하는 인자
+-- KEYS: Redis keys the script operates on
+-- ARGV: arguments passed to the script
 
--- 예시: EVALSHA sha1 1 mykey 10
+-- Example: EVALSHA sha1 1 mykey 10
 -- KEYS[1] = "mykey"
 -- ARGV[1] = "10"
 
 local key = KEYS[1]
 local increment = tonumber(ARGV[1])
 
--- Redis 명령어 호출
+-- calling Redis commands
 local current = redis.call('GET', key)
 current = tonumber(current) or 0
 
@@ -287,80 +287,80 @@ return new_value
 ### 2.4 EVAL vs EVALSHA
 
 ```
-EVAL (느림)
+EVAL (slower)
 ─────────────
-매번 스크립트 전체 전송
+sends the entire script every time
 
 Client: EVAL "local x = redis.call('GET', KEYS[1]) ..." 1 mykey
-                    └─────── 긴 스크립트 ───────┘
+                    └─────── long script ───────┘
 
 
-EVALSHA (빠름) ← FluxGate 사용
+EVALSHA (faster) ← used by FluxGate
 ──────────────
-1. 최초 1회: SCRIPT LOAD "스크립트..." → SHA: "a1b2c3..."
-2. 이후: EVALSHA "a1b2c3..." 1 mykey
-              └─ 40바이트 해시만 전송
+1. once: SCRIPT LOAD "script..." → SHA: "a1b2c3..."
+2. afterwards: EVALSHA "a1b2c3..." 1 mykey
+                 └─ only a 40-byte hash travels
 ```
 
 ---
 
-### 2.5 FluxGate의 Token Bucket Lua 스크립트
+### 2.5 FluxGate's Token Bucket Lua Script
 
 ```lua
--- token_bucket_consume.lua (간략화)
+-- token_bucket_consume.lua (simplified)
 
 local bucket_key = KEYS[1]
 local capacity = tonumber(ARGV[1])
 local window_micros = tonumber(ARGV[2])
 local permits = tonumber(ARGV[3])
 
--- Redis 서버 시간 사용 (클럭 드리프트 방지)
+-- use Redis server time (avoids clock drift)
 local time_info = redis.call('TIME')
 local now_micros = time_info[1] * 1000000 + time_info[2]
 
--- 현재 상태 읽기
+-- read the current state
 local data = redis.call('HMGET', bucket_key, 'tokens', 'last_refill_micros')
 local tokens = tonumber(data[1]) or capacity
 local last_refill = tonumber(data[2]) or now_micros
 
--- 토큰 리필 계산 (정수 연산만 사용)
+-- token refill (integer arithmetic only)
 local elapsed = now_micros - last_refill
 local refill = math.floor((elapsed * capacity) / window_micros)
 tokens = math.min(capacity, tokens + refill)
 
--- 소비 시도
+-- try to consume
 if tokens >= permits then
     tokens = tokens - permits
     redis.call('HMSET', bucket_key, 'tokens', tokens, 'last_refill_micros', now_micros)
-    redis.call('EXPIRE', bucket_key, 86400)  -- TTL 설정
-    return {1, tokens, 0}  -- 허용
+    redis.call('EXPIRE', bucket_key, 86400)  -- set TTL
+    return {1, tokens, 0}  -- allowed
 else
     local wait = math.ceil((permits - tokens) * window_micros / capacity)
-    return {0, tokens, wait}  -- 거부
+    return {0, tokens, wait}  -- rejected
 end
 ```
 
 ---
 
-### 2.6 NOSCRIPT 에러 처리
+### 2.6 NOSCRIPT Error Handling
 
 ```
-문제: Redis 재시작 시 스크립트 캐시 사라짐
+Problem: a Redis restart wipes the script cache
 
-EVALSHA "a1b2c3..." → NOSCRIPT 에러!
+EVALSHA "a1b2c3..." → NOSCRIPT error!
 
-해결 (FluxGate 구현):
-1. EVALSHA 시도
-2. NOSCRIPT 에러 발생
-3. EVAL로 폴백 (동작은 함)
-4. 스크립트 다시 로드 (다음 요청부터 EVALSHA 사용)
+Solution (FluxGate's implementation):
+1. try EVALSHA
+2. NOSCRIPT error raised
+3. fall back to EVAL (still works)
+4. load the script again (EVALSHA from the next request on)
 ```
 
 ---
 
 ## 3. Redis Pub/Sub
 
-### 3.1 개념
+### 3.1 Concept
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -370,7 +370,7 @@ EVALSHA "a1b2c3..." → NOSCRIPT 에러!
 │   │              Channel: "fluxgate:rule-reload"         │   │
 │   └─────────────────────────────────────────────────────┘   │
 │         ▲                    │                              │
-│         │ PUBLISH            │ 메시지 전달                   │
+│         │ PUBLISH            │ message delivery             │
 │         │                    ▼                              │
 └─────────┼────────────────────┼──────────────────────────────┘
           │                    │
@@ -384,140 +384,141 @@ EVALSHA "a1b2c3..." → NOSCRIPT 에러!
                      └──────────────────┘
 ```
 
-### 3.2 사용 예시
+### 3.2 Usage Example
 
-**Publisher (메시지 발행)**
+**Publisher (publish a message)**
 ```bash
 PUBLISH fluxgate:rule-reload '{"ruleSetId": "api-limits", "action": "RELOAD"}'
 ```
 
-**Subscriber (메시지 구독)**
+**Subscriber (subscribe to messages)**
 ```bash
 SUBSCRIBE fluxgate:rule-reload
-# 메시지가 오면 자동으로 수신
+# messages are received automatically as they arrive
 ```
 
-### 3.3 FluxGate에서의 활용
+### 3.3 How FluxGate Uses It
 
 ```
-Admin이 규칙 변경
+Admin changes a rule
        │
        ▼
 ┌─────────────────────┐
-│ PUBLISH 메시지 발행  │
+│ PUBLISH a message   │
 │ Channel: rule-reload│
 └─────────────────────┘
        │
-       ▼ Redis가 모든 구독자에게 전달
+       ▼ Redis delivers to every subscriber
        │
 ┌──────┴──────┬──────────────┐
 ▼             ▼              ▼
 Instance 1  Instance 2  Instance 3
     │             │            │
     ▼             ▼            ▼
-캐시 갱신     캐시 갱신    캐시 갱신
-버킷 리셋     버킷 리셋    버킷 리셋
+refresh cache  refresh cache  refresh cache
+reset buckets  reset buckets  reset buckets
 ```
 
 ### 3.4 Pub/Sub vs Polling
 
-| 방식 | 장점 | 단점 |
-|------|------|------|
-| **Polling** | 구현 단순 | 지연 발생 (폴링 주기) |
-| **Pub/Sub** | 실시간 동기화 | 연결 관리 필요 |
+| Approach | Pros | Cons |
+|----------|------|------|
+| **Polling** | simple to implement | latency (the polling interval) |
+| **Pub/Sub** | real-time synchronization | connection management required |
 
 ```yaml
-# FluxGate 설정
+# FluxGate configuration
 fluxgate:
   reload:
-    strategy: PUBSUB         # 또는 POLLING
+    strategy: PUBSUB         # or POLLING
     polling:
-      interval: 30s          # POLLING일 때 사용
+      interval: 30s          # used by POLLING
 ```
 
 ---
 
-## 4. Caffeine 캐시
+## 4. Caffeine Cache
 
-### 4.1 왜 캐시가 필요한가?
+### 4.1 Why a Cache?
 
 ```
-캐시 없을 때:
+Without a cache:
 ─────────────────────────────────────────
-요청 1 → MongoDB 조회 (10ms)
-요청 2 → MongoDB 조회 (10ms)
-요청 3 → MongoDB 조회 (10ms)
+request 1 → MongoDB query (10ms)
+request 2 → MongoDB query (10ms)
+request 3 → MongoDB query (10ms)
 ...
-요청 1000 → MongoDB 조회 (10ms)
-총: 10,000ms
+request 1000 → MongoDB query (10ms)
+total: 10,000ms
 
-캐시 있을 때:
+With a cache:
 ─────────────────────────────────────────
-요청 1 → MongoDB 조회 (10ms) → 캐시 저장
-요청 2 → 캐시 히트 (0.1ms)
-요청 3 → 캐시 히트 (0.1ms)
+request 1 → MongoDB query (10ms) → cached
+request 2 → cache hit (0.1ms)
+request 3 → cache hit (0.1ms)
 ...
-요청 1000 → 캐시 히트 (0.1ms)
-총: ~110ms (90배 빠름)
+request 1000 → cache hit (0.1ms)
+total: ~110ms (90× faster)
 ```
 
-### 4.2 Caffeine이란?
+### 4.2 What Is Caffeine?
 
-Java의 고성능 로컬 캐시 라이브러리입니다.
+A high-performance in-process caching library for Java.
 
 ```java
 Cache<String, RateLimitRuleSet> cache = Caffeine.newBuilder()
-    .maximumSize(1000)                    // 최대 1000개 항목
-    .expireAfterWrite(Duration.ofMinutes(5))  // 5분 후 만료
-    .recordStats()                        // 통계 수집
+    .maximumSize(1000)                    // at most 1000 entries
+    .expireAfterWrite(Duration.ofMinutes(5))  // expire 5 minutes after write
+    .recordStats()                        // collect statistics
     .build();
 
-// 저장
+// store
 cache.put("api-limits", ruleSet);
 
-// 조회
+// look up
 RateLimitRuleSet cached = cache.getIfPresent("api-limits");
 
-// 없으면 로드
+// load when absent
 RateLimitRuleSet loaded = cache.get("api-limits", key -> loadFromDB(key));
 ```
 
-### 4.3 Eviction 정책
+### 4.3 Eviction Policies
 
 ```
 ┌───────────────────────────────────────────────────────────┐
 │                    Caffeine Cache                          │
 │                                                            │
-│   Eviction (제거) 정책:                                    │
+│   Eviction policies:                                       │
 │                                                            │
-│   1. Size-based (크기 기반)                                │
-│      └─ maximumSize(1000) → 1000개 초과 시 제거            │
+│   1. Size-based                                            │
+│      └─ maximumSize(1000) → evict beyond 1000 entries      │
 │                                                            │
-│   2. Time-based (시간 기반)                                │
-│      ├─ expireAfterWrite(5min) → 쓴 후 5분 지나면 만료     │
-│      └─ expireAfterAccess(5min) → 접근 후 5분 지나면 만료  │
+│   2. Time-based                                            │
+│      ├─ expireAfterWrite(5min) → expire 5 min after write  │
+│      └─ expireAfterAccess(5min) → expire 5 min after access│
 │                                                            │
-│   3. Reference-based (참조 기반)                           │
-│      └─ weakKeys(), weakValues() → GC가 수거 가능         │
+│   3. Reference-based                                      │
+│      └─ weakKeys(), weakValues() → GC can collect them     │
 │                                                            │
-│   제거 알고리즘: Window TinyLFU (높은 히트율)              │
+│   Eviction algorithm: Window TinyLFU (high hit rate)       │
 └───────────────────────────────────────────────────────────┘
 ```
 
 ### 4.4 Window TinyLFU
 
-Caffeine의 핵심 알고리즘입니다.
+Caffeine's core algorithm.
 
 ```
-전통적인 LRU (Least Recently Used):
+Traditional LRU (Least Recently Used):
 ─────────────────────────────────────
-가장 오래 사용 안 된 항목 제거
-문제: 한 번 많이 사용된 항목도 잠시 안 쓰면 제거됨
+Evict the entry unused for the longest time
+Problem: even a frequently used entry is evicted
+after a short idle period
 
 Window TinyLFU:
 ─────────────────────────────────────
-빈도(Frequency) + 최근성(Recency) 조합
-더 스마트한 제거 결정
+Combines frequency + recency
+for a smarter eviction decision
 
 ┌─────────────────────────────────────────────────┐
 │                Window TinyLFU                    │
@@ -528,15 +529,15 @@ Window TinyLFU:
 │  └─────────┘     └─────────────────────────┘   │
 │       │                    │                    │
 │       ▼                    ▼                    │
-│  새 항목 진입         빈도 기반 제거             │
-│                     (TinyLFU 스케치)            │
+│  new entries enter    frequency-based eviction  │
+│                     (TinyLFU sketch)            │
 └─────────────────────────────────────────────────┘
 ```
 
-### 4.5 FluxGate에서의 사용
+### 4.5 Usage in FluxGate
 
 ```java
-// FluxGate의 RuleCache 구현
+// FluxGate's RuleCache implementation (simplified)
 @Component
 public class CaffeineRuleCache implements RuleCache {
 
@@ -544,8 +545,8 @@ public class CaffeineRuleCache implements RuleCache {
 
     public CaffeineRuleCache(FluxgateProperties props) {
         this.cache = Caffeine.newBuilder()
-            .maximumSize(props.getCache().getMaxSize())      // 기본 1000
-            .expireAfterWrite(props.getCache().getTtl())     // 기본 5분
+            .maximumSize(props.getCache().getMaxSize())      // default 1000
+            .expireAfterWrite(props.getCache().getTtl())     // default 5 minutes
             .recordStats()
             .build();
     }
@@ -562,19 +563,19 @@ public class CaffeineRuleCache implements RuleCache {
 
     @Override
     public void invalidate(String ruleSetId) {
-        cache.invalidate(ruleSetId);  // Hot Reload 시 호출
+        cache.invalidate(ruleSetId);  // called on hot reload
     }
 }
 ```
 
 ---
 
-## 5. Spring Filter 아키텍처
+## 5. Spring Filter Architecture
 
-### 5.1 Filter Chain 개념
+### 5.1 The Filter Chain Concept
 
 ```
-HTTP 요청
+HTTP request
     │
     ▼
 ┌─────────────────────────────────────────────────────────────┐
@@ -582,7 +583,7 @@ HTTP 요청
 │                                                              │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
 │  │ Filter 1 │─▶│ Filter 2 │─▶│ Filter 3 │─▶│ Servlet  │    │
-│  │ (인증)   │  │ (Rate   │  │ (로깅)   │  │(Controller)│   │
+│  │ (auth)   │  │ (Rate   │  │ (logging)│  │(Controller)│   │
 │  │          │  │  Limit) │  │          │  │          │    │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘    │
 │       │              │             │             │          │
@@ -590,14 +591,14 @@ HTTP 요청
 │   doFilter()    doFilter()    doFilter()    service()       │
 │       │              │             │             │          │
 │       ◀──────────────◀─────────────◀─────────────┘          │
-│                   응답 반환                                  │
+│                   response returns                           │
 └─────────────────────────────────────────────────────────────┘
     │
     ▼
-HTTP 응답
+HTTP response
 ```
 
-### 5.2 Filter 인터페이스
+### 5.2 The Filter Interface
 
 ```java
 public interface Filter {
@@ -614,7 +615,7 @@ public interface Filter {
 }
 ```
 
-### 5.3 Filter 동작 흐름
+### 5.3 Filter Execution Flow
 
 ```java
 public class MyFilter implements Filter {
@@ -625,43 +626,43 @@ public class MyFilter implements Filter {
             ServletResponse response,
             FilterChain chain) throws IOException, ServletException {
 
-        // ===== 전처리 (요청 들어올 때) =====
+        // ===== pre-processing (request coming in) =====
         System.out.println("Before request processing");
 
-        // 다음 필터로 전달 (또는 서블릿으로)
+        // pass to the next filter (or the servlet)
         chain.doFilter(request, response);
 
-        // ===== 후처리 (응답 나갈 때) =====
+        // ===== post-processing (response going out) =====
         System.out.println("After request processing");
     }
 }
 ```
 
 ```
-실행 순서:
+Execution order:
 ─────────────────────────────────────────
-요청 → Filter1 전처리
-           → Filter2 전처리
-                  → Filter3 전처리
-                         → Servlet 처리
-                  ← Filter3 후처리
-           ← Filter2 후처리
-     ← Filter1 후처리
-← 응답
+request → Filter1 pre-processing
+              → Filter2 pre-processing
+                     → Filter3 pre-processing
+                            → Servlet handles it
+                     ← Filter3 post-processing
+              ← Filter2 post-processing
+     ← Filter1 post-processing
+← response
 ```
 
-### 5.4 Filter 등록 방법
+### 5.4 How to Register a Filter
 
-**방법 1: @Component (Spring Boot)**
+**Option 1: @Component (Spring Boot)**
 ```java
 @Component
-@Order(1)  // 순서 지정
+@Order(1)  // specify the order
 public class RateLimitFilter implements Filter {
     // ...
 }
 ```
 
-**방법 2: FilterRegistrationBean**
+**Option 2: FilterRegistrationBean**
 ```java
 @Configuration
 public class FilterConfig {
@@ -672,7 +673,7 @@ public class FilterConfig {
             new FilterRegistrationBean<>();
 
         registration.setFilter(new RateLimitFilter());
-        registration.addUrlPatterns("/api/*");  // 특정 경로만
+        registration.addUrlPatterns("/api/*");  // only these paths
         registration.setOrder(1);
 
         return registration;
@@ -680,7 +681,7 @@ public class FilterConfig {
 }
 ```
 
-### 5.5 FluxGate Rate Limit Filter
+### 5.5 The FluxGate Rate Limit Filter
 
 ```java
 public class FluxgateRateLimitFilter implements Filter {
@@ -700,29 +701,29 @@ public class FluxgateRateLimitFilter implements Filter {
 
         String path = httpRequest.getRequestURI();
 
-        // 1. 제외 패턴 체크
+        // 1. check the exclude patterns
         if (shouldExclude(path)) {
             chain.doFilter(request, response);
             return;
         }
 
-        // 2. RequestContext 생성
+        // 2. build the RequestContext
         RequestContext context = RequestContext.builder()
             .clientIp(getClientIp(httpRequest))
             .method(httpRequest.getMethod())
             .endpoint(path)
             .build();
 
-        // 3. Rate Limit 체크
+        // 3. run the rate limit check
         RateLimitResponse result = handler.tryConsume(context, ruleSetId);
 
-        // 4. 응답 헤더 추가
+        // 4. add response headers
         httpResponse.setHeader("X-RateLimit-Remaining",
             String.valueOf(result.getRemainingTokens()));
 
-        // 5. 허용/거부 결정
+        // 5. allow or reject
         if (result.isAllowed()) {
-            chain.doFilter(request, response);  // 다음으로 전달
+            chain.doFilter(request, response);  // continue the chain
         } else {
             httpResponse.setStatus(429);  // Too Many Requests
             httpResponse.setHeader("Retry-After",
@@ -737,31 +738,31 @@ public class FluxgateRateLimitFilter implements Filter {
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│                        요청 처리 순서                           │
+│                     Request processing order                    │
 │                                                                │
-│  HTTP 요청                                                     │
+│  HTTP request                                                  │
 │      │                                                         │
 │      ▼                                                         │
 │  ┌──────────────────────────────────────────────────────────┐ │
 │  │                    Filter (Servlet)                       │ │
-│  │  - Servlet 스펙                                           │ │
-│  │  - Spring 외부에서도 동작                                  │ │
-│  │  - Request/Response 직접 조작 가능                        │ │
+│  │  - Servlet specification                                  │ │
+│  │  - works outside of Spring too                            │ │
+│  │  - direct access to Request/Response                      │ │
 │  └──────────────────────────────────────────────────────────┘ │
 │      │                                                         │
 │      ▼                                                         │
 │  ┌──────────────────────────────────────────────────────────┐ │
 │  │                 Interceptor (Spring MVC)                  │ │
-│  │  - Spring MVC 스펙                                        │ │
-│  │  - Handler 정보 접근 가능                                  │ │
+│  │  - Spring MVC specification                               │ │
+│  │  - access to handler information                          │ │
 │  │  - preHandle, postHandle, afterCompletion                 │ │
 │  └──────────────────────────────────────────────────────────┘ │
 │      │                                                         │
 │      ▼                                                         │
 │  ┌──────────────────────────────────────────────────────────┐ │
 │  │                      AOP (Spring)                         │ │
-│  │  - 메서드 레벨                                             │ │
-│  │  - 비즈니스 로직에 가까움                                   │ │
+│  │  - method level                                           │ │
+│  │  - close to the business logic                            │ │
 │  │  - @Before, @After, @Around                               │ │
 │  └──────────────────────────────────────────────────────────┘ │
 │      │                                                         │
@@ -772,86 +773,86 @@ public class FluxgateRateLimitFilter implements Filter {
 └────────────────────────────────────────────────────────────────┘
 ```
 
-| 구분 | Filter | Interceptor | AOP |
-|------|--------|-------------|-----|
-| **스펙** | Servlet | Spring MVC | Spring |
-| **레벨** | HTTP 요청/응답 | Handler | 메서드 |
-| **접근 가능** | Request, Response | Handler, ModelAndView | JoinPoint |
-| **사용 사례** | 인증, 로깅, **Rate Limit** | 권한, 로깅 | 트랜잭션, 로깅 |
+| | Filter | Interceptor | AOP |
+|---|--------|-------------|-----|
+| **Specification** | Servlet | Spring MVC | Spring |
+| **Level** | HTTP request/response | Handler | method |
+| **Can access** | Request, Response | Handler, ModelAndView | JoinPoint |
+| **Typical use** | auth, logging, **rate limiting** | authorization, logging | transactions, logging |
 
-**FluxGate가 Filter를 선택한 이유:**
-- HTTP 레벨에서 조기 차단 (불필요한 처리 방지)
-- Request/Response 직접 제어 가능
-- Spring 외에서도 사용 가능
+**Why FluxGate chose a Filter:**
+- blocks early at the HTTP level (no wasted processing)
+- direct control over Request/Response
+- usable outside Spring
 
 ---
 
 ## 6. Token Bucket vs Leaky Bucket
 
-### 6.1 동작 비교
+### 6.1 Behavior Comparison
 
 ```
-시나리오: 결제 API (10 req/sec 제한)
-사용자가 0초에 10개 요청을 동시에 보냄
+Scenario: a payments API (10 req/sec limit)
+A user fires 10 requests at once at t=0
 
 ┌─────────────────────────────────────────────────────────────┐
 │ Token Bucket                                                │
 ├─────────────────────────────────────────────────────────────┤
-│ 0.0초: 10개 요청 → 10개 모두 즉시 통과 ✅                     │
-│ 0.1초: 1개 요청 → 토큰 없음, 거부 ❌                         │
-│ 1.0초: 토큰 리필 → 다시 10개 가능                            │
+│ t=0.0: 10 requests → all 10 pass immediately ✅             │
+│ t=0.1: 1 request  → no tokens, rejected ❌                  │
+│ t=1.0: tokens refill → 10 possible again                    │
 │                                                             │
-│ 결과: 서버가 순간적으로 10개 동시 처리해야 함 💥              │
-│ 장점: 사용자 응답 빠름                                       │
-│ 단점: 서버 부하 스파이크 발생 가능                            │
+│ Result: the server must handle 10 at once 💥                 │
+│ Pro: fast responses for the user                            │
+│ Con: possible load spikes on the server                     │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
 │ Leaky Bucket                                                │
 ├─────────────────────────────────────────────────────────────┤
-│ 0.0초: 10개 요청 → 1개 통과, 9개 큐 대기                     │
-│ 0.1초: 큐에서 1개 처리 → 8개 대기                            │
-│ 0.2초: 큐에서 1개 처리 → 7개 대기                            │
+│ t=0.0: 10 requests → 1 passes, 9 queue                      │
+│ t=0.1: 1 processed from the queue → 8 waiting               │
+│ t=0.2: 1 processed from the queue → 7 waiting               │
 │ ...                                                         │
-│ 0.9초: 큐에서 1개 처리 → 0개 대기                            │
+│ t=0.9: 1 processed from the queue → 0 waiting               │
 │                                                             │
-│ 결과: 서버는 항상 1개씩만 처리 ✅                             │
-│ 장점: 서버 부하 일정                                         │
-│ 단점: 사용자 응답 지연 (최대 0.9초 대기)                      │
+│ Result: the server always handles one at a time ✅           │
+│ Pro: steady server load                                     │
+│ Con: user-visible latency (up to 0.9s of waiting)           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 6.2 언제 어떤 것을 사용?
+### 6.2 When to Use Which?
 
-| 상황 | 추천 | 이유 |
-|------|------|------|
-| API Gateway | Token Bucket | 빠른 응답이 사용자 경험에 중요 |
-| DB 보호 | Leaky Bucket | 일정한 처리량으로 DB 보호 |
-| 결제 API | Token Bucket | 즉각적인 피드백 필요 |
-| 배치 작업 큐 | Leaky Bucket | 처리량 평탄화 |
+| Situation | Recommended | Why |
+|-----------|-------------|-----|
+| API Gateway | Token Bucket | fast responses matter for UX |
+| DB protection | Leaky Bucket | constant throughput protects the DB |
+| Payments API | Token Bucket | immediate feedback needed |
+| Batch job queue | Leaky Bucket | flatten the throughput |
 
-### 6.3 FluxGate의 선택
+### 6.3 FluxGate's Choice
 
-FluxGate는 **Token Bucket**을 선택했습니다:
+FluxGate chose the **Token Bucket**:
 
-1. **API Gateway 용도** → 빠른 응답 중요
-2. **O(1) 시간복잡도** → 고성능
-3. **Redis Lua 스크립트로 원자적 처리 가능**
-4. **Multi-Band 지원** (10/초 + 100/분 + 1000/시간)
+1. **API gateway use case** → fast responses matter
+2. **O(1) time complexity** → high performance
+3. **Atomic processing via a Redis Lua script**
+4. **Multi-band support** (10/sec + 100/min + 1000/hour)
 
 ```java
 RateLimitRule rule = RateLimitRule.builder("multi-band")
-    .addBand(RateLimitBand.builder(Duration.ofSeconds(1), 10).build())    // 초당 10개
-    .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100).build())   // 분당 100개
-    .addBand(RateLimitBand.builder(Duration.ofHours(1), 1000).build())    // 시간당 1000개
+    .addBand(RateLimitBand.builder(Duration.ofSeconds(1), 10).build())    // 10 per second
+    .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100).build())   // 100 per minute
+    .addBand(RateLimitBand.builder(Duration.ofHours(1), 1000).build())    // 1000 per hour
     .build();
 ```
 
 ---
 
-## 관련 문서
+## Related Documentation
 
-- [아키텍처 개요](README.ko.md)
-- [RateLimiter Layer Deep Dive](deep-dive/ratelimiter-layer.ko.md)
-- [Storage Layer Deep Dive](deep-dive/storage-layer.ko.md)
-- [Hot Reload Deep Dive](deep-dive/hot-reload.ko.md)
+- [Architecture Overview](README.md)
+- [RateLimiter Layer](ratelimiter-layer.md)
+- [Storage Layer](storage-layer.md)
+- [Hot Reload](hot-reload.md)

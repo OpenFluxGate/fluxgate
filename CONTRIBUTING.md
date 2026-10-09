@@ -1,7 +1,8 @@
 # Contributing to FluxGate
 
-Thank you for your interest in contributing to FluxGate! This document provides guidelines and instructions for
-contributing.
+Thank you for your interest in contributing to FluxGate! This document covers
+everything you need to set up a development environment, follow the coding
+standards, and submit a change.
 
 ## Table of Contents
 
@@ -13,341 +14,185 @@ contributing.
 - [Testing](#testing)
 - [Submitting Changes](#submitting-changes)
 - [Review Process](#review-process)
+- [Good First Issues](#good-first-issues)
 
 ## Code of Conduct
 
-By participating in this project, you agree to maintain a respectful and inclusive environment. Please:
-
-- Be respectful and constructive in discussions
-- Welcome newcomers and help them get started
-- Focus on what is best for the community
-- Show empathy towards other community members
+All participants must follow the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.md).
+Report violations privately using GitHub's **Security → "Report a vulnerability"** form,
+which provides an encrypted channel to the maintainers.
 
 ## Getting Started
 
 ### Prerequisites
 
-- **Java 11+** - Required for building and running the project
-- **Maven 3.8+** - Build tool
-- **Docker** - For running Redis and MongoDB during development
-- **Git** - Version control
+| Tool | Minimum version |
+|---|---|
+| Java | 11 (to build core + boot2 starter); 17 for boot3 starter; 21 for samples |
+| Maven | 3.8 (use the provided `./mvnw` wrapper — do not use a system Maven) |
+| Docker | 24+ (for integration tests; unit tests run without Docker) |
+| Git | 2.x |
 
 ### Fork and Clone
-
-1. Fork the repository on GitHub
-2. Clone your fork locally:
 
 ```bash
 git clone https://github.com/YOUR-USERNAME/fluxgate.git
 cd fluxgate
-```
-
-3. Add the upstream repository:
-
-```bash
 git remote add upstream https://github.com/OpenFluxGate/fluxgate.git
 ```
 
 ## Development Setup
 
-### 1. Start Infrastructure
+### Start Infrastructure
 
-We provide Docker Compose files for local development in the `docker/` directory:
+We provide Docker Compose files in the `docker/` directory:
 
-| File                          | Description                                                          |
-|-------------------------------|----------------------------------------------------------------------|
-| `docker/full.yml`             | All services (Redis, MongoDB, ELK) - **Recommended for development** |
-| `docker/redis-standalone.yml` | Redis standalone only                                                |
-| `docker/redis-cluster.yml`    | Redis cluster (3 nodes)                                              |
-| `docker/mongo.yml`            | MongoDB only                                                         |
-| `docker/elk.yml`              | Elasticsearch, Logstash, Kibana                                      |
+| File | Services |
+|---|---|
+| `docker/full.yml` | Redis standalone, MongoDB, ELK — recommended |
+| `docker/redis-standalone.yml` | Redis standalone only |
+| `docker/redis-cluster.yml` | Redis cluster (3 nodes) on ports 7100-7105 |
+| `docker/mongo.yml` | MongoDB only |
 
 ```bash
-# Start all services (recommended)
 docker compose -f docker/full.yml up -d
-
-# Verify services are running
 docker compose -f docker/full.yml ps
-
-# Stop services
-docker compose -f docker/full.yml down
 ```
 
-### 2. Build the Project
+### Environment Variables
+
+Integration tests read these from the environment or fall back to Testcontainers:
 
 ```bash
-# Build all modules
-./mvnw clean install
-
-# Build without tests (faster)
-./mvnw clean install -DskipTests
+export FLUXGATE_REDIS_URI=redis://localhost:6379
+export FLUXGATE_MONGO_URI=mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
+export FLUXGATE_MONGO_DB=fluxgate
 ```
 
-### 3. Run Tests
+### Build the Project
 
 ```bash
-# Run all tests and verify (required before PR)
-./mvnw clean verify
+# Build everything, skipping tests
+./mvnw install -DskipTests
 
-# Run tests only
+# Run only unit tests (no Docker required)
 ./mvnw test
 
-# Run tests for specific module
-./mvnw test -pl fluxgate-core
+# Run unit + integration tests (Docker required, or the above env vars set)
+./mvnw verify
+
+# Run unit + integration tests including Redis Cluster tests
+./mvnw verify -Predis-cluster-it
+
+# Skip integration tests explicitly
+./mvnw verify -DskipITs
 ```
-
-### 4. IDE Setup
-
-#### IntelliJ IDEA (Recommended)
-
-1. Open the project as a Maven project
-2. Enable annotation processing: `Settings > Build > Compiler > Annotation Processors`
-3. Import code style: `Settings > Editor > Code Style > Import Scheme`
-
-#### VS Code
-
-1. Install "Extension Pack for Java"
-2. Open the project folder
-3. Let Maven import complete
 
 ## Making Changes
 
-### Branch Naming Convention
-
-Create a branch from `main` with a descriptive name:
-
-- `feature/` - New features (e.g., `feature/sliding-window-algorithm`)
-- `development/` - New module (e.g., `development/fluxgate-sample-something`)
-- `fix/` - Bug fixes (e.g., `fix/redis-connection-timeout`)
-- `docs/` - Documentation changes (e.g., `docs/api-reference`)
-- `refactor/` - Code refactoring (e.g., `refactor/cleanup-handlers`)
-- `test/` - Test additions or modifications (e.g., `test/redis-integration`)
-
-```bash
-# Create a new branch
-git checkout -b feature/your-feature-name
-
-# Keep your branch updated
-git fetch upstream
-git rebase upstream/main
-```
-
-### Commit Messages
-
-Follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
-
-```
-<type>(<scope>): <description>
-
-[optional body]
-
-[optional footer]
-```
-
-**Types:**
-
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation changes
-- `style`: Code style changes (formatting, etc.)
-- `refactor`: Code refactoring
-- `test`: Adding or modifying tests
-- `chore`: Build process or auxiliary tool changes
-
-**Examples:**
-
-```bash
-feat(redis): add connection pool monitoring
-
-fix(core): handle null key resolver gracefully
-
-docs(readme): add quick start guide
-
-test(mongo): add integration tests for rule store
-```
+1. Sync with upstream: `git fetch upstream && git rebase upstream/main`
+2. Create a feature branch: `git checkout -b feat/my-feature`
+3. Make your changes (see standards below).
+4. Run `./mvnw -q spotless:apply` to format Java code.
+5. Run `./mvnw test -pl <changed-modules> -am` to verify unit tests pass.
+6. Commit using [Conventional Commits](#commit-messages).
+7. Push and open a pull request.
 
 ## Coding Standards
 
-### Java Style Guide
+### Java Style
 
-We follow the [Google Java Style Guide](https://google.github.io/styleguide/javaguide.html) with some modifications:
+* **Google Java Format** is enforced by Spotless. Run `./mvnw spotless:apply`
+  before every commit; CI will reject a PR that fails `spotless:check`.
+* **2-space indent**; no tabs.
+* **Java 11 language level** in `fluxgate-core`, `fluxgate-redis-ratelimiter`,
+  `fluxgate-mongo-adapter`, `fluxgate-control-support`, and `fluxgate-spring-boot2-starter`.
+  No `record`, no `switch` expressions, no text blocks (`"""`), no `var`,
+  no `Stream.toList()`, no `String.formatted` in these modules.
+* **Java 17 language level** in `fluxgate-spring-boot3-starter` only.
+* **SLF4J logging**: `private static final Logger log = LoggerFactory.getLogger(MyClass.class);`
+  Never use `System.out.println` or `java.util.logging`.
+* **Javadoc** on every `public` type and method. Match the voice and style of
+  neighbouring Javadoc in the same file.
 
-1. **Indentation**: 4 spaces (not tabs)
-2. **Line length**: 120 characters maximum
-3. **Braces**: Always use braces for control statements
+### Spring Boot 2 Mirror Requirement
 
-### Code Quality
+The boot2 (`fluxgate-spring-boot2-starter`) and boot3 (`fluxgate-spring-boot3-starter`)
+starters are kept byte-identical apart from `jakarta.*` → `javax.*` imports. Any
+change to the boot3 starter must be mirrored into the boot2 starter with those
+import substitutions applied. The PR checklist reminds you of this.
 
-- Write self-documenting code with clear variable/method names
-- Add Javadoc for all public classes and methods
-- Keep methods focused and small (< 30 lines preferred)
-- Follow SOLID principles
-- Avoid code duplication
+### Commit Messages
 
-### Javadoc Requirements
-
-All public APIs must have Javadoc:
-
-```java
-/**
- * Attempts to consume tokens from the rate limiter.
- *
- * @param context the request context containing client information
- * @param ruleSet the rate limit rules to apply
- * @param tokens the number of tokens to consume
- * @return the result of the rate limit check
- * @throws IllegalArgumentException if tokens is less than 1
- */
-public RateLimitResult tryConsume(RequestContext context, RateLimitRuleSet ruleSet, long tokens);
-```
-
-### Package Structure
+FluxGate uses [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```
-org.fluxgate
-├── core                 # Core abstractions and interfaces
-│   ├── config          # Configuration classes
-│   ├── context         # Request context
-│   ├── handler         # Rate limit handlers
-│   ├── key             # Key resolution
-│   └── ratelimiter     # Rate limiter implementations
-├── redis               # Redis-specific implementation
-├── adapter.mongo       # MongoDB adapter
-└── spring              # Spring Boot integration
+feat(redis): add multi-band Lua script for atomic consumption
+fix(core): correct nanosToMillis rounding in RateLimitResponse
+docs(boot3): document trusted-proxies property
+test(mongo): add Testcontainers IT for rule reload
+chore(deps): bump bucket4j to 8.15.0
 ```
+
+Types: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `chore`, `ci`, `revert`.
+
+Breaking changes: add `!` after the type (`feat!:`) and a `BREAKING CHANGE:` footer.
+
+### CHANGELOG
+
+Add an entry under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md) for every
+user-visible change. Use the sections from [Keep a Changelog](https://keepachangelog.com/):
+`Added`, `Changed`, `Fixed`, `Deprecated`, `Removed`, `Security`.
 
 ## Testing
 
-### Test Categories
+### Test Tiers
 
-1. **Unit Tests** - Test individual classes in isolation
-2. **Integration Tests** - Test component interactions
-3. **End-to-End Tests** - Test complete flows
+| Tier | Command | Requires Docker? | File pattern |
+|---|---|---|---|
+| Unit | `./mvnw test` | No | `*Test.java` (not `*IntegrationTest`, not `*IT`) |
+| Integration | `./mvnw verify` | Yes (or env vars) | `*IntegrationTest.java`, `*IT.java` |
+
+Unit tests must run with no external services. Integration tests use
+Testcontainers and skip themselves automatically when neither a suitable Docker
+daemon nor the env-var URIs are available. Do not add `@Disabled` — use
+`Assumptions.assumeTrue(dockerAvailable)` via the existing
+`RedisContainerSupport` / `MongoContainerSupport` base classes.
+
+### Coverage
+
+New code should maintain the existing 80 % line / 70 % branch coverage thresholds.
+JaCoCo reports appear in `target/site/jacoco/index.html` after `./mvnw verify`.
 
 ### Writing Tests
 
-- Use descriptive test method names
-- Follow the Arrange-Act-Assert pattern
-- Mock external dependencies in unit tests
-- Use `@Tag` for test categorization
-
-```java
-
-@Test
-@DisplayName("Should reject request when rate limit exceeded")
-void shouldRejectWhenRateLimitExceeded() {
-    // Arrange
-    RateLimiter limiter = createLimiter(10);
-    consumeTokens(limiter, 10);
-
-    // Act
-    RateLimitResult result = limiter.tryConsume(context, ruleSet, 1);
-
-    // Assert
-    assertThat(result.isAllowed()).isFalse();
-    assertThat(result.getRemainingTokens()).isZero();
-}
-```
-
-### Test Coverage
-
-- Aim for at least 80% code coverage
-- Focus on testing business logic and edge cases
-- Don't test trivial getters/setters
+* Every behavioural change needs a regression test that fails _before_ your
+  change and passes _after_.
+* Use `assertj` fluent assertions; avoid raw JUnit `assertEquals`.
+* Name tests `givenX_whenY_thenZ` or the imperative verb form used in the file.
 
 ## Submitting Changes
 
-### Before Submitting
-
-1. **Start infrastructure** (if not running):
-   ```bash
-   docker compose -f docker/full.yml up -d
-   ```
-
-2. **Update your branch**:
-   ```bash
-   git fetch upstream
-   git rebase upstream/main
-   ```
-
-3. **Apply code formatting**:
-   ```bash
-   ./mvnw spotless:apply
-   ```
-
-4. **Run all tests and verify**:
-   ```bash
-   ./mvnw clean verify
-   ```
-
-   This command runs:
-    - Code compilation
-    - Unit tests
-    - Integration tests
-    - Code coverage checks (JaCoCo)
-    - Code formatting checks (Spotless)
-
-### Creating a Pull Request
-
-1. Push your branch to your fork:
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-
-2. Open a Pull Request on GitHub
-
-3. Fill in the PR template with:
-    - Clear description of changes
-    - Related issue numbers
-    - Testing performed
-    - Screenshots (if UI changes)
-
-### PR Checklist
-
-- [ ] Code follows the project style guide
-- [ ] All tests pass locally
-- [ ] New code has appropriate test coverage
-- [ ] Javadoc added for new public APIs
-- [ ] README updated if needed
-- [ ] CHANGELOG updated for notable changes
+1. Open a PR against `main`.
+2. Fill in the [pull request template](.github/PULL_REQUEST_TEMPLATE.md) fully.
+3. The CI matrix runs Java 11, 17, and 21; ensure all three pass.
+4. Address review comments within 14 days or the PR may be closed to keep the
+   queue manageable.
 
 ## Review Process
 
-### What to Expect
+All merged changes require at least one approval from [@rojae](https://github.com/rojae).
+Reviews are best-effort; expect one to two weeks for straightforward changes.
+Complex changes may take longer — open an issue first to discuss the design.
 
-1. **Automated checks** run first (CI/CD)
-2. **Code review** by maintainers
-3. **Feedback** provided as comments
-4. **Approval** when all requirements met
-5. **Merge** by maintainer
+## Good First Issues
 
-### Responding to Feedback
+Issues labelled [`good first issue`](https://github.com/OpenFluxGate/fluxgate/labels/good%20first%20issue)
+are specifically selected for new contributors. They:
 
-- Be open to suggestions
-- Ask questions if feedback is unclear
-- Make requested changes promptly
-- Mark conversations as resolved when addressed
+* Have a clear acceptance criterion in the issue body.
+* Touch a bounded area of the codebase.
+* Have a test strategy outlined.
 
-### After Merge
-
-- Delete your feature branch
-- Pull the latest changes:
-  ```bash
-  git checkout main
-  git pull upstream main
-  ```
-
-## Getting Help
-
-- **Questions/Bugs**: Open a [GitHub Issue](https://github.com/OpenFluxGate/fluxgate/issues)
-- **Security**: Email security@openfluxgate.org (do not open public issues)
-
-## Recognition
-
-Contributors are recognized in:
-
-- Release notes
-- GitHub contributors list
-- Project documentation
-
-Thank you for contributing to FluxGate!
+To claim one, leave a comment saying you are working on it so the maintainer can
+assign it to you. If you get stuck, ask in the issue — no question is too basic.
