@@ -60,6 +60,20 @@ def b64url(data):
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
+def signed_jwt(openssl, private_key, kid, issuer, audience, expiry, algorithm="RS256"):
+    """Sign explicit claims; negative fixtures change one trust input at a time."""
+    now = int(time.time())
+    header = b64url(json.dumps({"alg": algorithm, "kid": kid, "typ": "JWT"},
+                              separators=(",", ":")).encode())
+    claims = b64url(json.dumps({"iss": issuer, "aud": audience, "sub": "credential-proof-admin",
+                               "iat": min(now, expiry - 60), "exp": expiry,
+                               "realm_access": {"roles": ["admin"]}}, separators=(",", ":")).encode())
+    message = (header + "." + claims).encode()
+    digest = {"RS256": "-sha256", "RS512": "-sha512"}[algorithm]
+    signature = run([openssl, "dgst", digest, "-sign", str(private_key)], data=message).stdout
+    return message.decode() + "." + b64url(signature)
+
+
 class Proof:
     def __init__(self, fixture):
         self.fixture_path = Path(fixture).resolve()
@@ -564,15 +578,9 @@ class Proof:
         audience = "fluxgate-studio-admin-api"
         expiry = int(time.time()) + 1800
 
-        def token(index, kid=None, aud=audience):
-            header = b64url(json.dumps({"alg": "RS256", "kid": kid or keys[index][1]["kid"],
-                                       "typ": "JWT"}, separators=(",", ":")).encode())
-            claims = b64url(json.dumps({"iss": issuer, "aud": aud, "sub": "credential-proof-admin",
-                                       "iat": int(time.time()), "exp": expiry,
-                                       "realm_access": {"roles": ["admin"]}}, separators=(",", ":")).encode())
-            message = (header + "." + claims).encode()
-            signature = run([self.openssl, "dgst", "-sha256", "-sign", str(keys[index][0])], data=message).stdout
-            return message.decode() + "." + b64url(signature)
+        def token(index, kid=None, aud=audience, token_issuer=issuer, expires_at=expiry, algorithm="RS256"):
+            return signed_jwt(self.openssl, keys[index][0], kid or keys[index][1]["kid"],
+                              token_issuer, aud, expires_at, algorithm)
 
         old_token, new_token = token(0), token(1)
         admin = self.read("mongo_admin_uri_file")
@@ -644,8 +652,20 @@ class Proof:
                     status, active = api(old_token)
                     require(status == 200, "old JWT not accepted initially")
                     events["old_initial"] = status
-                    require(api(None)[0] == 401, "missing JWT accepted")
-                    require(api(token(0, aud="wrong-api"))[0] == 401, "wrong JWT audience accepted")
+                    negatives = {
+                        "missing": None,
+                        "wrong_audience": token(0, aud="wrong-api"),
+                        "expired": token(0, expires_at=int(time.time()) - 120),
+                        "wrong_issuer": token(0, token_issuer=issuer + "/untrusted"),
+                        # The trusted old kid names the wrong signing key: this is a real bad signature.
+                        "bad_signature": token(1, kid=keys[0][1]["kid"]),
+                        "wrong_algorithm": token(0, algorithm="RS512"),
+                    }
+                    events["negative_controls"] = {}
+                    for label, bearer in negatives.items():
+                        require(api(bearer)[0] == 401, "JWT negative accepted: " + label)
+                        require(api(old_token)[0] == 200, "valid JWT failed after negative: " + label)
+                        events["negative_controls"][label] = 401
                     jwks["keys"] = [keys[0][1], keys[1][1]]
                     require(api(new_token)[0] == 200 and api(old_token)[0] == 200,
                             "JWKS overlap rejected valid signature")
@@ -763,6 +783,34 @@ def self_test():
                 "explicit expired certificate fixture was not expired")
         valid, valid_key = proof.certificate("valid", ca, key, "gateway")
         run([proof.openssl, "verify", "-CAfile", str(ca), str(valid)])
+        public = Path(directory) / "jwt-public.pem"
+        run([proof.openssl, "pkey", "-in", str(valid_key), "-pubout", "-out", str(public)])
+        expiry = int(time.time()) + 1800
+        jwt_controls = {
+            "valid": signed_jwt(proof.openssl, valid_key, "trusted", "issuer", "audience", expiry),
+            "expired": signed_jwt(proof.openssl, valid_key, "trusted", "issuer", "audience", int(time.time()) - 120),
+            "wrong_issuer": signed_jwt(proof.openssl, valid_key, "trusted", "untrusted", "audience", expiry),
+            "bad_signature": signed_jwt(proof.openssl, cert_key, "trusted", "issuer", "audience", expiry),
+            "wrong_algorithm": signed_jwt(proof.openssl, valid_key, "trusted", "issuer", "audience", expiry, "RS512"),
+        }
+        def decode(segment):
+            return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+        for label, bearer in jwt_controls.items():
+            head, body, signature = bearer.split(".")
+            claims, header = json.loads(decode(body)), json.loads(decode(head))
+            require(header["kid"] == "trusted", "negative fixture changed trusted kid")
+            signature_path = Path(directory) / "jwt-signature.bin"
+            private_write(signature_path, decode(signature))
+            digest = "-sha512" if label == "wrong_algorithm" else "-sha256"
+            verified = run([proof.openssl, "dgst", digest, "-verify", str(public), "-signature", str(signature_path)],
+                           data=(head + "." + body).encode(), check=False)
+            require((verified.returncode == 0) == (label != "bad_signature"), "JWT signature fixture incorrect")
+            if label == "expired":
+                require(claims["iat"] < claims["exp"] < int(time.time()) - 60, "JWT not expired beyond clock skew")
+            else:
+                require(claims["exp"] == expiry, "negative fixture mutated retirement expiry")
+            require(claims["iss"] == ("untrusted" if label == "wrong_issuer" else "issuer"), "JWT issuer fixture incorrect")
+            require(header["alg"] == ("RS512" if label == "wrong_algorithm" else "RS256"), "JWT algorithm fixture incorrect")
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))
         listener.listen()
@@ -811,7 +859,7 @@ def self_test():
         proof.redis_check("unused", None, False)
         thread.join(timeout=5)
         require(not thread.is_alive() and not failures, "RESP regression server failed")
-    print("Offline credential regressions passed: partial TLS copy rollback, valid/expired X.509 and fresh RESP valid/wrong/missing authentication")
+    print("Offline credential regressions passed: partial TLS copy rollback, X.509, cryptographic JWT negative fixtures and fresh RESP authentication")
 
 
 def main():
