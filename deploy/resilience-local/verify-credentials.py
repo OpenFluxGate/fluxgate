@@ -338,6 +338,10 @@ class Proof:
             try:
                 with socket.create_connection(("127.0.0.1", port), timeout=8) as raw:
                     with ctx.wrap_socket(raw, server_hostname=self.f["server_name"]) as conn:
+                        if expected == "tls-reject":
+                            # TLS 1.3 may deliver its certificate alert after wrap_socket returns.
+                            conn.recv(1)
+                            raise ProofError("TLS negative lacked explicit certificate rejection")
                         request = ("GET " + path + " HTTP/1.1\r\nHost: " + self.f["server_name"] +
                                    "\r\nx-api-key: " + self.api_key + "\r\nConnection: close\r\n\r\n")
                         conn.sendall(request.encode())
@@ -1413,6 +1417,44 @@ def strict_tls_self_test():
             server.server_close()
 
 
+def tls_alert_read_self_test():
+    """A negative TLS control consumes its alert without sending HTTP bytes."""
+    from unittest.mock import patch
+    proof = Proof.__new__(Proof)
+    proof.f, proof.api_key = {"server_name": "localhost"}, "offline-only-key"
+    proof.forward = lambda *args: contextlib.nullcontext(8443)
+    for reason in ("TLSV13_ALERT_CERTIFICATE_REQUIRED", None, "SSLV3_ALERT_HANDSHAKE_FAILURE"):
+        calls = []
+        class Connection:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def recv(self, count):
+                calls.append(("recv", count))
+                if reason is None:
+                    return b""
+                error = ssl.SSLError(1, reason)
+                error.reason = reason
+                raise error
+            def sendall(self, data):
+                raise ProofError("negative TLS control sent HTTP before reading certificate alert")
+        class Context:
+            def wrap_socket(self, *args, **kwargs):
+                return Connection()
+        with patch.object(ssl, "create_default_context", return_value=Context()), \
+                patch.object(socket, "create_connection", return_value=Connection()):
+            try:
+                result = proof.tls_probe_pod("offline", "unused-ca", expected="tls-reject")
+            except ProofError:
+                if reason == "TLSV13_ALERT_CERTIFICATE_REQUIRED":
+                    raise
+            else:
+                require(reason == "TLSV13_ALERT_CERTIFICATE_REQUIRED" and result["tls_rejected"],
+                        "EOF or generic TLS alert passed negative certificate control")
+        require(calls == [("recv", 1)], "negative TLS control did not first read queued certificate alert")
+
+
 def tls_runtime_self_test():
     original = ssl.HAS_TLSv1_3
     try:
@@ -1439,6 +1481,7 @@ def tls_runtime_self_test():
 
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
+    tls_alert_read_self_test()
     strict_tls_self_test()
     tls_runtime_self_test()
     failed_rotation_cleanup_self_test()
