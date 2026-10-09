@@ -88,6 +88,14 @@ def main():
                     raise RuntimeError(f'{label} exceeded the declared {timeout}s recovery bound') from None
                 time.sleep(0.25)
 
+    def diagnostic_pods(candidates):
+        eligible = [pod for pod in candidates if pod not in paused]
+        if stopped_nodes:
+            eligible = [pod for pod in eligible if obj('pod', pod)['spec']['nodeName'] not in stopped_nodes]
+        if not eligible:
+            raise RuntimeError('No surviving diagnostic store Pod is available')
+        return eligible
+
     def redis(pod, arguments):
         script = 'export REDISCLI_AUTH="$(cat /credentials/redis-password)"; exec redis-cli -c "$@"'
         return kube(['-n', ns, 'exec', pod, '--', 'sh', '-c', script, 'probe'] + arguments, timeout=12).strip()
@@ -97,7 +105,7 @@ def main():
         preamble = f'''const fs=require('fs');const pw=fs.readFileSync('/admin/mongo-admin-password','utf8').trim();
 const conn=new Mongo('mongodb://admin:'+encodeURIComponent(pw)+'@{seed}/admin?replicaSet=rs0&authSource=admin&connectTimeoutMS=2000&serverSelectionTimeoutMS=2000&socketTimeoutMS=2000&readConcernLevel=majority');const admin=conn.getDB('admin');
 '''
-        pod = next(p for p in fixture['mongo_pods'] if p not in paused)
+        pod = diagnostic_pods(fixture['mongo_pods'])[0]
         return json.loads(kube(['-n', ns, 'exec', '-i', pod, '--', 'mongosh', '--quiet', '--nodb', '--file', '/dev/stdin'],
                               stdin=preamble + source + '\n', timeout=12))
 
@@ -201,7 +209,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         raise RuntimeError(f'Three consecutive real Gateway 200 responses exceeded {seconds}s')
 
     def topology():
-        pod = next(p for p in fixture['redis_pods'] if p not in paused)
+        pod = diagnostic_pods(fixture['redis_pods'])[0]
         lines = redis(pod, ['CLUSTER', 'NODES']).splitlines()
         result = {}
         for line in lines:
@@ -212,7 +220,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         return result
 
     def owner(key):
-        pod = next(p for p in fixture['redis_pods'] if p not in paused)
+        pod = diagnostic_pods(fixture['redis_pods'])[0]
         slot = int(redis(pod, ['CLUSTER', 'KEYSLOT', key]))
         nodes = topology()
         for identity, node in nodes.items():
@@ -230,12 +238,11 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         if key is None:
             matches = []
             pattern = 'fluxgate:bucket:{resilience-limits:quota-rule:key:' + fixture.get('ha_api_key_id', 'resilience-ha-key') + '}:daily:epoch:*'
-            for pod in fixture['redis_pods']:
-                if pod not in paused:
-                    matches += redis(pod, ['--scan', '--pattern', pattern]).splitlines()
+            for pod in diagnostic_pods(fixture['redis_pods']):
+                matches += redis(pod, ['--scan', '--pattern', pattern]).splitlines()
             candidates = sorted(set(k for k in matches if not k.endswith((':meta', ':fence'))))
-            key = next(k for k in candidates if redis(next(p for p in fixture['redis_pods'] if p not in paused), ['HGET', k, 'tokens']) not in ('', '(nil)'))
-        values = redis(next(p for p in fixture['redis_pods'] if p not in paused), ['--raw', 'HGETALL', key]).splitlines()
+            key = next(k for k in candidates if redis(diagnostic_pods(fixture['redis_pods'])[0], ['HGET', k, 'tokens']) not in ('', '(nil)'))
+        values = redis(diagnostic_pods(fixture['redis_pods'])[0], ['--raw', 'HGETALL', key]).splitlines()
         assert len(values) % 2 == 0 and values
         return key, dict(zip(values[::2], values[1::2]))
 
@@ -564,7 +571,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             assert len(shard) == 3
             for pod in shard:
                 signal(pod, 'STOP')
-            survivor = next(p for p in fixture['redis_pods'] if p not in paused)
+            survivor = diagnostic_pods(fixture['redis_pods'])[0]
             wait('Redis CLUSTERDOWN distinct from transport failure', lambda: assert_cluster_down(redis(survivor, ['CLUSTER', 'INFO'])), 30)
             request(fixture['quota_path'], {503})
             request(fixture['quota_path'], {503}, 'OPTIONS')
