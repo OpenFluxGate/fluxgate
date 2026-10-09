@@ -63,9 +63,26 @@ def assess(load, ha, fault, clock):
     rto = check.get("final_quota_seconds" if fault == "redis" else "recovery_seconds")
     require(isinstance(rto, (int, float)) and 0 <= rto <= 30, "monotonic RTO exceeds 30 seconds")
     require(0 <= verified - budget <= 30000, "verified UTC RTO exceeds 30 seconds")
-    require(len(check.get("sustained_gateway", [])) == 3
-            and all(s.get("status") == 200 for s in check["sustained_gateway"]),
-            "missing sustained recovery responses")
+    recovery_samples = check.get("sustained_gateway", [])
+    require(isinstance(recovery_samples, list) and len(recovery_samples) >= 10,
+            "dense recovery requires at least ten actual Gateway responses")
+    previous_completion = paused
+    for response in recovery_samples:
+        require(response.get("status") == 200 and response.get("body_valid") is True
+                and response.get("backend_marker_present") is True and response.get("route_marker_valid") is True
+                and response.get("error") is None and not response.get("unexpected", False),
+                "dense recovery response status/body/route invalid")
+        requested = response.get("requested_unix_ms")
+        completed = response.get("completed_unix_ms")
+        require(type(requested) is int and type(completed) is int
+                and previous_completion <= requested <= completed <= sustained,
+                "dense recovery response timestamp invalid or outside actual recovery")
+        previous_completion = completed
+    require(recovery_samples[-1]["completed_unix_ms"] - recovery_samples[0]["requested_unix_ms"] >= 2000,
+            "dense recovery responses span less than two seconds")
+    if fault == "mongo":
+        require(times["publication_verified"] <= recovery_samples[0]["requested_unix_ms"],
+                "dense traffic precedes verified publication")
     offset = clock["pod_minus_host_estimate_ms"]
     uncertainty = clock["measurement_bound_ms"]
     require(isinstance(offset, (int, float)) and isinstance(uncertainty, (int, float))
@@ -441,7 +458,10 @@ def self_check():
         "sustained_gateway_recovered": 14000, "quota_verified": 15000}.items()}
     ha = {"result": "pass", "phase": "redis", "phase_complete": True, "complete": False,
           "checks": [{"check": "redis-promotion", "target_still_paused": True, "timestamps": timestamps,
-                      "final_quota_seconds": 5, "sustained_gateway": [{"status": 200}] * 3}]}
+                      "final_quota_seconds": 5, "sustained_gateway": [
+                          {"status": 200, "body_valid": True, "backend_marker_present": True, "route_marker_valid": True,
+                           "requested_unix_ms": start + 11500 + n * 234,
+                           "completed_unix_ms": start + 11510 + n * 234} for n in range(10)]}]}
     clock = {"pod_minus_host_estimate_ms": 0, "measurement_bound_ms": 1}
     assert assess(load, ha, "redis", clock)["passed"]
     during = copy.deepcopy(load)
@@ -452,7 +472,7 @@ def self_check():
     check = mongo["checks"][0]; check["check"] = "mongo-election-publication"
     check["recovery_seconds"] = 4
     del check["final_quota_seconds"]
-    check["timestamps"]["publication_verified"] = stamp(start + 13000)
+    check["timestamps"]["publication_verified"] = stamp(start + 11000)
     check["timestamps"]["policy_and_traffic_verified"] = stamp(start + 15000)
     del check["timestamps"]["quota_verified"]
     assert assess(load, mongo, "mongo", clock)["passed"]
@@ -469,6 +489,21 @@ def self_check():
     healthy_baseline["checks"][-1]["timestamps"] = {"started": stamp(start - 20000), "completed": stamp(start - 10000)}
     assert not assess(load, healthy_baseline, "redis", clock)["operator_restorations_during_observation"]
     invalid = []
+    sparse = copy.deepcopy(ha); sparse["checks"][0]["sustained_gateway"] = [{"status": 200}] * 3
+    invalid.append((load, sparse))
+    for field, value in (("body_valid", False), ("backend_marker_present", False), ("route_marker_valid", False),
+                         ("status", 503), ("completed_unix_ms", start + 14001), ("requested_unix_ms", start + 10000)):
+        invalid_dense = copy.deepcopy(ha)
+        invalid_dense["checks"][0]["sustained_gateway"][0][field] = value
+        invalid.append((load, invalid_dense))
+    missing_time = copy.deepcopy(ha)
+    del missing_time["checks"][0]["sustained_gateway"][0]["requested_unix_ms"]
+    invalid.append((load, missing_time))
+    short_span = copy.deepcopy(ha)
+    for n, sample in enumerate(short_span["checks"][0]["sustained_gateway"]):
+        sample.update(requested_unix_ms=start + 11500 + n * 100, completed_unix_ms=start + 11510 + n * 100)
+    invalid.append((load, short_span))
+
     missing = copy.deepcopy(ha); del missing["checks"][0]["timestamps"]["fault_start"]
     invalid.append((load, missing))
     late = copy.deepcopy(ha); late["checks"][0]["timestamps"]["quota_verified"] = stamp(start + 61000)
