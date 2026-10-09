@@ -46,11 +46,36 @@ SOURCE = r'''
 import com.mongodb.MongoException;
 import com.mongodb.client.MongoClients;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import org.bson.Document;
 import org.fluxgate.adapter.mongo.policy.MongoPolicyRepository;
 
 public final class PublicationProbe {
+  static Document attemptEvidence(int attempt, long wallStart, long nanoStart, MongoException failure) {
+    long wallEnd = System.currentTimeMillis();
+    var frames = new ArrayList<Document>();
+    if (failure != null) {
+      for (StackTraceElement frame : failure.getStackTrace()) {
+        // Exact packaged repository class, including its generated inner classes only.
+        String name = frame.getClassName();
+        if (name.equals("org.fluxgate.adapter.mongo.policy.MongoPolicyRepository")
+            || name.startsWith("org.fluxgate.adapter.mongo.policy.MongoPolicyRepository$")) {
+          frames.add(new Document("class", name).append("method", frame.getMethodName())
+              .append("line", frame.getLineNumber()));
+        }
+      }
+    }
+    return new Document("attempt", attempt)
+        .append("outcome", failure == null ? "success" : "mongo-failure")
+        .append("startedAtUtc", Instant.ofEpochMilli(wallStart).toString())
+        .append("startedAtUnixMs", wallStart)
+        .append("finishedAtUtc", Instant.ofEpochMilli(wallEnd).toString())
+        .append("finishedAtUnixMs", wallEnd)
+        .append("elapsedSeconds", (System.nanoTime() - nanoStart) / 1e9)
+        .append("fluxGateFrames", frames);
+  }
+
   public static void main(String[] args) throws Exception {
     Document input = Document.parse(new String(System.in.readAllBytes(), StandardCharsets.UTF_8));
     String id = input.getString("ruleSetId");
@@ -90,9 +115,12 @@ public final class PublicationProbe {
       var rules = baseline.getList("rules", Document.class);
       rules.get(0).put("name", "Resilience metadata proof " + operation);
       var failures = new ArrayList<String>();
+      var attemptTimings = new ArrayList<Document>();
       long start = System.nanoTime();
       long deadline = start + input.getInteger("deadline") * 1_000_000_000L;
       while (true) {
+        long attemptWallStart = System.currentTimeMillis();
+        long attemptNanoStart = System.nanoTime();
         try {
           Document result = repository.publish(id, expected, rules,
               baseline.get("accessControl", Document.class), false, null, operation,
@@ -111,6 +139,8 @@ public final class PublicationProbe {
             throw new IllegalStateException("publication coherence or idempotency failed");
           if (System.nanoTime() > deadline)
             throw new IllegalStateException("successful publication exceeded recovery deadline");
+          attemptTimings.add(attemptEvidence(attemptTimings.size() + 1,
+              attemptWallStart, attemptNanoStart, null));
           Document evidence = new Document("passed", true).append("published", true)
               .append("operationId", operation)
               .append("beforeRevision", expected).append("revision", result.get("revision"))
@@ -118,7 +148,8 @@ public final class PublicationProbe {
               .append("checksum", result.get("checksum")).append("epochPreserved", true)
               .append("majorityReadVerified", true).append("idempotentReplay", true)
               .append("elapsedSeconds", (System.nanoTime() - start) / 1e9)
-              .append("transientFailureClasses", failures);
+              .append("transientFailureClasses", failures)
+              .append("attemptTimings", attemptTimings);
           System.out.println("PROOF:" + evidence.toJson());
           return;
         } catch (MongoException failure) {
@@ -126,6 +157,8 @@ public final class PublicationProbe {
               || failure.getCode() == 13 || failure.getCode() == 18) throw failure;
           // Class only: messages can include connection details or credentials.
           failures.add(failure.getClass().getSimpleName());
+          attemptTimings.add(attemptEvidence(attemptTimings.size() + 1,
+              attemptWallStart, attemptNanoStart, failure));
           if (System.nanoTime() >= deadline) {
             if (!input.getString("expect").equals("rejected")) throw failure;
             System.out.println("PROOF:" + new Document("passed", true)
@@ -134,6 +167,7 @@ public final class PublicationProbe {
                 .append("published", null).append("commitStatus", "unknown")
                 .append("requiresRecoveryResolution", true).append("attempts", failures.size())
                 .append("availabilityFailureClasses", failures)
+                .append("attemptTimings", attemptTimings)
                 .append("elapsedSeconds", (System.nanoTime() - start) / 1e9).toJson());
             return;
           }
@@ -256,7 +290,83 @@ def create_probe(kube, fixture, state, state_path):
     save_state(state_path, state)
 
 
-def self_check():
+def check_packaged_diagnostics(jar_path):
+    """Compile the deployed probe and exercise its evidence without a Mongo connection."""
+    test_source = r'''
+import com.mongodb.MongoException;
+import java.time.Instant;
+import java.util.List;
+import java.util.Set;
+import org.bson.Document;
+
+final class PublicationDiagnosticsSelfCheck {
+  public static void main(String[] args) {
+    String privateMarker = "SECRET_URI_PASSWORD_CERT_ARGS";
+    var failure = new MongoException(privateMarker);
+    failure.initCause(new IllegalStateException(privateMarker));
+    failure.setStackTrace(new StackTraceElement[] {
+        new StackTraceElement("com.mongodb.driver.Socket", "connect", privateMarker, 900),
+        new StackTraceElement("org.fluxgate.adapter.mongo.policy.MongoPolicyRepository",
+            "ensurePublicationIndexes", privateMarker, 55),
+        new StackTraceElement("org.fluxgate.adapter.mongo.policy.MongoPolicyRepository$Nested",
+            "publish", privateMarker, 144),
+        new StackTraceElement("org.fluxgate.adapter.mongo.policy.Untrusted", privateMarker,
+            privateMarker, 7)
+    });
+    long wallStart = System.currentTimeMillis();
+    long nanoStart = System.nanoTime() - 1_000_000_000L;
+    Document failed = PublicationProbe.attemptEvidence(1, wallStart, nanoStart, failure);
+    Document success = PublicationProbe.attemptEvidence(2, wallStart, nanoStart, null);
+    Set<String> schema = Set.of("attempt", "outcome", "startedAtUtc", "startedAtUnixMs",
+        "finishedAtUtc", "finishedAtUnixMs", "elapsedSeconds", "fluxGateFrames");
+    for (Document evidence : List.of(failed, success)) {
+      if (!evidence.keySet().equals(schema)
+          || evidence.getLong("startedAtUnixMs") != wallStart
+          || Instant.parse(evidence.getString("startedAtUtc")).toEpochMilli() != wallStart
+          || Instant.parse(evidence.getString("finishedAtUtc")).toEpochMilli()
+              != evidence.getLong("finishedAtUnixMs")
+          || evidence.getDouble("elapsedSeconds") < 1.0
+          || evidence.toJson().contains(privateMarker))
+        throw new AssertionError("attempt timing schema or privacy failure");
+    }
+    var frames = failed.getList("fluxGateFrames", Document.class);
+    if (failed.getInteger("attempt") != 1 || !failed.getString("outcome").equals("mongo-failure")
+        || frames.size() != 2
+        || !frames.get(0).equals(new Document("class",
+            "org.fluxgate.adapter.mongo.policy.MongoPolicyRepository")
+            .append("method", "ensurePublicationIndexes").append("line", 55))
+        || !frames.get(1).getString("class").endsWith("$Nested")
+        || frames.stream().anyMatch(frame -> !frame.keySet().equals(Set.of("class", "method", "line")))
+        || success.getInteger("attempt") != 2 || !success.getString("outcome").equals("success")
+        || !success.getList("fluxGateFrames", Document.class).isEmpty())
+      throw new AssertionError("stack whitelist or successful attempt evidence failure");
+    failure.setStackTrace(new StackTraceElement[0]);
+    if (!PublicationProbe.attemptEvidence(3, wallStart, nanoStart, failure)
+        .getList("fluxGateFrames", Document.class).isEmpty())
+      throw new AssertionError("empty stack must remain empty");
+    System.out.println("PASS");
+  }
+}
+'''
+    with tempfile.TemporaryDirectory(prefix='publication-diagnostics-unit-') as tmp:
+        directory = Path(tmp)
+        extract_probe_libraries(jar_path, directory)
+        probe = directory / 'PublicationProbe.java'
+        test = directory / 'PublicationDiagnosticsSelfCheck.java'
+        probe.write_text(SOURCE)
+        test.write_text(test_source)
+        java_bin = Path(os.environ['JAVA_HOME']) / 'bin' if os.environ.get('JAVA_HOME') else None
+        compiler = str(java_bin / 'javac') if java_bin else 'javac'
+        runtime = str(java_bin / 'java') if java_bin else 'java'
+        checked([compiler, '--release', '17', '-cp', str(directory / '*'),
+                 '-d', str(directory), str(probe), str(test)])
+        output = checked([runtime, '-cp', str(directory) + os.pathsep + str(directory / '*'),
+                          'PublicationDiagnosticsSelfCheck'])
+        if output.strip() != b'PASS':
+            raise RuntimeError('packaged diagnostic self-check failed')
+
+
+def self_check(jar_path=None):
     from unittest.mock import patch
     checks = 0
     with tempfile.TemporaryDirectory(prefix='publication-probe-unit-') as tmp:
@@ -309,7 +419,11 @@ def self_check():
             if fault in ('uid', 'legacy'):
                 assert 'pod' not in deleted, 'never delete a foreign or application Pod'
             checks += 1
-    print(json.dumps({'result': 'PASS', 'self_checks': checks}))
+    if jar_path is not None and jar_path.is_file():
+        check_packaged_diagnostics(jar_path)
+        checks += 1
+    print(json.dumps({'result': 'PASS', 'self_checks': checks,
+                      'packaged_diagnostics_checked': jar_path is not None and jar_path.is_file()}))
 
 
 def main():
@@ -329,7 +443,7 @@ def main():
     if args.self_check:
         if not __debug__:
             parser.error('Python optimization disables proof assertions')
-        self_check()
+        self_check(args.jar)
         return
     if args.fixture is None:
         parser.error('--fixture required for live publication proof')
