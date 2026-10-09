@@ -82,6 +82,25 @@ def assess(load, ha, fault, clock):
     require(abs(schedule_end - schedule_start - 120000) <= 1, "wrong observation interval")
     require(schedule_start + uncertainty <= budget and verified + uncertainty < schedule_end - 60000,
             "fault not contained or verified recovery overlaps final minute")
+    restorations = []
+    if fault == "redis":
+        for restoration in ha.get("checks", []):
+            if restoration.get("check") != "redis-primary-placement-restoration":
+                continue
+            require(isinstance(restoration.get("performed"), bool), "restoration performed flag absent")
+            if not restoration["performed"]:
+                continue
+            restoration_stamps = restoration.get("timestamps", {})
+            restored_start = milestone(restoration_stamps.get("started"))
+            restored_end = milestone(restoration_stamps.get("completed"))
+            require(restored_start <= restored_end, "restoration timeline out of order")
+            # Clock uncertainty expands possible overlap; operator failback never
+            # extends the automatic fault window or its already-verified RTO.
+            if restored_start - uncertainty <= schedule_end and restored_end + uncertainty >= schedule_start:
+                require(restored_start >= verified, "operator restoration preceded automatic recovery")
+                require(restored_end + uncertainty < schedule_end - 60000,
+                        "operator restoration overlaps final steady minute")
+                restorations.append({"performed": True, "timestamps": restoration_stamps})
     failures = []
     for sample in samples:
         scheduled = sample["scheduled_unix_ms"] - offset
@@ -117,7 +136,8 @@ def assess(load, ha, fault, clock):
     require(tail["target_requests"] == 6000 and rules["baseline_passes"](tail),
             "final minute fails original steady-state bounds")
     return {"passed": True, "complete": False, "fault": fault, "phase_complete": True,
-            "fault_timestamps": stamps, "verified_rto_monotonic_seconds": rto,
+            "fault_timestamps": stamps, "operator_restorations_during_observation": restorations,
+            "verified_rto_monotonic_seconds": rto,
             "verified_rto_utc_seconds": (verified - budget) / 1000,
             "clock": clock, "observation_requests": len(samples),
             "all_statuses": recomputed["all_statuses"], "fault_window_failures": len(failures),
@@ -432,6 +452,18 @@ def self_check():
     check["timestamps"]["policy_and_traffic_verified"] = stamp(start + 15000)
     del check["timestamps"]["quota_verified"]
     assert assess(load, mongo, "mongo", clock)["passed"]
+    restored = copy.deepcopy(ha)
+    restored["checks"].append({"check": "redis-primary-placement-restoration", "performed": True,
+        "timestamps": {"started": stamp(start + 45000), "completed": stamp(start + 50000)}})
+    result = assess(load, restored, "redis", clock)
+    assert len(result["operator_restorations_during_observation"]) == 1
+    assert result["verified_rto_monotonic_seconds"] == 5 and result["fault_timestamps"] == timestamps
+    noop = copy.deepcopy(ha)
+    noop["checks"].append({"check": "redis-primary-placement-restoration", "performed": False})
+    assert not assess(load, noop, "redis", clock)["operator_restorations_during_observation"]
+    healthy_baseline = copy.deepcopy(restored)
+    healthy_baseline["checks"][-1]["timestamps"] = {"started": stamp(start - 20000), "completed": stamp(start - 10000)}
+    assert not assess(load, healthy_baseline, "redis", clock)["operator_restorations_during_observation"]
     invalid = []
     missing = copy.deepcopy(ha); del missing["checks"][0]["timestamps"]["fault_start"]
     invalid.append((load, missing))
@@ -460,6 +492,24 @@ def self_check():
     invalid.append((p95, ha))
     lost = copy.deepcopy(load); lost["observation"]["samples"].pop()
     invalid.append((lost, ha))
+    for completed in (start + 61000, start + 59999):
+        late_restoration = copy.deepcopy(restored)
+        late_restoration["checks"][-1]["timestamps"]["completed"] = stamp(completed)
+        invalid.append((load, late_restoration))
+    missing_restoration_time = copy.deepcopy(restored)
+    del missing_restoration_time["checks"][-1]["timestamps"]["completed"]
+    invalid.append((load, missing_restoration_time))
+    # A well-timed failback does not excuse even one failure after the original
+    # automatic recovery, including transport errors and 503s during failback.
+    for status, error in ((503, None), ("ERROR", "transport-error")):
+        failback_error = copy.deepcopy(load)
+        failback_error["observation"]["samples"][4700].update(status=status, error=error, backend_body=False)
+        try:
+            assess(failback_error, restored, "redis", clock)
+        except ValueError as error:
+            assert str(error) == "failure outside actual fault window"
+        else:
+            raise AssertionError("operator failback expanded automatic fault window")
     for bad_load, bad_ha in invalid:
         try:
             assess(bad_load, bad_ha, "redis", clock)
@@ -670,7 +720,7 @@ def self_check():
         assert evidence["exit_code"] == -15 and processes[0][0] == "publisher_preparation"
     finally:
         os.killpg, subprocess.Popen = original_killpg, original_popen
-    print(json.dumps({"result": "PASS", "self_checks": len(invalid) + 5 + rejected_polls + ordering_checks + 1}))
+    print(json.dumps({"result": "PASS", "self_checks": len(invalid) + 10 + rejected_polls + ordering_checks + 1}))
 
 
 def main():
