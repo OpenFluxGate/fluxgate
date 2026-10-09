@@ -187,6 +187,7 @@ class Proof:
         self.results = {}
         self.backups = {}
         self.store_rollback = None
+        self.api_rollback = None
         self.tls_rollback = None
         self.cold_sentinels = []
         self.ns = self.f["namespace"]
@@ -453,6 +454,9 @@ class Proof:
         mappings_path = Path(self.f["api_key_mapping_file"])
         document = json.loads(mappings_path.read_text())
         original = document["fluxgate"]["envoy"]["api-keys"]
+        retained = self.work / "retained-api-key"
+        self.api_rollback = {path: (path.read_bytes(), path.stat().st_mode & 0o777) if path.exists() else None
+                             for path in (mappings_path, retained)}
         old, new = secrets.token_urlsafe(40), secrets.token_urlsafe(40)
         identity = "rotation-" + secrets.token_hex(8)
         template = {"user-id": identity, "api-key-id": identity, "attributes": {"tenant": "resilience"}}
@@ -483,6 +487,7 @@ class Proof:
                                    "old_retired": 403, "missing": 403, "wrong": 403,
                                    "stable_logical_identity": True, "stable_bucket_epoch": True,
                                    "new_connections_and_replaced_pods": True}
+        self.api_rollback = None
         self.backups.clear()
 
     def redis(self, pod, command, password=None, readonly=False):
@@ -787,9 +792,11 @@ class Proof:
                                "files": {Path(self.f[field]): Path(self.f[field]).read_bytes()
                                          for field in ("mongo_uri_file", "redis_uri_file", "redis_password_file",
                                                        "mongo_app_password_file") if self.f.get(field)},
-                               "fixture": self.fixture_path.read_bytes()}
+                               "fixture": self.fixture_path.read_bytes(),
+                               "new_user": new_user, "ownership": secrets.token_hex(24)}
         self.mongo(admin, "c.getDB(" + json.dumps(auth_db) + ").createUser({user:" + json.dumps(new_user) +
-                   ",pwd:" + json.dumps(new_mongo_password) + ",roles:[{role:'readWrite',db:'fluxgate'}]})")
+                   ",pwd:" + json.dumps(new_mongo_password) + ",customData:" +
+                   json.dumps({"fluxgateCredentialProof": self.store_rollback["ownership"]}) + ",roles:[{role:'readWrite',db:'fluxgate'}]})")
         new_uri = urlunsplit(parsed._replace(netloc=quote(new_user) + ":" + quote(new_mongo_password) + "@" + hosts))
         self.mongo(new_uri, protected_read)
         self.mongo(uri, protected_read)  # overlap: both users still work over new connections
@@ -1004,6 +1011,22 @@ class Proof:
             server.shutdown()
             server.server_close()
 
+    def remove_owned_mongo_user(self, state):
+        if not state.get("new_user") or not state.get("ownership"):
+            return
+        user, owner = json.dumps(state["new_user"]), json.dumps(state["ownership"])
+        database = "c.getDB(" + json.dumps(state["auth_db"]) + ")"
+        output = self.mongo(state["admin"], "const u=" + database + ".getUser(" + user +
+                            "); print('OWNERSHIP:'+JSON.stringify(u ? u.customData || null : null))")
+        metadata = json.loads(mongo_marker(output, "OWNERSHIP:"))
+        if not isinstance(metadata, dict) or metadata.get("fluxgateCredentialProof") != state["ownership"]:
+            return
+        # Recheck ownership on the deleting connection, including a changed user between reads.
+        self.mongo(state["admin"], "const d=" + database + "; const u=d.getUser(" + user +
+                   "); if(u) { if(!u.customData || u.customData.fluxgateCredentialProof!==" + owner +
+                   ") throw Error('overlap ownership changed'); if(!d.dropUser(" + user +
+                   ")) throw Error('overlap user cleanup failed'); }")
+
     def cleanup_failed(self):
         failures = []
         for pod, sentinel in self.cold_sentinels:
@@ -1013,6 +1036,16 @@ class Proof:
                     failures.append("cold-restart-sentinel-cleanup")
             except Exception:
                 failures.append("cold-restart-sentinel-cleanup")
+        for path, original in (getattr(self, "api_rollback", None) or {}).items():
+            try:
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    contents, mode = original
+                    private_write(path, contents)
+                    os.chmod(path, mode)
+            except Exception:
+                failures.append("private-api-file-restore")
         if self.tls_rollback:
             for path, contents in self.tls_rollback.items():
                 try:
@@ -1050,6 +1083,8 @@ class Proof:
                            "); if(!d.getUser(" + json.dumps(user) + ")) d.createUser({user:" +
                            json.dumps(user) + ",pwd:" + json.dumps(password) +
                            ",roles:[{role:'readWrite',db:'fluxgate'}]})")
+                self.mongo(state["old_uri"], "c.getDB('fluxgate').getCollection('rate_limit_rules').findOne()")
+                self.remove_owned_mongo_user(state)
             except Exception:
                 failures.append("mongo-credential-restore")
         for (namespace, kind, name), data in reversed(list(self.backups.items())):
@@ -1147,6 +1182,111 @@ def sampler_cleanup_self_test():
                 require(bool(list(Path(directory).glob("*-cleanup-failed.json"))), "cleanup failure diagnostics missing")
 
 
+def failed_rotation_cleanup_self_test():
+    """Exercise partial local writes and ownership-bound Mongo cleanup without live services."""
+    import io
+    with tempfile.TemporaryDirectory(prefix="credential-rollback-unit-") as directory:
+        for retained_exists in (False, True):
+            proof = Proof.__new__(Proof)
+            proof.work = Path(directory) / str(retained_exists)
+            proof.work.mkdir()
+            mapping = proof.work / "mapping"
+            original = b'{"fluxgate":{"envoy":{"api-keys":[]}}}\n'
+            private_write(mapping, original)
+            os.chmod(mapping, 0o640)
+            retained = proof.work / "retained-api-key"
+            if retained_exists:
+                private_write(retained, b"original-retained")
+                os.chmod(retained, 0o640)
+            proof.f = {"api_key_mapping_file": str(mapping), "quota_path": "/quota", "load_path": "/load"}
+            proof.results, proof.backups = {}, {("local", "secret", "mapping"): {}}
+            proof.store_rollback, proof.tls_rollback, proof.cold_sentinels = None, None, []
+            proof.policy_stamp = lambda: {"revision": 1}
+            proof.api_mapping = lambda entries: json.dumps({"fluxgate": {"envoy": {"api-keys": entries}}})
+            statuses = iter((200, 200, 200, 403, 200, 200, 429, 403, 403))
+            proof.gateway = lambda *args: next(statuses)
+            counters = iter(({"bucket": b"before"}, {"bucket": b"overlap"}, {"bucket": b"final"}))
+            proof.counter_snapshot = lambda *args: next(counters)
+            def fail_remote(*args, **kwargs):
+                raise ProofError("offline Secret restore failure")
+            proof.kube, proof.rollout, proof.envoy_rollout = fail_remote, lambda: None, lambda: None
+            writer = globals()["private_write"]
+            def partial_write(path, content):
+                writer(path, content)
+                if Path(path) == retained:
+                    raise ProofError("offline retained-key partial write failure")
+            globals()["private_write"] = partial_write
+            try:
+                try:
+                    proof.api_keys()
+                except ProofError:
+                    pass
+                else:
+                    raise ProofError("partial write negative did not execute")
+            finally:
+                globals()["private_write"] = writer
+            with contextlib.redirect_stdout(io.StringIO()):
+                proof.cleanup_failed()
+            require(mapping.read_bytes() == original and mapping.stat().st_mode & 0o777 == 0o640,
+                    "API partial write failed to restore original mapping bytes/mode independently")
+            require((retained.read_bytes() == b"original-retained" and retained.stat().st_mode & 0o777 == 0o640)
+                    if retained_exists else not retained.exists(), "API partial write lost retained-key bytes/mode/absence")
+            # A local restore failure must not skip the independently captured key file.
+            private_write(retained, b"partial-again")
+            def failed_mapping_restore(path, content):
+                if Path(path) == mapping:
+                    raise ProofError("offline local mapping restore failure")
+                writer(path, content)
+            globals()["private_write"] = failed_mapping_restore
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    proof.cleanup_failed()
+            finally:
+                globals()["private_write"] = writer
+            require(retained.read_bytes() == b"original-retained" if retained_exists else not retained.exists(),
+                    "failed mapping restore skipped independent key cleanup")
+            # Successful completion commits this phase; later failures must not undo it.
+            statuses = iter((200, 200, 200, 403, 200, 200, 429, 403, 403))
+            counters = iter(({"bucket": b"before"}, {"bucket": b"overlap"}, {"bucket": b"final"}))
+            proof.api_keys()
+            committed = mapping.read_bytes(), retained.read_bytes()
+            proof.cleanup_failed()
+            require((mapping.read_bytes(), retained.read_bytes()) == committed,
+                    "completed API phase was rolled back by later cleanup")
+        for owned, old_auth_ok in ((True, True), (False, True), (True, False)):
+            proof = Proof.__new__(Proof)
+            proof.backups, proof.tls_rollback, proof.cold_sentinels = {}, None, []
+            proof.fixture_path = Path(directory) / "fixture"
+            proof.f = {"redis_pods": []}
+            proof.store_rollback = {"files": {}, "fixture": b"{}", "old_uri": "mongodb://old:offline@local/fluxgate",
+                                    "admin": "admin-offline", "auth_db": "fluxgate", "old_password": "offline",
+                                    "new_password": None, "new_user": "new-owned", "ownership": "owned-marker"}
+            calls = []
+            def mongo(uri, javascript, *args):
+                if uri == proof.store_rollback["old_uri"]:
+                    calls.append("old-auth")
+                    require(old_auth_ok, "offline old auth rejection")
+                elif "OWNERSHIP:" in javascript:
+                    calls.append("ownership")
+                    return ('OWNERSHIP:' + json.dumps({"fluxgateCredentialProof": "owned-marker" if owned else "foreign"})).encode()
+                elif "dropUser" in javascript:
+                    calls.append("drop")
+                    require("fluxgateCredentialProof" in javascript and "owned-marker" in javascript,
+                            "Mongo deletion lacks final ownership check")
+                else:
+                    calls.append("restore-old")
+                return b"AUTH_PROBE_OK"
+            proof.mongo = mongo
+            with contextlib.redirect_stdout(io.StringIO()):
+                proof.cleanup_failed()
+            require(calls[:2] == ["restore-old", "old-auth"], "Mongo overlap cleanup did not verify restored old auth")
+            require(("drop" in calls) == (owned and old_auth_ok), "Mongo cleanup deleted foreign user or left owned overlap")
+            proof.store_rollback = None
+            calls.clear()
+            proof.cleanup_failed()
+            require(not calls, "completed store phase deleted its active user")
+
+
 def backend_body_self_test():
     """Exercise the gateway's real 200 control against fake responses containing the marker."""
     proof = Proof.__new__(Proof)
@@ -1183,6 +1323,7 @@ def backend_body_self_test():
 
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
+    failed_rotation_cleanup_self_test()
     backend_body_self_test()
     sampler_cleanup_self_test()
     require(redis_hash_contents(b"revision\n1\nepoch\nstable") ==
