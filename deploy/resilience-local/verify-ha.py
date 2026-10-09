@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Serial fault proof for the isolated fixture. Root must schedule this run exclusively."""
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import io
 import json
@@ -14,6 +15,11 @@ import threading
 import uuid
 import zipfile
 
+
+
+def utc_milestone():
+    unix_ms = time.time_ns() // 1_000_000
+    return {'unix_ms': unix_ms, 'utc': datetime.fromtimestamp(unix_ms / 1000, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')}
 
 
 def canonical_lua_sha(script):
@@ -192,7 +198,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         result = subprocess.check_output(entry['ctr'] + ['ls'], text=True, timeout=10)
         return next(line.split()[-1] for line in result.splitlines() if line.split() and line.split()[0] == entry['container'])
 
-    def signal(pod, action):
+    def signal(pod, action, timestamps=None):
         if action == 'STOP':
             assert pod in fixture['mongo_pods'] + fixture['redis_pods']
             resource = obj('pod', pod)
@@ -208,15 +214,19 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             state = next(line.split()[-1] for line in existing.splitlines() if line.split() and line.split()[0] == entry['container'])
             assert state == 'RUNNING', 'Cannot take ownership of an already paused task'
             paused[pod] = entry
+            if timestamps is not None:
+                timestamps['fault_start'] = utc_milestone()
             subprocess.run(paused[pod]['ctr'] + ['pause', paused[pod]['container']], check=True, timeout=10, stdout=subprocess.DEVNULL)
             assert task_state(pod) == 'PAUSED', 'Container task was not actually frozen'
+            if timestamps is not None:
+                timestamps['paused_verified'] = utc_milestone()
         else:
             if task_state(pod) == 'PAUSED':
                 subprocess.run(paused[pod]['ctr'] + ['resume', paused[pod]['container']], check=True, timeout=10, stdout=subprocess.DEVNULL)
             assert task_state(pod) == 'RUNNING'
             paused.pop(pod)
 
-    def sustained_traffic(started, seconds, while_down=None, expected_header=None):
+    def sustained_traffic(started, seconds, while_down=None, expected_header=None, timestamps=None):
         streak = 0
         observations = []
         while time.monotonic() - started < seconds:
@@ -233,6 +243,8 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             if streak == 3:
                 if while_down:
                     assert while_down()
+                if timestamps is not None:
+                    timestamps['sustained_gateway_recovered'] = utc_milestone()
                 return round(time.monotonic() - started, 3), observations[-3:]
             time.sleep(1)
         raise RuntimeError(f'Three consecutive real Gateway 200 responses exceeded {seconds}s')
@@ -437,7 +449,8 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             fault_started = time.monotonic()
             fault_deadline = fault_started + 30
             phase_evidence['fault_started_monotonic'] = fault_started
-            signal(old_primary['pod'], 'STOP')
+            phase_evidence['timestamps'] = {'rto_budget_started': utc_milestone()}
+            signal(old_primary['pod'], 'STOP', phase_evidence['timestamps'])
             load_key = 'fluxgate:bucket:{resilience-limits:load-rule:key:' + fixture.get('api_key_id', 'resilience-key') + '}:hourly-fw'
             assert owner(load_key)[0] == old_id, 'Continuous high-capacity load must hit the failed quota primary shard'
             outage_samples = start_sampler(fault_started)
@@ -454,7 +467,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             def unchanged_paused_clients():
                 assert authz_processes() == authz_before, 'Redis recovery changed the application client processes'
                 return task_state(old_primary['pod']) == 'PAUSED'
-            recovery_seconds, sustained = sustained_traffic(fault_started, 30, unchanged_paused_clients)
+            recovery_seconds, sustained = sustained_traffic(fault_started, 30, unchanged_paused_clients, timestamps=phase_evidence['timestamps'])
             phase_evidence.update({'recovery_seconds': recovery_seconds, 'sustained_gateway': sustained})
             assert time.monotonic() < fault_deadline
             request(fixture['quota_path'], {200})
@@ -470,9 +483,10 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             assert unchanged_paused_clients()
             assert time.monotonic() <= fault_deadline, 'Final quota checks exceeded global 30s fault budget'
             phase_evidence['final_quota_seconds'] = round(time.monotonic() - fault_started, 3)
+            phase_evidence['timestamps']['quota_verified'] = utc_milestone()
             stop_sampler()
             assert not any('unexpected' in sample for sample in outage_samples)
-            record('redis-promotion', old_primary_id=old_id, new_primary_id=new_id, target_still_paused=old_primary['pod'] in paused,
+            record('redis-promotion', timestamps=phase_evidence['timestamps'], old_primary_id=old_id, new_primary_id=new_id, target_still_paused=old_primary['pod'] in paused,
                    final_quota_seconds=phase_evidence['final_quota_seconds'], recovery_seconds=recovery_seconds, identity_promotion_seconds=seconds, sustained_gateway=sustained, task_state=task_state(old_primary['pod']), continuous_outage_samples=outage_samples, load_key_owned_failed_shard=True, bucket_key=key, raw_before=before, raw_after_promotion=after, raw_exhausted=exhausted,
                    script_provenance=script_provenance, script_exists_old_primary_before_flush=True, cache_absent_before_promotion=True, cache_loaded_after_real_request=True, authz_processes_unchanged=authz_before, rpo='Observed counter preserved; asynchronous replication is not zero-loss consensus')
             fault_deadline = None
@@ -485,7 +499,8 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             prepare_publisher()
             old_primary = mongo_primary()
             fault_started = time.monotonic()
-            signal(old_primary, 'STOP')
+            phase_evidence['timestamps'] = {'rto_budget_started': utc_milestone()}
+            signal(old_primary, 'STOP', phase_evidence['timestamps'])
             outage_samples = start_sampler(fault_started)
             # Repository publish begins during election and retries one stable operation ID.
             published = publisher('retry')
@@ -499,12 +514,14 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             expected_rules[0]['name'] = 'Resilience metadata proof ' + published['operationId']
             assert current['rules'] == expected_rules and current['accessControl'] == baseline['accessControl']
             assert int(current['revision']) == int(baseline['revision']) + 1 and current['checksum'] == published['checksum'] and current['operationId'] == published['operationId']
-            recovery_seconds, sustained = sustained_traffic(fault_started, 30, lambda: task_state(old_primary) == 'PAUSED')
+            phase_evidence['timestamps']['publication_verified'] = utc_milestone()
+            recovery_seconds, sustained = sustained_traffic(fault_started, 30, lambda: task_state(old_primary) == 'PAUSED', timestamps=phase_evidence['timestamps'])
             if args.phase == 'all':
                 request(fixture['quota_path'], {429})
             stop_sampler()
             assert not any('unexpected' in sample for sample in outage_samples)
-            record('mongo-election-publication', old_primary=old_primary, new_primary=new_primary,
+            phase_evidence['timestamps']['policy_and_traffic_verified'] = utc_milestone()
+            record('mongo-election-publication', timestamps=phase_evidence['timestamps'], old_primary=old_primary, new_primary=new_primary,
                    target_still_paused=task_state(old_primary) == 'PAUSED', recovery_seconds=recovery_seconds, sustained_gateway=sustained, continuous_outage_samples=outage_samples, publication=published, policy=current)
             baseline = current
             signal(old_primary, 'CONT')
