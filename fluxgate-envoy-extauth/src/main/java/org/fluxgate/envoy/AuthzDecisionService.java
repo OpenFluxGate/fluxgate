@@ -2,6 +2,7 @@ package org.fluxgate.envoy;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.Semaphore;
 import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.engine.RateLimitEngine;
@@ -22,15 +23,26 @@ public final class AuthzDecisionService {
   private final RateLimitEngine engine;
   private final String ruleSetId;
   private final RateLimitRuleSetProvider provider;
+  private final Semaphore decisionSlots;
 
   @Autowired
   public AuthzDecisionService(
       RateLimitEngine engine,
       RateLimitRuleSetProvider provider,
-      @Value("${fluxgate.envoy.rule-set-id:gateway-pilot}") String ruleSetId) {
+      @Value("${fluxgate.envoy.rule-set-id:gateway-pilot}") String ruleSetId,
+      @Value("${fluxgate.envoy.max-concurrent-decisions:32}") int maxConcurrentDecisions) {
+    if (maxConcurrentDecisions <= 0) {
+      throw new IllegalArgumentException("maxConcurrentDecisions must be positive");
+    }
     this.engine = Objects.requireNonNull(engine, "engine");
     this.provider = provider;
     this.ruleSetId = Objects.requireNonNull(ruleSetId, "ruleSetId");
+    this.decisionSlots = new Semaphore(maxConcurrentDecisions);
+  }
+
+  public AuthzDecisionService(
+      RateLimitEngine engine, RateLimitRuleSetProvider provider, String ruleSetId) {
+    this(engine, provider, ruleSetId, 32);
   }
 
   /** Compatibility constructor for direct embedding; production always injects the provider. */
@@ -66,6 +78,10 @@ public final class AuthzDecisionService {
   }
 
   public AuthzDecision decide(String selectedRuleSetId, RequestContext context, long permits) {
+    // Admission never queues and precedes policy I/O, consumption, and synchronous audit work.
+    if (!decisionSlots.tryAcquire()) {
+      return AuthzDecision.of(503);
+    }
     try {
       if (permits <= 0) {
         return AuthzDecision.of(503);
@@ -99,6 +115,8 @@ public final class AuthzDecisionService {
     } catch (RuntimeException e) {
       log.warn("Envoy authorization backend failed", e);
       return AuthzDecision.of(503);
+    } finally {
+      decisionSlots.release();
     }
   }
 }
