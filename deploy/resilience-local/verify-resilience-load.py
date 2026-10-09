@@ -132,6 +132,63 @@ def kube(fixture, arguments):
     return process.stdout
 
 
+class ReadinessFailure(ValueError):
+    def __init__(self, reason, stage="load_readiness"):
+        super().__init__(reason)
+        self.stage = stage
+
+
+def wait_readiness(fixture, load, query=kube, now=time.monotonic, sleep=time.sleep):
+    """A missing atomic marker is pending; API/exec failures are genuine failures."""
+    deadline = now() + 60
+    identity = None
+    while now() < deadline:
+        if load.poll() is not None:
+            raise ReadinessFailure("load exited before readiness marker", "load_warmup")
+        pods = json.loads(query(fixture, ["get", "pods", "-l", "fluxgate.io/load-phase=resilience", "-o", "json"]))
+        require(len(pods["items"]) <= 1, "ambiguous resilience generator")
+        if not pods["items"]:
+            require(identity is None, "owned generator disappeared before readiness")
+        else:
+            pod = pods["items"][0]
+            metadata = pod["metadata"]
+            name = metadata["name"]
+            labels = metadata.get("labels", {})
+            require(labels.get("fluxgate.io/load-run") == name
+                    and labels.get("fluxgate.io/load-phase") == "resilience"
+                    and labels.get("app") == "fluxgate-load-generator"
+                    and labels.get("fluxgate.io/environment") == "local-ephemeral",
+                    "generator ownership mismatch")
+            current = (name, metadata.get("uid"), metadata.get("creationTimestamp"))
+            require(all(current), "generator identity absent")
+            require(identity is None or current == identity, "owned generator identity changed")
+            identity = current
+            require(not metadata.get("deletionTimestamp"), "owned generator is being deleted")
+            phase = pod.get("status", {}).get("phase")
+            require(phase not in ("Failed", "Succeeded"), "generator terminated before readiness")
+            if phase == "Running":
+                value = query(fixture, ["exec", name, "--", "python3", "-c",
+                    "from pathlib import Path; p=Path('/tmp/fluxgate-load-ready.json'); print(p.read_text() if p.exists() else 'null')"])
+                marker = json.loads(value)
+                if marker is not None:
+                    require(marker.get("load_pod_name") == name and marker.get("run_label") == name
+                            and marker.get("phase") == "resilience" and marker.get("planned_requests") == 12000,
+                            "wrong readiness marker")
+                    require(marker.get("target_rps") == 100 and marker.get("duration_seconds") == 120,
+                            "wrong readiness schedule")
+                    if load.poll() is not None:
+                        raise ReadinessFailure("load exited while reading readiness marker", "load_warmup")
+                    # Re-read identity before authorizing a fault against this observation.
+                    confirmed = json.loads(query(fixture, ["get", "pod", name, "-o", "json"]))
+                    final = confirmed.get("metadata", {})
+                    require((final.get("name"), final.get("uid"), final.get("creationTimestamp")) == identity
+                            and final.get("labels") == labels and not final.get("deletionTimestamp"),
+                            "owned generator identity or ownership changed during readiness")
+                    return name, marker, {"name": name, "uid": identity[1], "creationTimestamp": identity[2]}
+        sleep(0.25)
+    raise ReadinessFailure("load readiness marker timed out")
+
+
 def clock_measurement(fixture, pod):
     before = time.time_ns() / 1000000
     pod_ms = int(kube(fixture, ["exec", pod, "--", "python3", "-c", "import time; print(time.time_ns())"])) / 1000000
@@ -159,10 +216,12 @@ def coordinate(args):
     processes = []
     handles = []
     summary = {"passed": False, "complete": False, "fault": args.fault}
+    stage = "fixture_preflight"
     try:
         active = json.loads(kube(fixture, ["get", "pods", "-l", "fluxgate.io/load-phase=resilience", "-o", "json"]))
         require(not active["items"], "another resilience generator is active")
         if args.fault == "redis":
+            stage = "identity_preparation"
             with (proof / "prepare.log").open("w") as log:
                 prepared = subprocess.run([sys.executable, str(HERE / "prepare-ha-identity.py"),
                     "--fixture", str(fixture_file), "--output", str(proof / "identity.json")],
@@ -171,36 +230,19 @@ def coordinate(args):
             identity = json.loads((proof / "identity.json").read_text())
             require(identity.get("passed") is True and identity.get("policy_pointer_unchanged") is True
                     and identity.get("existing_counters_deleted_or_reset") is False, "identity preparation changed policy/counters")
+        stage = "load_start"
         log = (proof / "load.log").open("w"); handles.append(log)
         load = subprocess.Popen([sys.executable, str(HERE / "verify-load.py"), "--fixture", str(fixture_file),
             "--phase", "resilience", "--output", str(proof / "raw-load.json")], stdout=log, stderr=log)
         processes.append(("load", load))
-        deadline = time.monotonic() + 60
-        marker = None
-        while time.monotonic() < deadline:
-            require(load.poll() is None, "load exited before readiness marker")
-            pods = json.loads(kube(fixture, ["get", "pods", "-l", "fluxgate.io/load-phase=resilience", "-o", "json"]))
-            require(len(pods["items"]) <= 1, "ambiguous resilience generator")
-            if pods["items"]:
-                pod = pods["items"][0]
-                name = pod["metadata"]["name"]
-                require(pod["metadata"]["labels"].get("fluxgate.io/load-run") == name, "generator ownership mismatch")
-                # cat returns a sentinel until the atomic marker exists; no credentials in arguments.
-                if pod["status"].get("phase") == "Running":
-                    text = kube(fixture, ["exec", name, "--", "python3", "-c",
-                        "from pathlib import Path; p=Path('/tmp/fluxgate-load-ready.json'); print(p.read_text() if p.exists() else 'null')"])
-                    marker = json.loads(text)
-                    if marker is not None:
-                        require(marker.get("load_pod_name") == name and marker.get("run_label") == name
-                                and marker.get("phase") == "resilience" and marker.get("planned_requests") == 12000,
-                                "wrong readiness marker")
-                        require(marker.get("target_rps") == 100 and marker.get("duration_seconds") == 120,
-                                "wrong readiness schedule")
-                        break
-            time.sleep(0.25)
-        require(marker is not None, "load readiness marker timed out")
+        stage = "load_readiness"
+        name, marker, pod_identity = wait_readiness(fixture, load)
+        stage = "clock_alignment"
         clock = clock_measurement(fixture, name)
-        (proof / "readiness.json").write_text(json.dumps({"marker": marker, "clock": clock}, indent=2) + "\n")
+        (proof / "readiness.json").write_text(json.dumps({"marker": marker, "clock": clock, "pod_identity": pod_identity}, indent=2) + "\n")
+        if load.poll() is not None:
+            raise ReadinessFailure("load exited before fault launch", "load_warmup")
+        stage = "fault_execution"
         log = (proof / "ha.log").open("w"); handles.append(log)
         ha = subprocess.Popen([sys.executable, str(HERE / "verify-ha.py"), "--fixture", str(fixture_file),
             "--phase", args.fault, "--proof", str(proof / "ha")], stdout=log, stderr=log)
@@ -213,9 +255,12 @@ def coordinate(args):
         require(load_data["target"]["generator_pod"] == name
                 and load_data["observation"]["schedule_start_unix_ms"] == marker["schedule_start_unix_ms"],
                 "raw load does not match readiness invocation")
+        stage = "evidence_assessment"
         summary = assess(load_data, json.loads(raw_ha.read_text()), args.fault, clock)
         summary["raw_proofs"] = {"load": digest(raw_load), "ha": digest(raw_ha), "readiness": digest(proof / "readiness.json")}
     except Exception as error:
+        summary["failure_stage"] = getattr(error, "stage", stage)
+        summary["fault_process_started"] = any(name == "ha" for name, _ in processes)
         summary["failure"] = str(error) if isinstance(error, ValueError) else type(error).__name__
     finally:
         # Do not kill a fault subprocess: its finally block must restore the real primary.
@@ -313,7 +358,98 @@ def self_check():
         except (ValueError, KeyError):
             continue
         raise AssertionError("invalid fault/load proof accepted")
-    print(json.dumps({"result": "PASS", "self_checks": len(invalid) + 3}))
+    # Exercise the orchestration boundary without kubectl, subprocesses or faults.
+    pod = {"metadata": {"name": "owned", "uid": "original-uid", "creationTimestamp": "2026-10-10T00:00:00Z",
+                           "labels": {"fluxgate.io/load-run": "owned", "fluxgate.io/load-phase": "resilience",
+                                      "app": "fluxgate-load-generator", "fluxgate.io/environment": "local-ephemeral"}},
+           "status": {"phase": "Running"}}
+    marker = {"load_pod_name": "owned", "run_label": "owned", "phase": "resilience",
+              "planned_requests": 12000, "target_rps": 100, "duration_seconds": 120}
+    class FakeLoad:
+        def __init__(self, exits=None):
+            self.exits = iter(exits or [])
+        def poll(self):
+            return next(self.exits, None)
+    def polling(responses, process=None):
+        remaining = iter(responses)
+        queries = []
+        ticks = [0]
+        def query(_, arguments):
+            queries.append(arguments)
+            response = next(remaining)
+            if isinstance(response, Exception):
+                raise response
+            return json.dumps(response)
+        def sleep(seconds):
+            ticks[0] += seconds
+        result = wait_readiness({}, process or FakeLoad(), query, lambda: ticks[0], sleep)
+        return result, queries
+    result, queries = polling([{"items": [pod]}, None, {"items": [pod]}, marker, pod])
+    assert result[0] == "owned" and result[2]["uid"] == "original-uid" and len(queries) == 5
+    # Run the actual exec payload against a missing local path: absent is JSON null,
+    # not a nonzero cat exit. This uses no Kubernetes or live fixture.
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        expression = queries[1][-1].replace("/tmp/fluxgate-load-ready.json", str(Path(directory) / "ready.json"))
+        absent = subprocess.run([sys.executable, "-c", expression], capture_output=True, text=True)
+        assert absent.returncode == 0 and json.loads(absent.stdout) is None
+    rejected_polls = 0
+    replacement = copy.deepcopy(pod); replacement["metadata"]["uid"] = "replacement"
+    wrong_owner = copy.deepcopy(pod); wrong_owner["metadata"]["labels"]["fluxgate.io/load-run"] = "other"
+    for responses, process, reason in [
+        ([], FakeLoad([1]), "load exited"),
+        ([{"items": [pod]}, None], FakeLoad([None, 1]), "load exited"),
+        ([{"items": [pod]}, marker], FakeLoad([None, 1]), "load exited"),
+        ([{"items": [pod]}, None, {"items": [replacement]}], None, "identity changed"),
+        ([{"items": [pod]}, None, {"items": []}], None, "disappeared"),
+        ([{"items": [wrong_owner]}], None, "ownership mismatch"),
+        ([{"items": [pod]}, ValueError("coordination kubectl failed")], None, "kubectl failed"),
+        ([{"items": [pod]}, marker, replacement], None, "identity or ownership changed")]:
+        try:
+            polling(responses, process)
+        except ValueError as error:
+            assert reason in str(error)
+            if "load exited" in reason:
+                assert error.stage == "load_warmup"
+            rejected_polls += 1
+            continue
+        raise AssertionError("failed/replaced generator authorized a fault")
+    # A failed warmup must retain its raw JSON and never spawn the HA process.
+    import contextlib
+    import io
+    from types import SimpleNamespace
+    original_kube, original_wait, original_popen = globals()["kube"], globals()["wait_readiness"], subprocess.Popen
+    spawned = []
+    failed_evidence = {"phase": "resilience", "result": "FAIL", "warmup": {"all_statuses": {"503": 325}}}
+    class FailedProcess:
+        pid = 123
+        def poll(self):
+            return 1
+    def fake_popen(arguments, stdout, stderr):
+        spawned.append(arguments)
+        stdout.write(json.dumps(failed_evidence))
+        stdout.flush()
+        return FailedProcess()
+    def failed_ready(*arguments):
+        raise ReadinessFailure("load exited before readiness marker", "load_warmup")
+    try:
+        globals()["kube"] = lambda *arguments: '{"items": []}'
+        globals()["wait_readiness"] = failed_ready
+        subprocess.Popen = fake_popen
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / "fixture.json"
+            fixture.write_text(json.dumps({"context": "kind-fluxgate-resilience", "namespace": "fluxgate-resilience"}))
+            proof = Path(directory) / "proof"
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert coordinate(SimpleNamespace(fixture=fixture, proof=proof, fault="mongo")) == 1
+            failed_summary = json.loads((proof / "summary.json").read_text())
+            assert failed_summary["failure_stage"] == "load_warmup"
+            assert failed_summary["fault_process_started"] is False and not (proof / "ha.log").exists()
+            assert len(spawned) == 1 and json.loads((proof / "raw-load.json").read_text()) == failed_evidence
+            assert failed_summary["raw_proofs"]["load"]["sha256"] == digest(proof / "raw-load.json")["sha256"]
+    finally:
+        globals()["kube"], globals()["wait_readiness"], subprocess.Popen = original_kube, original_wait, original_popen
+    print(json.dumps({"result": "PASS", "self_checks": len(invalid) + 6 + rejected_polls}))
 
 
 def main():
