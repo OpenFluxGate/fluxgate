@@ -193,7 +193,10 @@ class AuthzDecisionServiceTest {
     RateLimitEngine engine =
         RateLimitEngine.builder()
             .ruleSetProvider(provider)
-            .rateLimiter((ctx, rs, permits) -> RateLimitResult.allowedWithoutRule())
+            .rateLimiter(
+                (ctx, rs, permits) -> {
+                  throw new AssertionError("missing policy consumed");
+                })
             .onMissingRuleSetStrategy(RateLimitEngine.OnMissingRuleSetStrategy.DENY)
             .build();
     assertThat(new AuthzDecisionService(engine, provider, "pilot").decide(request).status())
@@ -218,5 +221,125 @@ class AuthzDecisionServiceTest {
             });
     assertThat(svc.isReady("pilot")).isFalse();
     assertThat(svc.decide(request).status()).isEqualTo(503);
+  }
+
+  @Test
+  void policyChangeCannotSwapTheValidatedSnapshotBeforeConsumption() {
+    RateLimitRule first =
+        RateLimitRule.builder("one")
+            .name("one")
+            .ruleSetId("pilot")
+            .attribute("fluxgate.counterRevision", 7L)
+            .attribute("fluxgate.counterEpoch", "epoch-a")
+            .addBand(RateLimitBand.builder(Duration.ofSeconds(60), 1).build())
+            .build();
+    org.fluxgate.core.metrics.RateLimitMetricsRecorder recorder = (ctx, result) -> {};
+    RateLimitRule wait =
+        RateLimitRule.builder("wait")
+            .name("wait")
+            .ruleSetId("pilot")
+            .onLimitExceedPolicy(org.fluxgate.core.config.OnLimitExceedPolicy.WAIT_FOR_REFILL)
+            .addBand(RateLimitBand.builder(Duration.ofSeconds(60), 1).build())
+            .build();
+    RateLimitRuleSet validated =
+        RateLimitRuleSet.builder("pilot")
+            .rules(List.of(first))
+            .keyResolver(new LimitScopeKeyResolver())
+            .metricsRecorder(recorder)
+            .build();
+    RateLimitRuleSet replacement =
+        RateLimitRuleSet.builder("pilot")
+            .rules(List.of(wait))
+            .keyResolver(new LimitScopeKeyResolver())
+            .build();
+    java.util.concurrent.atomic.AtomicInteger reads =
+        new java.util.concurrent.atomic.AtomicInteger();
+    java.util.concurrent.atomic.AtomicInteger consumed =
+        new java.util.concurrent.atomic.AtomicInteger();
+    RateLimitRuleSetProvider provider =
+        id -> java.util.Optional.of(reads.incrementAndGet() == 1 ? validated : replacement);
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(provider)
+            .rateLimiter(
+                (ctx, rs, permits) -> {
+                  consumed.incrementAndGet();
+                  assertThat(rs)
+                      .as("execute the policy that passed WAIT validation")
+                      .isSameAs(validated);
+                  assertThat(rs.getRules().get(0).getAttributes())
+                      .containsEntry("fluxgate.counterRevision", 7L)
+                      .containsEntry("fluxgate.counterEpoch", "epoch-a");
+                  assertThat(rs.getMetricsRecorder()).isSameAs(recorder);
+                  return RateLimitResult.allowed(RateLimitKey.of("global"), first, 0, 0);
+                })
+            .build();
+    var svc = new AuthzDecisionService(engine, provider, "pilot");
+    assertThat(svc.decide(request).status()).isEqualTo(200);
+    assertThat(reads).hasValue(1);
+    assertThat(consumed).hasValue(1);
+    assertThat(svc.decide(request).status()).isEqualTo(503);
+    assertThat(reads).hasValue(2);
+    assertThat(consumed).hasValue(1);
+  }
+
+  @Test
+  void invalidPolicyCannotBypassExistingRuleSetValidation() {
+    RateLimitRuleSetProvider provider =
+        id ->
+            java.util.Optional.of(
+                RateLimitRuleSet.builder(id)
+                    .rules(List.of())
+                    .keyResolver(new LimitScopeKeyResolver())
+                    .build());
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(provider)
+            .rateLimiter(
+                (ctx, rs, permits) -> {
+                  throw new AssertionError("invalid policy consumed");
+                })
+            .build();
+    var svc = new AuthzDecisionService(engine, provider, "pilot");
+    assertThat(svc.isReady("pilot")).isFalse();
+    assertThat(svc.decide(request).status()).isEqualTo(503);
+  }
+
+  @Test
+  void unavailablePolicyFailsClosedForReadinessAndDecision() {
+    RateLimitRuleSetProvider provider =
+        id -> {
+          throw new IllegalStateException("Mongo unavailable");
+        };
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(provider)
+            .rateLimiter(
+                (ctx, rs, permits) -> {
+                  throw new AssertionError("unavailable policy consumed");
+                })
+            .build();
+    var svc = new AuthzDecisionService(engine, provider, "pilot");
+    assertThat(svc.isReady("pilot")).isFalse();
+    assertThat(svc.decide(request).status()).isEqualTo(503);
+  }
+
+  @Test
+  void invalidPermitsDoNotReadOrConsumePolicy() {
+    RateLimitRuleSetProvider provider =
+        id -> {
+          throw new AssertionError("invalid request read policy");
+        };
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(provider)
+            .rateLimiter(
+                (ctx, rs, permits) -> {
+                  throw new AssertionError("invalid request consumed");
+                })
+            .build();
+    var svc = new AuthzDecisionService(engine, provider, "pilot");
+    assertThat(svc.decide("pilot", request, 0L).status()).isEqualTo(503);
+    assertThat(svc.decide("pilot", request, -1L).status()).isEqualTo(503);
   }
 }

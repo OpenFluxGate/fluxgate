@@ -114,7 +114,26 @@ public final class RateLimitEngine {
       return onMissingRuleSet(ruleSetId);
     }
 
-    RateLimitRuleSet ruleSet = optionalRuleSet.get();
+    return checkUsingSnapshot(optionalRuleSet.get(), context, permits);
+  }
+
+  /**
+   * Checks the supplied rule set without querying the provider again.
+   *
+   * <p>Callers that validate a freshly resolved policy before consumption can use this entry point
+   * to execute that exact snapshot. Access control, key resolution and limiter execution are shared
+   * with {@link #check(String, RequestContext, long)}. The caller owns resolving the snapshot and
+   * handling a missing policy; this method does not cache or refresh it.
+   *
+   * @param ruleSet the resolved policy snapshot (must not be null)
+   * @param context request-scoped information (must not be null)
+   * @param permits number of permits to consume
+   * @return the rate limit result, never null
+   */
+  public RateLimitResult checkUsingSnapshot(
+      RateLimitRuleSet ruleSet, RequestContext context, long permits) {
+    Objects.requireNonNull(ruleSet, "ruleSet must not be null");
+    Objects.requireNonNull(context, "context must not be null");
 
     // ===== access control =====
     AccessControl accessControl = ruleSet.getAccessControl();
@@ -149,7 +168,7 @@ public final class RateLimitEngine {
           "RateLimiter "
               + rateLimiter.getClass().getName()
               + " returned null for ruleSetId: "
-              + ruleSetId);
+              + ruleSet.getId());
     }
     return result;
   }

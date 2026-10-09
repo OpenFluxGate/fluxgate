@@ -172,6 +172,75 @@ class RateLimitEngineTest {
         .hasMessageContaining("returned null");
   }
 
+  @Test
+  void snapshot_entrypoint_preserves_policy_context_permits_and_matcher_without_lookup() {
+    RateLimitRuleSet snapshot = new StubRuleSetProvider("policy").ruleSet;
+    RequestContext context = RequestContext.builder().endpoint("/api/test").build();
+    org.fluxgate.core.match.PathPatternMatcher matcher = (pattern, path) -> true;
+    RateLimitResult rejected =
+        RateLimitResult.rejected(RateLimitKey.of("stub"), snapshot.getRules().get(0), 123L);
+    RateLimiter limiter =
+        new RateLimiter() {
+          @Override
+          public RateLimitResult tryConsume(RequestContext ctx, RateLimitRuleSet rs, long permits) {
+            throw new AssertionError("matcher-aware execution must be preserved");
+          }
+
+          @Override
+          public RateLimitResult tryConsume(
+              RequestContext ctx,
+              RateLimitRuleSet rs,
+              long permits,
+              org.fluxgate.core.match.PathPatternMatcher actualMatcher) {
+            assertThat(ctx).isSameAs(context);
+            assertThat(rs).isSameAs(snapshot);
+            assertThat(permits).isEqualTo(3L);
+            assertThat(actualMatcher).isSameAs(matcher);
+            return rejected;
+          }
+        };
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(
+                id -> {
+                  throw new AssertionError("snapshot must not be re-resolved");
+                })
+            .rateLimiter(limiter)
+            .pathMatcher(matcher)
+            .build();
+    assertThat(engine.checkUsingSnapshot(snapshot, context, 3L)).isSameAs(rejected);
+  }
+
+  @Test
+  void snapshot_entrypoint_keeps_acl_and_null_result_guards() {
+    RateLimitRuleSet plain = new StubRuleSetProvider("policy").ruleSet;
+    RequestContext context = RequestContext.builder().clientIp("127.0.0.1").build();
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(
+                id -> {
+                  throw new AssertionError("unexpected lookup");
+                })
+            .rateLimiter((ctx, rs, permits) -> null)
+            .build();
+    RateLimitRuleSet denied =
+        RateLimitRuleSet.builder("policy")
+            .rules(plain.getRules())
+            .keyResolver(plain.getKeyResolver())
+            .accessControl(
+                org.fluxgate.core.config.AccessControl.builder().addDeniedKey("stub").build())
+            .build();
+    assertThat(engine.checkUsingSnapshot(denied, context, 1L).getDecisionReason())
+        .isEqualTo(RateLimitResult.DecisionReason.ACCESS_DENIED);
+    assertThatThrownBy(() -> engine.checkUsingSnapshot(plain, context, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("policy");
+    assertThatThrownBy(() -> engine.checkUsingSnapshot(null, context, 1L))
+        .isInstanceOf(NullPointerException.class);
+    assertThatThrownBy(() -> engine.checkUsingSnapshot(plain, null, 1L))
+        .isInstanceOf(NullPointerException.class);
+  }
+
   // ---- Test stubs ----
 
   private static class StubRuleSetProvider implements RateLimitRuleSetProvider {

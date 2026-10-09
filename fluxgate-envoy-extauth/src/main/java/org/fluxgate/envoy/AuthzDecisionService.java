@@ -1,10 +1,12 @@
 package org.fluxgate.envoy;
 
 import java.util.Objects;
+import java.util.Optional;
 import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.engine.RateLimitEngine;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
+import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,19 +43,22 @@ public final class AuthzDecisionService {
       return false;
     }
     try {
-      return provider
-          .findById(selectedRuleSetId)
-          .filter(rs -> !rs.getRules().isEmpty())
-          .filter(
-              rs ->
-                  rs.getRules().stream()
-                      .noneMatch(
-                          rule ->
-                              rule.getOnLimitExceedPolicy() == OnLimitExceedPolicy.WAIT_FOR_REFILL))
-          .isPresent();
+      return readySnapshot(selectedRuleSetId).isPresent();
     } catch (RuntimeException e) {
       return false;
     }
+  }
+
+  private Optional<RateLimitRuleSet> readySnapshot(String selectedRuleSetId) {
+    return provider
+        .findById(selectedRuleSetId)
+        .filter(rs -> !rs.getRules().isEmpty())
+        .filter(
+            rs ->
+                rs.getRules().stream()
+                    .noneMatch(
+                        rule ->
+                            rule.getOnLimitExceedPolicy() == OnLimitExceedPolicy.WAIT_FOR_REFILL));
   }
 
   public AuthzDecision decide(RequestContext context) {
@@ -62,10 +67,19 @@ public final class AuthzDecisionService {
 
   public AuthzDecision decide(String selectedRuleSetId, RequestContext context, long permits) {
     try {
-      if (permits <= 0 || (provider != null && !isReady(selectedRuleSetId))) {
+      if (permits <= 0) {
         return AuthzDecision.of(503);
       }
-      RateLimitResult result = engine.check(selectedRuleSetId, context, permits);
+      RateLimitResult result;
+      if (provider == null) {
+        result = engine.check(selectedRuleSetId, context, permits);
+      } else {
+        Optional<RateLimitRuleSet> snapshot = readySnapshot(selectedRuleSetId);
+        if (snapshot.isEmpty()) {
+          return AuthzDecision.of(503);
+        }
+        result = engine.checkUsingSnapshot(snapshot.get(), context, permits);
+      }
       if (result.getPolicy() == OnLimitExceedPolicy.WAIT_FOR_REFILL) {
         return AuthzDecision.of(503);
       }
