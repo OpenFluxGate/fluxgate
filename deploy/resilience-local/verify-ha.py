@@ -291,8 +291,10 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             sentinel_path = mount + '/.ha-proof-' + uuid.uuid4().hex
             content = uuid.uuid4().hex
             sentinel_hash = hashlib.sha256(content.encode()).hexdigest()
-            kube(['-n', namespace, 'exec', pod, '--', 'sh', '-c', 'umask 077; cat > "$1"', 'probe', sentinel_path], stdin=content)
+            kube(['-n', namespace, 'exec', '-i', pod, '--', 'sh', '-c', 'umask 077; cat > "$1"', 'probe', sentinel_path], stdin=content)
             sentinels.append((pod, namespace, sentinel_path))
+            written = kube(['-n', namespace, 'exec', pod, '--', 'cat', sentinel_path])
+            assert hashlib.sha256(written.encode()).hexdigest() == sentinel_hash, 'PVC probe must be readable before Pod deletion'
         started = time.monotonic()
         kube(['-n', namespace, 'delete', 'pod', pod, '--wait=false'])
         def replaced():
@@ -698,7 +700,8 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                 cleanup_failures.append('probe cleanup failed: ' + kind)
         if cleanup_failures:
             raise RuntimeError('; '.join(cleanup_failures))
-    result['complete'] = True
+    result['phase_complete'] = True
+    result['complete'] = args.phase == 'all'
     (proof / 'ha.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({'result': 'pass', 'proof': str(proof / 'ha.json'), 'checks': len(checks)}, indent=2))
 
