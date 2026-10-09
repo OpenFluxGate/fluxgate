@@ -145,6 +145,9 @@ class MongoRateLimitRuleRepositoryTest {
               .ruleSetId("test-ruleset")
               .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100).build())
               .build();
+      when(collection.find(any(Bson.class))).thenReturn(findIterable);
+      when(findIterable.limit(1)).thenReturn(findIterable);
+      when(findIterable.first()).thenReturn(null);
 
       // when
       repository.save(rule);

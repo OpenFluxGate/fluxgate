@@ -49,11 +49,41 @@ public class MongoRateLimitRuleRepository implements RateLimitRuleRepository {
     return Optional.of(RateLimitRuleConverter.toDomain(ruleDoc));
   }
 
+  /** BSON fields holding the rule-set-level access control, embedded on every rule document. */
+  private static final String[] ACCESS_CONTROL_FIELDS = {
+    "allowedIps", "deniedIps", "allowedKeys", "deniedKeys"
+  };
+
+  /**
+   * Saves (upserts) a rule.
+   *
+   * <p>The domain rule carries no access control (it is rule-set level), so the access-control
+   * fields of an existing document of the same rule set are copied onto the saved document. This
+   * keeps the access control when an existing rule is updated, and embeds it on a rule newly added
+   * to a rule set that already has one.
+   */
   @Override
   public void save(RateLimitRule rule) {
     RateLimitRuleDocument ruleDoc = RateLimitRuleConverter.toDocument(rule);
     Document doc = RateLimitRuleMongoConverter.toBson(ruleDoc);
+    copyAccessControlFields(ruleDoc.getRuleSetId(), doc);
     collection.replaceOne(Filters.eq("id", rule.getId()), doc, new ReplaceOptions().upsert(true));
+  }
+
+  private void copyAccessControlFields(String ruleSetId, Document target) {
+    if (ruleSetId == null) {
+      return;
+    }
+    Document existing = collection.find(Filters.eq("ruleSetId", ruleSetId)).limit(1).first();
+    if (existing == null) {
+      return;
+    }
+    for (String field : ACCESS_CONTROL_FIELDS) {
+      Object value = existing.get(field);
+      if (value != null) {
+        target.put(field, value);
+      }
+    }
   }
 
   @Override
