@@ -226,13 +226,13 @@ def stop_preparation_group(process):
         process.wait(timeout=5)
 
 
-def prepare_owned(arguments, log, processes, name, evidence):
+def prepare_owned(arguments, log, processes, name, evidence, timeout=300):
     evidence["started_unix_ms"] = time.time_ns() // 1000000
     process = subprocess.Popen(arguments, stdout=log, stderr=log, start_new_session=True)
     processes.append((name, process))
     evidence["pid"] = process.pid
     try:
-        code = process.wait(timeout=300)
+        code = process.wait(timeout=timeout)
         require(code == 0, name + " failed")
     except BaseException:
         stop_preparation_group(process)
@@ -283,7 +283,8 @@ def coordinate(args):
             state_file = fixture_file.parent / "publication-hook-state.json"
             require(state_file.stat().st_mode & 0o077 == 0, "publisher state must be private")
             state = json.loads(state_file.read_text())
-            require(state.get("pod_uid") and state.get("ruleSetId") == fixture.get("rule_set_id", "resilience-limits")
+            require(state.get("probe_owned") is True and state.get("pod_uid") and state.get("source_authz_pod") and state.get("source_authz_pod_uid")
+                    and state.get("ruleSetId") == fixture.get("rule_set_id", "resilience-limits")
                     and isinstance(state.get("jar_sha256"), str) and len(state["jar_sha256"]) == 64
                     and all(c in "0123456789abcdef" for c in state["jar_sha256"]), "publisher provenance absent")
             baseline = state.get("baseline", {})
@@ -336,6 +337,47 @@ def coordinate(args):
                 except subprocess.TimeoutExpired:
                     summary["passed"] = False
                     summary["incomplete_subprocess_retained"] = True
+        # HA owns cleanup after real fault restoration. This fallback is idempotent
+        # and also handles a partially-created publisher when preparation fails.
+        if args.fault == "mongo" and any(name == "publisher_preparation" for name, _ in processes):
+            cleanup = {}
+            summary["publisher_cleanup"] = cleanup
+            if any(name == "ha" and process.poll() is None for name, process in processes):
+                summary["passed"] = False
+                cleanup["failure"] = "deferred while HA fault restoration is active"
+            else:
+                try:
+                    cleanup["source"] = digest(HERE / "publish-hook.py")
+                    with (proof / "publisher-cleanup.log").open("w") as log:
+                        prepare_owned([sys.executable, str(HERE / "publish-hook.py"),
+                            "--fixture", str(fixture_file), "--cleanup"], log, processes,
+                            "publisher_cleanup", cleanup, timeout=60)
+                    report = json.loads((proof / "publisher-cleanup.log").read_text())
+                    cleanup_proof = proof / "publisher-cleanup.json"
+                    cleanup_proof.write_text(json.dumps(report, indent=2) + "\n")
+                    cleanup["proof"] = digest(cleanup_proof)
+                    require(report.get("passed") is True and report.get("pod_absent") is True
+                            and report.get("network_policy_absent") is True,
+                            "publisher cleanup did not verify absence of owned resources")
+                    cleanup["owned_resources_absent_verified_by_helper"] = True
+                    state_file = fixture_file.parent / "publication-hook-state.json"
+                    if state_file.exists():
+                        state = json.loads(state_file.read_text())
+                        if state.get("probe_owned") is True:
+                            require(state.get("cleanup_complete") is True
+                                    and isinstance(state.get("cleanup_resources"), list)
+                                    and all(resource.get("absent") is True for resource in state["cleanup_resources"]),
+                                    "publisher cleanup tombstone incomplete")
+                        tombstone = proof / "publication-helper-cleanup-state.json"
+                        tombstone.write_bytes(state_file.read_bytes())
+                        cleanup["state"] = digest(tombstone)
+                except Exception as error:
+                    summary["passed"] = False
+                    cleanup["failure"] = str(error) if isinstance(error, ValueError) else type(error).__name__
+                    # Retain the original preparation/measurement failure verbatim.
+                    if "failure" not in summary:
+                        summary["failure_stage"] = "publisher_cleanup"
+                        summary["failure"] = cleanup["failure"]
         summary["preparations"] = preparations
         summary["processes"] = [{"name": name, "pid": p.pid, "exit_code": p.poll()} for name, p in processes]
         for handle in handles:
@@ -492,7 +534,8 @@ def self_check():
     ordering_checks = 0
     try:
         os.killpg = lambda *arguments: None
-        for fault, failure in [("mongo", None), ("redis", None), ("mongo", "warmup"), ("mongo", "prepare")]:
+        for fault, failure in [("mongo", None), ("redis", None), ("mongo", "warmup"), ("mongo", "prepare"),
+                               ("mongo", "provenance"), ("mongo", "cleanup"), ("mongo", "prepare_and_cleanup"), ("mongo", "residual")]:
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 globals()["HERE"] = root
@@ -518,18 +561,32 @@ def self_check():
                     spawned.append((name, arguments, start_new_session))
                     events.append("started:" + name)
                     if name in ("publish-hook.py", "prepare-ha-identity.py"):
-                        assert start_new_session and len(spawned) == 1
+                        assert start_new_session
+                        if "--cleanup" in arguments:
+                            assert name == "publish-hook.py" and len(spawned) > 1
+                            assert "started:verify-ha.py" not in events or "completed:verify-ha.py" in events
+                            stdout.write(json.dumps({"passed": True, "pod_absent": True,
+                                "network_policy_absent": failure != "residual"})); stdout.flush()
+                            state_file = root / "publication-hook-state.json"
+                            state = json.loads(state_file.read_text())
+                            state.update(cleanup_complete=True, cleanup_resources=[{"kind": "Pod", "name": "probe", "uid": "probe-uid", "absent": True}])
+                            state_file.write_text(json.dumps(state))
+                            return FakeProcess("cleanup", 1 if failure in ("cleanup", "prepare_and_cleanup") else 0)
+                        assert len(spawned) == 1
                         if name == "publish-hook.py":
                             assert "--prepare" in arguments
-                            state = {"pod_uid": "authz-uid", "jar_sha256": "a" * 64,
+                            state = {"probe_owned": True, "pod_uid": "probe-uid", "source_authz_pod": "authz-source", "source_authz_pod_uid": "authz-uid",
+                                     "jar_sha256": "a" * 64,
                                      "ruleSetId": "resilience-limits", "baseline": {
                                          "revision": 3, "counterEpoch": "epoch", "snapshotId": "snap", "checksum": "sum"}}
+                            if failure == "provenance":
+                                del state["source_authz_pod_uid"]
                             state_file = root / "publication-hook-state.json"
                             state_file.write_text(json.dumps(state)); state_file.chmod(0o600)
                         else:
                             Path(arguments[arguments.index("--output") + 1]).write_text(json.dumps({
                                 "passed": True, "policy_pointer_unchanged": True, "existing_counters_deleted_or_reset": False}))
-                        return FakeProcess(name, 1 if failure == "prepare" else 0)
+                        return FakeProcess(name, 1 if failure in ("prepare", "prepare_and_cleanup") else 0)
                     if name == "verify-load.py":
                         assert "completed:" + spawned[0][0] in events
                         stdout.write(json.dumps(failed_evidence)); stdout.flush()
@@ -560,7 +617,10 @@ def self_check():
                 summary = json.loads((proof / "summary.json").read_text())
                 prep_name = "publisher_preparation" if fault == "mongo" else "identity_preparation"
                 assert summary["preparations"][prep_name]["source"]["sha256"] == digest(root / spawned[0][0])["sha256"]
-                if failure:
+                if failure in ("cleanup", "residual"):
+                    assert code == 1 and not summary["passed"] and summary["failure_stage"] == "publisher_cleanup"
+                    assert summary["publisher_cleanup"]["exit_code"] == (1 if failure == "cleanup" else 0) and len(spawned) == 4
+                elif failure:
                     assert code == 1 and not summary["passed"] and not summary["fault_process_started"]
                     assert not (proof / "ha.log").exists()
                     assert summary["failure_stage"] == ("load_warmup" if failure == "warmup" else "publisher_preparation")
@@ -568,11 +628,19 @@ def self_check():
                         assert json.loads((proof / "raw-load.json").read_text()) == failed_evidence
                         assert summary["raw_proofs"]["load"]["sha256"] == digest(proof / "raw-load.json")["sha256"]
                     else:
-                        assert len(spawned) == 1 and not (proof / "load.log").exists()
+                        assert len(spawned) == 2 and not (proof / "load.log").exists()
+                        if failure == "prepare_and_cleanup":
+                            assert summary["failure"] == "publisher_preparation failed"
+                            assert summary["publisher_cleanup"]["failure"] == "publisher_cleanup failed"
                 else:
-                    assert code == 0 and len(spawned) == 3
+                    assert code == 0 and len(spawned) == (4 if fault == "mongo" else 3)
                     if fault == "mongo":
                         assert summary["preparations"][prep_name]["state"]["sha256"] == digest(proof / "publication-helper-state.json")["sha256"]
+                if fault == "mongo" and failure not in ("cleanup", "prepare_and_cleanup", "residual"):
+                    assert summary["publisher_cleanup"]["owned_resources_absent_verified_by_helper"] is True
+                    assert "state" in summary["publisher_cleanup"]
+                if fault == "redis":
+                    assert "publisher_cleanup" not in summary
                 ordering_checks += 1
     finally:
         globals().update(saved)
