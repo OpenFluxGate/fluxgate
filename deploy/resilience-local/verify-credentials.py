@@ -355,15 +355,22 @@ class Proof:
 
     def ca(self, stem):
         p = self.work / stem
+        config = Path(str(p) + ".cnf")
+        private_write(config, "[req]\ndistinguished_name=dn\nx509_extensions=ca\nprompt=no\n"
+                      "[dn]\nCN=local-ca\n[ca]\nbasicConstraints=critical,CA:TRUE\n"
+                      "keyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\n"
+                      "authorityKeyIdentifier=keyid:always\n")
         run([self.openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
-             "-sha256", "-keyout", str(p) + ".key", "-out", str(p) + ".crt", "-subj", "/CN=" + stem])
+             "-sha256", "-keyout", str(p) + ".key", "-out", str(p) + ".crt", "-subj", "/CN=" + stem,
+             "-config", str(config)])
         return Path(str(p) + ".crt"), Path(str(p) + ".key")
 
     def certificate(self, stem, ca, ca_key, subject, server=False, expired=False):
         p = self.work / stem
         run([self.openssl, "req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", str(p) + ".key",
              "-out", str(p) + ".csr", "-subj", "/CN=" + subject])
-        ext = "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\n"
+        ext = ("basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\n"
+               "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n")
         ext += "extendedKeyUsage=" + ("serverAuth" if server else "clientAuth") + "\n"
         if server:
             ext += "subjectAltName=DNS:" + subject + "\n"
@@ -1333,6 +1340,68 @@ def backend_body_self_test():
         http.client.HTTPConnection = original
 
 
+def strict_tls_self_test():
+    """Validate generated chains and actual localhost mTLS with unchanged SSL verification."""
+    import importlib.util
+    with tempfile.TemporaryDirectory(prefix="credential-strict-tls-") as directory:
+        proof = Proof.__new__(Proof)
+        proof.work = Path(directory)
+        proof.openssl = "/opt/homebrew/bin/openssl" if Path("/opt/homebrew/bin/openssl").exists() else "openssl"
+        ca, key = proof.ca("strict-ca")
+        server_cert, server_key = proof.certificate("strict-server", ca, key, "localhost", server=True)
+        client, client_key = proof.certificate("strict-client", ca, key, "trusted-gateway")
+        wrong, wrong_key = proof.certificate("strict-wrong", ca, key, "wrong-gateway")
+        expired, expired_key = proof.certificate("strict-expired", ca, key, "trusted-gateway", expired=True)
+        for cert in (server_cert, client, wrong):
+            checked = run([proof.openssl, "verify", "-x509_strict", "-CAfile", str(ca), str(cert)], check=False)
+            require(checked.returncode == 0, "generated chain failed strict verification: " + checked.stderr.decode())
+        checked = run([proof.openssl, "verify", "-x509_strict", "-CAfile", str(ca), str(expired)], check=False)
+        require(checked.returncode != 0 and b"expired" in checked.stderr.lower(), "strict expired control accepted")
+        spec = importlib.util.spec_from_file_location("credential_setup", Path(__file__).with_name("setup.py"))
+        initial = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(initial)
+        initial_dir = proof.work / "initial"
+        initial_dir.mkdir(mode=0o700)
+        def initial_run(args, **kwargs):
+            return run([proof.openssl] + args[1:]).stdout
+        initial.generate_tls(initial_dir, "localhost", initial_run)
+        for role in ("server", "client"):
+            run([proof.openssl, "verify", "-x509_strict", "-CAfile", str(initial_dir / (role + "-ca.crt")),
+                 str(initial_dir / (role + ".crt"))])
+        if not ssl.HAS_TLSv1_3:
+            return
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                subject = dict(item for group in self.connection.getpeercert()["subject"] for item in group)
+                self.send_response(200 if subject.get("commonName") == "trusted-gateway" else 403)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(str(server_cert), str(server_key))
+        context.load_verify_locations(cafile=str(ca))
+        context.verify_mode = ssl.CERT_REQUIRED
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        proof.f, proof.api_key = {"server_name": "localhost"}, "offline-only-key"
+        proof.forward = lambda *args: contextlib.nullcontext(server.server_port)
+        try:
+            positive = proof.tls_probe_pod("offline", ca, client, client_key)
+            require(positive["http"] == 200 and positive["protocol"] == "TLSv1.3", "modern mTLS positive failed")
+            require(proof.tls_probe_pod("offline", ca, expected="tls-reject")["tls_rejected"], "missing cert accepted")
+            require(proof.tls_probe_pod("offline", ca, expired, expired_key, expected="tls-reject")["tls_rejected"],
+                    "expired cert accepted")
+            require(proof.tls_probe_pod("offline", ca, wrong, wrong_key, path="/authz", expected=403)["http"] == 403,
+                    "wrong client subject accepted")
+            require(proof.tls_probe_pod("offline", ca, client, client_key)["http"] == 200,
+                    "valid client failed after negatives")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
 def tls_runtime_self_test():
     original = ssl.HAS_TLSv1_3
     try:
@@ -1359,6 +1428,7 @@ def tls_runtime_self_test():
 
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
+    strict_tls_self_test()
     tls_runtime_self_test()
     failed_rotation_cleanup_self_test()
     backend_body_self_test()

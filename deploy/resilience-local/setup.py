@@ -237,6 +237,30 @@ def preset_self_check():
     print('Mongo preset offline contract checks passed; no cluster accessed')
 
 
+def generate_tls(tls, server_name, run):
+    """Generate only private local chains with explicit strict X.509 extensions."""
+    if not (tls / 'client.crt').exists():
+        config = tls / 'ca-config.cnf'
+        config.write_text('[req]\ndistinguished_name=dn\nx509_extensions=ca\nprompt=no\n[dn]\nCN=local-ca\n[ca]\nbasicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid:always\n')
+        config.chmod(0o600)
+        for role in ('server', 'client'):
+            run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2', '-sha256',
+                 '-keyout', str(tls / f'{role}-ca.key'), '-out', str(tls / f'{role}-ca.crt'),
+                 '-subj', f'/CN=fluxgate-resilience-{role}-ca', '-config', str(config)], sensitive=True)
+            subject = server_name if role == 'server' else 'fluxgate-resilience-gateway'
+            run(['openssl', 'req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(tls / f'{role}.key'),
+                 '-out', str(tls / f'{role}.csr'), '-subj', f'/CN={subject}'], sensitive=True)
+            extension = f'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage={role}Auth\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n'
+            if role == 'server':
+                extension += f'subjectAltName=DNS:{server_name}\n'
+            (tls / f'{role}.ext').write_text(extension)
+            run(['openssl', 'x509', '-req', '-in', str(tls / f'{role}.csr'), '-CA', str(tls / f'{role}-ca.crt'),
+                 '-CAkey', str(tls / f'{role}-ca.key'), '-CAcreateserial', '-days', '2', '-sha256',
+                 '-extfile', str(tls / f'{role}.ext'), '-out', str(tls / f'{role}.crt')], sensitive=True)
+    for file in tls.iterdir():
+        file.chmod(0o600)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fixture', type=Path, help='Private directory; existing files are reused')
@@ -362,23 +386,7 @@ const conn=new Mongo('mongodb://admin:'+encodeURIComponent(password)+'@127.0.0.1
     tls = directory / 'tls'
     tls.mkdir(mode=0o700, exist_ok=True)
     server_name = f'fluxgate-authz.{NS}.svc.cluster.local'
-    if not (tls / 'client.crt').exists():
-        for role in ('server', 'client'):
-            run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2', '-sha256',
-                 '-keyout', str(tls / f'{role}-ca.key'), '-out', str(tls / f'{role}-ca.crt'),
-                 '-subj', f'/CN=fluxgate-resilience-{role}-ca'], sensitive=True)
-            subject = server_name if role == 'server' else 'fluxgate-resilience-gateway'
-            run(['openssl', 'req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(tls / f'{role}.key'),
-                 '-out', str(tls / f'{role}.csr'), '-subj', f'/CN={subject}'], sensitive=True)
-            extension = f'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage={role}Auth\n'
-            if role == 'server':
-                extension += f'subjectAltName=DNS:{server_name}\n'
-            (tls / f'{role}.ext').write_text(extension)
-            run(['openssl', 'x509', '-req', '-in', str(tls / f'{role}.csr'), '-CA', str(tls / f'{role}-ca.crt'),
-                 '-CAkey', str(tls / f'{role}-ca.key'), '-CAcreateserial', '-days', '2', '-sha256',
-                 '-extfile', str(tls / f'{role}.ext'), '-out', str(tls / f'{role}.crt')], sensitive=True)
-    for file in tls.iterdir():
-        file.chmod(0o600)
+    generate_tls(tls, server_name, run)
     mongo_admin = private('mongo-admin-password')
     mongo_app = private('mongo-app-password')
     redis_password = private('redis-password')
