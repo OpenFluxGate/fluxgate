@@ -111,3 +111,10 @@ private.key
 # Local environment files (credentials, connection strings)
 .env
 .env.*
+
+# Local AI agent files and state (never commit)
+CLAUDE.md
+AGENTS.md
+.claude/
+.omc/
+.omx/
