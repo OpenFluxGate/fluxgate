@@ -77,6 +77,33 @@ def probe_pod(name, image):
                                                    'limits': {'cpu': '500m', 'memory': '128Mi'}}}]}}
 
 
+def policy_control_pod(name, image, namespace, service_selector, nodes, expected_names):
+    captured_names = {node['metadata']['name'] for node in nodes}
+    if (len(nodes) != 3 or len(captured_names) != 3 or captured_names != set(expected_names)
+            or any(not node_name.startswith(NS + '-') for node_name in captured_names)):
+        raise ValueError('control placement requires exact three-node local fixture')
+    control_planes = [node for node in nodes if 'node-role.kubernetes.io/control-plane'
+                      in node['metadata'].get('labels', {})]
+    if len(control_planes) != 1:
+        raise ValueError('control placement requires exactly one labeled control-plane node')
+    control_plane = control_planes[0]['metadata']
+    if control_plane.get('labels', {}).get('kubernetes.io/hostname') != control_plane['name']:
+        raise ValueError('control-plane hostname label must match captured local node name')
+    pod = probe_pod(name, image)
+    pod['metadata']['namespace'] = namespace
+    pod['metadata']['labels']['app'] = 'fluxgate-network-policy-control'
+    pod['metadata']['labels'].update(OWNER)
+    if not service_selector or all(pod['metadata']['labels'].get(k) == v
+                                   for k, v in service_selector.items()):
+        raise ValueError('control Pod would be selected by the actual Gateway Service')
+    # Owner labels necessarily match the resident Envoy anti-affinity selector.
+    # Only this operator-owned probe uses the otherwise unused local control plane.
+    pod['spec']['nodeSelector'] = {'kubernetes.io/hostname': control_plane['name']}
+    pod['spec']['tolerations'] = [{'key': 'node-role.kubernetes.io/control-plane',
+                                 'operator': 'Exists', 'effect': 'NoSchedule'}]
+    return pod
+
+
 def egress_policy(name, gateway_selector, gateway_port, destination_ingress=False):
     rules = [{'to': [{'namespaceSelector': {'matchLabels': {
         'kubernetes.io/metadata.name': 'kube-system'}},
@@ -266,12 +293,8 @@ def live(args):
     name = 'fluxgate-network-' + uuid.uuid4().hex[:12]
     control_name = name + '-control'
     control_namespace = fixture['gateway_namespace']
-    control = probe_pod(control_name, args.image)
-    control['metadata']['namespace'] = control_namespace
-    control['metadata']['labels']['app'] = 'fluxgate-network-policy-control'
-    control['metadata']['labels'].update(OWNER)
-    if all(control['metadata']['labels'].get(k) == v for k, v in selector.items()):
-        raise ValueError('control Pod would be selected by the actual Gateway Service')
+    control = policy_control_pod(control_name, args.image, control_namespace, selector,
+                                 nodes, fixture['node_container_names'])
     control_policy = {'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy',
         'metadata': {'name': control_name, 'namespace': control_namespace, 'labels': {RUN_LABEL: control_name}},
         'spec': {'podSelector': {'matchLabels': {RUN_LABEL: control_name}},
@@ -410,6 +433,32 @@ def live(args):
 
 
 def self_check():
+    node_names = [NS + '-control-plane', NS + '-worker', NS + '-worker2']
+    nodes = [{'metadata': {'name': name, 'labels': dict(
+        {'node-role.kubernetes.io/control-plane': ''} if index == 0 else {},
+        **{'kubernetes.io/hostname': name})}}
+        for index, name in enumerate(node_names)]
+    service_selector = dict(OWNER, **{'app.kubernetes.io/name': 'envoy'})
+    control = policy_control_pod('network-self-check-control', 'python:3.12-alpine',
+                                 'envoy-gateway-system', service_selector, nodes, node_names)
+    assert control['spec']['nodeSelector'] == {'kubernetes.io/hostname': node_names[0]}
+    assert control['spec']['tolerations'] == [{'key': 'node-role.kubernetes.io/control-plane',
+                                             'operator': 'Exists', 'effect': 'NoSchedule'}]
+    assert not control['spec']['automountServiceAccountToken']
+    assert control['spec']['securityContext']['runAsNonRoot']
+    assert control['spec']['containers'][0]['securityContext']['capabilities']['drop'] == ['ALL']
+    assert not all(control['metadata']['labels'].get(k) == v for k, v in service_selector.items())
+    for invalid_nodes in (
+            [{'metadata': {'name': name, 'labels': {}}} for name in node_names],
+            [{'metadata': {'name': name, 'labels': {'node-role.kubernetes.io/control-plane': ''}}}
+             for name in node_names], nodes[:2]):
+        try:
+            policy_control_pod('network-self-check-control', 'python:3.12-alpine',
+                               'envoy-gateway-system', service_selector, invalid_nodes, node_names)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('missing, ambiguous, or foreign control-plane placement accepted')
     good = [{'id': 'source->target', 'passed': True}]
     assert not phase_passes(['source->target'], good, {'passed': True},
                             [{'id': 'source->target', 'passed': False}], {'passed': True})
