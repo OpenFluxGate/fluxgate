@@ -296,6 +296,18 @@ def quota_burst(client):
     return report
 
 
+
+def warmup_preconditions(client, pool, report):
+    for name, rate in (("priming", 10), ("warmup", BASELINE_RPS)):
+        measured = fixed_arrivals(client, pool, rate, 5)
+        report[name] = measured
+        if (not generator_valid(measured) or measured["expected_status_fraction"] != 1
+                or measured["unexpected_body_responses"] != 0):
+            report["result"] = "FAIL"
+            report["failure_stage"] = report["phase"] + "-" + name
+            return False
+    return True
+
 def worker(config):
     client = GatewayClient(config)
     report = {"phase": config["phase"], "thresholds": {
@@ -316,11 +328,7 @@ def worker(config):
         return report
     if config["phase"] == "resilience":
         with concurrent.futures.ThreadPoolExecutor(max_workers=128) as pool:
-            warmup = fixed_arrivals(client, pool, BASELINE_RPS, 5)
-            report["warmup"] = warmup
-            if not generator_valid(warmup) or warmup["expected_status_fraction"] != 1:
-                report["result"] = "FAIL"
-                report["failure_stage"] = "resilience-warmup"
+            if not warmup_preconditions(client, pool, report):
                 return report
             observation = fixed_arrivals(client, pool, BASELINE_RPS, RESILIENCE_SECONDS,
                                          readiness=True)
@@ -333,13 +341,12 @@ def worker(config):
         return report
     if config["phase"] in ("load", "all"):
         with concurrent.futures.ThreadPoolExecutor(max_workers=128) as pool:
-            warmup = fixed_arrivals(client, pool, 100, 5)
-            report["warmup"] = warmup
+            if not warmup_preconditions(client, pool, report):
+                return report
             baseline = fixed_arrivals(client, pool, BASELINE_RPS, BASELINE_SECONDS)
             baseline["passed"] = baseline_passes(baseline)
             report["baseline"] = baseline
-            passed = (passed and generator_valid(warmup) and warmup["expected_status_fraction"] == 1
-                      and baseline["passed"])
+            passed = passed and baseline["passed"]
             report["characterization"] = []
             for rate in (300, 600):
                 measured = fixed_arrivals(client, pool, rate, 30)
@@ -678,8 +685,61 @@ def self_check():
             assert not Path(READY_MARKER + ".tmp").exists()
     finally:
         globals()["READY_MARKER"] = original_marker
+    original_client, original_arrivals = GatewayClient, fixed_arrivals
+    pacing_checks = 0
+    try:
+        class SuccessfulControlClient:
+            def __init__(self, config):
+                self.config = config
+            def request(self, *arguments):
+                return dict(sample, status=200, error=None, body_valid=True, backend_body=True)
+        globals()["GatewayClient"] = SuccessfulControlClient
+        for phase, failure in (("resilience", None), ("resilience", "priming-status"),
+                               ("resilience", "warmup-body"), ("load", "priming-omission"),
+                               ("all", "warmup-status")):
+            calls = []
+            def fake_arrivals(client, pool, rate, seconds, mixed=False, readiness=False):
+                calls.append((rate, seconds, readiness))
+                assert pool._max_workers == 128
+                target = rate * seconds
+                samples = [dict(sample, sequence=n, error=None, backend_body=True, body_valid=True,
+                                scheduled_unix_ms=wall_start + n * 1000 / rate,
+                                completed_unix_ms=wall_start + n * 1000 / rate + 10)
+                           for n in range(target)]
+                name = "priming" if len(calls) == 1 else "warmup"
+                omitted_count = 0
+                if failure == name + "-status":
+                    samples[0].update(status=503, backend_body=False)
+                elif failure == name + "-body":
+                    samples[0].update(body_valid=False, backend_body=False)
+                elif failure == name + "-omission":
+                    samples.pop(); omitted_count = 1
+                measured = aggregate(samples, target, seconds, seconds, omitted_count, 0)
+                measured.update(schedule_start_unix_ms=wall_start,
+                                schedule_end_unix_ms=wall_start + seconds * 1000, omitted_samples=[])
+                return measured
+            globals()["fixed_arrivals"] = fake_arrivals
+            result = worker({"phase": phase, "load_path": "/offline", "api_key": "offline"})
+            assert calls[0] == (10, 5, False)
+            assert result["priming"]["target_requests"] == 50
+            if failure:
+                name = failure.split('-')[0]
+                assert result["result"] == "FAIL" and result["failure_stage"] == phase + "-" + name
+                assert len(calls) == (1 if name == "priming" else 2)
+                assert not any(key in result for key in ("observation", "baseline", "mixed", "quota", "characterization"))
+                assert not any(call[2] for call in calls)
+            else:
+                assert result["result"] == "OBSERVATION_COMPLETE"
+                assert calls == [(10, 5, False), (100, 5, False), (100, 120, True)]
+                assert result["warmup"]["target_requests"] == 500 and result["observation"]["target_requests"] == 12000
+            assert result["thresholds"] == {"baseline_rps": 100, "baseline_seconds": 60,
+                "min_achieved_rps": 99, "p95_ms": 100, "p99_ms": 250, "expected_200_fraction": .999,
+                "omitted_schedules": 0, "quota_burst": 100, "quota_allowed": 5}
+            pacing_checks += 1
+    finally:
+        globals()["GatewayClient"], globals()["fixed_arrivals"] = original_client, original_arrivals
     assert percentile([1, 2, 3, 4, 5], 0.95) == 5
-    print(json.dumps({"result": "PASS", "self_checks": 21 + body_checks}))
+    print(json.dumps({"result": "PASS", "self_checks": 21 + body_checks + pacing_checks}))
 
 
 def main():
