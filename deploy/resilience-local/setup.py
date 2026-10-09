@@ -35,6 +35,20 @@ def preset_config(config):
     return updated
 
 
+def require_preset_config(expected, observed, primary_term, reconfigured):
+    normalized = copy.deepcopy(expected)
+    if reconfigured:
+        # Ordinary replSetReconfig ignores submitted term and uses the primary's.
+        old_term, new_term = expected.get('term'), observed.get('term')
+        if (type(old_term) is not int or type(new_term) is not int
+                or type(primary_term) is not int or new_term != primary_term
+                or new_term < old_term):
+            raise ValueError('Mongo reconfiguration term must match confirmed primary without regression')
+        normalized['term'] = primary_term
+    if observed != normalized:
+        raise ValueError('Mongo configuration changed during preset application')
+
+
 def apply_mongo_preset(kube, mongo, wait, fixture, run):
     if fixture.get('context') != CONTEXT or fixture.get('namespace') != NS:
         raise ValueError('preset requires exact local fixture context and namespace')
@@ -77,19 +91,29 @@ def apply_mongo_preset(kube, mongo, wait, fixture, run):
         raise ValueError('previous Mongo configuration must be majority committed')
     config = current['config']
     updated = preset_config(config)
-    if updated != config:
+    reconfigured = updated != config
+    if reconfigured:
         # Ordinary primary reconfiguration preserves all fields; never force it.
         result = read(primary, {'replSetReconfig': updated, 'maxTimeMS': 10000})
         if result.get('ok') != 1:
             raise ValueError('ordinary primary Mongo reconfiguration failed')
 
+    pinned_config = None
     def committed_everywhere():
+        nonlocal pinned_config
         primary_now = primary_status()
+        confirmed_primary = read(primary_now, {'replSetGetStatus': 1})
+        if (confirmed_primary.get('ok') != 1 or confirmed_primary.get('set') != 'rs0'
+                or confirmed_primary.get('myState') != 1):
+            raise ValueError('Mongo preset must be verified against an actual primary')
         committed = read(primary_now, {'replSetGetConfig': 1, 'commitmentStatus': True})
         if committed.get('ok') != 1 or committed.get('commitmentStatus') is not True:
             raise ValueError('Mongo preset configuration not majority committed')
         authoritative = committed['config']
-        if authoritative != updated:
+        require_preset_config(updated, authoritative, confirmed_primary.get('term'), reconfigured)
+        if pinned_config is None:
+            pinned_config = copy.deepcopy(authoritative)
+        elif authoritative != pinned_config:
             raise ValueError('Mongo configuration changed during preset application')
         for pod in ('mongo-0', 'mongo-1', 'mongo-2'):
             observed = read(pod, {'replSetGetConfig': 1})
@@ -122,6 +146,29 @@ def preset_self_check():
     assert updated['settings']['replicaSetId'] == config['settings']['replicaSetId']
     assert all(updated['settings'][k] == v for k, v in MONGO_PRESET.items())
     assert preset_config(updated) == updated
+    normalized = dict(updated, term=9)
+    require_preset_config(updated, normalized, 9, True)
+    # An unchanged configuration legitimately keeps an older config term.
+    require_preset_config(updated, updated, 9, False)
+    mutations = [dict(normalized, term=1), dict(normalized, term=8),
+                 dict(normalized, version=normalized['version'] + 1),
+                 dict(normalized, writeConcernMajorityJournalDefault=False),
+                 dict(normalized, members=[dict(m, priority=2) for m in normalized['members']]),
+                 dict(normalized, settings=dict(normalized['settings'], catchUpTimeoutMillis=3000)),
+                 dict(normalized, settings=dict(normalized['settings'], replicaSetId={'$oid': 'f' * 24}))]
+    for mutation in mutations:
+        try:
+            require_preset_config(updated, mutation, 9, True)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('term or unrelated server configuration mutation accepted')
+    try:
+        require_preset_config(updated, dict(updated, term=1), 1, True)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('term regression matching stale primary accepted')
     for invalid in (dict(config, _id='production'), dict(config, members=config['members'][:2]),
                     dict(config, members=[dict(m, host='foreign:27017') for m in config['members']])):
         try:
@@ -145,11 +192,12 @@ def preset_self_check():
         calls.append((pod, command))
         if 'replSetReconfig' in command:
             assert pod == 'mongo-1' and 'force' not in command
-            state[0] = command['replSetReconfig']
+            assert command['replSetReconfig']['term'] == 2
+            state[0] = dict(command['replSetReconfig'], term=9)
             return json.dumps({'ok': 1})
         if 'replSetGetConfig' in command:
             return json.dumps({'ok': 1, 'config': state[0], 'commitmentStatus': True})
-        return json.dumps({'ok': 1, 'set': 'rs0', 'myState': 1 if pod == 'mongo-1' else 2,
+        return json.dumps({'ok': 1, 'set': 'rs0', 'term': 9, 'myState': 1 if pod == 'mongo-1' else 2,
                            'members': [{'name': m['host'], 'state': 1 if i == 1 else 2, 'health': 1}
                                        for i, m in enumerate(config['members'])]})
     def run(command):
@@ -157,11 +205,15 @@ def preset_self_check():
     def wait(label, action, seconds=180):
         return action()
     apply_mongo_preset(kube, mongo, wait, fixture, run)
-    assert state[0] == updated
+    assert state[0] == dict(updated, term=9)
     assert {pod for pod, command in calls if command == {'replSetGetConfig': 1}} == {'mongo-0', 'mongo-1', 'mongo-2'}
     assert {pod for pod, command in calls if 'replSetGetStatus' in command} == {'mongo-0', 'mongo-1', 'mongo-2'}
     before = len([command for _, command in calls if 'replSetReconfig' in command])
     apply_mongo_preset(kube, mongo, wait, fixture, run)
+    assert len([command for _, command in calls if 'replSetReconfig' in command]) == before
+    state[0] = copy.deepcopy(updated)  # Existing preset config term predates current election.
+    apply_mongo_preset(kube, mongo, wait, fixture, run)
+    assert state[0]['term'] == 2
     assert len([command for _, command in calls if 'replSetReconfig' in command]) == before
     try:
         apply_mongo_preset(kube, mongo, wait, dict(fixture, context='production'), run)
