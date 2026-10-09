@@ -350,6 +350,7 @@ spec:
               cluster-enabled yes
               cluster-config-file /data/nodes.conf
               cluster-node-timeout 3000
+              cluster-allow-replica-migration no
               cluster-announce-ip $POD_IP
               cluster-announce-hostname $HOSTNAME.redis.fluxgate-resilience.svc.cluster.local
               cluster-preferred-endpoint-type hostname

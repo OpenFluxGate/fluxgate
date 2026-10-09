@@ -287,6 +287,21 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         assert len(values) % 2 == 0 and values
         return key, dict(zip(values[::2], values[1::2]))
 
+    def shard_placement(redis_nodes):
+        placements = {p['metadata']['name']: p['spec']['nodeName']
+                      for p in obj('pods', selector='app=redis')['items']}
+        shards = {}
+        for identity, primary in redis_nodes.items():
+            if 'master' not in primary['flags']:
+                continue
+            members = [primary['pod']] + [n['pod'] for n in redis_nodes.values() if n['primary'] == identity]
+            assert len(members) == 3, 'Each Redis primary must retain exactly two replicas'
+            nodes = [placements[pod] for pod in members]
+            assert set(nodes) == expected_nodes, 'Each Redis shard must span all three failure domains'
+            shards[identity] = {'members': members, 'nodes': nodes, 'slots': primary['slots']}
+        assert len(shards) == 3
+        return shards
+
     def replace_pod(pod, namespace=ns):
         before = obj('pod', pod, namespace)
         selector = ','.join(f'{k}={v}' for k,v in before['metadata']['labels'].items() if k in ('app', 'redis-instance', 'gateway.envoyproxy.io/owning-gateway-namespace', 'gateway.envoyproxy.io/owning-gateway-name'))
@@ -337,6 +352,11 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         command = ['python3', str(args.publisher_hook), '--fixture', str(fixture_file),
                    '--expect', 'success' if mode == 'retry' else 'rejected', '--deadline', '30', '--output', str(output)]
         result = subprocess.run(command, env=env, text=True, capture_output=True, timeout=40)
+        if result.returncode:
+            # Driver stderr may contain URIs. Retain it only inside the private proof directory.
+            diagnostic = proof / 'publication-hook-private-failure.log'
+            diagnostic.write_text(result.stdout + '\nSTDERR\n' + result.stderr)
+            diagnostic.chmod(0o600)
         assert result.returncode == 0, 'Actual repository publication hook did not meet its expectation'
         return json.loads(output.read_text())
 
@@ -376,6 +396,8 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             for pod in fixture['redis_pods']:
                 info = redis(pod, ['CLUSTER', 'INFO'])
                 assert 'cluster_state:ok' in info and 'cluster_slots_ok:16384' in info and 'cluster_known_nodes:9' in info
+                assert redis(pod, ['CONFIG', 'GET', 'cluster-allow-replica-migration']).splitlines() == ['cluster-allow-replica-migration', 'no']
+            actual_shards = shard_placement(redis_nodes)
             for identity, primary in primaries.items():
                 assert sum(n['primary'] == identity for n in replicas.values()) == 2
                 replication = redis(primary['pod'], ['INFO', 'replication'])
@@ -385,7 +407,8 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                 assert 'master_link_status:up' in redis(replica['pod'], ['INFO', 'replication'])
             if route_restore is not None:
                 assert obj('httproute', 'resilience-api')['spec'] == route_restore
-            return {'ready_counts': counts, 'mongo_healthy_voters': 3, 'redis_primaries': 3, 'redis_linked_replicas': 6}
+            return {'ready_counts': counts, 'mongo_healthy_voters': 3, 'redis_primaries': 3, 'redis_linked_replicas': 6,
+                    'redis_shard_placement': actual_shards, 'replica_migration_disabled_on_all_members': True}
         try:
             remaining = restore_deadline - time.monotonic()
             state, _ = wait('Complete fixture restoration', healthy, max(0, remaining))
@@ -420,7 +443,9 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                      'volumes': [{'name': 'key', 'secret': {'secretName': probe_secret, 'defaultMode': 256}}]}})
         kube(['-n', ns, 'wait', '--for=condition=Ready', 'pod/' + probe, '--timeout=180s'], timeout=190)
         baseline = policy()
-        record('baseline', policy=baseline, redis=topology(), placement=json.loads((fixture_file.parent / 'placement.json').read_text()))
+        redis_baseline = topology()
+        record('baseline', policy=baseline, redis=redis_baseline, actual_redis_shard_placement=shard_placement(redis_baseline),
+               initial_setup_placement=json.loads((fixture_file.parent / 'placement.json').read_text()))
         request(fixture['load_path'], {200})
         if args.phase in ('all', 'redis'):
             failure_phase = 'redis-promotion'
