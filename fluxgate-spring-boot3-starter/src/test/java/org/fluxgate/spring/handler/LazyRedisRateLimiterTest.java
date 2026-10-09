@@ -14,8 +14,14 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import org.fluxgate.core.config.RateLimitBand;
+import org.fluxgate.core.config.RateLimitRule;
+import org.fluxgate.core.config.RuleMatcher;
+import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.exception.RedisConnectionException;
 import org.fluxgate.core.exception.RedisUnavailableException;
+import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.match.PathPatternMatcher;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
 import org.junit.jupiter.api.Test;
@@ -262,5 +268,34 @@ class LazyRedisRateLimiterTest {
       Thread.currentThread().interrupt();
       throw new IllegalStateException(e);
     }
+  }
+
+  @Test
+  void shouldPassThePathMatcherToTheRedisLimiter() {
+    RedisTokenBucketStore store = mock(RedisTokenBucketStore.class);
+    RateLimitRuleSet ruleSet =
+        RateLimitRuleSet.builder("orders")
+            .rules(
+                List.of(
+                    RateLimitRule.builder("orders-rule")
+                        .matcher(RuleMatcher.builder().addPathPattern("/API/**").build())
+                        .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 5).build())
+                        .build()))
+            .keyResolver((ctx, rule) -> RateLimitKey.of("ip:" + ctx.getClientIp()))
+            .build();
+    RequestContext context =
+        RequestContext.builder().clientIp("10.0.0.1").endpoint("/api/orders").build();
+    AtomicInteger matcherCalls = new AtomicInteger();
+    PathPatternMatcher matcher =
+        (pattern, path) -> {
+          matcherCalls.incrementAndGet();
+          return false;
+        };
+
+    try (LazyRedisRateLimiter limiter = new LazyRedisRateLimiter(() -> store, RETRY, RETRY)) {
+      assertThat(limiter.tryConsume(context, ruleSet, 1L, matcher).isAllowed()).isTrue();
+    }
+
+    assertThat(matcherCalls.get()).isPositive();
   }
 }

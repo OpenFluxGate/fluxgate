@@ -13,6 +13,7 @@ import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.exception.RedisUnavailableException;
+import org.fluxgate.core.match.PathPatternMatcher;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.ratelimiter.RateLimiter;
@@ -101,6 +102,25 @@ public class LazyRedisRateLimiter implements RateLimiter, RedisConnectionState, 
   @Override
   public RateLimitResult tryConsume(
       RequestContext context, RateLimitRuleSet ruleSet, long permits) {
+    return connectedDelegate().tryConsume(context, ruleSet, permits);
+  }
+
+  /**
+   * {@inheritDoc}
+   *
+   * <p>The path matcher is passed on to the Redis limiter so the engine's matcher (for example
+   * {@code case-sensitive-patterns=false}) selects the rules.
+   */
+  @Override
+  public RateLimitResult tryConsume(
+      RequestContext context,
+      RateLimitRuleSet ruleSet,
+      long permits,
+      PathPatternMatcher pathMatcher) {
+    return connectedDelegate().tryConsume(context, ruleSet, permits, pathMatcher);
+  }
+
+  private RateLimiter connectedDelegate() {
     RateLimiter delegate = delegateRef.get();
     if (delegate == null) {
       // Deliberately does not connect: see the class Javadoc. The exception is non-retryable so the
@@ -108,7 +128,7 @@ public class LazyRedisRateLimiter implements RateLimiter, RedisConnectionState, 
       throw new RedisUnavailableException(
           "FluxGate Redis rate limiter is not connected yet: " + lastErrorMessage.get());
     }
-    return delegate.tryConsume(context, ruleSet, permits);
+    return delegate;
   }
 
   @Override

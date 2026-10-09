@@ -12,6 +12,7 @@ import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.exception.RedisConnectionException;
 import org.fluxgate.core.exception.RedisUnavailableException;
 import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.match.PathPatternMatcher;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.ratelimiter.RateLimiter;
@@ -288,5 +289,62 @@ class ResilientRateLimiterTest {
     assertThat(fallbackCalls).hasValue(6);
     // Once the circuit opened, the primary stopped being called at all.
     assertThat(primaryCalls.get()).isLessThan(6);
+  }
+
+  @Nested
+  class PathMatcherPropagation {
+
+    private final PathPatternMatcher matcher = (pattern, path) -> true;
+
+    /** Records the matcher it receives through the 4-arg overload; fails if it is dropped. */
+    private RateLimiter recording(AtomicReference<PathPatternMatcher> seen, boolean fail) {
+      return new RateLimiter() {
+        @Override
+        public RateLimitResult tryConsume(
+            RequestContext ctx, RateLimitRuleSet rules, long permits) {
+          throw new AssertionError("the path matcher was dropped");
+        }
+
+        @Override
+        public RateLimitResult tryConsume(
+            RequestContext ctx,
+            RateLimitRuleSet rules,
+            long permits,
+            PathPatternMatcher pathMatcher) {
+          seen.set(pathMatcher);
+          if (fail) {
+            throw new RedisConnectionException("redis is down");
+          }
+          return RateLimitResult.allowedWithoutRule();
+        }
+      };
+    }
+
+    @Test
+    void shouldPassThePathMatcherToThePrimaryLimiter() {
+      AtomicReference<PathPatternMatcher> seen = new AtomicReference<>();
+      ResilientRateLimiter limiter =
+          new ResilientRateLimiter(recording(seen, false), directExecutor(), null, false, null);
+
+      assertThat(limiter.tryConsume(context, ruleSet, 1L, matcher).isAllowed()).isTrue();
+      assertThat(seen.get()).isSameAs(matcher);
+    }
+
+    @Test
+    void shouldPassThePathMatcherToTheFallbackLimiter() {
+      AtomicReference<PathPatternMatcher> primarySeen = new AtomicReference<>();
+      AtomicReference<PathPatternMatcher> fallbackSeen = new AtomicReference<>();
+      ResilientRateLimiter limiter =
+          new ResilientRateLimiter(
+              recording(primarySeen, true),
+              directExecutor(),
+              recording(fallbackSeen, false),
+              false,
+              null);
+
+      assertThat(limiter.tryConsume(context, ruleSet, 1L, matcher).isAllowed()).isTrue();
+      assertThat(primarySeen.get()).isSameAs(matcher);
+      assertThat(fallbackSeen.get()).isSameAs(matcher);
+    }
   }
 }

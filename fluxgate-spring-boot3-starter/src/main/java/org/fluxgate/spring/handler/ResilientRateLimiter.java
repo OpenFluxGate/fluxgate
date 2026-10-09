@@ -5,6 +5,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.match.PathPatternMatcher;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.ratelimiter.RateLimiter;
@@ -107,6 +108,30 @@ public class ResilientRateLimiter implements RateLimiter {
   @Override
   public RateLimitResult tryConsume(
       RequestContext context, RateLimitRuleSet ruleSet, long permits) {
+    return execute(context, ruleSet, permits, null);
+  }
+
+  /**
+   * {@inheritDoc}
+   *
+   * <p>The path matcher is passed on to the primary limiter and to the fallback limiter, so rule
+   * matching (for example {@code case-sensitive-patterns=false}) is the same on both paths.
+   */
+  @Override
+  public RateLimitResult tryConsume(
+      RequestContext context,
+      RateLimitRuleSet ruleSet,
+      long permits,
+      PathPatternMatcher pathMatcher) {
+    return execute(context, ruleSet, permits, pathMatcher);
+  }
+
+  /** Runs the primary limiter through the executor; a null matcher uses the 3-arg overload. */
+  private RateLimitResult execute(
+      RequestContext context,
+      RateLimitRuleSet ruleSet,
+      long permits,
+      PathPatternMatcher pathMatcher) {
     // Remembers the failure so the fallback can tag the metric with its cause; an open circuit
     // never runs the action, which is why the reference can still be empty in the fallback.
     AtomicReference<Throwable> failure = new AtomicReference<>();
@@ -114,24 +139,39 @@ public class ResilientRateLimiter implements RateLimiter {
         OPERATION,
         () -> {
           try {
-            return delegate.tryConsume(context, ruleSet, permits);
+            return consume(delegate, context, ruleSet, permits, pathMatcher);
           } catch (RuntimeException e) {
             failure.set(e);
             throw e;
           }
         },
-        () -> degrade(context, ruleSet, permits, failure.get()));
+        () -> degrade(context, ruleSet, permits, pathMatcher, failure.get()));
+  }
+
+  private static RateLimitResult consume(
+      RateLimiter limiter,
+      RequestContext context,
+      RateLimitRuleSet ruleSet,
+      long permits,
+      PathPatternMatcher pathMatcher) {
+    return pathMatcher != null
+        ? limiter.tryConsume(context, ruleSet, permits, pathMatcher)
+        : limiter.tryConsume(context, ruleSet, permits);
   }
 
   /** Applies the configured degradation for one failed call. */
   private RateLimitResult degrade(
-      RequestContext context, RateLimitRuleSet ruleSet, long permits, Throwable cause) {
+      RequestContext context,
+      RateLimitRuleSet ruleSet,
+      long permits,
+      PathPatternMatcher pathMatcher,
+      Throwable cause) {
     String ruleSetId = ruleSet != null ? ruleSet.getId() : null;
     String endpoint = context != null ? context.getEndpoint() : null;
 
     if (fallbackLimiter != null) {
       try {
-        RateLimitResult result = fallbackLimiter.tryConsume(context, ruleSet, permits);
+        RateLimitResult result = consume(fallbackLimiter, context, ruleSet, permits, pathMatcher);
         failureRecorder.recordLimiterFailure(ruleSetId, endpoint, ACTION_FALLBACK, cause);
         log.debug(
             "Primary rate limiter unavailable for rule set '{}', limited in memory instead",
