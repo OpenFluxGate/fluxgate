@@ -290,6 +290,46 @@ def fault_arguments(fixture_file, fault, proof):
         arguments.append("--preserve-promoted-roles")
     return arguments
 
+
+def baseline_preflight(fixture_file, proof, processes, evidence):
+    evidence["source"] = digest(HERE / "verify-ha.py")
+    evidence["started_unix_ms"] = time.time_ns() // 1000000
+    process = None
+    log_path = proof / "preflight-baseline.log"
+    try:
+        with log_path.open("w") as log:
+            process = subprocess.Popen([sys.executable, str(HERE / "verify-ha.py"), "--fixture", str(fixture_file),
+                "--phase", "baseline", "--proof", str(proof / "preflight-baseline")], stdout=log, stderr=log)
+            processes.append(("baseline_preflight", process))
+            evidence["pid"] = process.pid
+            require(process.wait(timeout=600) == 0, "baseline preflight subprocess failed")
+        raw = proof / "preflight-baseline" / "ha.json"
+        evidence["proof"] = digest(raw)
+        baseline = json.loads(raw.read_text())
+        require(baseline.get("result") == "pass" and baseline.get("phase") == "baseline"
+                and baseline.get("context") == "kind-fluxgate-resilience"
+                and baseline.get("phase_complete") is True and baseline.get("complete") is False,
+                "baseline preflight must pass as an explicitly partial phase")
+        restored = [c for c in baseline.get("checks", []) if c.get("check") == "complete-fixture-restoration"]
+        require(restored and all(c.get("mongo_healthy_voters") == 3 and c.get("redis_primaries") == 3
+                and c.get("redis_linked_replicas") == 6 and c.get("redis_primary_nodes_distinct") is True
+                and c.get("placement_restoration_deferred") is False
+                and all(c.get("ready_counts", {}).get(selector) == count for selector, count in {
+                    "app=mongo": 3, "app=redis": 9, "app=fluxgate-authz": 2, "app=echo": 2,
+                    "control-plane=envoy-gateway": 2,
+                    "gateway.envoyproxy.io/owning-gateway-namespace=fluxgate-resilience": 2}.items()) for c in restored),
+                "baseline preflight did not verify healthy restored home roles")
+        cleaned = [c for c in baseline.get("checks", []) if c.get("check") == "publication-probe-cleanup"]
+        require(cleaned and all(c.get("passed") is True and c.get("pod_absent") is True
+                and c.get("network_policy_absent") is True for c in cleaned), "baseline preflight cleanup absent")
+        evidence["passed"] = True
+    finally:
+        # This HA may be restoring roles: retain it for the coordinator finally wait,
+        # never terminate it like a compilation/upload preparation subprocess.
+        evidence["completed_unix_ms"] = time.time_ns() // 1000000 if process is not None and process.poll() is not None else None
+        evidence["exit_code"] = process.poll() if process is not None else None
+        evidence["stdout"] = digest(log_path)
+
 def coordinate(args):
     os.umask(0o077)
     proof = args.proof.resolve()
@@ -308,6 +348,10 @@ def coordinate(args):
     try:
         active = json.loads(kube(fixture, ["get", "pods", "-l", "fluxgate.io/load-phase=resilience", "-o", "json"]))
         require(not active["items"], "another resilience generator is active")
+        if args.fault == "mongo":
+            stage = "baseline_preflight"
+            preparations[stage] = {}
+            baseline_preflight(fixture_file, proof, processes, preparations[stage])
         stage = "identity_preparation" if args.fault == "redis" else "publisher_preparation"
         helper = HERE / ("prepare-ha-identity.py" if args.fault == "redis" else "publish-hook.py")
         evidence = {"source": digest(helper)}
@@ -320,6 +364,9 @@ def coordinate(args):
             identity = json.loads((proof / "identity.json").read_text())
             require(identity.get("passed") is True and identity.get("policy_pointer_unchanged") is True
                     and identity.get("existing_counters_deleted_or_reset") is False, "identity preparation changed policy/counters")
+            stage = "baseline_preflight"
+            preparations[stage] = {}
+            baseline_preflight(fixture_file, proof, processes, preparations[stage])
         else:
             state_file = fixture_file.parent / "publication-hook-state.json"
             require(state_file.stat().st_mode & 0o077 == 0, "publisher state must be private")
@@ -434,7 +481,8 @@ def coordinate(args):
                 pass
         if "raw_proofs" not in summary:
             retained = {"load": raw_load, "ha": proof / "ha" / "ha.json",
-                        "ha_failure": proof / "ha" / "failure.json", "readiness": proof / "readiness.json"}
+                        "ha_failure": proof / "ha" / "failure.json", "readiness": proof / "readiness.json",
+                        "preflight_baseline": proof / "preflight-baseline" / "ha.json"}
             summary["raw_proofs"] = {name: digest(path) for name, path in retained.items() if path.exists()}
         (proof / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
@@ -624,31 +672,58 @@ def self_check():
     try:
         os.killpg = lambda *arguments: None
         for fault, failure in [("mongo", None), ("redis", None), ("mongo", "warmup"), ("mongo", "prepare"),
-                               ("mongo", "provenance"), ("mongo", "cleanup"), ("mongo", "prepare_and_cleanup"), ("mongo", "residual")]:
+                               ("mongo", "provenance"), ("mongo", "cleanup"), ("mongo", "prepare_and_cleanup"), ("mongo", "residual"),
+                               ("mongo", "preflight"), ("redis", "preflight"), ("mongo", "preflight-health"), ("mongo", "preflight-timeout")]:
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 globals()["HERE"] = root
-                for script in ("publish-hook.py", "prepare-ha-identity.py"):
+                for script in ("publish-hook.py", "prepare-ha-identity.py", "verify-ha.py"):
                     (root / script).write_text("# offline helper source\n")
                 fixture = root / "fixture.json"
                 fixture.write_text(json.dumps({"context": "kind-fluxgate-resilience", "namespace": "fluxgate-resilience"}))
                 proof = root / "proof"
                 spawned = []
                 events = []
+                killed = []
+                os.killpg = lambda *arguments: killed.append(arguments)
                 class FakeProcess:
                     pid = 123
                     def __init__(self, name, code=0):
                         self.name, self.code, self.finished = name, code, False
+                        self.waited = False
                     def poll(self):
                         return self.code if self.finished else None
                     def wait(self, timeout):
+                        if self.name == "baseline-ha" and failure == "preflight-timeout" and not self.waited:
+                            self.waited = True
+                            raise subprocess.TimeoutExpired("offline-baseline", timeout)
                         events.append("completed:" + self.name)
                         self.finished = True
                         return self.code
                 def fake_popen(arguments, stdout, stderr, start_new_session=False):
                     name = Path(arguments[1]).name
+                    if name == "verify-ha.py" and arguments[arguments.index("--phase") + 1] == "baseline":
+                        name = "baseline-ha"
                     spawned.append((name, arguments, start_new_session))
                     events.append("started:" + name)
+                    if name == "baseline-ha":
+                        assert not start_new_session
+                        assert "--preserve-promoted-roles" not in arguments and "--prepared-publisher" not in arguments
+                        assert "started:verify-load.py" not in events and "started:verify-ha.py" not in events
+                        if fault == "redis":
+                            assert "completed:prepare-ha-identity.py" in events
+                        else:
+                            assert "started:publish-hook.py" not in events
+                        baseline_dir = proof / "preflight-baseline"; baseline_dir.mkdir()
+                        (baseline_dir / "ha.json").write_text(json.dumps({"result": "pass", "phase": "baseline", "context": "kind-fluxgate-resilience", "phase_complete": True, "complete": False,
+                            "checks": [{"check": "complete-fixture-restoration", "mongo_healthy_voters": 3, "redis_primaries": 3,
+                                "redis_linked_replicas": 6, "redis_primary_nodes_distinct": failure != "preflight-health",
+                                "placement_restoration_deferred": False, "ready_counts": {
+                                    "app=mongo": 3, "app=redis": 9, "app=fluxgate-authz": 2, "app=echo": 2,
+                                    "control-plane=envoy-gateway": 2,
+                                    "gateway.envoyproxy.io/owning-gateway-namespace=fluxgate-resilience": 2}},
+                                {"check": "publication-probe-cleanup", "passed": True, "pod_absent": True, "network_policy_absent": True}]}))
+                        return FakeProcess(name, 1 if failure == "preflight" else 0)
                     if name in ("publish-hook.py", "prepare-ha-identity.py"):
                         assert start_new_session
                         if "--cleanup" in arguments:
@@ -661,8 +736,9 @@ def self_check():
                             state.update(cleanup_complete=True, cleanup_resources=[{"kind": "Pod", "name": "probe", "uid": "probe-uid", "absent": True}])
                             state_file.write_text(json.dumps(state))
                             return FakeProcess("cleanup", 1 if failure in ("cleanup", "prepare_and_cleanup") else 0)
-                        assert len(spawned) == 1
+                        assert len(spawned) == (2 if fault == "mongo" else 1)
                         if name == "publish-hook.py":
+                            assert "completed:baseline-ha" in events
                             assert "--prepare" in arguments
                             state = {"probe_owned": True, "pod_uid": "probe-uid", "source_authz_pod": "authz-source", "source_authz_pod_uid": "authz-uid",
                                      "jar_sha256": "a" * 64,
@@ -677,7 +753,8 @@ def self_check():
                                 "passed": True, "policy_pointer_unchanged": True, "existing_counters_deleted_or_reset": False}))
                         return FakeProcess(name, 1 if failure in ("prepare", "prepare_and_cleanup") else 0)
                     if name == "verify-load.py":
-                        assert "completed:" + spawned[0][0] in events
+                        assert "completed:baseline-ha" in events
+                        assert "completed:" + ("publish-hook.py" if fault == "mongo" else "prepare-ha-identity.py") in events
                         stdout.write(json.dumps(failed_evidence)); stdout.flush()
                         if failure != "warmup":
                             Path(arguments[arguments.index("--output") + 1]).write_text(json.dumps({
@@ -706,10 +783,18 @@ def self_check():
                     code = coordinate(SimpleNamespace(fixture=fixture, proof=proof, fault=fault))
                 summary = json.loads((proof / "summary.json").read_text())
                 prep_name = "publisher_preparation" if fault == "mongo" else "identity_preparation"
-                assert summary["preparations"][prep_name]["source"]["sha256"] == digest(root / spawned[0][0])["sha256"]
-                if failure in ("cleanup", "residual"):
+                if not failure or not failure.startswith("preflight"):
+                    assert summary["preparations"][prep_name]["source"]["sha256"] == digest(root / ("publish-hook.py" if fault == "mongo" else "prepare-ha-identity.py"))["sha256"]
+                if failure and failure.startswith("preflight"):
+                    assert code == 1 and summary["failure_stage"] == "baseline_preflight"
+                    assert not summary["fault_process_started"] and not (proof / "load.log").exists() and not (proof / "ha.log").exists()
+                    assert not any(name == "publish-hook.py" for name, _, _ in spawned)
+                    assert not killed
+                    if failure == "preflight-timeout":
+                        assert summary["processes"][-1]["exit_code"] == 0 and summary["passed"] is False
+                elif failure in ("cleanup", "residual"):
                     assert code == 1 and not summary["passed"] and summary["failure_stage"] == "publisher_cleanup"
-                    assert summary["publisher_cleanup"]["exit_code"] == (1 if failure == "cleanup" else 0) and len(spawned) == 4
+                    assert summary["publisher_cleanup"]["exit_code"] == (1 if failure == "cleanup" else 0) and len(spawned) == 5
                 elif failure:
                     assert code == 1 and not summary["passed"] and not summary["fault_process_started"]
                     assert not (proof / "ha.log").exists()
@@ -718,15 +803,15 @@ def self_check():
                         assert json.loads((proof / "raw-load.json").read_text()) == failed_evidence
                         assert summary["raw_proofs"]["load"]["sha256"] == digest(proof / "raw-load.json")["sha256"]
                     else:
-                        assert len(spawned) == 2 and not (proof / "load.log").exists()
+                        assert len(spawned) == 3 and not (proof / "load.log").exists()
                         if failure == "prepare_and_cleanup":
                             assert summary["failure"] == "publisher_preparation failed"
                             assert summary["publisher_cleanup"]["failure"] == "publisher_cleanup failed"
                 else:
-                    assert code == 0 and len(spawned) == (4 if fault == "mongo" else 3)
+                    assert code == 0 and len(spawned) == (5 if fault == "mongo" else 4)
                     if fault == "mongo":
                         assert summary["preparations"][prep_name]["state"]["sha256"] == digest(proof / "publication-helper-state.json")["sha256"]
-                if fault == "mongo" and failure not in ("cleanup", "prepare_and_cleanup", "residual"):
+                if fault == "mongo" and failure not in ("cleanup", "prepare_and_cleanup", "residual", "preflight", "preflight-health", "preflight-timeout"):
                     assert summary["publisher_cleanup"]["owned_resources_absent_verified_by_helper"] is True
                     assert "state" in summary["publisher_cleanup"]
                 if fault == "redis":
