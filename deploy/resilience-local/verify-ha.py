@@ -2,6 +2,7 @@
 """Serial fault proof for the isolated fixture. Root must schedule this run exclusively."""
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -11,7 +12,30 @@ import tempfile
 import time
 import threading
 import uuid
+import zipfile
 
+
+
+def canonical_lua_sha(script):
+    # BufferedReader.readLine recognizes LF, CRLF and CR; a terminator adds no final line.
+    text = script.decode('utf-8')
+    lines = re.split(r'\r\n|\r|\n', text)
+    if text.endswith(('\r', '\n')):
+        lines.pop()
+    return hashlib.sha1('\n'.join(lines).encode('utf-8')).hexdigest()
+
+
+def packaged_script(jar_file):
+    jar_bytes = jar_file.read_bytes()
+    with zipfile.ZipFile(io.BytesIO(jar_bytes)) as jar:
+        libraries = [name for name in jar.namelist() if name.startswith('BOOT-INF/lib/fluxgate-redis-ratelimiter-') and name.endswith('.jar')]
+        assert len(libraries) == 1, 'Expected exactly one packaged Redis rate limiter library'
+        with zipfile.ZipFile(io.BytesIO(jar.read(libraries[0]))) as library:
+            resource = 'lua/token_bucket_consume.lua'
+            script = library.read(resource)
+    return {'sha1': canonical_lua_sha(script), 'jar_file': str(jar_file), 'jar_sha256': hashlib.sha256(jar_bytes).hexdigest(),
+            'nested_archive': libraries[0], 'resource': resource, 'raw_resource_sha256': hashlib.sha256(script).hexdigest(),
+            'loader': 'UTF-8 BufferedReader.lines().collect(joining("\\n"))'}
 
 
 def main():
@@ -397,7 +421,13 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             replicas = [n for n in nodes.values() if n['primary'] == old_id]
             assert len(replicas) == 2
             # Script cache is volatile; clear replicas only to prove actual NOSCRIPT recovery.
-            sha = hashlib.sha1((Path(__file__).resolve().parents[2] / 'fluxgate-redis-ratelimiter/src/main/resources/lua/token_bucket_consume.lua').read_bytes()).hexdigest()
+            script_provenance = packaged_script(Path(fixture['application_jar_file']))
+            sha = script_provenance['sha1']
+            authz_pod = obj('pods', selector='app=fluxgate-authz')['items'][0]['metadata']['name']
+            deployed_jar_sha = kube(['-n', ns, 'exec', authz_pod, '--', 'sha256sum', '/app/app.jar']).split()[0]
+            assert deployed_jar_sha == script_provenance['jar_sha256'], 'Local packaged script artifact differs from deployed app'
+            assert redis(old_primary['pod'], ['SCRIPT', 'EXISTS', sha]) == '1', 'Canonical packaged Lua SHA must exist before replica flush'
+            phase_evidence.update({'script_provenance': script_provenance, 'script_exists_old_primary_before_flush': True})
             for replica in replicas:
                 redis(replica['pod'], ['SCRIPT', 'FLUSH'])
                 assert redis(replica['pod'], ['SCRIPT', 'EXISTS', sha]) == '0'
@@ -442,7 +472,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             assert not any('unexpected' in sample for sample in outage_samples)
             record('redis-promotion', old_primary_id=old_id, new_primary_id=new_id, target_still_paused=old_primary['pod'] in paused,
                    final_quota_seconds=phase_evidence['final_quota_seconds'], recovery_seconds=recovery_seconds, identity_promotion_seconds=seconds, sustained_gateway=sustained, task_state=task_state(old_primary['pod']), continuous_outage_samples=outage_samples, load_key_owned_failed_shard=True, bucket_key=key, raw_before=before, raw_after_promotion=after, raw_exhausted=exhausted,
-                   cache_absent_before_promotion=True, cache_loaded_after_real_request=True, authz_processes_unchanged=authz_before, rpo='Observed counter preserved; asynchronous replication is not zero-loss consensus')
+                   script_provenance=script_provenance, script_exists_old_primary_before_flush=True, cache_absent_before_promotion=True, cache_loaded_after_real_request=True, authz_processes_unchanged=authz_before, rpo='Observed counter preserved; asynchronous replication is not zero-loss consensus')
             fault_deadline = None
             signal(old_primary['pod'], 'CONT')
             wait('Redis old member recovery', lambda: request(fixture['load_path'], {200}), 30)
