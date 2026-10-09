@@ -17,6 +17,7 @@ from pathlib import Path
 import secrets
 import socket
 import ssl
+import sys
 import subprocess
 import tempfile
 import threading
@@ -86,6 +87,82 @@ def signed_jwt(openssl, private_key, kid, issuer, audience, expiry, algorithm="R
     return message.decode() + "." + b64url(signature)
 
 
+def redis_hash_contents(value):
+    fields = value.split(b"\n")
+    require(bool(value) and len(fields) % 2 == 0, "Redis metadata is not a complete hash")
+    pairs = dict(zip(fields[::2], fields[1::2]))
+    require(len(pairs) == len(fields) // 2, "Redis metadata has ambiguous duplicate fields")
+    return pairs
+
+
+def validate_restart_identity(before, after, originals, current):
+    require(before["metadata"]["uid"] != after["metadata"]["uid"], "Redis member was not cold replaced")
+    def claims(pod):
+        return {v["persistentVolumeClaim"]["claimName"] for v in pod["spec"]["volumes"] if "persistentVolumeClaim" in v}
+    require(bool(claims(before)) and claims(before) == claims(after), "replacement lost data PVC mount")
+    for claim, original in originals.items():
+        pvc = current[claim]
+        require(pvc["metadata"]["uid"] == original["metadata"]["uid"] and
+                pvc["spec"]["volumeName"] == original["spec"]["volumeName"], "cold restart replaced PVC/PV identity")
+
+
+def sampler_worker(config, stop_path):
+    """Fixed 100ms schedules, fresh sockets, and explicit missed schedules/errors."""
+    start = time.monotonic()
+    sequence = 0
+    samples = []
+    omitted = 0
+    while not Path(stop_path).exists():
+        deadline = start + sequence * .1
+        lag = time.monotonic() - deadline
+        if lag >= .1:
+            missed = int(lag / .1)
+            omitted += missed
+            sequence += missed
+            deadline = start + sequence * .1
+        time.sleep(max(0, deadline - time.monotonic()))
+        began = time.monotonic()
+        sample = {"sequence": sequence, "elapsed_seconds": began - start,
+                  "dispatch_lag_ms": max(0, began - deadline) * 1000}
+        connection = http.client.HTTPConnection(config["service"], config["port"], timeout=2)
+        try:
+            connection.request("GET", config["path"], headers={"Host": config["host"],
+                               "x-api-key": config["api_key"], "Connection": "close"})
+            response = connection.getresponse()
+            body = response.read()
+            sample.update(status=response.status, body_valid=config["body"].encode() in body)
+        except Exception as error:
+            sample.update(status=None, body_valid=False, error=type(error).__name__)
+        finally:
+            connection.close()
+        sample["latency_ms"] = (time.monotonic() - began) * 1000
+        samples.append(sample)
+        if sample["status"] == 200 and sample["body_valid"]:
+            private_write(config.get("positive_path", "/tmp/sampler-positive"), "yes")
+        sequence += 1
+    return {"interval_ms": 100, "scheduled": sequence, "omitted_schedules": omitted,
+            "samples": samples, "duration_seconds": time.monotonic() - start,
+            "transport": "in-cluster Gateway Service; fresh connection per sample"}
+
+
+def sampler_summary(report):
+    samples = report["samples"]
+    require(bool(samples), "credential traffic sampler produced no observations")
+    require(report["scheduled"] == len(samples) + report["omitted_schedules"],
+            "credential traffic sampler lost schedules")
+    statuses = {}
+    for sample in samples:
+        label = str(sample["status"]) if sample["status"] is not None else "ERROR"
+        statuses[label] = statuses.get(label, 0) + 1
+    valid = sum(x["status"] == 200 and x["body_valid"] for x in samples)
+    report.update(statuses=statuses, backend_successes=valid,
+                  unexpected_body_responses=sum(x["status"] == 200 and not x["body_valid"] for x in samples),
+                  observed_availability=valid / len(samples),
+                  uninterrupted_observed=valid == len(samples) and report["omitted_schedules"] == 0,
+                  limit="Sampling bounds observed gaps; it does not prove zero downtime between samples.")
+    return report
+
+
 class Proof:
     def __init__(self, fixture):
         self.fixture_path = Path(fixture).resolve()
@@ -102,6 +179,7 @@ class Proof:
         self.backups = {}
         self.store_rollback = None
         self.tls_rollback = None
+        self.cold_sentinels = []
         self.ns = self.f["namespace"]
         self.api_key = self.read("api_key_file")
 
@@ -397,7 +475,7 @@ class Proof:
                                    "new_connections_and_replaced_pods": True}
         self.backups.clear()
 
-    def redis(self, pod, command, password=None):
+    def redis(self, pod, command, password=None, readonly=False):
         def response(stream):
             prefix = stream.read(1)
             line = stream.readline().rstrip(b"\r\n")
@@ -428,6 +506,8 @@ class Proof:
                         auth = send(stream, ["AUTH", password])
                         if auth.startswith(b"ERROR"):
                             return auth
+                    if readonly:
+                        require(send(stream, ["READONLY"]) == b"OK", "Redis replica READONLY failed")
                     return send(stream, command)
 
     def redis_check(self, pod, password, expected):
@@ -466,6 +546,150 @@ class Proof:
                     (b":18:", b":13:", b"AuthenticationFailed", b"Unauthorized")),
                     "Mongo negative did not explicitly reject authentication")
         return result.stdout
+
+    @contextlib.contextmanager
+    def traffic_sampler(self, phase):
+        name = "credential-traffic-" + secrets.token_hex(6)
+        service = self.get("service/" + self.f["gateway_service"], self.f["gateway_namespace"])
+        ports = [p for p in service["spec"]["ports"] if p["port"] == 80]
+        require(len(ports) == 1 and isinstance(ports[0]["targetPort"], int), "numeric Gateway sampler port required")
+        labels = {"fluxgate.io/credential-sampler": name}
+        policy = {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+                  "metadata": {"name": name, "namespace": self.ns},
+                  "spec": {"podSelector": {"matchLabels": labels}, "policyTypes": ["Egress"], "egress": [
+                      {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+                               "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+                       "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+                      {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": self.f["gateway_namespace"]}},
+                               "podSelector": {"matchLabels": service["spec"]["selector"]}}],
+                       "ports": [{"protocol": "TCP", "port": ports[0]["targetPort"]}]}]}}
+        pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": name, "namespace": self.ns, "labels": labels},
+               "spec": {"restartPolicy": "Never", "automountServiceAccountToken": False,
+                        "terminationGracePeriodSeconds": 1,
+                        "containers": [{"name": "sampler", "image": self.f.get("generator_image", "python:3.12-alpine"),
+                                        "command": ["python3", "-c", "import time;time.sleep(7200)"],
+                                        "resources": {"requests": {"cpu": "25m", "memory": "32Mi"},
+                                                      "limits": {"cpu": "250m", "memory": "128Mi"}}}]}}
+        process = None
+        try:
+            self.kube("create", "-f", "-", data=json.dumps(policy).encode())
+            self.kube("create", "-f", "-", data=json.dumps(pod).encode())
+            self.kube("wait", "--for=condition=Ready", "pod/" + name, "--timeout=180s")
+            code = Path(__file__).read_text().rsplit('\nif __name__ == "__main__":', 1)[0]
+            code += "\nconfig=json.loads(sys.stdin.readline());private_write('/tmp/sampler-started','yes');print(json.dumps(sampler_worker(config,'/tmp/sampler-stop')),flush=True)\n"
+            # Code/command contains no secret. The API key enters only the exec stdin stream.
+            process = subprocess.Popen(["kubectl", "--kubeconfig", self.f["kubeconfig"], "--context", self.f["context"],
+                                        "-n", self.ns, "exec", "-i", name, "--", "python3", "-c", code],
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            config = {"service": self.f["gateway_service"] + "." + self.f["gateway_namespace"] + ".svc.cluster.local",
+                      "port": 80, "host": self.f["gateway_host"], "path": self.f["load_path"],
+                      "api_key": self.api_key, "body": self.f.get("backend_body", "fluxgate-resilience-ok")}
+            process.stdin.write((json.dumps(config) + "\n").encode())
+            process.stdin.close()
+            process.stdin = None
+            for _ in range(60):
+                require(process.poll() is None, "credential sampler exited before mutation")
+                if self.kube("exec", name, "--", "test", "-f", "/tmp/sampler-positive", check=False).returncode == 0:
+                    break
+                time.sleep(.1)
+            else:
+                raise ProofError("credential sampler did not start")
+            yield
+        finally:
+            try:
+                if process:
+                    self.kube("exec", name, "--", "touch", "/tmp/sampler-stop", check=False)
+                    output, _ = process.communicate(timeout=15)
+                    require(process.returncode == 0, "credential sampler failed")
+                    require(self.api_key.encode() not in output, "credential sampler leaked secret; evidence suppressed")
+                    report = sampler_summary(json.loads(output))
+                    self.results.setdefault("rotation_traffic", {})[phase] = report
+                    # Retain failed-phase observations privately even when no complete proof is emitted.
+                    private_write(self.work / (phase + "-traffic.json"), json.dumps(report, indent=2) + "\n")
+            finally:
+                if process and process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=5)
+                self.kube("delete", "pod/" + name, "networkpolicy/" + name, "--ignore-not-found=true", check=False)
+
+    def redis_cold_restart(self, password, retired_password):
+        chosen = None
+        for pod in self.f["redis_pods"]:
+            if not self.redis(pod, ["ROLE"], password).startswith(b"slave\n"):
+                continue
+            keys = self.redis(pod, ["KEYS", "fluxgate:bucket:policy:*"], password, readonly=True)
+            for key in keys.decode().splitlines():
+                if self.redis(pod, ["TYPE", key], password, readonly=True) == b"hash":
+                    value = self.redis(pod, ["HGETALL", key], password, readonly=True)
+                    if value and not value.startswith(b"ERROR"):
+                        chosen = (pod, key, value)
+                        break
+            if chosen:
+                break
+        require(chosen is not None, "no replica with real persisted policy metadata for cold restart")
+        pod, key, value = chosen
+        before = self.get("pod/" + pod)
+        claims = [v["persistentVolumeClaim"]["claimName"] for v in before["spec"]["volumes"] if "persistentVolumeClaim" in v]
+        require(bool(claims), "Redis member has no persistent data claim")
+        pvcs = {claim: self.get("pvc/" + claim) for claim in claims}
+        node_id = self.redis(pod, ["CLUSTER", "MYID"], password)
+        sentinel = "/data/.credential-restart-" + secrets.token_hex(8)
+        content = secrets.token_bytes(32)
+        self.cold_sentinels.append((pod, sentinel))
+        self.kube("exec", "-i", pod, "--", "sh", "-c", 'cat > "$1"', "sentinel", sentinel, data=content)
+        require(self.kube("exec", pod, "--", "cat", sentinel).stdout == content, "restart data sentinel unreadable")
+        started = time.monotonic()
+        self.kube("delete", "pod/" + pod, "--wait=true")
+        for _ in range(300):
+            try:
+                fresh = self.get("pod/" + pod)
+                ready = any(c["type"] == "Ready" and c["status"] == "True" for c in fresh.get("status", {}).get("conditions", []))
+                if fresh["metadata"]["uid"] != before["metadata"]["uid"] and ready:
+                    self.redis_check(pod, password, True)
+                    info = self.redis(pod, ["INFO", "replication"], password)
+                    if b"role:slave" in info and b"master_link_status:up" in info:
+                        break
+            except ProofError:
+                pass
+            time.sleep(1)
+        else:
+            raise ProofError("Redis cold member failed to recover with new Secret credential")
+        require(self.redis(pod, ["CLUSTER", "MYID"], password) == node_id, "cold restart lost persisted Redis node identity")
+        require(redis_hash_contents(self.redis(pod, ["HGETALL", key], password, readonly=True)) ==
+                redis_hash_contents(value), "cold restart lost real policy metadata")
+        require(self.kube("exec", pod, "--", "cat", sentinel).stdout == content, "cold restart lost mounted data")
+        validate_restart_identity(before, fresh, pvcs, {claim: self.get("pvc/" + claim) for claim in pvcs})
+        self.redis_check(pod, retired_password, False)
+        self.redis_check(pod, secrets.token_urlsafe(40), False)
+        self.redis_check(pod, None, False)
+        self.redis_check(pod, password, True)
+        restored = False
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            restored = True
+            for member in self.f["redis_pods"]:
+                info = self.redis(member, ["CLUSTER", "INFO"], password)
+                nodes = self.redis(member, ["CLUSTER", "NODES"], password)
+                lines = [line.split() for line in nodes.decode().splitlines() if line.startswith(node_id.decode() + " ")]
+                restored = restored and b"cluster_state:ok" in info and (
+                    "cluster_known_nodes:" + str(len(self.f["redis_pods"]))).encode() in info and len(lines) == 1
+                if lines:
+                    restored = restored and len(lines[0]) >= 8 and lines[0][7] == "connected" and (
+                        lines[0][1].startswith(fresh["status"]["podIP"] + ":")) and not any(
+                            flag in lines[0][2].split(",") for flag in ("fail", "fail?", "noaddr", "handshake"))
+            if restored:
+                break
+            time.sleep(1)
+        require(restored, "Redis topology did not converge to cold member's new address")
+        self.available()
+        self.kube("exec", pod, "--", "sh", "-c", 'rm -- "$1"', "sentinel", sentinel)
+        self.cold_sentinels.remove((pod, sentinel))
+        return {"replica": pod, "before_uid": before["metadata"]["uid"], "after_uid": fresh["metadata"]["uid"],
+                "pvc_uids": {c: v["metadata"]["uid"] for c, v in pvcs.items()}, "redis_node_id_preserved": True,
+                "policy_metadata_preserved": True, "mounted_data_sha256": hashlib.sha256(content).hexdigest(),
+                "new_correct_accepted": True, "retired_wrong_missing_rejected": True,
+                "replication_link_up": True, "cluster_restored": True, "gateway_positive": True,
+                "recovery_seconds": time.monotonic() - started}
 
     def stores(self):
         uri = self.read("mongo_uri_file")
@@ -531,6 +755,7 @@ class Proof:
             require(b"OK" in output and b"ERR" not in output, "Redis old password retirement failed")
             self.redis_check(pod, old_password, False)
             self.redis_check(pod, new_redis_password, True)
+        cold_restart = self.redis_cold_restart(new_redis_password, old_password)
         self.available()
         private_write(self.f["mongo_uri_file"], new_uri)
         if self.f.get("mongo_app_password_file"):
@@ -543,7 +768,8 @@ class Proof:
                                              "overlap_users": True, "old_user_retired": True},
                                   "redis": {"nodes": len(self.f["redis_pods"]), "valid": True,
                                             "wrong_rejected": True, "missing_rejected": True,
-                                            "overlap_passwords": True, "old_password_retired": True},
+                                            "overlap_passwords": True, "old_password_retired": True,
+                                            "cold_restart": cold_restart},
                                   "new_connections_and_replaced_app_pods": True}
         self.backups.clear()
         self.store_rollback = None
@@ -711,6 +937,13 @@ class Proof:
 
     def cleanup_failed(self):
         failures = []
+        for pod, sentinel in self.cold_sentinels:
+            try:
+                result = self.kube("exec", pod, "--", "sh", "-c", 'rm -- "$1"', "sentinel", sentinel, check=False)
+                if result.returncode:
+                    failures.append("cold-restart-sentinel-cleanup")
+            except Exception:
+                failures.append("cold-restart-sentinel-cleanup")
         if self.tls_rollback:
             for path, contents in self.tls_rollback.items():
                 try:
@@ -769,6 +1002,56 @@ class Proof:
 
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
+    require(redis_hash_contents(b"revision\n1\nepoch\nstable") ==
+            redis_hash_contents(b"epoch\nstable\nrevision\n1"), "Redis metadata compared hash iteration order")
+    worker_source = Path(__file__).read_text().rsplit('\nif __name__ == "__main__":', 1)[0]
+    compile(worker_source + "\nconfig=json.loads(sys.stdin.readline());print(json.dumps(sampler_worker(config,'/tmp/stop')))\n",
+            "sampler-worker", "exec")
+    original = {"metadata": {"uid": "old"}, "spec": {"volumes": [{"persistentVolumeClaim": {"claimName": "data"}}]}}
+    replacement = {"metadata": {"uid": "new"}, "spec": original["spec"]}
+    pvc = {"data": {"metadata": {"uid": "pvc"}, "spec": {"volumeName": "pv"}}}
+    validate_restart_identity(original, replacement, pvc, pvc)
+    for after, now in ((original, pvc), (replacement, {"data": {"metadata": {"uid": "different"}, "spec": {"volumeName": "pv"}}}),
+                       ({"metadata": {"uid": "new"}, "spec": {"volumes": []}}, pvc)):
+        try:
+            validate_restart_identity(original, after, pvc, now)
+        except ProofError:
+            pass
+        else:
+            raise ProofError("cold restart accepted old UID or lost PVC")
+    report = sampler_summary({"scheduled": 4, "omitted_schedules": 1, "samples": [
+        {"status": 200, "body_valid": True}, {"status": 503, "body_valid": False},
+        {"status": None, "body_valid": False, "error": "TimeoutError"}]})
+    require(report["statuses"] == {"200": 1, "503": 1, "ERROR": 1} and not report["uninterrupted_observed"] and
+            report["observed_availability"] == 1 / 3, "traffic summary hid outages or missed samples")
+    with tempfile.TemporaryDirectory(prefix="fluxgate-sampler-unit-") as directory:
+        stop = Path(directory) / "stop"
+        calls = []
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                calls.append(self.path)
+                status = 503 if len(calls) == 2 else 200
+                body = b"backend-marker" if len(calls) == 1 else b"unexpected-body"
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                if len(calls) == 3:
+                    private_write(stop, "stop")
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            observed = sampler_summary(sampler_worker({"service": "127.0.0.1", "port": server.server_port,
+                "path": "/load", "host": "local", "api_key": "offline-fixture", "body": "backend-marker",
+                "positive_path": str(Path(directory) / "positive")}, str(stop)))
+            require(observed["statuses"] == {"200": 2, "503": 1} and observed["unexpected_body_responses"] == 1 and
+                    observed["backend_successes"] == 1 and not observed["uninterrupted_observed"],
+                    "actual traffic sampler hid status/body failures")
+        finally:
+            server.shutdown()
+            server.server_close()
     require(mongo_marker(b'POLICY:{"revision":1}\nAUTH_PROBE_OK\n', "POLICY:") == '{"revision":1}',
             "direct Mongo marker parsing failed")
     require(mongo_marker(b'> PRIMARY:mongo-0.mongo.local:27017\nAUTH_PROBE_OK\n', "PRIMARY:") ==
@@ -784,7 +1067,7 @@ def self_test():
     with tempfile.TemporaryDirectory(prefix="fluxgate-credential-unit-") as directory:
         proof = Proof.__new__(Proof)
         proof.work, proof.openssl = Path(directory), "openssl"
-        proof.backups, proof.store_rollback = {}, None
+        proof.backups, proof.store_rollback, proof.cold_sentinels = {}, None, []
         originals = {Path(directory) / "tls" / name: ("original-" + name).encode()
                      for name in ("server-ca.crt", "server-ca.key", "client-ca.crt", "client-ca.key",
                                   "server.crt", "server.key", "client.crt", "client.key")}
@@ -880,7 +1163,7 @@ def self_test():
         proof.redis_check("unused", None, False)
         thread.join(timeout=5)
         require(not thread.is_alive() and not failures, "RESP regression server failed")
-    print("Offline credential regressions passed: strict Mongo markers, partial TLS copy rollback, X.509, cryptographic JWT negative fixtures and fresh RESP authentication")
+    print("Offline credential regressions passed: cold UID/PVC checks, actual traffic sampler, strict Mongo markers, TLS rollback, X.509/JWT and fresh RESP authentication")
 
 
 def main():
@@ -904,10 +1187,15 @@ def main():
             print("Credential phase: " + phase, flush=True)
             method = {"mtls": proof.tls, "api-key": proof.api_keys, "stores": proof.stores,
                       "jwt": proof.jwt}[phase]
-            method()
+            if phase in ("mtls", "api-key", "stores"):
+                with proof.traffic_sampler(phase):
+                    method()
+            else:
+                method()
         result = {"passed": True, "complete": set(phases) == {"mtls", "api-key", "stores", "jwt"},
                   "context": proof.f["context"], "namespace": proof.ns, "results": proof.results,
                   "limits": ["Local ephemeral fixture only; no external credential authority tested.",
+                             "Rotation availability is measured by 100ms in-cluster samples with explicit errors and omissions; no zero-downtime guarantee is inferred.",
                              "JWKS retirement records warm-cache behavior, checks an observed unknown-kid refresh, and checks a fresh decoder; key removal alone is not immediate revocation."]}
         private_write(args.output, json.dumps(result, indent=2) + "\n")
         print("Credential proof passed; evidence: " + str(Path(args.output).resolve()))
