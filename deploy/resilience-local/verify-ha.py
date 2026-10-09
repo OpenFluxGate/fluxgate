@@ -59,27 +59,38 @@ def run_publisher_preparation(command, env, timeout=120):
         try:
             process.communicate(timeout=3)
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, process_signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.communicate(timeout=3)
+            pass
+        # A leader can exit while descendants close their pipes and continue running.
+        try:
+            os.killpg(process.pid, process_signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.communicate(timeout=3)
         raise
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def validate_prepared_publisher(state, pod, baseline, rule_set_id, local_jar_sha, deployed_jar_sha):
+def validate_prepared_publisher(state, pod, source_pod, baseline, rule_set_id, local_jar_sha, probe_jar_sha, source_jar_sha):
     assert isinstance(state.get('operationId'), str) and state['operationId'].strip(), 'Prepared publication operation ID missing'
     assert state.get('ruleSetId') == rule_set_id and state.get('baseline', {}).get('ruleSetId') == rule_set_id, 'Prepared policy rule set differs'
     assert state.get('pod') == pod['metadata']['name'] and state.get('pod_uid') == pod['metadata']['uid'], 'Prepared publisher Pod identity changed'
     assert not pod['metadata'].get('deletionTimestamp'), 'Prepared publisher Pod is terminating'
-    assert pod['metadata'].get('labels', {}).get('app') == 'fluxgate-authz', 'Prepared publisher is not an authz Pod'
+    assert state.get('probe_owned') is True, 'Prepared publisher is not an owned dedicated probe'
+    assert pod['metadata'].get('labels', {}).get('app') == 'fluxgate-publication-probe', 'Prepared publisher is not a dedicated probe Pod'
+    assert pod['metadata']['labels'].get('fluxgate.io/publication-probe') == state['pod'], 'Prepared probe ownership label differs'
+    assert state.get('source_authz_pod') == source_pod['metadata']['name'] and state.get('source_authz_pod_uid') == source_pod['metadata']['uid'], 'Prepared source authz identity changed'
+    assert source_pod['metadata'].get('labels', {}).get('app') == 'fluxgate-authz' and not source_pod['metadata'].get('deletionTimestamp'), 'Prepared source is not an active authz Pod'
+    assert any(c['type'] == 'Ready' and c['status'] == 'True' for c in source_pod.get('status', {}).get('conditions', [])), 'Prepared source authz Pod is not Ready'
     assert any(c['type'] == 'Ready' and c['status'] == 'True' for c in pod.get('status', {}).get('conditions', [])), 'Prepared publisher Pod is not Ready'
-    assert state.get('jar_sha256') == local_jar_sha == deployed_jar_sha, 'Prepared publisher JAR identity changed'
+    assert state.get('jar_sha256') == local_jar_sha == probe_jar_sha == source_jar_sha, 'Prepared publisher JAR identity changed'
     assert isinstance(local_jar_sha, str) and re.fullmatch(r'[0-9a-f]{64}', local_jar_sha), 'Prepared publisher JAR digest missing'
     for field in ('snapshotId', 'revision', 'counterEpoch', 'checksum'):
         assert field in state['baseline'] and field in baseline, 'Prepared policy identity field missing'
         assert str(state['baseline'][field]) == str(baseline[field]), 'Prepared publisher policy snapshot changed: ' + field
+
+
+def validate_publisher_cleanup(result):
+    assert result.get('passed') is True and result.get('pod_absent') is True and result.get('network_policy_absent') is True, 'Publication probe cleanup absence is unverified'
 
 
 def main():
@@ -121,6 +132,7 @@ def main():
     phase_evidence = {}
     outage_samples = []
     sentinels = []
+    owned_probe_uids = {}
 
     def kube(command, stdin=None, timeout=45, binary=False):
         deadlines = [d for d in (restore_deadline, fault_deadline) if d is not None]
@@ -144,6 +156,26 @@ def main():
 
     def apply(resource):
         kube(['apply', '-f', '-'], stdin=json.dumps(resource))
+
+    def apply_owned_probe(resource):
+        resource['metadata'].setdefault('labels', {})['fluxgate.io/ha-probe'] = probe
+        apply(resource)
+        current = obj(resource['kind'], resource['metadata']['name'])
+        owned_probe_uids[(resource['kind'].lower(), resource['metadata']['name'])] = current['metadata']['uid']
+
+    def remove_owned_probe(kind, name):
+        started = time.monotonic()
+        def lookup():
+            value = kube(['-n', ns, 'get', kind, name, '--ignore-not-found=true', '-o', 'json'], timeout=max(.1, 30 - (time.monotonic() - started)))
+            return json.loads(value) if value.strip() else None
+        current = lookup()
+        if current is not None:
+            assert current['metadata'].get('labels', {}).get('fluxgate.io/ha-probe') == probe, 'Probe cleanup ownership label differs'
+            expected_uid = owned_probe_uids.get((kind, name))
+            assert expected_uid is None or current['metadata']['uid'] == expected_uid, 'Probe cleanup UID changed'
+            kube(['-n', ns, 'delete', kind, name, '--wait=true', '--timeout=25s'], timeout=max(.1, 30 - (time.monotonic() - started)))
+        assert lookup() is None and time.monotonic() - started <= 30, 'Owned probe resource remains after cleanup'
+        record('owned-probe-resource-cleanup', kind=kind, name=name, uid=owned_probe_uids.get((kind, name)), absent=True)
 
     def record(label, **data):
         checks.append({'check': label, **data})
@@ -412,9 +444,11 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         assert isinstance(state.get('pod'), str) and state['pod'], 'Prepared publication Pod missing'
         pod = obj('pod', state['pod'])
         jar_sha = hashlib.sha256(Path(fixture['application_jar_file']).read_bytes()).hexdigest()
-        deployed_sha = kube(['-n', ns, 'exec', state['pod'], '--', 'sha256sum', '/app/app.jar']).split()[0]
-        validate_prepared_publisher(state, pod, baseline, fixture['rule_set_id'], jar_sha, deployed_sha)
-        record('prepared-publisher-validated', pod_uid=state['pod_uid'], jar_sha256=jar_sha, operation_id=state['operationId'],
+        source_pod = obj('pod', state['source_authz_pod'])
+        probe_sha = kube(['-n', ns, 'exec', state['pod'], '--', 'sha256sum', '/app/app.jar']).split()[0]
+        source_sha = kube(['-n', ns, 'exec', state['source_authz_pod'], '--', 'sha256sum', '/app/app.jar']).split()[0]
+        validate_prepared_publisher(state, pod, source_pod, baseline, fixture['rule_set_id'], jar_sha, probe_sha, source_sha)
+        record('prepared-publisher-validated', source_authz_pod_uid=state['source_authz_pod_uid'], pod_uid=state['pod_uid'], jar_sha256=jar_sha, operation_id=state['operationId'],
                snapshot_id=baseline['snapshotId'], revision=baseline['revision'], counter_epoch=baseline['counterEpoch'], checksum=baseline['checksum'])
 
     def authz_processes():
@@ -478,16 +512,16 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
     try:
         # Probe has a single allowlisted egress policy and reads its key from a Secret file.
         import base64
-        apply({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': probe_secret, 'namespace': ns},
+        apply_owned_probe({'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': probe_secret, 'namespace': ns},
                'data': {'api-key': base64.b64encode(Path(fixture['ha_api_key_file']).read_bytes()).decode(),
                         'load-api-key': base64.b64encode(Path(fixture['api_key_file']).read_bytes()).decode()}})
-        apply({'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy', 'metadata': {'name': probe_policy, 'namespace': ns},
+        apply_owned_probe({'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy', 'metadata': {'name': probe_policy, 'namespace': ns},
             'spec': {'podSelector': {'matchLabels': {'app': probe}}, 'policyTypes': ['Egress'], 'egress': [
                 {'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': fixture['gateway_namespace']}},
                          'podSelector': {'matchLabels': {'gateway.envoyproxy.io/owning-gateway-namespace': ns}}}], 'ports': [{'port': 80}, {'port': 10080}]},
                 {'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'kube-system'}}, 'podSelector': {'matchLabels': {'k8s-app': 'kube-dns'}}}],
                  'ports': [{'port': 53, 'protocol': 'UDP'}, {'port': 53, 'protocol': 'TCP'}]}]}})
-        apply({'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': probe, 'namespace': ns, 'labels': {'app': probe}},
+        apply_owned_probe({'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': probe, 'namespace': ns, 'labels': {'app': probe}},
             'spec': {'automountServiceAccountToken': False, 'nodeSelector': {'kubernetes.io/hostname': ns + '-control-plane'},
                      'tolerations': [{'key': 'node-role.kubernetes.io/control-plane', 'operator': 'Exists', 'effect': 'NoSchedule'}],
                      'containers': [{'name': 'probe', 'image': 'python:3.12-alpine', 'command': ['python', '-c', 'import time;time.sleep(3600)'],
@@ -791,9 +825,19 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             full_restore(cleanup_started)
         except Exception:
             cleanup_failures.append('complete fixture restoration failed within 180s')
+        try:
+            cleaned = run_publisher_preparation(['python3', str(args.publisher_hook), '--fixture', str(fixture_file), '--cleanup'], env, timeout=30)
+            assert cleaned.returncode == 0, 'Publication probe cleanup failed'
+            cleanup_result = json.loads(cleaned.stdout)
+            validate_publisher_cleanup(cleanup_result)
+            record('publication-probe-cleanup', **cleanup_result)
+            (proof / 'publisher-cleanup.json').write_text(json.dumps(cleanup_result, indent=2) + '\n')
+        except Exception as error:
+            (proof / 'publisher-cleanup.json').write_text(json.dumps({'passed': False, 'exception_class': type(error).__name__}) + '\n')
+            cleanup_failures.append('publication probe cleanup failed')
         for kind, name in [('pod', probe), ('secret', probe_secret), ('networkpolicy', probe_policy)]:
             try:
-                kube(['-n', ns, 'delete', kind, name, '--ignore-not-found=true', '--wait=false'])
+                remove_owned_probe(kind, name)
             except Exception:
                 cleanup_failures.append('probe cleanup failed: ' + kind)
         if cleanup_failures:
