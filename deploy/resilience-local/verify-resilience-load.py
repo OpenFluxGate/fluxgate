@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import signal
 import subprocess
 import sys
 import time
@@ -203,6 +204,51 @@ def digest(path):
     return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
+
+def stop_preparation_group(process):
+    """Only preparation children have their own session; never stop HA cleanup."""
+    for signum in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(process.pid, signum)
+        except ProcessLookupError:
+            pass
+        if signum == signal.SIGTERM:
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                continue
+            # The session leader may exit before a hung kubectl descendant.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            return
+        process.wait(timeout=5)
+
+
+def prepare_owned(arguments, log, processes, name, evidence):
+    evidence["started_unix_ms"] = time.time_ns() // 1000000
+    process = subprocess.Popen(arguments, stdout=log, stderr=log, start_new_session=True)
+    processes.append((name, process))
+    evidence["pid"] = process.pid
+    try:
+        code = process.wait(timeout=300)
+        require(code == 0, name + " failed")
+    except BaseException:
+        stop_preparation_group(process)
+        raise
+    finally:
+        evidence["completed_unix_ms"] = time.time_ns() // 1000000
+        evidence["exit_code"] = process.poll()
+
+
+def fault_arguments(fixture_file, fault, proof):
+    arguments = [sys.executable, str(HERE / "verify-ha.py"), "--fixture", str(fixture_file),
+                 "--phase", fault, "--proof", str(proof / "ha")]
+    if fault == "mongo":
+        arguments.append("--prepared-publisher")
+    return arguments
+
 def coordinate(args):
     os.umask(0o077)
     proof = args.proof.resolve()
@@ -215,21 +261,38 @@ def coordinate(args):
             "requires isolated resilience fixture")
     processes = []
     handles = []
+    preparations = {}
     summary = {"passed": False, "complete": False, "fault": args.fault}
     stage = "fixture_preflight"
     try:
         active = json.loads(kube(fixture, ["get", "pods", "-l", "fluxgate.io/load-phase=resilience", "-o", "json"]))
         require(not active["items"], "another resilience generator is active")
+        stage = "identity_preparation" if args.fault == "redis" else "publisher_preparation"
+        helper = HERE / ("prepare-ha-identity.py" if args.fault == "redis" else "publish-hook.py")
+        evidence = {"source": digest(helper)}
+        preparations[stage] = evidence
+        arguments = [sys.executable, str(helper), "--fixture", str(fixture_file)]
+        arguments += ["--output", str(proof / "identity.json")] if args.fault == "redis" else ["--prepare"]
+        with (proof / "prepare.log").open("w") as log:
+            prepare_owned(arguments, log, processes, stage, evidence)
         if args.fault == "redis":
-            stage = "identity_preparation"
-            with (proof / "prepare.log").open("w") as log:
-                prepared = subprocess.run([sys.executable, str(HERE / "prepare-ha-identity.py"),
-                    "--fixture", str(fixture_file), "--output", str(proof / "identity.json")],
-                    stdout=log, stderr=log, timeout=300)
-            require(prepared.returncode == 0, "fresh HA identity preparation failed")
             identity = json.loads((proof / "identity.json").read_text())
             require(identity.get("passed") is True and identity.get("policy_pointer_unchanged") is True
                     and identity.get("existing_counters_deleted_or_reset") is False, "identity preparation changed policy/counters")
+        else:
+            state_file = fixture_file.parent / "publication-hook-state.json"
+            require(state_file.stat().st_mode & 0o077 == 0, "publisher state must be private")
+            state = json.loads(state_file.read_text())
+            require(state.get("pod_uid") and state.get("ruleSetId") == fixture.get("rule_set_id", "resilience-limits")
+                    and isinstance(state.get("jar_sha256"), str) and len(state["jar_sha256"]) == 64
+                    and all(c in "0123456789abcdef" for c in state["jar_sha256"]), "publisher provenance absent")
+            baseline = state.get("baseline", {})
+            require(all(key in baseline for key in ("revision", "counterEpoch", "snapshotId", "checksum")),
+                    "prepared publisher baseline pointer/epoch absent")
+            retained_state = proof / "publication-helper-state.json"
+            retained_state.write_text(json.dumps(state, indent=2) + "\n")
+            evidence["state"] = digest(retained_state)
+        # All compilation/upload and preparation finish while healthy, before warmup.
         stage = "load_start"
         log = (proof / "load.log").open("w"); handles.append(log)
         load = subprocess.Popen([sys.executable, str(HERE / "verify-load.py"), "--fixture", str(fixture_file),
@@ -244,8 +307,7 @@ def coordinate(args):
             raise ReadinessFailure("load exited before fault launch", "load_warmup")
         stage = "fault_execution"
         log = (proof / "ha.log").open("w"); handles.append(log)
-        ha = subprocess.Popen([sys.executable, str(HERE / "verify-ha.py"), "--fixture", str(fixture_file),
-            "--phase", args.fault, "--proof", str(proof / "ha")], stdout=log, stderr=log)
+        ha = subprocess.Popen(fault_arguments(fixture_file, args.fault, proof), stdout=log, stderr=log)
         processes.append(("ha", ha))
         ha_code = ha.wait(timeout=600)
         load_code = load.wait(timeout=400)
@@ -264,13 +326,17 @@ def coordinate(args):
         summary["failure"] = str(error) if isinstance(error, ValueError) else type(error).__name__
     finally:
         # Do not kill a fault subprocess: its finally block must restore the real primary.
-        for _, process in processes:
+        for process_name, process in processes:
             if process.poll() is None:
+                if process_name in ("identity_preparation", "publisher_preparation"):
+                    stop_preparation_group(process)
+                    continue
                 try:
                     process.wait(timeout=600)
                 except subprocess.TimeoutExpired:
                     summary["passed"] = False
                     summary["incomplete_subprocess_retained"] = True
+        summary["preparations"] = preparations
         summary["processes"] = [{"name": name, "pid": p.pid, "exit_code": p.poll()} for name, p in processes]
         for handle in handles:
             handle.close()
@@ -414,42 +480,129 @@ def self_check():
             rejected_polls += 1
             continue
         raise AssertionError("failed/replaced generator authorized a fault")
-    # A failed warmup must retain its raw JSON and never spawn the HA process.
+    # Mock only process/API boundaries: exercise actual coordinator ordering,
+    # source/state evidence, flags, stage attribution and failed JSON retention.
     import contextlib
     import io
     from types import SimpleNamespace
-    original_kube, original_wait, original_popen = globals()["kube"], globals()["wait_readiness"], subprocess.Popen
-    spawned = []
+    saved = {key: globals()[key] for key in ("HERE", "kube", "wait_readiness", "clock_measurement", "assess")}
+    original_popen = subprocess.Popen
+    original_killpg = os.killpg
     failed_evidence = {"phase": "resilience", "result": "FAIL", "warmup": {"all_statuses": {"503": 325}}}
-    class FailedProcess:
-        pid = 123
-        def poll(self):
-            return 1
-    def fake_popen(arguments, stdout, stderr):
-        spawned.append(arguments)
-        stdout.write(json.dumps(failed_evidence))
-        stdout.flush()
-        return FailedProcess()
-    def failed_ready(*arguments):
-        raise ReadinessFailure("load exited before readiness marker", "load_warmup")
+    ordering_checks = 0
     try:
-        globals()["kube"] = lambda *arguments: '{"items": []}'
-        globals()["wait_readiness"] = failed_ready
-        subprocess.Popen = fake_popen
-        with tempfile.TemporaryDirectory() as directory:
-            fixture = Path(directory) / "fixture.json"
-            fixture.write_text(json.dumps({"context": "kind-fluxgate-resilience", "namespace": "fluxgate-resilience"}))
-            proof = Path(directory) / "proof"
-            with contextlib.redirect_stdout(io.StringIO()):
-                assert coordinate(SimpleNamespace(fixture=fixture, proof=proof, fault="mongo")) == 1
-            failed_summary = json.loads((proof / "summary.json").read_text())
-            assert failed_summary["failure_stage"] == "load_warmup"
-            assert failed_summary["fault_process_started"] is False and not (proof / "ha.log").exists()
-            assert len(spawned) == 1 and json.loads((proof / "raw-load.json").read_text()) == failed_evidence
-            assert failed_summary["raw_proofs"]["load"]["sha256"] == digest(proof / "raw-load.json")["sha256"]
+        os.killpg = lambda *arguments: None
+        for fault, failure in [("mongo", None), ("redis", None), ("mongo", "warmup"), ("mongo", "prepare")]:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                globals()["HERE"] = root
+                for script in ("publish-hook.py", "prepare-ha-identity.py"):
+                    (root / script).write_text("# offline helper source\n")
+                fixture = root / "fixture.json"
+                fixture.write_text(json.dumps({"context": "kind-fluxgate-resilience", "namespace": "fluxgate-resilience"}))
+                proof = root / "proof"
+                spawned = []
+                events = []
+                class FakeProcess:
+                    pid = 123
+                    def __init__(self, name, code=0):
+                        self.name, self.code, self.finished = name, code, False
+                    def poll(self):
+                        return self.code if self.finished else None
+                    def wait(self, timeout):
+                        events.append("completed:" + self.name)
+                        self.finished = True
+                        return self.code
+                def fake_popen(arguments, stdout, stderr, start_new_session=False):
+                    name = Path(arguments[1]).name
+                    spawned.append((name, arguments, start_new_session))
+                    events.append("started:" + name)
+                    if name in ("publish-hook.py", "prepare-ha-identity.py"):
+                        assert start_new_session and len(spawned) == 1
+                        if name == "publish-hook.py":
+                            assert "--prepare" in arguments
+                            state = {"pod_uid": "authz-uid", "jar_sha256": "a" * 64,
+                                     "ruleSetId": "resilience-limits", "baseline": {
+                                         "revision": 3, "counterEpoch": "epoch", "snapshotId": "snap", "checksum": "sum"}}
+                            state_file = root / "publication-hook-state.json"
+                            state_file.write_text(json.dumps(state)); state_file.chmod(0o600)
+                        else:
+                            Path(arguments[arguments.index("--output") + 1]).write_text(json.dumps({
+                                "passed": True, "policy_pointer_unchanged": True, "existing_counters_deleted_or_reset": False}))
+                        return FakeProcess(name, 1 if failure == "prepare" else 0)
+                    if name == "verify-load.py":
+                        assert "completed:" + spawned[0][0] in events
+                        stdout.write(json.dumps(failed_evidence)); stdout.flush()
+                        if failure != "warmup":
+                            Path(arguments[arguments.index("--output") + 1]).write_text(json.dumps({
+                                "target": {"generator_pod": "owned"}, "observation": {"schedule_start_unix_ms": 123}}))
+                        process = FakeProcess(name, 1 if failure == "warmup" else 0)
+                        process.finished = failure == "warmup"
+                        return process
+                    assert name == "verify-ha.py" and not start_new_session
+                    assert ("--prepared-publisher" in arguments) == (fault == "mongo")
+                    assert events.index("marker-ready") < events.index("started:verify-ha.py")
+                    ha_dir = proof / "ha"; ha_dir.mkdir()
+                    (ha_dir / "ha.json").write_text('{}')
+                    return FakeProcess(name)
+                def fake_ready(fixture_data, load_process):
+                    if load_process.poll() is not None:
+                        raise ReadinessFailure("load exited before readiness marker", "load_warmup")
+                    events.append("marker-ready")
+                    return "owned", {"schedule_start_unix_ms": 123}, {"uid": "load-uid"}
+                globals()["kube"] = lambda *arguments: '{"items": []}'
+                globals()["wait_readiness"] = fake_ready
+                globals()["clock_measurement"] = lambda *arguments: {}
+                globals()["assess"] = lambda *arguments: {"passed": True, "complete": False}
+                subprocess.Popen = fake_popen
+                with contextlib.redirect_stdout(io.StringIO()):
+                    code = coordinate(SimpleNamespace(fixture=fixture, proof=proof, fault=fault))
+                summary = json.loads((proof / "summary.json").read_text())
+                prep_name = "publisher_preparation" if fault == "mongo" else "identity_preparation"
+                assert summary["preparations"][prep_name]["source"]["sha256"] == digest(root / spawned[0][0])["sha256"]
+                if failure:
+                    assert code == 1 and not summary["passed"] and not summary["fault_process_started"]
+                    assert not (proof / "ha.log").exists()
+                    assert summary["failure_stage"] == ("load_warmup" if failure == "warmup" else "publisher_preparation")
+                    if failure == "warmup":
+                        assert json.loads((proof / "raw-load.json").read_text()) == failed_evidence
+                        assert summary["raw_proofs"]["load"]["sha256"] == digest(proof / "raw-load.json")["sha256"]
+                    else:
+                        assert len(spawned) == 1 and not (proof / "load.log").exists()
+                else:
+                    assert code == 0 and len(spawned) == 3
+                    if fault == "mongo":
+                        assert summary["preparations"][prep_name]["state"]["sha256"] == digest(proof / "publication-helper-state.json")["sha256"]
+                ordering_checks += 1
     finally:
-        globals()["kube"], globals()["wait_readiness"], subprocess.Popen = original_kube, original_wait, original_popen
-    print(json.dumps({"result": "PASS", "self_checks": len(invalid) + 6 + rejected_polls}))
+        globals().update(saved)
+        subprocess.Popen, os.killpg = original_popen, original_killpg
+    # Timeout kills only the helper's dedicated session, including descendants.
+    original_killpg = os.killpg
+    signals = []
+    class TimedOutPreparation:
+        pid = 4242
+        def wait(self, timeout):
+            if timeout == 300:
+                raise subprocess.TimeoutExpired("offline-helper", timeout)
+            return -15
+        def poll(self):
+            return -15
+    try:
+        os.killpg = lambda pid, signum: signals.append((pid, signum))
+        subprocess.Popen = lambda *args, **kwargs: TimedOutPreparation()
+        evidence, processes = {}, []
+        try:
+            prepare_owned(["offline"], None, processes, "publisher_preparation", evidence)
+        except subprocess.TimeoutExpired:
+            pass
+        else:
+            raise AssertionError("preparation timeout ignored")
+        assert signals == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
+        assert evidence["exit_code"] == -15 and processes[0][0] == "publisher_preparation"
+    finally:
+        os.killpg, subprocess.Popen = original_killpg, original_popen
+    print(json.dumps({"result": "PASS", "self_checks": len(invalid) + 5 + rejected_polls + ordering_checks + 1}))
 
 
 def main():
