@@ -202,8 +202,10 @@ class MultiAlgorithmLuaIntegrationTest {
 
       long now = System.currentTimeMillis();
       long reset = result.get(RESET_TIME_MILLIS);
-      // reset ≈ now + window (60 s), within a generous tolerance for test latency
-      assertThat(reset).isBetween(now + 55_000L, now + 70_000L);
+      // reset = end of the current sub-bucket cycle, so it lies in (now + window - sub-bucket,
+      // now + window]: 54-60 s for a 60 s window of 10 sub-buckets, plus slack for test latency
+      // and clock skew between the test JVM and Redis.
+      assertThat(reset).isBetween(now + 53_000L, now + 62_000L);
     }
 
     @Test
