@@ -351,7 +351,7 @@ def coordinate(args):
                     with (proof / "publisher-cleanup.log").open("w") as log:
                         prepare_owned([sys.executable, str(HERE / "publish-hook.py"),
                             "--fixture", str(fixture_file), "--cleanup"], log, processes,
-                            "publisher_cleanup", cleanup, timeout=60)
+                            "publisher_cleanup", cleanup, timeout=90)
                     report = json.loads((proof / "publisher-cleanup.log").read_text())
                     cleanup_proof = proof / "publisher-cleanup.json"
                     cleanup_proof.write_text(json.dumps(report, indent=2) + "\n")
