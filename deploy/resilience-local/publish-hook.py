@@ -6,6 +6,7 @@ or loss of write quorum. Credentials go through kubectl stdin, never argv/output
 This helper changes only policy metadata and preserves the counter epoch.
 """
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -15,6 +16,30 @@ import tarfile
 import tempfile
 import uuid
 import zipfile
+
+
+# Use the actual packaged repository and its runtime dependencies. Uploading the
+# entire Spring application classpath during a measured fault run changes the
+# experiment's workload and can leave a blocked kubectl upload behind.
+PROBE_LIBRARIES = ('fluxgate-core-', 'fluxgate-mongo-adapter-',
+                   'bucket4j_jdk11-core-', 'slf4j-api-', 'mongodb-driver-sync-',
+                   'mongodb-driver-core-', 'bson-', 'bson-record-codec-')
+
+
+def extract_probe_libraries(jar_path, directory):
+    selected = []
+    with zipfile.ZipFile(jar_path) as jar:
+        names = [name for name in jar.namelist()
+                 if name.startswith('BOOT-INF/lib/') and name.endswith('.jar')]
+        for prefix in PROBE_LIBRARIES:
+            matches = [name for name in names if Path(name).name.startswith(prefix)
+                       and (prefix != 'bson-' or not Path(name).name.startswith('bson-record-codec-'))]
+            if len(matches) != 1:
+                raise RuntimeError('missing or ambiguous packaged probe dependency: ' + prefix)
+            name = matches[0]
+            (directory / Path(name).name).write_bytes(jar.read(name))
+            selected.append(Path(name).name)
+    return selected
 
 
 SOURCE = r'''
@@ -164,16 +189,18 @@ def main():
             'authz_deployment', 'fluxgate-authz'), '-o', 'json']))
         selector = ','.join(k + '=' + v for k, v in deployment['spec']['selector']['matchLabels'].items())
         pods = json.loads(checked(kube + ['get', 'pods', '-l', selector, '-o', 'json']))['items']
-        pod = next(p['metadata']['name'] for p in pods if not p['metadata'].get('deletionTimestamp') and
-                   any(c['type'] == 'Ready' and c['status'] == 'True'
-                       for c in p.get('status', {}).get('conditions', [])))
+        selected_pod = next(p for p in pods if not p['metadata'].get('deletionTimestamp') and
+                            any(c['type'] == 'Ready' and c['status'] == 'True'
+                                for c in p.get('status', {}).get('conditions', [])))
+        pod = selected_pod['metadata']['name']
+        jar_sha = hashlib.sha256(args.jar.read_bytes()).hexdigest()
+        deployed_sha = checked(kube + ['exec', pod, '--', 'sha256sum', '/app/app.jar']).decode().split()[0]
+        if deployed_sha != jar_sha:
+            raise RuntimeError('publication helper artifact differs from deployed application')
         remote = '/tmp/publication-proof-' + uuid.uuid4().hex
         with tempfile.TemporaryDirectory(prefix='publication-compiler-', dir=fixture_path.parent) as tmp:
             directory = Path(tmp)
-            with zipfile.ZipFile(args.jar) as jar:
-                for name in jar.namelist():
-                    if name.startswith('BOOT-INF/lib/') and name.endswith('.jar'):
-                        (directory / Path(name).name).write_bytes(jar.read(name))
+            libraries = extract_probe_libraries(args.jar, directory)
             (directory / 'PublicationProbe.java').write_text(SOURCE)
             compiler = str(Path(os.environ['JAVA_HOME']) / 'bin/javac') if os.environ.get('JAVA_HOME') else 'javac'
             checked([compiler, '--release', '17', '-cp', str(directory / '*'),
@@ -185,7 +212,11 @@ def main():
                         tar.add(path, arcname=path.name)
             checked(kube + ['exec', pod, '--', 'mkdir', '-p', remote])
             checked(kube + ['exec', '-i', pod, '--', 'tar', 'xz', '-C', remote], archive.getvalue())
-        state = {'pod': pod, 'remote': remote, 'operationId': 'resilience-' + uuid.uuid4().hex}
+        state = {'pod': pod, 'pod_uid': selected_pod['metadata']['uid'],
+                 'jar_sha256': jar_sha, 'ruleSetId': fixture.get('rule_set_id', 'resilience-limits'),
+                 'remote': remote, 'operationId': 'resilience-' + uuid.uuid4().hex,
+                 'probe_libraries': libraries, 'archive_bytes': len(archive.getvalue()),
+                 'archive_sha256': hashlib.sha256(archive.getvalue()).hexdigest()}
     else:
         state = json.loads(state_path.read_text())
     uri_path = Path(fixture['mongo_uri_file'])
@@ -206,6 +237,12 @@ def main():
     if len(records) != 1:
         raise RuntimeError('missing unique Java publication proof')
     if args.prepare:
+        current_pod = json.loads(checked(kube + ['get', 'pod/' + state['pod'], '-o', 'json']))
+        if (current_pod['metadata']['uid'] != state['pod_uid']
+                or current_pod['metadata'].get('deletionTimestamp')
+                or not any(c['type'] == 'Ready' and c['status'] == 'True'
+                           for c in current_pod.get('status', {}).get('conditions', []))):
+            raise RuntimeError('publication helper Pod changed or became unready during preparation')
         state['baseline'] = records[0]
         state_path.write_text(json.dumps(state))
         state_path.chmod(0o600)
