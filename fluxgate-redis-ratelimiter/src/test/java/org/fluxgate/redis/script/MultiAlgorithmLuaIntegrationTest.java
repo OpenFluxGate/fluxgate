@@ -259,6 +259,54 @@ class MultiAlgorithmLuaIntegrationTest {
     }
 
     @Test
+    @DisplayName("Sub-second window: the counter key gets a millisecond TTL on the first consume")
+    void subSecondWindowHasTtl() throws InterruptedException {
+      String key = key("fw-100ms-ttl");
+      // Keep the whole window inside one second so a seconds-based EXPIREAT could not be set.
+      while (redisNowMicros() % SECOND_MICROS > 800_000L) {
+        Thread.sleep(20L);
+      }
+      long windowEndMicros = redisNowMicros() + 100_000L;
+      String[] b = band(2, 100_000L, ALG_FIXED_WINDOW, 0, windowEndMicros);
+
+      assertThat(consume(1, b, key).get(ALLOWED)).isEqualTo(1L);
+
+      assertThat(pttl(key)).isBetween(1L, 101L);
+    }
+
+    @Test
+    @DisplayName("Sub-second window: an exhausted counter admits again once the window has passed")
+    void subSecondWindowRollsOver() throws InterruptedException {
+      String key = key("fw-100ms-rollover");
+      // Derived (non-calendar) 100 ms windows: the key holds no window index, so only the TTL
+      // separates one window's counter from the next.
+      String[] b = band(2, 100_000L, ALG_FIXED_WINDOW, 0, 0);
+
+      boolean rejected = false;
+      for (int i = 0; i < 10 && !rejected; i++) {
+        rejected = consume(1, b, key).get(ALLOWED) == 0L;
+      }
+      assertThat(rejected).as("capacity 2 per 100 ms must reject within 10 calls").isTrue();
+      assertThat(pttl(key)).isBetween(1L, 101L);
+
+      Thread.sleep(250L);
+
+      assertThat(consume(1, b, key).get(ALLOWED)).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("A legacy counter without TTL gets one on the reject path")
+    void rejectRepairsMissingTtl() {
+      String key = key("fw-legacy-no-ttl");
+      redis.eval("redis.call('SET', KEYS[1], '5') return {1}", new String[] {key}, new String[0]);
+      String[] b = band(2, 100_000L, ALG_FIXED_WINDOW, 0, 0);
+
+      assertThat(consume(1, b, key).get(ALLOWED)).isZero();
+
+      assertThat(pttl(key)).isBetween(1L, 101L);
+    }
+
+    @Test
     @DisplayName("Calendar rollover: a new window_end starts a fresh counter")
     void calendarRollover() {
       // Simulate rolling over: the first call uses a window_end 1 second from now,
@@ -476,6 +524,21 @@ class MultiAlgorithmLuaIntegrationTest {
     args[1] = String.valueOf(maxTtlSeconds);
     System.arraycopy(bandArgs, 0, args, 2, bandArgs.length);
     return redis.eval(scripts.getTokenBucketConsumeScript(), keys, args);
+  }
+
+  private static long redisNowMicros() {
+    List<Long> time =
+        redis.eval(
+            "local t = redis.call('TIME') return {tonumber(t[1]), tonumber(t[2])}",
+            new String[0],
+            new String[0]);
+    return time.get(0) * SECOND_MICROS + time.get(1);
+  }
+
+  private static long pttl(String key) {
+    List<Long> result =
+        redis.eval("return {redis.call('PTTL', KEYS[1])}", new String[] {key}, new String[0]);
+    return result.get(0);
   }
 
   private static String key(String name) {

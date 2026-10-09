@@ -11,7 +11,9 @@ DESIGN NOTES:
    TOKEN_BUCKET state is not modified either; only the TTLs of TB/SW buckets
    are refreshed so buckets that see nothing but rejections still expire on schedule.
 5. TTL = min(max_bucket_ttl, max(1, ceil(window_seconds * 1.1))) for TOKEN_BUCKET
-   and SLIDING_WINDOW. FIXED_WINDOW uses EXPIREAT at the absolute window end.
+   and SLIDING_WINDOW. FIXED_WINDOW uses PEXPIREAT at the absolute window end, rounded
+   UP to the millisecond, and always sets one: the counter key carries no window index,
+   so a counter without a TTL would keep rejecting in every later window.
 
 PRECISION: Redis runs Lua 5.1, which has no integer type — every number is an
 IEEE-754 double with an exact integer range of 2^53 (about 9.0e15). Microseconds
@@ -27,7 +29,7 @@ KEYS[1..n] = bucket keys, one per band of ONE rule, all in the same hash tag
 ARGV layout:
   ARGV[1]           = permits (number of tokens/requests to consume, usually 1)
   ARGV[2]           = max_bucket_ttl_seconds (upper bound on every TOKEN_BUCKET /
-                      SLIDING_WINDOW bucket TTL; FIXED_WINDOW uses EXPIREAT instead)
+                      SLIDING_WINDOW bucket TTL; FIXED_WINDOW uses PEXPIREAT instead)
 
   Per band i (1-indexed), at base offset = 2 + 5 * (i - 1):
     ARGV[base + 1]  = capacity  (max tokens / requests allowed per window)
@@ -35,7 +37,7 @@ ARGV layout:
     ARGV[base + 3]  = algorithm_code
                         1 = TOKEN_BUCKET   (continuous refill; hash {tokens, last_refill_micros})
                         2 = SLIDING_WINDOW (N sub-buckets; hash {sub_bucket_index: count})
-                        3 = FIXED_WINDOW   (tumbling counter; plain string with EXPIREAT)
+                        3 = FIXED_WINDOW   (tumbling counter; plain string with PEXPIREAT)
     ARGV[base + 4]  = buckets_or_zero
                         SLIDING_WINDOW: number of sub-buckets [2..60]
                         others: 0
@@ -148,9 +150,16 @@ local function ttl_for_window(win_micros)
     return math.min(max_ttl_seconds, math.max(1, math.ceil(win_micros / 1000000 * 1.1)))
 end
 
+-- Absolute expiry of a FIXED_WINDOW counter in epoch milliseconds: the window end rounded
+-- UP (a sub-second window must not lose its TTL, and the counter must not expire before
+-- the window ends), and never earlier than 1 ms from now so PEXPIREAT never deletes the key.
+local function fixed_window_expire_millis(win_end_micros)
+    return math.max(math.ceil(win_end_micros / 1000), math.floor(now_micros / 1000) + 1)
+end
+
 -- Refresh TTLs for TOKEN_BUCKET and SLIDING_WINDOW keys on the reject path.
 -- EXPIRE is a no-op on keys that do not exist yet; FIXED_WINDOW keys are not touched
--- because EXPIREAT (an absolute timestamp) must not be overridden with a relative one.
+-- because PEXPIREAT (an absolute timestamp) must not be overridden with a relative one.
 local function refresh_ttls()
     for j = 1, band_count do
         if algorithms[j] == ALG_TOKEN_BUCKET or algorithms[j] == ALG_SLIDING_WINDOW then
@@ -291,6 +300,10 @@ for i = 1, band_count do
 
         if count + permits > capacity then
             refresh_ttls()
+            -- A counter left without a TTL (written by an older script) would reject forever.
+            if redis.call('PTTL', KEYS[i]) == -1 then
+                redis.call('PEXPIREAT', KEYS[i], string.format('%.0f', fixed_window_expire_millis(win_end)))
+            end
             local remaining    = capacity - count
             local wait         = math.max(0, win_end - now_micros)
             local reset_millis = math.floor(win_end / 1000)
@@ -362,11 +375,7 @@ for i = 1, band_count do
     elseif alg == ALG_FIXED_WINDOW then
         local win_end = fw_ends[i]
         redis.call('INCRBY', KEYS[i], permits)
-        -- EXPIREAT takes a Unix timestamp in seconds; only set it when it is in the future.
-        local expireat_secs = math.floor(win_end / 1000000)
-        if expireat_secs > math.floor(now_micros / 1000000) then
-            redis.call('EXPIREAT', KEYS[i], expireat_secs)
-        end
+        redis.call('PEXPIREAT', KEYS[i], string.format('%.0f', fixed_window_expire_millis(win_end)))
 
         local remaining = capacity - fw_counts[i] - permits
 
