@@ -112,6 +112,38 @@ def home_failover_targets(redis_nodes, placements):
     return targets
 
 
+DENSE_RECOVERY_SOURCE = r'''import json,pathlib,sys,time,urllib.request,urllib.error
+host,path,hostname,backend,budget=sys.argv[1:]
+started=time.monotonic();deadline=started+float(budget);samples=[];streak=[];recovered=False
+opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+key=pathlib.Path('/key/load-api-key').read_text().strip()
+while time.monotonic()<deadline:
+    item={'requested_unix_ms':time.time_ns()//1000000}
+    try:
+        req=urllib.request.Request(host+path,headers={'Host':hostname,'X-API-Key':key})
+        try: response=opener.open(req,timeout=max(.01,min(2,deadline-time.monotonic())))
+        except urllib.error.HTTPError as error: response=error
+        with response:
+            item['status']=response.status
+            item['body_valid']=(response.read().decode().strip()==backend)
+            item['route_marker_valid']='x-ha-controller-proof' not in response.headers
+        if item['status']==200 and (not item['body_valid'] or not item['route_marker_valid']):
+            item['unexpected']=True
+        if item['status'] not in (200,503) or (item['status']!=200 and item['body_valid']):
+            item['unexpected']=True
+    except Exception as error:
+        item['transport_error']=type(error).__name__
+    item['completed_unix_ms']=time.time_ns()//1000000;samples.append(item)
+    if item.get('unexpected'): break
+    if item.get('status')==200 and item.get('body_valid') and item.get('route_marker_valid') and not item.get('transport_error'): streak.append(item)
+    else: streak=[]
+    if len(streak)>=10 and streak[-1]['completed_unix_ms']-streak[0]['completed_unix_ms']>=2000:
+        recovered=True;break
+    time.sleep(min(.2,max(0,deadline-time.monotonic())))
+print(json.dumps({'recovered':recovered,'samples':samples,'consecutive_successes':len(streak),'success_window':streak}))
+'''
+
+
 def main():
     if not __debug__:
         raise RuntimeError('Assertions disabled; run Python without -O')
@@ -119,11 +151,14 @@ def main():
     parser.add_argument('--fixture', required=True, type=Path)
     parser.add_argument('--phase', choices=['all', 'baseline', 'redis', 'mongo', 'pod-restarts', 'node', 'no-quorum'], default='all')
     parser.add_argument('--publisher-hook', type=Path, default=Path(__file__).with_name('publish-hook.py'))
+    parser.add_argument('--preserve-promoted-roles', action='store_true', help='Defer Redis home failback until after the combined observation')
     parser.add_argument('--prepared-publisher', action='store_true', help='Reuse a validated helper prepared before measured Mongo load')
     parser.add_argument('--proof', type=Path)
     args = parser.parse_args()
     if args.prepared_publisher and args.phase != 'mongo':
         parser.error('--prepared-publisher is valid only with --phase mongo')
+    if args.preserve_promoted_roles and args.phase != 'redis':
+        parser.error('--preserve-promoted-roles is valid only with --phase redis')
     os.umask(0o077)
     fixture_file = args.fixture / 'fixture.json' if args.fixture.is_dir() else args.fixture
     fixture = json.loads(fixture_file.read_text())
@@ -269,13 +304,14 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         observations = []
         def sample():
             while not sampler_stop.is_set():
-                item = {'elapsed_seconds': round(time.monotonic() - started, 3)}
+                item = {'elapsed_seconds': round(time.monotonic() - started, 3), 'requested_unix_ms': time.time_ns() // 1_000_000}
                 try:
                     item['status'] = request(fixture['load_path'], {200, 503})
                 except AssertionError as error:
                     item['unexpected'] = str(error)
                 except (RuntimeError, subprocess.TimeoutExpired) as error:
                     item['transport_error'] = type(error).__name__
+                item['completed_unix_ms'] = time.time_ns() // 1_000_000
                 observations.append(item)
                 sampler_stop.wait(0.25)
         sampler_thread = threading.Thread(target=sample, daemon=True)
@@ -343,6 +379,30 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                 return round(time.monotonic() - started, 3), observations[-3:]
             time.sleep(1)
         raise RuntimeError(f'Three consecutive real Gateway 200 responses exceeded {seconds}s')
+
+    def dense_gateway_recovery(started, while_down, background, evidence):
+        batches = evidence.setdefault('dense_gateway_batches', [])
+        host = f'http://{fixture["gateway_service"]}.{fixture["gateway_namespace"]}.svc.cluster.local'
+        while time.monotonic() - started < 30:
+            assert while_down(), 'Fault target or application clients changed during dense recovery'
+            remaining = 30 - (time.monotonic() - started) - .5
+            if remaining <= 0:
+                break
+            result = json.loads(kube(['-n', ns, 'exec', probe, '--', 'python', '-c', DENSE_RECOVERY_SOURCE,
+                                      host, fixture['load_path'], fixture['gateway_host'], fixture['backend_body'], str(remaining)], timeout=remaining + .5))
+            batches.append(result)
+            assert not any(s.get('unexpected') for s in result['samples']), 'Dense Gateway probe received invalid status/body/route marker'
+            if result['recovered']:
+                window_start = result['success_window'][0]['requested_unix_ms']
+                observed = [s for s in list(background) if s.get('completed_unix_ms', 0) >= window_start]
+                if not observed or any(s.get('status') != 200 for s in observed):
+                    result['background_window_rejected'] = True
+                    continue
+                assert while_down() and time.monotonic() - started <= 30
+                evidence['timestamps']['sustained_gateway_recovered'] = utc_milestone()
+                return round(time.monotonic() - started, 3), result['success_window']
+            break
+        raise RuntimeError('Dense actual Gateway recovery exceeded the original 30s fault budget')
 
     def topology():
         pod = diagnostic_pods(fixture['redis_pods'])[0]
@@ -478,7 +538,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                       for p in obj('pods', selector='app=fluxgate-authz')['items']
                       for c in p['status'].get('containerStatuses', []))
 
-    def full_restore(started):
+    def full_restore(started, preserve_promoted_roles=False):
         nonlocal restore_deadline
         restore_deadline = started + 180
         restoration_started = utc_milestone()
@@ -531,7 +591,8 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                 preserved_bucket = bucket()
             except StopIteration:
                 preserved_bucket = None
-            for target in targets:
+            failbacks = [] if preserve_promoted_roles else targets
+            for target in failbacks:
                 current = topology()[target['identity']]
                 assert 'slave' in current['flags'] and not current['slots']
                 assert 'master_link_status:up' in redis(target['pod'], ['INFO', 'replication'])
@@ -549,11 +610,16 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             assert after_bucket == preserved_bucket, 'Role balancing changed the exact HA quota bucket'
             after_nodes = topology()
             after_primary_nodes = {identity: placements[node['pod']] for identity, node in after_nodes.items() if 'master' in node['flags']}
-            assert len(after_primary_nodes) == 3 and len(set(after_primary_nodes.values())) == 3
-            assert not home_failover_targets(after_nodes, placements), 'Redis home roles were not restored'
-            state['redis_primary_nodes_distinct'] = True
+            assert len(after_primary_nodes) == 3
+            distinct_primary_nodes = len(set(after_primary_nodes.values())) == 3
+            if not preserve_promoted_roles:
+                assert distinct_primary_nodes and not home_failover_targets(after_nodes, placements), 'Redis home roles were not restored'
+            state['redis_primary_nodes_distinct'] = distinct_primary_nodes
+            state['placement_restoration_deferred'] = preserve_promoted_roles
             elapsed, responses = sustained_traffic(started, 180, expected_header=(route_header, None) if route_header else None)
-            record('redis-primary-placement-restoration', performed=bool(targets), command='CLUSTER FAILOVER' if targets else None,
+            record('redis-primary-placement-restoration', performed=bool(failbacks), command='CLUSTER FAILOVER' if failbacks else None,
+                   placement_restoration_deferred=preserve_promoted_roles, home_roles_pending=bool(home_failover_targets(after_nodes, placements)),
+                   actual_primary_nodes_distinct=distinct_primary_nodes,
                    before_topology=before_nodes, after_topology=after_nodes,
                    before_placements=before_primary_nodes, after_placements=after_primary_nodes,
                    policy=preserved_policy, policy_exact_preserved=True, raw_bucket_before=preserved_bucket,
@@ -640,7 +706,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             def unchanged_paused_clients():
                 assert authz_processes() == authz_before, 'Redis recovery changed the application client processes'
                 return task_state(old_primary['pod']) == 'PAUSED'
-            recovery_seconds, sustained = sustained_traffic(fault_started, 30, unchanged_paused_clients, timestamps=phase_evidence['timestamps'])
+            recovery_seconds, sustained = dense_gateway_recovery(fault_started, unchanged_paused_clients, outage_samples, phase_evidence)
             phase_evidence.update({'recovery_seconds': recovery_seconds, 'sustained_gateway': sustained})
             assert time.monotonic() < fault_deadline
             request(fixture['quota_path'], {200})
@@ -660,11 +726,11 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             stop_sampler()
             assert not any('unexpected' in sample for sample in outage_samples)
             record('redis-promotion', timestamps=phase_evidence['timestamps'], old_primary_id=old_id, new_primary_id=new_id, target_still_paused=old_primary['pod'] in paused,
-                   final_quota_seconds=phase_evidence['final_quota_seconds'], recovery_seconds=recovery_seconds, identity_promotion_seconds=seconds, sustained_gateway=sustained, task_state=task_state(old_primary['pod']), continuous_outage_samples=outage_samples, load_key_owned_failed_shard=True, bucket_key=key, raw_before=before, raw_after_promotion=after, raw_exhausted=exhausted,
+                   final_quota_seconds=phase_evidence['final_quota_seconds'], recovery_seconds=recovery_seconds, identity_promotion_seconds=seconds, sustained_gateway=sustained, dense_gateway_batches=phase_evidence['dense_gateway_batches'], task_state=task_state(old_primary['pod']), continuous_outage_samples=outage_samples, load_key_owned_failed_shard=True, bucket_key=key, raw_before=before, raw_after_promotion=after, raw_exhausted=exhausted,
                    script_provenance=script_provenance, script_exists_old_primary_before_flush=True, cache_absent_before_promotion=True, cache_loaded_after_real_request=True, authz_processes_unchanged=authz_before, rpo='Observed counter preserved; asynchronous replication is not zero-loss consensus')
             fault_deadline = None
             signal(old_primary['pod'], 'CONT')
-            full_restore(time.monotonic())
+            full_restore(time.monotonic(), preserve_promoted_roles=args.preserve_promoted_roles)
         if args.phase in ('all', 'mongo'):
             failure_phase = 'mongo-election-publication'
             phase_evidence = {}
@@ -691,14 +757,15 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             assert current['rules'] == expected_rules and current['accessControl'] == baseline['accessControl']
             assert int(current['revision']) == int(baseline['revision']) + 1 and current['checksum'] == published['checksum'] and current['operationId'] == published['operationId']
             phase_evidence['timestamps']['publication_verified'] = utc_milestone()
-            recovery_seconds, sustained = sustained_traffic(fault_started, 30, lambda: task_state(old_primary) == 'PAUSED', timestamps=phase_evidence['timestamps'])
+            recovery_seconds, sustained = dense_gateway_recovery(fault_started, lambda: task_state(old_primary) == 'PAUSED', outage_samples, phase_evidence)
             if args.phase == 'all':
                 request(fixture['quota_path'], {429})
             stop_sampler()
             assert not any('unexpected' in sample for sample in outage_samples)
+            assert time.monotonic() - fault_started <= 30, 'Mongo publication and traffic proof exceeded original 30s fault budget'
             phase_evidence['timestamps']['policy_and_traffic_verified'] = utc_milestone()
             record('mongo-election-publication', timestamps=phase_evidence['timestamps'], old_primary=old_primary, new_primary=new_primary,
-                   target_still_paused=task_state(old_primary) == 'PAUSED', recovery_seconds=recovery_seconds, sustained_gateway=sustained, continuous_outage_samples=outage_samples, publication=published, policy=current)
+                   target_still_paused=task_state(old_primary) == 'PAUSED', recovery_seconds=recovery_seconds, sustained_gateway=sustained, dense_gateway_batches=phase_evidence['dense_gateway_batches'], continuous_outage_samples=outage_samples, publication=published, policy=current)
             baseline = current
             signal(old_primary, 'CONT')
         if args.phase in ('all', 'pod-restarts'):
@@ -884,7 +951,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             except Exception:
                 cleanup_failures.append('route restoration failed')
         try:
-            full_restore(cleanup_started)
+            full_restore(cleanup_started, preserve_promoted_roles=args.preserve_promoted_roles)
         except Exception:
             cleanup_failures.append('complete fixture restoration failed within 180s')
         try:
