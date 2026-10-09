@@ -7,7 +7,7 @@ import static org.mockito.Mockito.*;
 import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoCursor;
-import com.mongodb.client.model.ReplaceOptions;
+import com.mongodb.client.model.UpdateOptions;
 import com.mongodb.client.result.DeleteResult;
 import java.time.Duration;
 import java.util.List;
@@ -145,13 +145,16 @@ class MongoRateLimitRuleRepositoryTest {
               .ruleSetId("test-ruleset")
               .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100).build())
               .build();
+      when(collection.find(any(Bson.class))).thenReturn(findIterable);
+      when(findIterable.limit(1)).thenReturn(findIterable);
+      when(findIterable.projection(any(Bson.class))).thenReturn(findIterable);
+      when(findIterable.first()).thenReturn(null);
 
       // when
       repository.save(rule);
 
       // then
-      verify(collection)
-          .replaceOne(any(Bson.class), any(Document.class), any(ReplaceOptions.class));
+      verify(collection).updateOne(any(Bson.class), any(Bson.class), any(UpdateOptions.class));
     }
   }
 

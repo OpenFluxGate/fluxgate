@@ -3,13 +3,20 @@ package org.fluxgate.adapter.mongo.converter;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.Duration;
+import java.time.ZoneId;
 import java.util.List;
+import java.util.Set;
+import org.bson.Document;
 import org.fluxgate.adapter.mongo.model.RateLimitBandDocument;
 import org.fluxgate.adapter.mongo.model.RateLimitRuleDocument;
+import org.fluxgate.core.config.AccessControl;
 import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.OnLimitExceedPolicy;
+import org.fluxgate.core.config.QuotaPeriod;
+import org.fluxgate.core.config.RateLimitAlgorithm;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
+import org.fluxgate.core.config.RuleMatcher;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -285,6 +292,125 @@ class RateLimitRuleConverterTest {
         assertEquals(originalBand.getCapacity(), restoredBand.getCapacity());
         assertEquals(originalBand.getLabel(), restoredBand.getLabel());
       }
+    }
+  }
+
+  // ==================== 0.4.0 Field Round-Trip Tests ====================
+
+  @Nested
+  @DisplayName("0.4.0 Field Round-Trip Tests")
+  class FieldRoundTripTests {
+
+    @Test
+    @DisplayName("matcher, priority and band algorithms survive a BSON round-trip")
+    void matcherAndAlgorithms_surviveBsonRoundTrip() {
+      RuleMatcher matcher =
+          RuleMatcher.builder()
+              .methods(Set.of("GET", "POST"))
+              .addPathPattern("/api/**")
+              .addExcludePathPattern("/api/health")
+              .headerEquals("X-Tier", "free")
+              .headerPresent("X-Api-Key")
+              .build();
+      RateLimitRule rule =
+          RateLimitRule.builder("rule-rt")
+              .name("Round trip")
+              .scope(LimitScope.PER_API_KEY)
+              .keyStrategyId("apiKey")
+              .ruleSetId("rs-rt")
+              .priority(7)
+              .matcher(matcher)
+              .addBand(
+                  RateLimitBand.builder(Duration.ofMinutes(1), 10)
+                      .label("sw")
+                      .algorithm(RateLimitAlgorithm.SLIDING_WINDOW)
+                      .slidingWindowBuckets(6)
+                      .build())
+              .addBand(
+                  RateLimitBand.builder(Duration.ofDays(1), 1000)
+                      .label("daily")
+                      .algorithm(RateLimitAlgorithm.FIXED_WINDOW)
+                      .quotaPeriod(QuotaPeriod.DAILY)
+                      .zoneId(ZoneId.of("Asia/Seoul"))
+                      .build())
+              .build();
+
+      Document bson = RateLimitRuleMongoConverter.toBson(RateLimitRuleConverter.toDocument(rule));
+      RateLimitRule restored =
+          RateLimitRuleConverter.toDomain(RateLimitRuleMongoConverter.fromBson(bson));
+
+      assertEquals(7, restored.getPriority());
+      assertEquals(Set.of("GET", "POST"), restored.getMatcher().getMethods());
+      assertEquals(List.of("/api/**"), restored.getMatcher().getPathPatterns());
+      assertEquals(List.of("/api/health"), restored.getMatcher().getExcludePathPatterns());
+      assertEquals(matcher.getHeaderEquals(), restored.getMatcher().getHeaderEquals());
+      assertEquals(matcher.getHeaderPresent(), restored.getMatcher().getHeaderPresent());
+      assertEquals(matcher, restored.getMatcher());
+      assertEquals(rule.getBands(), restored.getBands());
+    }
+
+    @Test
+    @DisplayName("unknown algorithm and zone id fall back to TOKEN_BUCKET and UTC")
+    void unknownAlgorithmAndZone_fallBackToDefaults() {
+      RateLimitBandDocument doc =
+          new RateLimitBandDocument(60, 5, "x", "NO_SUCH_ALGORITHM", null, "Not/AZone", 0);
+
+      RateLimitBand band = RateLimitRuleConverter.toDomain(doc);
+
+      assertEquals(RateLimitAlgorithm.TOKEN_BUCKET, band.getAlgorithm());
+      assertEquals(java.time.ZoneOffset.UTC, band.getZoneId());
+    }
+
+    @Test
+    @DisplayName("toAccessControl builds every list that is present")
+    void toAccessControl_buildsAllLists() {
+      RateLimitRuleDocument doc = createDocument();
+      RateLimitRuleConverter.applyAccessControlStrings(
+          doc,
+          List.of("192.168.0.0/16"),
+          List.of("10.0.0.0/8"),
+          Set.of("user:admin"),
+          Set.of("user:blocked"));
+
+      AccessControl ac = RateLimitRuleConverter.toAccessControl(doc);
+
+      assertTrue(ac.getAllowedIps().contains("192.168.1.1"));
+      assertTrue(ac.getDeniedIps().contains("10.1.2.3"));
+      assertEquals(Set.of("user:admin"), ac.getAllowedKeys());
+      assertEquals(Set.of("user:blocked"), ac.getDeniedKeys());
+    }
+
+    @Test
+    @DisplayName("toAccessControl with only a denied key list leaves the other lists empty")
+    void toAccessControl_partialLists() {
+      RateLimitRuleDocument doc = createDocument();
+      RateLimitRuleConverter.applyAccessControlStrings(doc, null, null, null, Set.of("key:bad"));
+
+      AccessControl ac = RateLimitRuleConverter.toAccessControl(doc);
+
+      assertFalse(ac.isEmpty());
+      assertTrue(ac.getAllowedIps().isEmpty());
+      assertTrue(ac.getDeniedIps().isEmpty());
+      assertTrue(ac.getAllowedKeys().isEmpty());
+      assertEquals(Set.of("key:bad"), ac.getDeniedKeys());
+    }
+
+    @Test
+    @DisplayName("toAccessControl of a document without lists is EMPTY")
+    void toAccessControl_noLists_isEmpty() {
+      assertSame(AccessControl.EMPTY, RateLimitRuleConverter.toAccessControl(createDocument()));
+    }
+
+    private RateLimitRuleDocument createDocument() {
+      return new RateLimitRuleDocument(
+          "rule-acl",
+          "ACL",
+          true,
+          LimitScope.PER_IP,
+          "ip",
+          OnLimitExceedPolicy.REJECT_REQUEST,
+          List.of(new RateLimitBandDocument(60, 10, "per-minute")),
+          "rs-acl");
     }
   }
 }
