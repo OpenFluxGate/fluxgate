@@ -260,14 +260,18 @@ public class FluxgateRateLimiterAutoConfiguration {
    * under {@code fluxgate.ratelimit.rule-sets}.
    *
    * <p>All rule sets are built eagerly during startup, so configuration errors surface before the
-   * first request arrives. The provider is registered under {@code propertiesRuleSetProvider} so
-   * {@link FluxgateMongoAutoConfiguration} can compose it with the Mongo-backed provider.
+   * first request arrives.
+   *
+   * <p>Not registered when a {@code delegateRuleSetProvider} exists: {@link
+   * FluxgateMongoAutoConfiguration} (which runs before this configuration) then already composes
+   * the YAML rule sets with the Mongo-backed provider, and a second provider bean would make the
+   * {@link RateLimitRuleSetProvider} injection ambiguous.
    *
    * @param keyResolver the key resolver to attach to every rule set
    * @return the properties-backed rule set provider
    */
   @Bean(name = "propertiesRuleSetProvider")
-  @ConditionalOnMissingBean(name = "propertiesRuleSetProvider")
+  @ConditionalOnMissingBean(name = {"propertiesRuleSetProvider", "delegateRuleSetProvider"})
   @Conditional(RuleSetsConfiguredCondition.class)
   public PropertiesRuleSetProvider propertiesRuleSetProvider(KeyResolver keyResolver) {
     List<RuleSetProperties> ruleSets = properties.getRatelimit().getRuleSets();

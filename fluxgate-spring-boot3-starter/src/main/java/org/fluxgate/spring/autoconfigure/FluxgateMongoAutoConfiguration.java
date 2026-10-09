@@ -9,6 +9,7 @@ import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.IndexOptions;
 import com.mongodb.client.model.Indexes;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import org.bson.Document;
 import org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder;
@@ -24,6 +25,7 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.fluxgate.spring.actuator.FluxgateHealthIndicator.HealthStatus;
 import org.fluxgate.spring.actuator.FluxgateHealthIndicator.MongoHealthChecker;
 import org.fluxgate.spring.properties.FluxgateProperties;
+import org.fluxgate.spring.properties.FluxgateProperties.RuleSetProperties;
 import org.fluxgate.spring.rule.CompositeRuleSetProvider;
 import org.fluxgate.spring.rule.PropertiesRuleSetProvider;
 import org.slf4j.Logger;
@@ -31,13 +33,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
 
 /**
  * Auto-configuration for FluxGate MongoDB integration.
@@ -203,10 +203,20 @@ public class FluxgateMongoAutoConfiguration {
    *   <li>{@code CompositeMetricsRecorder} - Wraps multiple recorders when both are enabled
    * </ul>
    *
+   * <p>When rule sets are also declared under {@code fluxgate.ratelimit.rule-sets}, the returned
+   * provider is a {@link CompositeRuleSetProvider} that tries the YAML rule sets first and falls
+   * back to MongoDB. This lets operators define some rule sets in YAML (fast, no round-trip to
+   * MongoDB) and leave the others in MongoDB. The composite is built here, as the single {@code
+   * delegateRuleSetProvider}, rather than as a separate bean: a second provider bean would need
+   * {@code @Primary}, which clashes with the {@code @Primary} caching provider of hot reload, and
+   * the reload wiring wraps {@code delegateRuleSetProvider}, so both sources are cached and
+   * reloaded together. {@link FluxgateRateLimiterAutoConfiguration} then registers no separate
+   * {@link PropertiesRuleSetProvider}.
+   *
    * @param repository the rule repository for fetching rate limit rules
    * @param fluxgateKeyResolver the key resolver for generating rate limit keys
    * @param metricsRecorderProvider lazy provider for composite metrics recorder
-   * @return configured MongoRuleSetProvider instance
+   * @return configured MongoRuleSetProvider instance, or the YAML + Mongo composite
    */
   @Bean(name = "delegateRuleSetProvider")
   @ConditionalOnMissingBean(name = "delegateRuleSetProvider")
@@ -217,8 +227,21 @@ public class FluxgateMongoAutoConfiguration {
     // Use a wrapper that lazily retrieves the recorder at runtime
     // This ensures CompositeMetricsRecorder is available even if created later
     log.info("Creating MongoRuleSetProvider with lazy metrics recorder injection");
-    return new LazyMetricsMongoRuleSetProvider(
-        repository, fluxgateKeyResolver, metricsRecorderProvider);
+    RateLimitRuleSetProvider mongoProvider =
+        new LazyMetricsMongoRuleSetProvider(
+            repository, fluxgateKeyResolver, metricsRecorderProvider);
+
+    List<RuleSetProperties> ruleSets = properties.getRatelimit().getRuleSets();
+    if (ruleSets == null || ruleSets.isEmpty()) {
+      return mongoProvider;
+    }
+    PropertiesRuleSetProvider propertiesProvider =
+        new PropertiesRuleSetProvider(ruleSets, fluxgateKeyResolver);
+    log.info(
+        "Creating CompositeRuleSetProvider: properties={} rule set(s) {} + Mongo fallback",
+        propertiesProvider.size(),
+        propertiesProvider.ruleSetIds());
+    return new CompositeRuleSetProvider(propertiesProvider, mongoProvider);
   }
 
   /**
@@ -302,35 +325,6 @@ public class FluxgateMongoAutoConfiguration {
       @Qualifier("fluxgateEventCollection") MongoCollection<Document> fluxgateEventCollection) {
     log.info("Creating MongoRateLimitMetricsRecorder for MongoDB event logging");
     return new MongoRateLimitMetricsRecorder(fluxgateEventCollection);
-  }
-
-  /**
-   * Promotes the properties-based provider to the primary {@link RateLimitRuleSetProvider} when
-   * both a properties-backed and the Mongo-backed provider exist in the context.
-   *
-   * <p>The composite tries the properties provider first. If the rule set id is not found there it
-   * falls back to the Mongo delegate. This lets operators define some rule sets in YAML (fast, no
-   * round-trip to MongoDB) and leave other rule sets in MongoDB without any code changes.
-   *
-   * <p>Only registered when a {@link PropertiesRuleSetProvider} bean is present (which requires
-   * {@code fluxgate.ratelimit.rule-sets} to be non-empty), so a pure-Mongo deployment is
-   * unaffected.
-   *
-   * @param propertiesProvider the YAML-backed provider
-   * @param delegateProvider the Mongo-backed delegate registered as {@code delegateRuleSetProvider}
-   * @return the composite provider, which replaces the plain Mongo provider as the primary
-   */
-  @Bean
-  @Primary
-  @ConditionalOnBean(name = "propertiesRuleSetProvider")
-  @ConditionalOnMissingBean(CompositeRuleSetProvider.class)
-  public RateLimitRuleSetProvider compositeRuleSetProvider(
-      @Qualifier("propertiesRuleSetProvider") PropertiesRuleSetProvider propertiesProvider,
-      @Qualifier("delegateRuleSetProvider") RateLimitRuleSetProvider delegateProvider) {
-    log.info(
-        "Creating CompositeRuleSetProvider: properties={} rule set(s) + Mongo fallback",
-        propertiesProvider.size());
-    return new CompositeRuleSetProvider(propertiesProvider, delegateProvider);
   }
 
   /**

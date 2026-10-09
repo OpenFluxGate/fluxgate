@@ -18,9 +18,9 @@ import org.slf4j.LoggerFactory;
  *       one) is consulted.
  * </ol>
  *
- * <p>Only registered by {@link org.fluxgate.spring.autoconfigure.FluxgateMongoAutoConfiguration}
- * when both providers exist in the application context, so the composite never creates circular
- * dependencies.
+ * <p>Built by {@link org.fluxgate.spring.autoconfigure.FluxgateMongoAutoConfiguration} as its
+ * {@code delegateRuleSetProvider} when rule sets are also declared under {@code
+ * fluxgate.ratelimit.rule-sets}, so it is the single provider bean and hot reload wraps it.
  *
  * @since 0.4.0
  */
