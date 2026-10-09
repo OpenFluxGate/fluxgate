@@ -461,7 +461,11 @@ class Proof:
         new_user, new_mongo_password = "fluxgate_rotation_" + secrets.token_hex(4), secrets.token_urlsafe(40)
         auth_db = self.f.get("mongo_auth_database", dict(parse_qsl(parsed.query)).get("authSource", "admin"))
         self.store_rollback = {"old_uri": uri, "admin": admin, "auth_db": auth_db,
-                               "old_password": old_password, "new_password": None}
+                               "old_password": old_password, "new_password": None,
+                               "files": {Path(self.f[field]): Path(self.f[field]).read_bytes()
+                                         for field in ("mongo_uri_file", "redis_uri_file", "redis_password_file",
+                                                       "mongo_app_password_file") if self.f.get(field)},
+                               "fixture": self.fixture_path.read_bytes()}
         self.mongo(admin, "c.getDB(" + json.dumps(auth_db) + ").createUser({user:" + json.dumps(new_user) +
                    ",pwd:" + json.dumps(new_mongo_password) + ",roles:[{role:'readWrite',db:'fluxgate'}]})")
         new_uri = urlunsplit(parsed._replace(netloc=quote(new_user) + ":" + quote(new_mongo_password) + "@" + hosts))
@@ -498,6 +502,7 @@ class Proof:
             require(b"OK" in output and b"ERR" not in output, "Redis old password retirement failed")
             self.redis_check(pod, old_password, False)
             self.redis_check(pod, new_redis_password, True)
+        self.available()
         private_write(self.f["mongo_uri_file"], new_uri)
         if self.f.get("mongo_app_password_file"):
             private_write(self.f["mongo_app_password_file"], new_mongo_password)
@@ -505,7 +510,6 @@ class Proof:
         private_write(self.fixture_path, json.dumps(self.f, indent=2) + "\n")
         private_write(self.f["redis_uri_file"], new_redis_uri)
         private_write(self.f["redis_password_file"], new_redis_password)
-        self.available()
         self.results["stores"] = {"mongo": {"valid": True, "wrong_rejected": True, "missing_rejected": True,
                                              "overlap_users": True, "old_user_retired": True},
                                   "redis": {"nodes": len(self.f["redis_pods"]), "valid": True,
@@ -675,6 +679,15 @@ class Proof:
         failures = []
         if self.store_rollback:
             state = self.store_rollback
+            for path, contents in state["files"].items():
+                try:
+                    private_write(path, contents)
+                except Exception:
+                    failures.append("private-credential-file-restore")
+            try:
+                private_write(self.fixture_path, state["fixture"])
+            except Exception:
+                failures.append("fixture-metadata-restore")
             parsed = urlsplit(state["old_uri"])
             for pod in self.f["redis_pods"]:
                 try:
