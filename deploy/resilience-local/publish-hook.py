@@ -199,7 +199,7 @@ def main():
     if not args.prepare:
         payload['baseline'] = state['baseline']
     output = checked(kube + ['exec', '-i', state['pod'], '--', 'java', '-cp',
-                            state['remote'] + '/*', 'PublicationProbe'],
+                            state['remote'] + ':' + state['remote'] + '/*', 'PublicationProbe'],
                      json.dumps(payload).encode(), timeout=args.deadline + 45)
     records = [json.loads(line.removeprefix('PROOF:')) for line in output.decode().splitlines()
                if line.startswith('PROOF:')]
