@@ -118,8 +118,10 @@ public final class RateLimitEngine {
     // ===== access control =====
     AccessControl accessControl = ruleSet.getAccessControl();
     if (!accessControl.isEmpty()) {
-      List<RateLimitKey> resolvedKeys = resolveKeysForAccessControl(context, ruleSet);
-      AccessControl.Decision decision = accessControl.evaluate(context.getClientIp(), resolvedKeys);
+      List<RateLimitKey> resolvedKeys = new ArrayList<>();
+      RateLimitKey primaryKey = resolveKeysForAccessControl(context, ruleSet, resolvedKeys);
+      AccessControl.Decision decision =
+          accessControl.evaluate(context.getClientIp(), primaryKey, resolvedKeys);
       if (decision == AccessControl.Decision.DENY) {
         return RateLimitResult.builder(
                 RateLimitKey.of(DENIED_KEY_PREFIX + resolvedKeys.get(0).value()))
@@ -148,16 +150,26 @@ public final class RateLimitEngine {
   /**
    * Resolves the rate limit keys used for access control key-list evaluation.
    *
-   * <p>Returns the key of every matching rule (highest priority first), so a denied key is caught
-   * regardless of which matching rule resolves it. Rules whose key cannot be resolved are skipped.
-   * Falls back to a single synthetic IP key when no key could be resolved. Never empty.
+   * <p>Adds the key of every matching rule (highest priority first) to {@code keys}, so a denied
+   * key is caught regardless of which matching rule resolves it. Rules whose key cannot be resolved
+   * are skipped. Falls back to a single synthetic IP key when no key could be resolved; {@code
+   * keys} is never left empty.
+   *
+   * @return the key of the highest-priority matching rule (the only key allowed to grant a
+   *     key-based bypass), the synthetic IP key when no rule matches, or {@code null} when the
+   *     highest-priority rule's key cannot be resolved
    */
-  private List<RateLimitKey> resolveKeysForAccessControl(
-      RequestContext context, RateLimitRuleSet ruleSet) {
-    List<RateLimitKey> keys = new ArrayList<>();
-    for (RateLimitRule rule : ruleSet.getMatchingRules(context, pathMatcher)) {
+  private RateLimitKey resolveKeysForAccessControl(
+      RequestContext context, RateLimitRuleSet ruleSet, List<RateLimitKey> keys) {
+    List<RateLimitRule> matchingRules = ruleSet.getMatchingRules(context, pathMatcher);
+    RateLimitKey primaryKey = null;
+    for (int i = 0; i < matchingRules.size(); i++) {
       try {
-        keys.add(ruleSet.getKeyResolver().resolve(context, rule));
+        RateLimitKey key = ruleSet.getKeyResolver().resolve(context, matchingRules.get(i));
+        keys.add(key);
+        if (i == 0) {
+          primaryKey = key;
+        }
       } catch (Exception e) {
         // skip: the IP lists are still checked against the client IP
       }
@@ -165,9 +177,14 @@ public final class RateLimitEngine {
     if (keys.isEmpty()) {
       // fallback: synthetic IP key
       String ip = context.getClientIp();
-      keys.add(RateLimitKey.of("ip:" + (ip != null && !ip.isEmpty() ? ip : "unknown")));
+      RateLimitKey fallback =
+          RateLimitKey.of("ip:" + (ip != null && !ip.isEmpty() ? ip : "unknown"));
+      keys.add(fallback);
+      if (matchingRules.isEmpty()) {
+        primaryKey = fallback;
+      }
     }
-    return keys;
+    return primaryKey;
   }
 
   private RateLimitResult onMissingRuleSet(String ruleSetId) {

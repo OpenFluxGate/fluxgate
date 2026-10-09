@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.fluxgate.core.config.AccessControl;
 import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.OnLimitExceedPolicy;
@@ -16,6 +17,7 @@ import org.fluxgate.core.config.RuleMatcher;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.engine.RateLimitEngine.OnMissingRuleSetStrategy;
 import org.fluxgate.core.key.LimitScopeKeyResolver;
+import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.match.CidrSet;
 import org.fluxgate.core.match.SimpleAntPathMatcher;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
@@ -266,6 +268,96 @@ class RateLimitEngineMatchingTest {
           RequestContext.builder()
               .clientIp("1.2.3.4")
               .apiKey("bad")
+              .endpoint("/api/x")
+              .method("GET")
+              .build();
+      assertThat(engine(rs, failingLimiter).check("test", ctx).isAllowed()).isFalse();
+    }
+
+    private RateLimitRule highPriorityIpRule() {
+      return RateLimitRule.builder("a-ip-rule")
+          .scope(LimitScope.PER_IP)
+          .keyStrategyId("ip")
+          .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+          .priority(10)
+          .matcher(RuleMatcher.matchAll())
+          .addBand(BAND)
+          .build();
+    }
+
+    @Test
+    @DisplayName("allowed key on a lower-priority matching rule does NOT bypass limiting")
+    void allowedKey_onSecondMatchingRule_doesNotBypass() {
+      AccessControl ac = AccessControl.builder().addAllowedKey("user:admin").build();
+      RateLimitRuleSet rs =
+          ruleSet("test", ac, highPriorityIpRule(), scoped("b-user-rule", LimitScope.PER_USER));
+
+      AtomicInteger limiterCalls = new AtomicInteger();
+      RateLimiter countingLimiter =
+          (ctx, ruleSet2, permits) -> {
+            limiterCalls.incrementAndGet();
+            return RateLimitResult.builder(RateLimitKey.of("ip:1.2.3.4"))
+                .allowed(false)
+                .remainingTokens(0L)
+                .nanosToWaitForRefill(1L)
+                .build();
+          };
+
+      // the caller controls X-User-Id, so "admin" must not unlock the PER_IP rule
+      RequestContext ctx =
+          RequestContext.builder()
+              .clientIp("1.2.3.4")
+              .userId("admin")
+              .endpoint("/api/x")
+              .method("GET")
+              .build();
+      RateLimitResult result = engine(rs, countingLimiter).check("test", ctx);
+
+      assertThat(limiterCalls.get()).isEqualTo(1);
+      assertThat(result.isAllowed()).isFalse();
+    }
+
+    @Test
+    @DisplayName("allowed key on the highest-priority matching rule bypasses limiting")
+    void allowedKey_onFirstMatchingRule_bypasses() {
+      AccessControl ac = AccessControl.builder().addAllowedKey("user:admin").build();
+      RateLimitRule userRule =
+          RateLimitRule.builder("a-user-rule")
+              .scope(LimitScope.PER_USER)
+              .keyStrategyId("custom")
+              .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+              .priority(10)
+              .matcher(RuleMatcher.matchAll())
+              .addBand(BAND)
+              .build();
+      RateLimitRuleSet rs =
+          ruleSet("test", ac, userRule, rule("b-ip-rule", 0, RuleMatcher.matchAll()));
+
+      RequestContext ctx =
+          RequestContext.builder()
+              .clientIp("1.2.3.4")
+              .userId("admin")
+              .endpoint("/api/x")
+              .method("GET")
+              .build();
+      RateLimitResult result = engine(rs, failingLimiter).check("test", ctx);
+
+      assertThat(result.isAllowed()).isTrue();
+      assertThat(result.hasRule()).isFalse();
+    }
+
+    @Test
+    @DisplayName("denied key on a lower-priority rule beats an allowed key on the first rule")
+    void deniedKeyOnSecondRule_beatsAllowedKeyOnFirstRule() {
+      AccessControl ac =
+          AccessControl.builder().addAllowedKey("ip:1.2.3.4").addDeniedKey("user:mallory").build();
+      RateLimitRuleSet rs =
+          ruleSet("test", ac, highPriorityIpRule(), scoped("b-user-rule", LimitScope.PER_USER));
+
+      RequestContext ctx =
+          RequestContext.builder()
+              .clientIp("1.2.3.4")
+              .userId("mallory")
               .endpoint("/api/x")
               .method("GET")
               .build();

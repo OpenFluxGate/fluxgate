@@ -17,9 +17,10 @@ import org.fluxgate.core.match.CidrSet;
  * <p>IP-based rules use the full CIDR syntax; key-based rules compare against the <em>resolved</em>
  * key value (e.g. {@code "user:alice"}, {@code "key:abc"}, {@code "ip:192.168.1.1"}).
  *
- * <p>The engine uses {@link #evaluate(String, Collection)}, which checks the IP lists against the
- * request's actual client IP regardless of the rule scope, so a denied IP is blocked (and an
- * allowed IP bypasses limiting) for {@code PER_USER} / {@code PER_API_KEY} rules too.
+ * <p>The engine uses {@link #evaluate(String, RateLimitKey, Collection)}, which checks the IP lists
+ * against the request's actual client IP regardless of the rule scope, so a denied IP is blocked
+ * (and an allowed IP bypasses limiting) for {@code PER_USER} / {@code PER_API_KEY} rules too. Only
+ * the highest-priority matching rule's key can grant a key-based bypass.
  *
  * <p>Example usage:
  *
@@ -164,46 +165,52 @@ public final class AccessControl {
    * Evaluates the access control rules for a request.
    *
    * <p>The IP lists are checked against {@code clientIp} (the request's actual client address),
-   * independent of how the rules resolve their keys. The key lists are checked against every
-   * resolved key in {@code keys} (one per matching rule). Deny always wins: the request is denied
-   * if the client IP or <em>any</em> key is denied, even when something else is allowed.
+   * independent of how the rules resolve their keys.
+   *
+   * <ul>
+   *   <li><b>Deny</b> if the client IP is in the denied IPs, or <em>any</em> key in {@code keys}
+   *       (one per matching rule) is a denied key.
+   *   <li><b>Allow-bypass</b> if the client IP is in the allowed IPs, or {@code primaryKey} — the
+   *       key of the highest-priority matching rule — is an allowed key. A lower-priority rule's
+   *       key never grants a bypass: that key may come from caller-controlled input (e.g. an {@code
+   *       X-User-Id} header) and would otherwise skip a higher-priority rule such as a {@code
+   *       PER_IP} limit.
+   * </ul>
+   *
+   * <p>Deny always wins over allow.
    *
    * @param clientIp the request's client IP (may be null or empty when unknown)
-   * @param keys the resolved rate limit keys of the matching rules (must not be null)
+   * @param primaryKey the resolved key of the highest-priority matching rule, or {@code null} when
+   *     it could not be resolved (then no key-based bypass is granted)
+   * @param keys the resolved keys of all matching rules, checked against the denied keys (must not
+   *     be null)
    * @return the access control decision
    * @since 0.4.0
    */
-  public Decision evaluate(String clientIp, Collection<RateLimitKey> keys) {
+  public Decision evaluate(
+      String clientIp, RateLimitKey primaryKey, Collection<RateLimitKey> keys) {
     Objects.requireNonNull(keys, "keys must not be null");
 
-    boolean isDenied = false;
-    boolean isAllowed = false;
+    boolean hasClientIp = clientIp != null && !clientIp.isEmpty();
 
-    if (clientIp != null && !clientIp.isEmpty()) {
-      if (!deniedIps.isEmpty() && deniedIps.contains(clientIp)) {
-        isDenied = true;
-      }
-      if (!allowedIps.isEmpty() && allowedIps.contains(clientIp)) {
-        isAllowed = true;
-      }
+    boolean isDenied = hasClientIp && !deniedIps.isEmpty() && deniedIps.contains(clientIp);
+    if (primaryKey != null && deniedKeys.contains(primaryKey.value())) {
+      isDenied = true;
     }
-
     for (RateLimitKey key : keys) {
-      Decision decision = evaluate(key);
-      if (decision == Decision.DENY) {
+      if (deniedKeys.contains(key.value())) {
         isDenied = true;
-      } else if (decision == Decision.ALLOW_BYPASS) {
-        isAllowed = true;
       }
     }
-
     if (isDenied) {
       return Decision.DENY;
     }
-    if (isAllowed) {
-      return Decision.ALLOW_BYPASS;
+
+    boolean isAllowed = hasClientIp && !allowedIps.isEmpty() && allowedIps.contains(clientIp);
+    if (primaryKey != null && allowedKeys.contains(primaryKey.value())) {
+      isAllowed = true;
     }
-    return Decision.NO_OPINION;
+    return isAllowed ? Decision.ALLOW_BYPASS : Decision.NO_OPINION;
   }
 
   /** Returns {@code true} if this instance has no rules configured. */

@@ -2,6 +2,7 @@ package org.fluxgate.core.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.Arrays;
 import java.util.Collections;
 import org.fluxgate.core.config.AccessControl.Decision;
 import org.fluxgate.core.key.RateLimitKey;
@@ -122,5 +123,66 @@ class AccessControlTest {
             .build();
     assertThat(ac.evaluate(RateLimitKey.of("user:alice"))).isEqualTo(Decision.ALLOW_BYPASS);
     assertThat(ac.evaluate(RateLimitKey.of("key:bad"))).isEqualTo(Decision.DENY);
+  }
+
+  // ===== request-level evaluation (client IP + keys of all matching rules) =====
+
+  @Nested
+  @DisplayName("evaluate(clientIp, primaryKey, keys)")
+  class RequestEvaluationTests {
+
+    private final RateLimitKey ipKey = RateLimitKey.of("ip:1.2.3.4");
+    private final RateLimitKey adminKey = RateLimitKey.of("user:admin");
+
+    @Test
+    @DisplayName("allowed key that is not the primary key does not bypass")
+    void allowedNonPrimaryKey_noOpinion() {
+      AccessControl ac = AccessControl.builder().addAllowedKey("user:admin").build();
+      assertThat(ac.evaluate("1.2.3.4", ipKey, Arrays.asList(ipKey, adminKey)))
+          .isEqualTo(Decision.NO_OPINION);
+    }
+
+    @Test
+    @DisplayName("allowed primary key bypasses")
+    void allowedPrimaryKey_bypasses() {
+      AccessControl ac = AccessControl.builder().addAllowedKey("user:admin").build();
+      assertThat(ac.evaluate("1.2.3.4", adminKey, Arrays.asList(adminKey, ipKey)))
+          .isEqualTo(Decision.ALLOW_BYPASS);
+    }
+
+    @Test
+    @DisplayName("null primary key (unresolvable first rule) never bypasses by key")
+    void nullPrimaryKey_noKeyBypass() {
+      AccessControl ac = AccessControl.builder().addAllowedKey("user:admin").build();
+      assertThat(ac.evaluate("1.2.3.4", null, Collections.singletonList(adminKey)))
+          .isEqualTo(Decision.NO_OPINION);
+    }
+
+    @Test
+    @DisplayName("denied non-primary key beats allowed primary key")
+    void deniedNonPrimaryKey_beatsAllowedPrimary() {
+      AccessControl ac =
+          AccessControl.builder().addAllowedKey("ip:1.2.3.4").addDeniedKey("user:admin").build();
+      assertThat(ac.evaluate("1.2.3.4", ipKey, Arrays.asList(ipKey, adminKey)))
+          .isEqualTo(Decision.DENY);
+    }
+
+    @Test
+    @DisplayName("client IP lists apply regardless of key shape")
+    void clientIpLists() {
+      AccessControl allow =
+          AccessControl.builder()
+              .allowedIps(CidrSet.of(Collections.singletonList("1.2.3.0/24")))
+              .build();
+      AccessControl deny =
+          AccessControl.builder()
+              .deniedIps(CidrSet.of(Collections.singletonList("1.2.3.0/24")))
+              .addAllowedKey("user:admin")
+              .build();
+      assertThat(allow.evaluate("1.2.3.4", adminKey, Collections.singletonList(adminKey)))
+          .isEqualTo(Decision.ALLOW_BYPASS);
+      assertThat(deny.evaluate("1.2.3.4", adminKey, Collections.singletonList(adminKey)))
+          .isEqualTo(Decision.DENY);
+    }
   }
 }
