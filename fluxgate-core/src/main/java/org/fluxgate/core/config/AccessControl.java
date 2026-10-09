@@ -1,9 +1,8 @@
 package org.fluxgate.core.config;
 
-import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import org.fluxgate.core.key.RateLimitKey;
@@ -17,6 +16,10 @@ import org.fluxgate.core.match.CidrSet;
  *
  * <p>IP-based rules use the full CIDR syntax; key-based rules compare against the <em>resolved</em>
  * key value (e.g. {@code "user:alice"}, {@code "key:abc"}, {@code "ip:192.168.1.1"}).
+ *
+ * <p>The engine uses {@link #evaluate(String, Collection)}, which checks the IP lists against the
+ * request's actual client IP regardless of the rule scope, so a denied IP is blocked (and an
+ * allowed IP bypasses limiting) for {@code PER_USER} / {@code PER_API_KEY} rules too.
  *
  * <p>Example usage:
  *
@@ -148,6 +151,52 @@ public final class AccessControl {
     }
 
     // deny beats allow
+    if (isDenied) {
+      return Decision.DENY;
+    }
+    if (isAllowed) {
+      return Decision.ALLOW_BYPASS;
+    }
+    return Decision.NO_OPINION;
+  }
+
+  /**
+   * Evaluates the access control rules for a request.
+   *
+   * <p>The IP lists are checked against {@code clientIp} (the request's actual client address),
+   * independent of how the rules resolve their keys. The key lists are checked against every
+   * resolved key in {@code keys} (one per matching rule). Deny always wins: the request is denied
+   * if the client IP or <em>any</em> key is denied, even when something else is allowed.
+   *
+   * @param clientIp the request's client IP (may be null or empty when unknown)
+   * @param keys the resolved rate limit keys of the matching rules (must not be null)
+   * @return the access control decision
+   * @since 0.4.0
+   */
+  public Decision evaluate(String clientIp, Collection<RateLimitKey> keys) {
+    Objects.requireNonNull(keys, "keys must not be null");
+
+    boolean isDenied = false;
+    boolean isAllowed = false;
+
+    if (clientIp != null && !clientIp.isEmpty()) {
+      if (!deniedIps.isEmpty() && deniedIps.contains(clientIp)) {
+        isDenied = true;
+      }
+      if (!allowedIps.isEmpty() && allowedIps.contains(clientIp)) {
+        isAllowed = true;
+      }
+    }
+
+    for (RateLimitKey key : keys) {
+      Decision decision = evaluate(key);
+      if (decision == Decision.DENY) {
+        isDenied = true;
+      } else if (decision == Decision.ALLOW_BYPASS) {
+        isAllowed = true;
+      }
+    }
+
     if (isDenied) {
       return Decision.DENY;
     }

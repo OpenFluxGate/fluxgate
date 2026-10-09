@@ -161,6 +161,118 @@ class RateLimitEngineMatchingTest {
     }
   }
 
+  // ===== AccessControl: non-IP scopes =====
+
+  @Nested
+  @DisplayName("AccessControl with non-IP rule scopes")
+  class NonIpScopeTests {
+
+    private RateLimitRule scoped(String id, LimitScope scope) {
+      return RateLimitRule.builder(id)
+          .scope(scope)
+          .keyStrategyId("custom")
+          .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+          .matcher(RuleMatcher.matchAll())
+          .addBand(BAND)
+          .build();
+    }
+
+    private final RateLimiter failingLimiter =
+        (ctx, ruleSet2, permits) -> {
+          throw new AssertionError("limiter must not be called");
+        };
+
+    @Test
+    @DisplayName("denied IP is rejected even when the rule is PER_USER")
+    void deniedIp_perUserRule_isRejected() {
+      AccessControl ac =
+          AccessControl.builder()
+              .deniedIps(CidrSet.of(Collections.singletonList("10.0.0.0/8")))
+              .build();
+      RateLimitRuleSet rs = ruleSet("test", ac, scoped("user-rule", LimitScope.PER_USER));
+
+      RequestContext ctx =
+          RequestContext.builder()
+              .clientIp("10.1.2.3")
+              .userId("alice")
+              .endpoint("/api/x")
+              .method("GET")
+              .build();
+      RateLimitResult result = engine(rs, failingLimiter).check("test", ctx);
+
+      assertThat(result.isAllowed()).isFalse();
+      assertThat(result.getKey().value()).startsWith("denied:");
+    }
+
+    @Test
+    @DisplayName("allowed IP bypasses limiting even when the rule is PER_API_KEY")
+    void allowedIp_perApiKeyRule_bypasses() {
+      AccessControl ac =
+          AccessControl.builder()
+              .allowedIps(CidrSet.of(Collections.singletonList("192.168.0.0/16")))
+              .build();
+      RateLimitRuleSet rs = ruleSet("test", ac, scoped("key-rule", LimitScope.PER_API_KEY));
+
+      RequestContext ctx =
+          RequestContext.builder()
+              .clientIp("192.168.1.1")
+              .apiKey("abc")
+              .endpoint("/api/x")
+              .method("GET")
+              .build();
+      RateLimitResult result = engine(rs, failingLimiter).check("test", ctx);
+
+      assertThat(result.isAllowed()).isTrue();
+      assertThat(result.hasRule()).isFalse();
+    }
+
+    @Test
+    @DisplayName("denied IP beats an allowed key")
+    void deniedIp_beatsAllowedKey() {
+      AccessControl ac =
+          AccessControl.builder()
+              .deniedIps(CidrSet.of(Collections.singletonList("10.0.0.0/8")))
+              .addAllowedKey("user:alice")
+              .build();
+      RateLimitRuleSet rs = ruleSet("test", ac, scoped("user-rule", LimitScope.PER_USER));
+
+      RequestContext ctx =
+          RequestContext.builder()
+              .clientIp("10.1.2.3")
+              .userId("alice")
+              .endpoint("/api/x")
+              .method("GET")
+              .build();
+      assertThat(engine(rs, failingLimiter).check("test", ctx).isAllowed()).isFalse();
+    }
+
+    @Test
+    @DisplayName("denied key on a lower-priority matching rule still rejects")
+    void deniedKey_onSecondMatchingRule_isRejected() {
+      AccessControl ac = AccessControl.builder().addDeniedKey("key:bad").build();
+      RateLimitRule ipRule =
+          RateLimitRule.builder("a-ip-rule")
+              .scope(LimitScope.PER_IP)
+              .keyStrategyId("ip")
+              .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+              .priority(10)
+              .matcher(RuleMatcher.matchAll())
+              .addBand(BAND)
+              .build();
+      RateLimitRuleSet rs =
+          ruleSet("test", ac, ipRule, scoped("b-key-rule", LimitScope.PER_API_KEY));
+
+      RequestContext ctx =
+          RequestContext.builder()
+              .clientIp("1.2.3.4")
+              .apiKey("bad")
+              .endpoint("/api/x")
+              .method("GET")
+              .build();
+      assertThat(engine(rs, failingLimiter).check("test", ctx).isAllowed()).isFalse();
+    }
+  }
+
   // ===== getMatchingRules priority ordering =====
 
   @Nested
