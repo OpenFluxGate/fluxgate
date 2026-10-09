@@ -164,4 +164,55 @@ class CidrSetTest {
     assertThat(CidrSet.EMPTY.isEmpty()).isTrue();
     assertThat(CidrSet.EMPTY.contains("1.2.3.4")).isFalse();
   }
+
+  // ===== IP literals only (no DNS) =====
+
+  @Nested
+  @DisplayName("non-literal input is never resolved")
+  class LiteralOnlyTests {
+
+    private final CidrSet loopback = CidrSet.of(Arrays.asList("127.0.0.0/8", "::1"));
+
+    @Test
+    @DisplayName("hostnames are not resolved and never match")
+    void hostnameNotResolved() {
+      // "localhost" resolves to 127.0.0.1 / ::1 via the resolver; it must not match
+      assertThat(loopback.contains("localhost")).isFalse();
+      assertThat(loopback.contains("example.com")).isFalse();
+    }
+
+    @Test
+    @DisplayName("placeholder values such as \"unknown\" never match")
+    void unknownNeverMatches() {
+      assertThat(loopback.contains("unknown")).isFalse();
+      assertThat(CidrSet.of(Collections.singletonList("0.0.0.0/0")).contains("unknown")).isFalse();
+    }
+
+    @Test
+    @DisplayName("abbreviated IPv4 forms are not treated as literals")
+    void abbreviatedIpv4Rejected() {
+      assertThat(loopback.contains("127.1")).isFalse();
+      assertThat(loopback.contains("127.0.0.1.5")).isFalse();
+      assertThat(loopback.contains("127.0.0.256")).isFalse();
+    }
+
+    @Test
+    @DisplayName("IPv4 and IPv6 literals still match")
+    void literalsMatch() {
+      assertThat(loopback.contains("127.0.0.1")).isTrue();
+      assertThat(loopback.contains(" 127.0.0.1 ")).isTrue();
+      assertThat(loopback.contains("::1")).isTrue();
+      assertThat(loopback.contains("0:0:0:0:0:0:0:1")).isTrue();
+      assertThat(loopback.contains("::ffff:127.0.0.1")).isTrue();
+      assertThat(loopback.contains("2001:db8::1")).isFalse();
+    }
+
+    @Test
+    @DisplayName("hostname entries are skipped, not resolved")
+    void hostnameEntrySkipped() {
+      CidrSet set = CidrSet.of(Collections.singletonList("localhost"));
+      assertThat(set.isEmpty()).isTrue();
+      assertThat(set.contains("127.0.0.1")).isFalse();
+    }
+  }
 }

@@ -9,6 +9,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,6 +19,10 @@ import org.slf4j.LoggerFactory;
  * <p>Accepts single addresses (e.g. {@code "192.168.1.1"}, {@code "::1"}) and CIDR notation (e.g.
  * {@code "10.0.0.0/8"}, {@code "2001:db8::/32"}). Entries that cannot be parsed are silently
  * skipped with a {@code WARN} log — they never widen the set.
+ *
+ * <p>Only IP <em>literals</em> are accepted, both as entries and in {@link #contains(String)}:
+ * hostnames and placeholders such as {@code "unknown"} are never resolved through DNS and never
+ * match.
  *
  * <p>IPv4-mapped IPv6 addresses (e.g. {@code "::ffff:192.168.1.1"}) are normalised to their IPv4
  * equivalents before matching, so an IPv4 CIDR entry will match the mapped form.
@@ -35,6 +40,14 @@ import org.slf4j.LoggerFactory;
 public final class CidrSet {
 
   private static final Logger log = LoggerFactory.getLogger(CidrSet.class);
+
+  /** Strict dotted-quad IPv4 literal (no abbreviated or octal-looking forms). */
+  private static final Pattern IPV4_LITERAL =
+      Pattern.compile(
+          "^(?:(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$");
+
+  /** Characters of an IPv6 literal (hex groups, colons, optional embedded IPv4). */
+  private static final Pattern IPV6_LITERAL = Pattern.compile("^[0-9A-Fa-f:.]+$");
 
   /** An empty set that never matches any address. */
   public static final CidrSet EMPTY = new CidrSet(Collections.emptyList());
@@ -85,7 +98,7 @@ public final class CidrSet {
     }
     InetAddress addr;
     try {
-      addr = InetAddress.getByName(ip.trim());
+      addr = parseLiteral(ip.trim());
     } catch (UnknownHostException e) {
       return false;
     }
@@ -96,6 +109,23 @@ public final class CidrSet {
       }
     }
     return false;
+  }
+
+  /**
+   * Parses an IPv4 or IPv6 <em>literal</em> without ever consulting DNS. {@link
+   * InetAddress#getByName} performs a lookup for anything that is not a literal (e.g. {@code
+   * "unknown"} or a hostname), so non-literals are rejected before it is called.
+   *
+   * @throws UnknownHostException if {@code text} is not an IP literal
+   */
+  private static InetAddress parseLiteral(String text) throws UnknownHostException {
+    boolean ipv4 = IPV4_LITERAL.matcher(text).matches();
+    boolean ipv6 = !ipv4 && text.indexOf(':') >= 0 && IPV6_LITERAL.matcher(text).matches();
+    if (!ipv4 && !ipv6) {
+      throw new UnknownHostException("not an IP literal: '" + text + "'");
+    }
+    // a literal never triggers a name lookup
+    return InetAddress.getByName(text);
   }
 
   /** Returns {@code true} if this set has no entries. */
@@ -157,7 +187,7 @@ public final class CidrSet {
       if (slashIdx < 0) {
         // single address — exact match
         hostPart = cidr;
-        InetAddress parsed = InetAddress.getByName(hostPart);
+        InetAddress parsed = parseLiteral(hostPart);
         prefixLen = parsed.getAddress().length * 8;
       } else {
         hostPart = cidr.substring(0, slashIdx);
@@ -167,7 +197,7 @@ public final class CidrSet {
           throw new IllegalArgumentException("Invalid prefix length in '" + cidr + "'");
         }
       }
-      InetAddress addr = InetAddress.getByName(hostPart);
+      InetAddress addr = parseLiteral(hostPart);
       byte[] raw = addr.getAddress();
       int maxPrefix = raw.length * 8;
       if (prefixLen < 0 || prefixLen > maxPrefix) {
