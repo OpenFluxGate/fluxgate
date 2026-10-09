@@ -133,7 +133,8 @@ def sampler_worker(config, stop_path):
                                "x-api-key": config["api_key"], "Connection": "close"})
             response = connection.getresponse()
             body = response.read()
-            sample.update(status=response.status, body_valid=config["body"].encode() in body)
+            expected = config["body"].encode()
+            sample.update(status=response.status, body_valid=body in (expected, expected + b"\n"))
         except Exception as error:
             sample.update(status=None, body_valid=False, error=type(error).__name__)
         finally:
@@ -291,7 +292,8 @@ class Proof:
                 response = conn.getresponse()
                 body = response.read()
                 if response.status == 200:
-                    require(self.f.get("backend_body", "fluxgate-resilience-ok").encode() in body,
+                    expected = self.f.get("backend_body", "fluxgate-resilience-ok").encode()
+                    require(body in (expected, expected + b"\n"),
                             "200 response was not the real backend")
                 return response.status
             finally:
@@ -1145,8 +1147,43 @@ def sampler_cleanup_self_test():
                 require(bool(list(Path(directory).glob("*-cleanup-failed.json"))), "cleanup failure diagnostics missing")
 
 
+def backend_body_self_test():
+    """Exercise the gateway's real 200 control against fake responses containing the marker."""
+    proof = Proof.__new__(Proof)
+    proof.f = {"gateway_service": "offline", "gateway_namespace": "offline",
+               "gateway_host": "offline", "load_path": "/load", "backend_body": "marker"}
+    proof.forward = lambda *args: contextlib.nullcontext(1)
+    original = http.client.HTTPConnection
+    class Connection:
+        def __init__(self, *args, **kwargs):
+            pass
+        def request(self, *args, **kwargs):
+            pass
+        def getresponse(self):
+            return self
+        def read(self):
+            return body
+        def close(self):
+            pass
+        status = 200
+    http.client.HTTPConnection = Connection
+    try:
+        for body in (b"marker", b"marker\n"):
+            require(proof.gateway() == 200, "gateway rejected exact backend/LF positive")
+        for body in (b"prefix-marker", b"marker-suffix", b"marker\n\n", b"marker\r\n", b"junk\nmarker\njunk"):
+            try:
+                proof.gateway()
+            except ProofError:
+                pass
+            else:
+                raise ProofError("gateway accepted fake 200 containing backend marker")
+    finally:
+        http.client.HTTPConnection = original
+
+
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
+    backend_body_self_test()
     sampler_cleanup_self_test()
     require(redis_hash_contents(b"revision\n1\nepoch\nstable") ==
             redis_hash_contents(b"epoch\nstable\nrevision\n1"), "Redis metadata compared hash iteration order")
@@ -1177,12 +1214,13 @@ def self_test():
             def do_GET(self):
                 calls.append(self.path)
                 status = 503 if len(calls) == 2 else 200
-                body = b"backend-marker" if len(calls) == 1 else b"unexpected-body"
+                body = {1: b"backend-marker", 2: b"unavailable", 3: b"prefix-backend-marker",
+                        4: b"backend-marker-suffix", 5: b"backend-marker\n"}[len(calls)]
                 self.send_response(status)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 # Publish stop before the final body unblocks the sampler's reader.
-                if len(calls) == 3:
+                if len(calls) == 5:
                     private_write(stop, "stop")
                 self.wfile.write(body)
             def log_message(self, *args):
@@ -1194,8 +1232,8 @@ def self_test():
                 "path": "/load", "host": "local", "api_key": "offline-fixture", "body": "backend-marker",
                 "positive_path": str(Path(directory) / "positive"),
                 "progress_path": str(Path(directory) / "progress.json")}, str(stop)))
-            require(observed["statuses"] == {"200": 2, "503": 1} and observed["unexpected_body_responses"] == 1 and
-                    observed["backend_successes"] == 1 and not observed["uninterrupted_observed"],
+            require(observed["statuses"] == {"200": 4, "503": 1} and observed["unexpected_body_responses"] == 2 and
+                    observed["backend_successes"] == 2 and not observed["uninterrupted_observed"],
                     "actual traffic sampler hid status/body failures")
             stop.unlink()
             calls.clear()
