@@ -246,10 +246,15 @@ class RedisTokenBucketStoreMockTest {
     verify(connectionProvider)
         .evalsha(
             eq("test-sha-123"),
-            eq(new String[] {"my-bucket-key"}),
             eq(
                 new String[] {
-                  "1", DEFAULT_TTL_ARG, "100", String.valueOf(MINUTE_MICROS), "1", "0", "0"
+                  "my-bucket-key",
+                  RedisTokenBucketStore.metadataKey("my-bucket-key"),
+                  RedisTokenBucketStore.revisionKey("my-bucket-key")
+                }),
+            eq(
+                new String[] {
+                  "1", DEFAULT_TTL_ARG, "100", String.valueOf(MINUTE_MICROS), "1", "0", "0", "0"
                 }));
   }
 
@@ -270,8 +275,16 @@ class RedisTokenBucketStoreMockTest {
     verify(connectionProvider)
         .evalsha(
             eq("test-sha-123"),
-            eq(new String[] {"my-bucket-key"}),
-            eq(new String[] {"1", "21600", "100", String.valueOf(MINUTE_MICROS), "1", "0", "0"}));
+            eq(
+                new String[] {
+                  "my-bucket-key",
+                  RedisTokenBucketStore.metadataKey("my-bucket-key"),
+                  RedisTokenBucketStore.revisionKey("my-bucket-key")
+                }),
+            eq(
+                new String[] {
+                  "1", "21600", "100", String.valueOf(MINUTE_MICROS), "1", "0", "0", "0"
+                }));
   }
 
   @Test
@@ -305,7 +318,14 @@ class RedisTokenBucketStoreMockTest {
     verify(connectionProvider)
         .evalsha(
             eq("test-sha-123"),
-            eq(new String[] {"k-fast", "k-slow"}),
+            eq(
+                new String[] {
+                  "k-fast",
+                  "k-slow",
+                  RedisTokenBucketStore.metadataKey("k-fast"),
+                  RedisTokenBucketStore.metadataKey("k-slow"),
+                  RedisTokenBucketStore.revisionKey("k-fast")
+                }),
             eq(
                 new String[] {
                   "1",
@@ -318,6 +338,7 @@ class RedisTokenBucketStoreMockTest {
                   "2",
                   String.valueOf(MINUTE_MICROS),
                   "1",
+                  "0",
                   "0",
                   "0"
                 }));

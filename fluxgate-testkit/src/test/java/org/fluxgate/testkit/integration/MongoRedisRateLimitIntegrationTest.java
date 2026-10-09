@@ -27,6 +27,7 @@ import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.redis.RedisRateLimiter;
 import org.fluxgate.redis.config.RedisRateLimiterConfig;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
+import org.fluxgate.redis.store.RedisTokenBucketStore;
 import org.fluxgate.testkit.support.MongoContainerSupport;
 import org.fluxgate.testkit.support.RedisContainerSupport;
 import org.junit.jupiter.api.*;
@@ -311,7 +312,7 @@ class MongoRedisRateLimitIntegrationTest {
 
     // Verify Redis keys exist. Scan only this run's keys: the target may be a shared Redis
     // whose other keys (rule sets, other runs) legitimately have no TTL.
-    List<String> keys = connectionProvider.scanKeys(runKeyPattern(), 500);
+    List<String> keys = connectionProvider.scanKeys("fluxgate:bucket:*" + RUN_ID + "*", 500);
     assertNotNull(keys);
     assertFalse(keys.isEmpty(), "Redis should have FluxGate keys for " + keyTestRuleSetId);
 
@@ -331,6 +332,28 @@ class MongoRedisRateLimitIntegrationTest {
       assertTrue(value.containsKey("tokens"), "Key should have 'tokens' field");
       assertTrue(
           value.containsKey("last_refill_micros"), "Key should have 'last_refill_micros' field");
+
+      String metadataKey = RedisTokenBucketStore.metadataKey(key);
+      assertTrue(
+          metadataKey.startsWith("fluxgate:policy:"), "Policy metadata has its own namespace");
+      Map<String, String> metadata = connectionProvider.hgetall(metadataKey);
+      assertEquals(
+          "0", metadata.get("revision"), "Versionless Java calls are fenced at revision zero");
+      assertEquals("10", metadata.get("capacity"));
+      assertEquals("30000000", metadata.get("window_micros"));
+      assertEquals("1", metadata.get("algorithm"));
+      assertTrue(connectionProvider.ttl(metadataKey) >= ttl, "Metadata must outlive its bucket");
+      String fenceKey = RedisTokenBucketStore.revisionKey(key);
+      assertTrue(connectionProvider.exists(fenceKey), "Rule revision fence must exist");
+      List<Long> fence =
+          connectionProvider.eval(
+              "return {tonumber(redis.call('GET', KEYS[1]))}",
+              new String[] {fenceKey},
+              new String[0]);
+      assertEquals(List.of(0L), fence);
+      assertTrue(
+          connectionProvider.ttl(fenceKey) >= connectionProvider.ttl(metadataKey),
+          "Fence must outlive metadata");
     }
 
     System.out.println("\n=== Redis Key Structure Test PASSED ===");

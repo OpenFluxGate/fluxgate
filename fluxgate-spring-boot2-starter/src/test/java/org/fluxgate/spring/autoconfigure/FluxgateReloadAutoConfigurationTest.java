@@ -1,6 +1,8 @@
 package org.fluxgate.spring.autoconfigure;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.time.Duration;
 import java.util.List;
@@ -208,6 +210,24 @@ class FluxgateReloadAutoConfigurationTest {
 
   @Nested
   class BucketResetWiring {
+
+    @Test
+    void shouldPreserveQuotaForTargetedAndFullReloads() {
+      InMemoryBucketResetHandler explicitHandler = mock(InMemoryBucketResetHandler.class);
+      contextRunner
+          .withBean("explicitResetHandler", InMemoryBucketResetHandler.class, () -> explicitHandler)
+          .run(
+              context -> {
+                RuleCache cache = context.getBean(RuleCache.class);
+                context.getBean(CachingRuleSetProvider.class).findById("orders");
+                context.getBean(RuleReloadStrategy.class).triggerReload("orders");
+                assertThat(cache.get("orders")).isEmpty();
+                context.getBean(CachingRuleSetProvider.class).findById("orders");
+                context.getBean(RuleReloadStrategy.class).triggerReloadAll();
+                assertThat(cache.get("orders")).isEmpty();
+                verifyNoInteractions(explicitHandler);
+              });
+    }
 
     @Test
     void shouldUseTheInMemoryResetHandlerWithTheInMemoryLimiter() {

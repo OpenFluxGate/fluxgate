@@ -1,9 +1,16 @@
-# Local-only smoke-test rule. Normal startup reads Studio's MongoDB rules instead.
+# Local-only smoke-test rule. Normal startup requires an explicitly published Mongo snapshot.
 fluxgate:
   mongo:
     enabled: false
   envoy:
     rule-set-id: gateway-pilot
+    published-policies: false
+    allow-insecure: true
+    routes:
+      - id: local-pilot
+        path-prefix: /api
+        rule-set-id: gateway-pilot
+        permits: 1
   ratelimit:
     rule-sets:
       - id: gateway-pilot

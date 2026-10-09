@@ -205,6 +205,7 @@ public class ResilientRateLimiter implements RateLimiter {
         .allowed(false)
         .remainingTokens(0L)
         .nanosToWaitForRefill(0L)
+        .decisionReason(RateLimitResult.DecisionReason.BACKEND_FAILURE)
         .build();
   }
 

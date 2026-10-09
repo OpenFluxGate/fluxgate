@@ -7,6 +7,7 @@ import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
@@ -133,6 +134,18 @@ public final class CidrSet {
     return entries.isEmpty();
   }
 
+  @Override
+  public boolean equals(Object other) {
+    if (this == other) return true;
+    if (!(other instanceof CidrSet)) return false;
+    return new HashSet<>(entries).equals(new HashSet<>(((CidrSet) other).entries));
+  }
+
+  @Override
+  public int hashCode() {
+    return new HashSet<>(entries).hashCode();
+  }
+
   // ===== normalisation =====
 
   /**
@@ -228,6 +241,21 @@ public final class CidrSet {
       }
       BigInteger candidateBig = new BigInteger(1, raw);
       return candidateBig.and(mask).equals(networkAddress);
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      if (this == other) return true;
+      if (!(other instanceof Entry)) return false;
+      Entry that = (Entry) other;
+      return addressLength == that.addressLength
+          && networkAddress.equals(that.networkAddress)
+          && mask.equals(that.mask);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(networkAddress, mask, addressLength);
     }
   }
 }

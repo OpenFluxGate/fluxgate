@@ -19,4 +19,9 @@ public interface RateLimitRuleSetProvider {
    * @return an Optional containing the RateLimitRuleSet if found, or empty if not found
    */
   Optional<RateLimitRuleSet> findById(String ruleSetId);
+
+  /** Whether every read must consult the authoritative policy revision rather than a TTL cache. */
+  default boolean requiresFreshRead() {
+    return false;
+  }
 }

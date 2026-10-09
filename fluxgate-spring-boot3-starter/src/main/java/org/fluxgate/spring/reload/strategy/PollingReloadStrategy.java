@@ -21,7 +21,7 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
  *
  * <p>This strategy maintains a version map (using hashCode) of cached rule sets and compares them
  * against the source provider at regular intervals. A rule set whose content is unchanged fires no
- * event, so no cache is invalidated and no bucket is reset.
+ * event, so no cache is invalidated. Notifications do not reset usage.
  *
  * <p>Configuration example:
  *
@@ -145,12 +145,13 @@ public class PollingReloadStrategy extends AbstractReloadStrategy {
    */
   private void checkForChange(String ruleSetId) {
     try {
+      Optional<RateLimitRuleSet> cached = cache.get(ruleSetId);
       Optional<RateLimitRuleSet> currentOpt = provider.findById(ruleSetId);
 
       if (currentOpt.isEmpty()) {
         // Rule set was deleted
         Integer previousVersion = versionMap.remove(ruleSetId);
-        if (previousVersion != null) {
+        if (previousVersion != null || cached.isPresent()) {
           log.info("Rule set deleted: {}", ruleSetId);
           notifyListeners(RuleReloadEvent.forRuleSet(ruleSetId, ReloadSource.POLLING));
         }
@@ -159,10 +160,10 @@ public class PollingReloadStrategy extends AbstractReloadStrategy {
 
       RateLimitRuleSet current = currentOpt.get();
       int currentVersion = computeVersion(current);
-      Integer previousVersion = versionMap.get(ruleSetId);
+      Integer previousVersion = cached.map(this::computeVersion).orElse(versionMap.get(ruleSetId));
 
       if (previousVersion == null) {
-        // First time seeing this rule set
+        // No cached snapshot or previous observation to compare
         versionMap.put(ruleSetId, currentVersion);
         log.debug("Tracking new rule set: {} (version: {})", ruleSetId, currentVersion);
       } else if (!previousVersion.equals(currentVersion)) {
@@ -195,7 +196,8 @@ public class PollingReloadStrategy extends AbstractReloadStrategy {
    * @return version hash
    */
   private int computeVersion(RateLimitRuleSet ruleSet) {
-    return Objects.hash(ruleSet.getId(), ruleSet.getDescription(), ruleSet.getRules());
+    return Objects.hash(
+        ruleSet.getId(), ruleSet.getDescription(), ruleSet.getRules(), ruleSet.getAccessControl());
   }
 
   /**

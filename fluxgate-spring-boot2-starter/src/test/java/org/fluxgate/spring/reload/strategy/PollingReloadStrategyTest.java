@@ -7,9 +7,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import org.fluxgate.core.config.AccessControl;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.match.CidrSet;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.reload.RuleReloadEvent;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
@@ -57,8 +59,78 @@ class PollingReloadStrategyTest {
   private PollingReloadStrategy strategyOver(RateLimitRuleSetProvider provider) {
     PollingReloadStrategy strategy =
         new PollingReloadStrategy(provider, cache, Duration.ofHours(1), Duration.ofHours(1));
-    strategy.addListener(events::add);
+    strategy.addListener(
+        event -> {
+          events.add(event);
+          cache.invalidate(event.getRuleSetId());
+        });
     return strategy;
+  }
+
+  @Test
+  void shouldDetectChangeBeforeTheFirstPoll() {
+    cache.put("orders", ruleSet("orders", 100));
+    PollingReloadStrategy strategy = strategyOver(id -> Optional.of(ruleSet(id, 50)));
+    strategy.forceCheck("orders");
+    assertThat(events).hasSize(1);
+    assertThat(cache.get("orders")).isEmpty();
+  }
+
+  @Test
+  void shouldNotLetMarkSeenConcealAStaleCachedSnapshot() {
+    cache.put("orders", ruleSet("orders", 100));
+    PollingReloadStrategy strategy = strategyOver(id -> Optional.of(ruleSet(id, 50)));
+    strategy.markSeen("orders");
+    strategy.forceCheck("orders");
+    assertThat(events).hasSize(1);
+    assertThat(cache.get("orders")).isEmpty();
+  }
+
+  @Test
+  void shouldDetectDeletionBeforeTheFirstPoll() {
+    cache.put("orders", ruleSet("orders", 100));
+    PollingReloadStrategy strategy = strategyOver(id -> Optional.empty());
+    strategy.forceCheck("orders");
+    strategy.forceCheck("orders");
+    assertThat(events).hasSize(1);
+    assertThat(cache.get("orders")).isEmpty();
+  }
+
+  @Test
+  void shouldNotInvalidateEqualAclSnapshotsRebuiltByTheProvider() {
+    RateLimitRuleSetProvider provider =
+        id ->
+            Optional.of(
+                RateLimitRuleSet.builder(id)
+                    .description("orders traffic")
+                    .rules(ruleSet(id, 100).getRules())
+                    .keyResolver((ctx, rule) -> RateLimitKey.of("ip:10.0.0.1"))
+                    .accessControl(
+                        AccessControl.builder()
+                            .deniedIps(CidrSet.of(List.of("10.0.0.0/8")))
+                            .build())
+                    .build());
+    cache.put("orders", provider.findById("orders").orElseThrow());
+    PollingReloadStrategy strategy = strategyOver(provider);
+    strategy.forceCheck("orders");
+    strategy.forceCheck("orders");
+    assertThat(events).isEmpty();
+  }
+
+  @Test
+  void shouldDetectOnlyIpAclChanges() {
+    cache.put("orders", ruleSet("orders", 100));
+    RateLimitRuleSet changed =
+        RateLimitRuleSet.builder("orders")
+            .description("orders traffic")
+            .rules(ruleSet("orders", 100).getRules())
+            .keyResolver((ctx, rule) -> RateLimitKey.of("ip:10.0.0.1"))
+            .accessControl(
+                AccessControl.builder().deniedIps(CidrSet.of(List.of("10.0.0.0/8"))).build())
+            .build();
+    PollingReloadStrategy strategy = strategyOver(id -> Optional.of(changed));
+    strategy.forceCheck("orders");
+    assertThat(events).hasSize(1);
   }
 
   @Test

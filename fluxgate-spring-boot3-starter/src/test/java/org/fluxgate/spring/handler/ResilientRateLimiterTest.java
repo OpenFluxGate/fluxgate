@@ -11,6 +11,7 @@ import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.exception.RedisConnectionException;
 import org.fluxgate.core.exception.RedisUnavailableException;
+import org.fluxgate.core.exception.ScriptExecutionException;
 import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.match.PathPatternMatcher;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
@@ -60,6 +61,35 @@ class ResilientRateLimiterTest {
             (ctx, rules, permits) -> expected, directExecutor(), null, false, null);
 
     assertThat(limiter.tryConsume(context, ruleSet, 1L)).isEqualTo(expected);
+  }
+
+  @Test
+  void shouldNotRechargeEarlierRulesWhenAScriptRejectsStalePolicy() {
+    AtomicInteger earlierRuleCharges = new AtomicInteger();
+    RateLimiter partiallyCharged =
+        (request, rules, permits) -> {
+          // A preceding matching rule already consumed before the later rule rejected stale policy.
+          earlierRuleCharges.incrementAndGet();
+          throw new ScriptExecutionException(
+              "STALE_POLICY", "token_bucket_consume.lua", null, false);
+        };
+    ResilientExecutor executor =
+        new ResilientExecutor(
+            RetryConfig.builder()
+                .enabled(true)
+                .maxAttempts(3)
+                .initialBackoff(Duration.ofMillis(1))
+                .maxBackoff(Duration.ofMillis(2))
+                .build(),
+            CircuitBreakerConfig.disabled(),
+            "policy-check");
+    ResilientRateLimiter limiter =
+        new ResilientRateLimiter(partiallyCharged, executor, null, false, null);
+    RateLimitResult result = limiter.tryConsume(context, ruleSet, 1);
+    assertThat(result.isAllowed()).isFalse();
+    assertThat(result.getDecisionReason())
+        .isEqualTo(RateLimitResult.DecisionReason.BACKEND_FAILURE);
+    assertThat(earlierRuleCharges).hasValue(1);
   }
 
   @Nested

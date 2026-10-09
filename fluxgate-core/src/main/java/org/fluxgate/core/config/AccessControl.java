@@ -239,13 +239,14 @@ public final class AccessControl {
     if (!(o instanceof AccessControl)) return false;
     AccessControl that = (AccessControl) o;
     return Objects.equals(allowedKeys, that.allowedKeys)
-        && Objects.equals(deniedKeys, that.deniedKeys);
-    // CidrSet does not override equals; structural equality via key sets is sufficient for reload
+        && Objects.equals(deniedKeys, that.deniedKeys)
+        && Objects.equals(allowedIps, that.allowedIps)
+        && Objects.equals(deniedIps, that.deniedIps);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(allowedKeys, deniedKeys);
+    return Objects.hash(allowedKeys, deniedKeys, allowedIps, deniedIps);
   }
 
   @Override

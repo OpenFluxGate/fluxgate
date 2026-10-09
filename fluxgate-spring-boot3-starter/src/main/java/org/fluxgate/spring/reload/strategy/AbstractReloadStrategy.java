@@ -19,11 +19,11 @@ import org.slf4j.LoggerFactory;
  * <p>Provides common functionality for managing listeners and lifecycle state.
  *
  * <p><b>Listener ordering is part of the contract.</b> Listeners are notified in ascending order
- * (lowest first), so cache invalidation always runs before bucket reset - the reverse order would
- * let an in-flight request recreate a bucket from the stale rule after the reset. The starter
- * registers {@code CachingRuleSetProvider} at {@link #ORDER_CACHE_INVALIDATION} and the bucket
- * reset handler at {@link #ORDER_BUCKET_RESET}; {@link #addListener(RuleReloadListener)} defaults
- * to {@code 0}, in between.
+ * (lowest first). The starter registers {@code CachingRuleSetProvider} at {@link
+ * #ORDER_CACHE_INVALIDATION}; it does not register bucket reset listeners because policy reloads
+ * preserve usage. Applications that explicitly opt into reset listeners can use {@link
+ * #ORDER_BUCKET_RESET} to run them after invalidation. This ordering is local to a notification,
+ * not an atomic barrier against concurrent requests or other processes.
  *
  * <p>If a listener fails, every listener with a strictly higher order is skipped for that event:
  * resetting buckets while the rules behind them are still stale would silently apply the old limits

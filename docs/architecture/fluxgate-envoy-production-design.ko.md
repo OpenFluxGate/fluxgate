@@ -1,6 +1,6 @@
 # FluxGate × Envoy Gateway: 운영 통합 설계안
 
-2026-10-10 현재 `feature/envoy-gateway-authz`의 코드와 kind 실측을 기준으로 한다. 이 문서는 구현 완료 선언이 아닌 다음 개발의 계약이다. [브라우저 다이어그램](fluxgate-envoy-target.html)은 정상 요청 경로와 판정·저장소 경로를 분리해 보여준다.
+2026-10-10 현재 `feature/envoy-gateway-authz`와 Studio의 `feature/envoy-policy-lifecycle` 구현을 기준으로 한다. 검증 결과는 별도 리뷰 기록에 남긴다. [브라우저 다이어그램](fluxgate-envoy-target.html)은 정상 요청 경로와 판정·저장소 경로를 분리해 보여준다.
 
 ## 목표와 범위
 
@@ -19,15 +19,18 @@ Envoy는 MongoDB·Redis의 클라이언트가 아니다. Java 판정 서비스�
 
 | 항목 | 2026-10-10 근거 | 남은 일 |
 | --- | --- | --- |
-| Envoy → Java → 실제 Pod | kind에서 200·200·429 | 실제 앱과 HTTPS 경로 검증 |
-| Mongo 규칙 → 기존 엔진 → Redis | Mongo 규칙 2개, 이벤트 3개, Redis 키 2개 확인 | Studio 변경 반영과 운영 데이터 계약 |
-| ACL·거부·Redis 장애 | 파일럿에서 403, 503 확인 | Mongo 장애·중복 요청·복수 Pod 실험 |
-| 요청 문맥 | 현재 controller는 path·method·Envoy peer IP만 전달 | 신뢰된 client IP/identity와 헤더 allowlist |
-| rule-set 선택 | 프로세스 전체에서 고정 ID 하나 | 노출할 route와 rule-set의 서버 소유 바인딩 |
-| 규칙 변경 | reload 비활성화 | Studio 알림 + cache TTL/polling 검증 |
+| Envoy → Java → 실제 Pod | Calico kind에서 200·200·429, 내부 mTLS 인증·인증서 누락 거부 | 운영 ingress TLS·실제 업무 서비스 연결 |
+| Mongo 규칙 → 기존 엔진 → Redis | 발행 정책 2개, Redis Cluster 포함 전체 2,213개 테스트 통과 | 운영 저장소 HA·영속화 |
+| ACL·거부·저장소 장애 | 두 Pod ACL 403, Mongo/Redis 정지 시 GET·OPTIONS 503, authz 부재 시 500으로 차단 | 운영 HA·장애 전환 |
+| 요청 문맥 | 검증된 API key identity, raw 사용자·permit 헤더 무시를 실제 경로에서 확인 | 인증 공급원 확장·자격증명 회전 |
+| rule-set 선택 | 서버 설정의 ordered route·host·method 바인딩과 permits | 보호할 모든 HTTPRoute의 배포 검사 |
+| 규칙 변경 | lifecycle 59개 기록, 실제 Studio JWT 17개 응답 검사: 두 Pod에 알림 없이 반영·사용량 유지 | 부하별 fresh read latency·혼합 구버전 이행 |
+| Pod 우회 접근 | Calico Service·Pod IP 및 실제 authz egress 31개 항목 통과 | 운영 RBAC·host-network·관리자 접근 경계 |
 | 제한 헤더 | 429의 Retry-After만 전달 | 허용 응답 헤더 전파 방식 결정·검증 |
 
 기존 HTML 설계 문서의 ‘단일 YAML 규칙’과 ‘중복 규칙 503’ 설명은 이전 파일럿 시점의 기록이다. 현재 Mongo·복수 규칙 실측을 설명하는 문서는 이 문서와 `deploy/envoy-gateway-local/README.md`다.
+
+[최종 리뷰와 재현 증거](../reviews/2026-10-10-enterprise-envoy-review.ko.md)에 내부 평가 96/100의 기준과 검사 결과를 기록했다. 이 점수는 구현된 로컬 통합 범위의 평가다.
 
 ## 권장 통합 방식
 
@@ -43,20 +46,43 @@ Envoy는 MongoDB·Redis의 클라이언트가 아니다. Java 판정 서비스�
 4. 컨텍스트는 기존 `RequestContextFactory`를 사용한다. 기본값에서 `PER_USER`·`PER_API_KEY`에 필요한 신원이 없으면 `MISSING_KEY`로 거부한다. 사용자 ID·API key·tenant를 클라이언트가 보낸 헤더만으로 신뢰하지 않는다. 선택지는 (a) Gateway의 검증된 JWT/인증 결과, (b) authz 내부 검증, (c) 신뢰된 프록시가 기존 헤더를 제거하고 재설정하는 방식이다. 공급원 선택 전에는 해당 scope의 출시를 막는다. Credential 원문은 Mongo 이벤트·로그에 저장하지 않는다.
 5. 실제 client IP는 Envoy와 앞단 로드밸런서의 신뢰 프록시 체인을 설정하고 테스트해 결정한다. Java가 보는 socket peer는 Envoy Pod일 수 있다. 임의 `X-Forwarded-For`를 그대로 키로 쓰면 IP별 제한을 우회할 수 있다.
 6. 정상 `200/OK`는 Envoy만 소비하고 백엔드는 원 요청을 받는다. ACL 거부와 신원 누락은 403, quota 초과는 429 + `Retry-After`, 규칙 조회·Redis·판정 서비스 실패는 5xx로 닫는다. 정확한 오류 코드는 Envoy의 경로별 동작을 실측해 확정한다. 기존 `RateLimitHeaderWriter`의 성공 헤더까지 필수라면 gRPC 전환을 완료해야 한다.
-7. 기존 `WAIT_FOR_REFILL`은 요청을 붙잡으므로 기본 비활성화한다. 활성화 시 대기 동시성 상한, 최대 대기시간, extAuth timeout, 클라이언트 timeout을 함께 설정하고, timeout 직전 재소비·중복 소비를 검사한다.
+7. 현재 Gateway 발행 계약은 `WAIT_FOR_REFILL`을 거부한다. 어댑터도 소비 전에 확인하고 readiness를 내린다. 추후 지원하려면 대기 동시성 상한과 timeout·중복 소비 계약을 별도 설계한다. 판정 서비스의 소비 재시도는 기본 비활성화한다. 응답 유실 시 이미 소비했는지 알 수 없으므로 동일 요청의 exactly-once 소비는 보장하지 않는다.
 
 ## 저장소·변경 반영
 
-Studio와 판정 서비스는 같은 `fluxgate.rate_limit_rules` 모델을 사용한다. 변경은 Studio의 저장 완료 이후에만 `fluxgate:rule-reload` 알림을 발행한다. 판정 Pod들은 Pub/Sub 메시지에서 rule-set ID를 검증하고 해당 cache를 무효화한다. Redis Pub/Sub은 영속 전달이 아니므로 제한된 TTL/주기적 polling을 보조 경로로 둔다. 버전이 낮은 이벤트는 무시하고 재연결 뒤 전체 재조회한다. **토큰 버킷 삭제 여부**는 규칙 변경 시 quota를 리셋하는 제품 의미이므로 기존 reload 구현을 점검하고 별도 결정한다. 알림 비밀값은 Studio와 판정 서비스가 일치해야 하며 배포용 Secret으로 제공한다.
+Studio의 기존 편집 API는 `rate_limit_rules` 초안을 편집한다. 새 발행 API는 **완전한 rules 배열과 별도 accessControl**을 한 요청으로 받고, ADMIN 권한·expectedRevision·UUID operationId를 검증한다. 편집 중인 여러 문서를 조회해 하나의 세대로 조합하지 않는다. 원본 BSON을 병합하고 전체 문서 CAS로 수정하므로 Studio가 표현하지 못하는 algorithm·calendar quota·matcher·priority 등의 필드를 보존한다.
 
-Mongo 장애 시 무조건 마지막 cache를 신뢰하는 것은 보안 결정을 바꾼다. 우선 짧은 유효 TTL 내의 마지막 검증 규칙만 사용할지, 즉시 503으로 닫을지 정책으로 명시한다. 기본은 503이며, 운영 관찰 뒤 예외를 제한적으로 도입한다. 샘플의 Mongo `emptyDir`와 무인증 Redis는 로컬 데모 전용이다.
+발행은 `<rulesCollection>_revisions`에 checksum이 있는 불변 snapshot을 먼저 majority write한 다음 `<rulesCollection>_policies`의 active pointer를 expectedRevision CAS로 교체한다. 실패한 CAS의 snapshot은 비활성 orphan이며 적용되거나 성공 이력으로 취급하지 않는다. actor는 인증된 관리자에서 얻는다. rollback도 새 revision이며 과거 snapshot을 직접 active로 되돌리지 않는다. `operationId` 재전송은 같은 payload일 때만 이전 결과를 반환한다. ACL의 허용 필드는 allowedIps·deniedIps·allowedKeys·deniedKeys뿐이며 rules 내부 ACL과 병용하지 않는다.
+
+```mermaid
+sequenceDiagram
+  participant A as Studio ADMIN
+  participant M as MongoDB
+  participant P as Java 판정 Pod
+  participant R as Redis
+  A->>M: 검증된 immutable snapshot 저장
+  A->>M: active pointer CAS(expectedRevision)
+  M-->>A: 새 revision / counterEpoch
+  Note over A,P: Pub/Sub은 선택적 갱신 힌트
+  P->>M: 매 요청 active pointer + snapshot 조회
+  P->>R: rule/key/epoch의 revision fence + quota 소비
+  R-->>P: allow / quota deny / stale failure
+```
+
+판정 서비스는 `PublishedMongoRuleSetProvider`로 **매 요청** active pointer를 읽는다. 일반 TTL cache도 fresh-read SPI를 우회하지 않는다. Mongo 오류·snapshot 손상·미발행 정책은 503으로 닫고 mutable draft나 이전 cache로 fallback하지 않는다. 따라서 Pub/Sub 유실에 correctness를 의존하지 않는다. 일반 SDK reload는 첫 poll·ACL 변경·삭제·재연결을 감지하지만 자동 bucket reset을 수행하지 않는다.
+
+`revision`은 설정 변경 번호, `counterEpoch`은 카운터 수명의 별도 ID다. 이름·matcher·ACL·capacity 변경은 epoch를 유지한다. TOKEN_BUCKET은 저장된 이전 capacity/window로 먼저 refill하고 signed usage debt를 새 capacity로 이행하므로 감소→증가→rollback이 무료 quota를 만들지 않는다. FIXED_WINDOW와 SLIDING_WINDOW도 raw count를 보존한다. 알고리즘·key scope·window·timezone·calendar period·sliding bucket 구조 변경과 삭제했던 rule ID 재사용은 명시적 reset 및 사유가 필요하다. published rule ID와 band label은 Redis 키 변환이 충돌하지 않는 안전한 문자 집합을 사용한다.
+
+Redis Lua는 rule/key/epoch별 monotonic revision fence를 모든 쓰기 전에 검사한다. stale-policy 실패는 요청 전체를 재시도하지 않는다. 이미 실행 중인 이전 epoch의 요청은 완료될 수 있으며 전역 동시 전환을 보장하지 않는다. debt·fence 보존은 설정된 최대 bucket TTL의 범위다. **구버전 Lua나 직접 Redis 호출자는 새 fence 계약을 따르지 않으므로 최초 발행 전에 업그레이드하거나 소비를 중지해야 한다.** 새 발행 경로와 예전 SDK를 무검증 혼용하지 않는다.
+
+로컬 예제의 Mongo/Redis는 무인증·임시 저장소다. 운영에서는 Mongo replica set/backup, Redis HA·영속화·인증/TLS, 최소 권한, certificate rotation을 별도 배포 환경에서 검증해야 한다.
 
 ## Kubernetes 배치와 신뢰 경계
 
-- Envoy Proxy → 판정 서비스만 extAuth 포트 접근을 허용하고, 일반 워크로드와 외부 클라이언트의 접근은 NetworkPolicy와 서비스 인증으로 제한한다. kind 기본 CNI만으로는 이 보장을 주장하지 않는다.
+- Envoy Proxy → 판정 서비스는 전용 CA의 mTLS와 허용 client certificate subject를 검증한다. EG `EnvoyProxy.backendTLS.clientCertificateRef`와 `BackendTLSPolicy`를 사용한다. NetworkPolicy는 이 포트와 실제 서비스 Pod의 우회 접근을 제한한다. kind 기본 CNI만으로는 집행을 주장하지 않으며 별도 Calico 클러스터에서 검증한다.
 - 판정 서비스 → MongoDB·Redis의 최소 연결만 허용한다. 운영 자격증명, TLS/mTLS, Secret 회전, namespace 분리를 배포 계약에 포함한다.
 - 실제 서비스 Pod는 Envoy 경로 외의 접근을 막지 않으면 Gateway 제한을 우회할 수 있다. 내부 호출을 포함할지 제품 범위로 정의하고 정책을 따로 적용한다.
-- 판정 서비스는 무상태로 여러 복제본을 운영한다. readiness는 애플리케이션 프로세스뿐 아니라 필수 규칙 공급원과 정책 유효성을 반영하고, Envoy timeout보다 짧은 Redis/Mongo timeout을 둔다. 장애 시 `failOpen=false`; 반환 코드는 500/503 모두 허용 차단으로 분류한다.
+- 판정 서비스는 여러 복제본을 운영한다. readiness는 필수 정책의 존재·유효성을 확인하고 quota를 소비하지 않는다. 별도 plaintext 8081 listener는 `/healthz`·`/readyz`만 노출하며 authz는 없다. Redis 장애는 판정에서 fail closed하고 readiness 자체가 Redis 가용성 검사를 대신하지 않는다. Mongo/Redis timeout은 extAuth timeout보다 짧게 두고 `failOpen=false`로 배포한다.
 
 ## 구현 순서와 완료 기준
 
@@ -64,15 +90,16 @@ Mongo 장애 시 무조건 마지막 cache를 신뢰하는 것은 보안 결정�
 | --- | --- | --- |
 | 1. 계약 고정 | route 바인딩·응답 상태·신원 공급원 정의 | 잘못된 binding/헤더 위조/미존재 규칙 거부 테스트 |
 | 2. 문맥 연결 | `RequestContextFactory` 재사용, IP·header allowlist, 신뢰된 identity | IP·user·API key·header matcher가 Gateway 경유로 독립 작동 |
-| 3. 변경 반영 | Mongo cache + Studio Pub/Sub + polling | Studio 변경 전후 여러 authz Pod에서 규칙 전환 확인 |
-| 4. 응답·정책 | 헤더 계약, 필요한 경우 gRPC, 선택적 WAIT | 허용/거부 응답 헤더·timeout·중복 소비 테스트 |
-| 5. 배포·운영 | Helm/Kustomize 샘플, NetworkPolicy, TLS, metrics, SLO | Pod 직접 접근 차단, 장애 주입, latency 부하, HA 검증 |
+| 3. 변경 반영 | 불변 snapshot + active pointer CAS, 매 요청 fresh read; 알림은 hint | Studio 알림을 끈 상태에서 두 authz Pod의 즉시 ACL 전환·동일 epoch 확인 |
+| 4. 응답·정책 | HTTP extAuth, Retry-After, WAIT 발행·시작·판정 단계 거부 | 403/429/저장소 503/endpoint 부재 500·capacity/rollback 사용량 보존 |
+| 5. 로컬 배포 | 독립 Calico kind, 두 authz Pod, NetworkPolicy, mTLS | Service·Pod IP 우회 차단과 저장소·판정 서비스 장애 주입 통과 |
+| 6. 운영 배포 | 영속 저장소·HA·자격증명 회전·SLO·부하 목표 | 운영 환경별 별도 검증 필요 |
 
 최소 회귀 시나리오는 `GET/POST/OPTIONS`, URL rewrite, 0·1·복수 매칭 규칙, ACL deny/bypass, 403/429/5xx, Redis/Mongo 중단, rule reload, 프록시 헤더 위조, 사용자별 독립 버킷, backend 5xx 뒤 카운터 소비다. 실제 운영 트래픽에 붙이기 전 core·Mongo·Redis 관련 이전 리뷰의 최신 상태도 재검증한다.
 
 ## 코드량 추정
 
-이미 구현된 파일럿 위에서 작업하는 **손작성 코드/테스트/배포 설정의 변경량**이다. 생성된 protobuf 코드는 제외하며, 상세 API가 정해지면 달라진다.
+아래는 초기 HTTP 어댑터 범위의 추정이었다. 이후 안전한 immutable publication, revision fence, counter epoch, Studio CAS 보존, Calico·JWT·장애 회귀가 범위에 추가됐으므로 최종 변경량의 상한으로 사용하면 안 된다. 상세 변경 파일은 두 전용 브랜치와 최종 리뷰에서 확인한다. 생성된 protobuf 코드는 포함하지 않는다.
 
 | 범위 | 대략적인 변경량 | 주된 비용 |
 | --- | ---: | --- |

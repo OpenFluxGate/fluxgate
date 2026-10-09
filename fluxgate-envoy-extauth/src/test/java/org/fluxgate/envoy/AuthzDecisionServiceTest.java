@@ -46,7 +46,7 @@ class AuthzDecisionServiceTest {
             .rateLimiter(limiter)
             .onMissingRuleSetStrategy(RateLimitEngine.OnMissingRuleSetStrategy.DENY)
             .build();
-    return new AuthzDecisionService(engine, "pilot");
+    return new AuthzDecisionService(engine, provider, "pilot");
   }
 
   @Test
@@ -196,10 +196,27 @@ class AuthzDecisionServiceTest {
             .rateLimiter((ctx, rs, permits) -> RateLimitResult.allowedWithoutRule())
             .onMissingRuleSetStrategy(RateLimitEngine.OnMissingRuleSetStrategy.DENY)
             .build();
-    assertThat(
-            new AuthzDecisionService(engine, "pilot")
-                .decide(request)
-                .status())
+    assertThat(new AuthzDecisionService(engine, provider, "pilot").decide(request).status())
         .isEqualTo(503);
+  }
+
+  @Test
+  void waitPolicyIsRejectedBeforeAnyConsumptionAndIsNotReady() {
+    RateLimitRule wait =
+        RateLimitRule.builder("wait")
+            .name("wait")
+            .ruleSetId("pilot")
+            .onLimitExceedPolicy(org.fluxgate.core.config.OnLimitExceedPolicy.WAIT_FOR_REFILL)
+            .addBand(RateLimitBand.builder(Duration.ofSeconds(60), 1).build())
+            .build();
+    var svc =
+        service(
+            List.of(wait),
+            AccessControl.EMPTY,
+            (ctx, rs, permits) -> {
+              throw new AssertionError("WAIT must be rejected before consumption");
+            });
+    assertThat(svc.isReady("pilot")).isFalse();
+    assertThat(svc.decide(request).status()).isEqualTo(503);
   }
 }

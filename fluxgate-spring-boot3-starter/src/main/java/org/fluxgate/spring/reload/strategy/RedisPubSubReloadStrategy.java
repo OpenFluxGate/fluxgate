@@ -296,7 +296,7 @@ public class RedisPubSubReloadStrategy extends AbstractReloadStrategy {
       log.info("Redis Pub/Sub reload strategy started on channel: {}", channel);
       log.info(
           "fluxgate.reload.pubsub.secret is not set: any publisher able to reach this Redis can "
-              + "trigger a full reload on channel '{}' and drop every token bucket. Set it here and "
+              + "trigger cache invalidation on channel '{}'. Set it here and "
               + "fluxgate.control.secret on the control plane to the same value.",
           channel);
     }
@@ -389,6 +389,11 @@ public class RedisPubSubReloadStrategy extends AbstractReloadStrategy {
             @Override
             public void subscribed(String channel, long count) {
               log.info("Subscribed to channel: {} (active subscriptions: {})", channel, count);
+              // Pub/Sub cannot replay notifications lost while disconnected. Invalidate cached
+              // policy on each acknowledgement, including Lettuce's automatic re-subscription.
+              if (RedisPubSubReloadStrategy.this.channel.equals(channel) && isRunning()) {
+                notifyListeners(fullReloadEvent());
+              }
             }
 
             @Override

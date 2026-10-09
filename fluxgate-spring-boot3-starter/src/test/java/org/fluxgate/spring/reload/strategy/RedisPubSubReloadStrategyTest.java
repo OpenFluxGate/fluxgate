@@ -1,14 +1,22 @@
 package org.fluxgate.spring.reload.strategy;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.*;
 
+import io.lettuce.core.RedisClient;
+import io.lettuce.core.pubsub.RedisPubSubListener;
+import io.lettuce.core.pubsub.StatefulRedisPubSubConnection;
+import io.lettuce.core.pubsub.api.sync.RedisPubSubCommands;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import org.fluxgate.core.reload.ReloadSource;
 import org.fluxgate.core.reload.RuleReloadEvent;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 
 /**
  * Message parsing tests for {@link RedisPubSubReloadStrategy}.
@@ -26,6 +34,38 @@ class RedisPubSubReloadStrategyTest {
           false,
           Duration.ofSeconds(5),
           Duration.ofSeconds(5));
+
+  @Test
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  void shouldReconcileCachesOnEverySubscriptionAcknowledgement() {
+    RedisClient client = mock(RedisClient.class);
+    StatefulRedisPubSubConnection<String, String> connection =
+        mock(StatefulRedisPubSubConnection.class);
+    RedisPubSubCommands<String, String> commands = mock(RedisPubSubCommands.class);
+    when(client.connectPubSub()).thenReturn(connection);
+    when(connection.sync()).thenReturn(commands);
+    RedisPubSubReloadStrategy subscribed =
+        new RedisPubSubReloadStrategy(client, "fluxgate:rule-reload", false, Duration.ofSeconds(5));
+    List<RuleReloadEvent> events = new ArrayList<>();
+    subscribed.addListener(events::add);
+    try {
+      subscribed.start();
+      ArgumentCaptor<RedisPubSubListener<String, String>> listener =
+          ArgumentCaptor.forClass((Class) RedisPubSubListener.class);
+      verify(connection).addListener(listener.capture());
+      listener.getValue().subscribed("fluxgate:rule-reload", 1);
+      listener.getValue().subscribed("fluxgate:rule-reload", 1);
+      assertThat(events)
+          .hasSize(2)
+          .allSatisfy(
+              event -> {
+                assertThat(event.isFullReload()).isTrue();
+                assertThat(event.getSource()).isEqualTo(ReloadSource.PUBSUB);
+              });
+    } finally {
+      subscribed.stop();
+    }
+  }
 
   @ParameterizedTest
   @ValueSource(

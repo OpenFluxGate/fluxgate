@@ -4,19 +4,30 @@ spring:
   application:
     name: fluxgate-envoy-extauth
 fluxgate:
+  resilience:
+    retry:
+      enabled: false
   reload:
     enabled: false
   envoy:
     rule-set-id: ${FLUXGATE_RULE_SET_ID:default-limits}
+    published-policies: true
+    authz-secret: ${FLUXGATE_AUTHZ_SECRET:}
+    routes:
+      - id: default-api
+        path-prefix: /api
+        rule-set-id: ${FLUXGATE_RULE_SET_ID:default-limits}
+        permits: 1
   mongo:
     enabled: true
-    uri: ${FLUXGATE_MONGO_URI:mongodb://localhost:27017/fluxgate}
+    uri: ${FLUXGATE_MONGO_URI:mongodb://localhost:27017/fluxgate?connectTimeoutMS=2000&serverSelectionTimeoutMS=2000&socketTimeoutMS=2000}
     database: ${FLUXGATE_MONGO_DB:fluxgate}
     rule-collection: rate_limit_rules
     event-collection: rate_limit_events
   redis:
     enabled: true
     uri: ${FLUXGATE_REDIS_URI:redis://localhost:6379}
+    timeout-ms: 2000
   ratelimit:
     mode: REDIS
     missing-rule-behavior: DENY

@@ -57,7 +57,9 @@ public class FluxgateMetricsCompositeAutoConfiguration {
    * name.
    *
    * <p>If only one recorder is available, it will be wrapped in a composite for consistency. This
-   * ensures the same behavior regardless of how many recorders are configured.
+   * ensures the same best-effort failure boundary regardless of recorder count: telemetry failure
+   * cannot change an already-computed decision. Durable policy publication audit is a separate
+   * storage contract, not a metrics-recorder guarantee.
    *
    * @param recorders all available RateLimitMetricsRecorder beans
    * @return a CompositeMetricsRecorder wrapping all recorders
@@ -66,12 +68,6 @@ public class FluxgateMetricsCompositeAutoConfiguration {
   @Primary
   public RateLimitMetricsRecorder compositeMetricsRecorder(
       List<RateLimitMetricsRecorder> recorders) {
-    if (recorders.size() == 1) {
-      RateLimitMetricsRecorder single = recorders.get(0);
-      log.info("Single metrics recorder available: {}", single.getClass().getSimpleName());
-      return single;
-    }
-
     log.info(
         "Creating CompositeMetricsRecorder with {} recorders: {}",
         recorders.size(),

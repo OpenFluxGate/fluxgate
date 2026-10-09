@@ -274,23 +274,20 @@ public class FluxgateReloadAutoConfiguration {
   }
 
   /**
-   * Creates the Redis bucket reset handler.
+   * Creates the Redis bucket reset handler for explicit administrative resets.
    *
-   * <p>This handler automatically resets token buckets when rules change, ensuring that the new
-   * rate limits take effect immediately.
+   * <p>Policy reload does not invoke this handler. Resetting usage is a separate, explicit
+   * administrative operation.
    *
-   * <p>Only created when Redis token bucket store is available. The
-   * {@code @ConditionalOnMissingBean} gate was removed so both this handler and {@link
-   * #inMemoryBucketResetHandler} can coexist when a Redis primary limiter runs alongside an
-   * in-memory fallback. {@link #cachingRuleSetProvider} iterates all handlers via {@code
-   * orderedStream()}.
+   * <p>Only created when Redis token bucket store is available. This handler and {@link
+   * #inMemoryBucketResetHandler} coexist when Redis runs alongside an in-memory fallback.
    */
   @Bean
   @ConditionalOnBean(RedisTokenBucketStore.class)
   @Conditional(FluxgateRateLimiterAutoConfiguration.NotInMemoryModeCondition.class)
   public BucketResetHandler bucketResetHandler(
       ObjectProvider<RedisTokenBucketStore> tokenBucketStoreProvider) {
-    log.info("Creating RedisBucketResetHandler for automatic bucket reset on rule changes");
+    log.info("Creating RedisBucketResetHandler for explicit administrative quota resets");
     // Resolved per reset so a Redis outage at startup does not prevent the handler from existing.
     return new RedisBucketResetHandler(tokenBucketStoreProvider::getObject);
   }
@@ -299,10 +296,10 @@ public class FluxgateReloadAutoConfiguration {
    * Creates the in-memory bucket reset handler.
    *
    * <p>Counterpart of {@link #bucketResetHandler(ObjectProvider)} for deployments running the
-   * in-memory limiter, so a rule change takes effect there immediately as well. The
-   * {@code @ConditionalOnMissingBean} gate was removed so both handlers coexist when a Redis
-   * primary runs with {@code fallback.mode=IN_MEMORY}: one handler resets the Redis buckets, the
-   * other the fallback's local buckets.
+   * in-memory limiter, for explicit administrative resets. The {@code @ConditionalOnMissingBean}
+   * gate was removed so both handlers coexist when a Redis primary runs with {@code
+   * fallback.mode=IN_MEMORY}: one handler resets the Redis buckets, the other the fallback's local
+   * buckets.
    *
    * @param rateLimiter the in-memory limiter owning the buckets
    * @return the reset handler
@@ -310,7 +307,7 @@ public class FluxgateReloadAutoConfiguration {
   @Bean
   @ConditionalOnBean(Bucket4jRateLimiter.class)
   public BucketResetHandler inMemoryBucketResetHandler(Bucket4jRateLimiter rateLimiter) {
-    log.info("Creating InMemoryBucketResetHandler for automatic bucket reset on rule changes");
+    log.info("Creating InMemoryBucketResetHandler for explicit administrative quota resets");
     return new InMemoryBucketResetHandler(rateLimiter);
   }
 
@@ -337,8 +334,7 @@ public class FluxgateReloadAutoConfiguration {
       // cachingRuleSetProvider (a @Primary RateLimitRuleSetProvider), but cachingRuleSetProvider
       // itself used to require RuleReloadStrategy directly — creating a cycle. The ObjectProvider
       // wrapper defers bean resolution until getIfAvailable() is called at runtime.
-      ObjectProvider<RuleReloadStrategy> reloadStrategyProvider,
-      ObjectProvider<BucketResetHandler> bucketResetHandlerProvider) {
+      ObjectProvider<RuleReloadStrategy> reloadStrategyProvider) {
 
     RateLimitRuleSetProvider ruleSetProvider = resolveProvider(namedProviderOp, anyProviderOp);
     if (ruleSetProvider == null) {
@@ -363,23 +359,9 @@ public class FluxgateReloadAutoConfiguration {
       return cachingProvider;
     }
 
-    // Cache invalidation must run before bucket reset: the reverse order lets an in-flight request
-    // recreate a bucket from the stale rule after it has been deleted.
+    // Reload changes policy freshness only. Deleting shared buckets from every subscribing Pod
+    // would repeatedly restore full quota. Reset handlers remain available for explicit admin use.
     addListener(reloadStrategy, cachingProvider, AbstractReloadStrategy.ORDER_CACHE_INVALIDATION);
-
-    // Register every reset handler in order; both Redis and in-memory handlers coexist when
-    // fluxgate.ratelimit.fallback.mode=IN_MEMORY so that rule changes clear both stores.
-    bucketResetHandlerProvider
-        .orderedStream()
-        .filter(h -> h instanceof RuleReloadListener)
-        .forEach(
-            h -> {
-              log.info("Registering {} as reload listener", h.getClass().getSimpleName());
-              addListener(
-                  reloadStrategy,
-                  (RuleReloadListener) h,
-                  AbstractReloadStrategy.ORDER_BUCKET_RESET);
-            });
 
     return cachingProvider;
   }

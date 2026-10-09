@@ -45,7 +45,13 @@ public class ScriptExecutionException extends FluxgateOperationException {
    * @param cause the cause of the exception
    */
   public ScriptExecutionException(String message, String scriptName, Throwable cause) {
-    super(message + " (script: " + scriptName + ")", cause, true);
+    this(message, scriptName, cause, true);
+  }
+
+  /** Creates a script failure with explicit retry semantics for non-idempotent operations. */
+  public ScriptExecutionException(
+      String message, String scriptName, Throwable cause, boolean retryable) {
+    super(message + " (script: " + scriptName + ")", cause, retryable);
     this.scriptName = scriptName;
   }
 

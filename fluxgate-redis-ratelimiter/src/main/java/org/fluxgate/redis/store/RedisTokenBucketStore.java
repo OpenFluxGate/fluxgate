@@ -2,6 +2,7 @@ package org.fluxgate.redis.store;
 
 import io.lettuce.core.RedisCommandExecutionException;
 import io.lettuce.core.RedisNoScriptException;
+import io.lettuce.core.cluster.SlotHash;
 import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.ZonedDateTime;
@@ -32,7 +33,7 @@ import org.slf4j.LoggerFactory;
  *   <li>Time is tracked in microseconds, which stay inside Lua's exact double range
  *   <li>All bands of one rule are evaluated in a single script call: either every band is charged
  *       or none is, so a rejected request never drains a band that would have allowed it
- *   <li>Token state is not modified on rejection; only the bucket TTLs are refreshed
+ *   <li>Rejection consumes no permits; capacity migrations persist signed debt and refresh TTLs
  *   <li>Returns the binding band's capacity and reset time, for HTTP rate limit headers
  *   <li>Every bucket TTL is capped at {@link #DEFAULT_MAX_BUCKET_TTL} (or the configured {@code
  *       fluxgate.redis.max-bucket-ttl}), so a long window cannot keep forged identity keys resident
@@ -49,6 +50,7 @@ import org.slf4j.LoggerFactory;
  * guarantees that with a hash tag.
  */
 public class RedisTokenBucketStore {
+  public static final String POLICY_KEY_PREFIX = "fluxgate:policy:";
 
   private static final Logger log = LoggerFactory.getLogger(RedisTokenBucketStore.class);
   private static final String SCRIPT_NAME = "token_bucket_consume.lua";
@@ -179,8 +181,9 @@ public class RedisTokenBucketStore {
    *
    * <p>The bands are evaluated in two passes inside a single Lua call: every band is refilled and
    * checked first, and the tokens are taken only when all of them can serve the request. A rejected
-   * request therefore leaves all buckets untouched, which is what makes a multi-band rule enforce
-   * its nominal limits rather than a systematically lower one.
+   * request does not consume permits. A policy capacity migration still persists signed usage debt
+   * and new capacity metadata on rejection, so a later increase cannot create extra quota. Metadata
+   * and debt retention are explicitly bounded by the configured maximum bucket TTL.
    *
    * <p>In cluster mode all keys must live in the same hash slot; {@link RedisRateLimiter} pins them
    * with a hash tag over {@code ruleSetId:ruleId:keyValue}.
@@ -195,8 +198,32 @@ public class RedisTokenBucketStore {
    * @throws ScriptExecutionException if the Lua script fails or returns an unexpected result
    */
   public BucketState tryConsume(List<String> bucketKeys, List<RateLimitBand> bands, long permits) {
+    return tryConsume(bucketKeys, bands, permits, 0L);
+  }
+
+  /** Consumes with monotonic policy fencing; versionless callers use revision zero. */
+  public BucketState tryConsume(
+      List<String> bucketKeys, List<RateLimitBand> bands, long permits, long revision) {
+    return tryConsume(bucketKeys, bands, permits, revision, "");
+  }
+
+  /** Epoch is supplied separately so arbitrary band labels cannot impersonate its namespace. */
+  public BucketState tryConsume(
+      List<String> bucketKeys,
+      List<RateLimitBand> bands,
+      long permits,
+      long revision,
+      String encodedEpoch) {
     Objects.requireNonNull(bucketKeys, "bucketKeys must not be null");
     Objects.requireNonNull(bands, "bands must not be null");
+    Objects.requireNonNull(encodedEpoch, "encodedEpoch must not be null");
+    if (!encodedEpoch.matches("[A-Za-z0-9_-]*")) {
+      throw new IllegalArgumentException("encodedEpoch must be URL-safe base64 without padding");
+    }
+    if (revision < 0 || revision > 9_007_199_254_740_991L) {
+      throw new IllegalArgumentException(
+          "revision must be in the exact nonnegative Lua integer range");
+    }
 
     if (permits <= 0) {
       throw new IllegalArgumentException("permits must be > 0");
@@ -247,13 +274,19 @@ public class RedisTokenBucketStore {
       }
     }
 
-    // KEYS[1..n] = bucketKeys
+    // KEYS[1..n] = bucketKeys, [n+1..2n] = metadata hashes, [2n+1] = revision fence.
+    // Trailing ARGV = revision; old Java signatures explicitly use zero, never bypass fencing.
     // ARGV[1] = permits, ARGV[2] = max_bucket_ttl_seconds, then 5 values per band:
     //   capacity, window_micros, algorithm_code, buckets_or_zero, window_end_micros_or_zero
-    String[] keys = bucketKeys.toArray(new String[0]);
-    String[] args = new String[2 + 5 * bands.size()];
+    List<String> scriptKeys = new ArrayList<>(bucketKeys);
+    for (String bucketKey : bucketKeys) scriptKeys.add(metadataKey(bucketKey));
+    scriptKeys.add(
+        revisionKey(bucketKeys.get(0)) + (encodedEpoch.isEmpty() ? "" : ":epoch:" + encodedEpoch));
+    String[] keys = scriptKeys.toArray(new String[0]);
+    String[] args = new String[3 + 5 * bands.size()];
     args[0] = String.valueOf(permits);
     args[1] = String.valueOf(maxBucketTtlSeconds);
+    args[args.length - 1] = String.valueOf(revision);
     for (int i = 0; i < bands.size(); i++) {
       RateLimitBand band = bands.get(i);
       int base = 2 + 5 * i;
@@ -277,7 +310,7 @@ public class RedisTokenBucketStore {
     }
 
     boolean allowed = result.get(0) == 1L;
-    long remainingTokens = result.get(2);
+    long remainingTokens = Math.max(0L, result.get(2));
     long nanosToWait = result.get(3) * NANOS_PER_MICRO;
     long resetTimeMillis = result.get(4);
     long limit = result.get(5);
@@ -306,6 +339,49 @@ public class RedisTokenBucketStore {
           resetTimeMillis);
     }
     return BucketState.rejected(remainingTokens, nanosToWait, resetTimeMillis, limit, bandIndex);
+  }
+
+  /** Dedicated metadata namespace keeps arbitrary band labels from colliding with bucket state. */
+  public static String metadataKey(String bucketKey) {
+    String prefix = POLICY_KEY_PREFIX;
+    if (hashTagEnd(bucketKey) >= 0) return prefix + bucketKey;
+    // A tag must precede the original key: empty/malformed braces in a raw key otherwise
+    // prevent Redis from interpreting an appended tag. Preserve the original bucket identity.
+    return prefix + "{" + RawKeySlotTags.TAGS[SlotHash.getSlot(bucketKey)] + "}:" + bucketKey;
+  }
+
+  /** The legacy fence follows the rule/key hash tag, never the band label. */
+  public static String revisionKey(String bucketKey) {
+    int close = hashTagEnd(bucketKey);
+    String root = close >= 0 ? bucketKey.substring(0, close + 1) : bucketKey;
+    return metadataKey(root) + ":revision";
+  }
+
+  private static int hashTagEnd(String key) {
+    int open = key.indexOf('{');
+    if (open < 0) return -1;
+    int close = key.indexOf('}', open + 1);
+    return close > open + 1 ? close : -1;
+  }
+
+  /** Lazily built, bounded table shared by all stores; raw-key calls need no per-call search. */
+  private static final class RawKeySlotTags {
+    private static final String[] TAGS = build();
+
+    private static String[] build() {
+      String[] tags = new String[16384];
+      int remaining = tags.length;
+      for (int candidate = 0; remaining > 0 && candidate < 1_000_000; candidate++) {
+        String tag = "raw" + candidate;
+        int slot = SlotHash.getSlot(tag);
+        if (tags[slot] == null) {
+          tags[slot] = tag;
+          remaining--;
+        }
+      }
+      if (remaining != 0) throw new IllegalStateException("Unable to construct Redis slot tags");
+      return tags;
+    }
   }
 
   private static long toMicros(RateLimitBand band) {
@@ -430,7 +506,7 @@ public class RedisTokenBucketStore {
 
   private ScriptExecutionException scriptFailed(RedisCommandExecutionException e) {
     return new ScriptExecutionException(
-        "Lua script execution failed: " + e.getMessage(), SCRIPT_NAME, e);
+        "Lua script execution failed: " + e.getMessage(), SCRIPT_NAME, e, false);
   }
 
   /**
@@ -483,6 +559,7 @@ public class RedisTokenBucketStore {
     log.debug("Deleting token buckets matching pattern: {}", pattern);
 
     long deleted = deleteInBatches(connectionProvider.scanKeys(pattern, BUCKET_SCAN_COUNT));
+    deleteInBatches(connectionProvider.scanKeys(POLICY_KEY_PREFIX + pattern, BUCKET_SCAN_COUNT));
     if (deleted == 0) {
       log.debug("No token buckets found for ruleSetId: {}", ruleSetId);
       return 0;
@@ -508,6 +585,7 @@ public class RedisTokenBucketStore {
     log.debug("Deleting all token buckets matching pattern: {}", pattern);
 
     long deleted = deleteInBatches(connectionProvider.scanKeys(pattern, BUCKET_SCAN_COUNT));
+    deleteInBatches(connectionProvider.scanKeys(POLICY_KEY_PREFIX + "*", BUCKET_SCAN_COUNT));
     if (deleted == 0) {
       log.debug("No token buckets found");
       return 0;
