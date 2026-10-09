@@ -98,7 +98,7 @@ class RedisConnectionFactoryTest {
   void createWithDefaultTimeoutShouldWork() {
     // This will fail to connect but tests the method signature
     assertThatThrownBy(() -> RedisConnectionFactory.create("redis://invalid-host:6379"))
-        .isInstanceOf(RedisConnectionException.class);
+        .isInstanceOf(org.fluxgate.core.exception.RedisConnectionException.class);
   }
 
   @Test
@@ -107,7 +107,7 @@ class RedisConnectionFactoryTest {
     List<String> uris = Arrays.asList("redis://invalid1:6379", "redis://invalid2:6379");
     assertThatThrownBy(
             () -> RedisConnectionFactory.create(RedisMode.STANDALONE, uris, Duration.ofSeconds(1)))
-        .isInstanceOf(RedisConnectionException.class);
+        .isInstanceOf(org.fluxgate.core.exception.RedisConnectionException.class);
   }
 
   @Test
@@ -115,13 +115,26 @@ class RedisConnectionFactoryTest {
     List<String> uris = Arrays.asList("redis://invalid1:6379", "redis://invalid2:6379");
     assertThatThrownBy(
             () -> RedisConnectionFactory.create(RedisMode.CLUSTER, uris, Duration.ofSeconds(1)))
-        .isInstanceOf(RedisConnectionException.class);
+        .isInstanceOf(org.fluxgate.core.exception.RedisConnectionException.class);
   }
 
   @Test
   void createWithClusterUriShouldDetectClusterMode() {
     String clusterUri = "redis://node1:6379,redis://node2:6379";
     assertThatThrownBy(() -> RedisConnectionFactory.create(clusterUri, Duration.ofSeconds(1)))
-        .isInstanceOf(RedisConnectionException.class);
+        .isInstanceOf(org.fluxgate.core.exception.RedisConnectionException.class);
+  }
+
+  @Test
+  void deprecatedModuleExceptionShouldStillBeCaughtByCoreCatchBlocks() {
+    // The module type now extends the core one, so code written against either hierarchy works.
+    assertThat(new RedisConnectionException("boom"))
+        .isInstanceOf(org.fluxgate.core.exception.RedisConnectionException.class);
+  }
+
+  @Test
+  void detectModeShouldIgnoreCommasInsideCredentials() {
+    assertThat(RedisConnectionFactory.detectMode("redis://:pa,ss@localhost:6379"))
+        .isEqualTo(RedisMode.STANDALONE);
   }
 }
