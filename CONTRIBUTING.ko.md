@@ -1,6 +1,7 @@
 # FluxGate 기여 가이드
 
-FluxGate에 기여해 주셔서 감사합니다! 이 문서는 기여를 위한 가이드라인과 지침을 제공합니다.
+FluxGate에 관심을 가져주셔서 감사합니다! 이 문서는 개발 환경 설정, 코딩 표준,
+변경 사항 제출에 대한 모든 내용을 다룹니다.
 
 ## 목차
 
@@ -12,341 +13,185 @@ FluxGate에 기여해 주셔서 감사합니다! 이 문서는 기여를 위한 
 - [테스트](#테스트)
 - [변경 사항 제출](#변경-사항-제출)
 - [리뷰 프로세스](#리뷰-프로세스)
+- [좋은 첫 번째 이슈](#좋은-첫-번째-이슈)
 
 ## 행동 강령
 
-이 프로젝트에 참여함으로써 존중하고 포용적인 환경을 유지하는 데 동의합니다:
-
-- 토론에서 존중하고 건설적으로 대화하기
-- 새로운 참여자를 환영하고 시작을 도와주기
-- 커뮤니티에 가장 좋은 것에 집중하기
-- 다른 커뮤니티 구성원에게 공감 보여주기
+모든 참여자는 [기여자 약속 행동 강령](CODE_OF_CONDUCT.md)을 준수해야 합니다.
+위반 사항은 GitHub의 **Security → "Report a vulnerability"** 양식을 통해
+비공개로 신고하세요. 이 채널은 관리자에게 암호화된 경로를 제공합니다.
 
 ## 시작하기
 
-### 사전 요구 사항
+### 필수 조건
 
-- **Java 11+** - 프로젝트 빌드 및 실행에 필요
-- **Maven 3.8+** - 빌드 도구
-- **Docker** - 개발 중 Redis 및 MongoDB 실행용
-- **Git** - 버전 관리
+| 도구 | 최소 버전 |
+|---|---|
+| Java | 11 이상 (core + boot2 스타터 빌드); boot3 스타터는 17; 샘플은 21 |
+| Maven | 3.8 이상 (제공된 `./mvnw` 래퍼 사용 — 시스템 Maven 사용 금지) |
+| Docker | 24 이상 (통합 테스트용; 단위 테스트는 Docker 없이 실행 가능) |
+| Git | 2.x |
 
-### Fork 및 Clone
-
-1. GitHub에서 저장소를 Fork합니다
-2. Fork한 저장소를 로컬에 Clone합니다:
+### 포크 및 클론
 
 ```bash
 git clone https://github.com/YOUR-USERNAME/fluxgate.git
 cd fluxgate
-```
-
-3. upstream 저장소를 추가합니다:
-
-```bash
 git remote add upstream https://github.com/OpenFluxGate/fluxgate.git
 ```
 
 ## 개발 환경 설정
 
-### 1. 인프라 시작
+### 인프라 시작
 
-`docker/` 디렉토리에 로컬 개발용 Docker Compose 파일을 제공합니다:
+`docker/` 디렉토리에 Docker Compose 파일이 있습니다:
 
-| 파일                            | 설명                                        |
-|-------------------------------|-------------------------------------------|
-| `docker/full.yml`             | 모든 서비스 (Redis, MongoDB, ELK) - **개발용 권장** |
-| `docker/redis-standalone.yml` | Redis 단독                                  |
-| `docker/redis-cluster.yml`    | Redis 클러스터 (3노드)                          |
-| `docker/mongo.yml`            | MongoDB만                                  |
-| `docker/elk.yml`              | Elasticsearch, Logstash, Kibana           |
+| 파일 | 서비스 |
+|---|---|
+| `docker/full.yml` | Redis 독립형, MongoDB, ELK — 권장 |
+| `docker/redis-standalone.yml` | Redis 독립형만 |
+| `docker/redis-cluster.yml` | Redis 클러스터 (노드 3개, 포트 7100-7105) |
+| `docker/mongo.yml` | MongoDB만 |
 
 ```bash
-# 모든 서비스 시작 (권장)
 docker compose -f docker/full.yml up -d
-
-# 서비스 실행 확인
 docker compose -f docker/full.yml ps
-
-# 서비스 중지
-docker compose -f docker/full.yml down
 ```
 
-### 2. 프로젝트 빌드
+### 환경 변수
+
+통합 테스트는 환경 변수를 읽거나 없으면 Testcontainers로 폴백합니다:
 
 ```bash
-# 모든 모듈 빌드
-./mvnw clean install
-
-# 테스트 없이 빌드 (더 빠름)
-./mvnw clean install -DskipTests
+export FLUXGATE_REDIS_URI=redis://localhost:6379
+export FLUXGATE_MONGO_URI=mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
+export FLUXGATE_MONGO_DB=fluxgate
 ```
 
-### 3. 테스트 실행
+### 프로젝트 빌드
 
 ```bash
-# 모든 테스트 및 검증 실행 (PR 전 필수)
-./mvnw clean verify
+# 테스트 없이 전체 빌드
+./mvnw install -DskipTests
 
-# 테스트만 실행
+# 단위 테스트만 실행 (Docker 불필요)
 ./mvnw test
 
-# 특정 모듈 테스트 실행
-./mvnw test -pl fluxgate-core
+# 단위 + 통합 테스트 실행 (Docker 필요 또는 위 환경 변수 설정)
+./mvnw verify
+
+# Redis 클러스터 테스트 포함 실행
+./mvnw verify -Predis-cluster-it
+
+# 통합 테스트 명시적 건너뛰기
+./mvnw verify -DskipITs
 ```
-
-### 4. IDE 설정
-
-#### IntelliJ IDEA (권장)
-
-1. Maven 프로젝트로 열기
-2. 어노테이션 처리 활성화: `Settings > Build > Compiler > Annotation Processors`
-3. 코드 스타일 가져오기: `Settings > Editor > Code Style > Import Scheme`
-
-#### VS Code
-
-1. "Extension Pack for Java" 설치
-2. 프로젝트 폴더 열기
-3. Maven import 완료 대기
 
 ## 변경 사항 만들기
 
-### 브랜치 명명 규칙
-
-`main`에서 설명적인 이름으로 브랜치를 생성합니다:
-
-- `feature/` - 새 기능 (예: `feature/sliding-window-algorithm`)
-- `development/` - 새 모듈 (예: `development/fluxgate-sample-something`)
-- `fix/` - 버그 수정 (예: `fix/redis-connection-timeout`)
-- `docs/` - 문서 변경 (예: `docs/api-reference`)
-- `refactor/` - 코드 리팩토링 (예: `refactor/cleanup-handlers`)
-- `test/` - 테스트 추가 또는 수정 (예: `test/redis-integration`)
-
-```bash
-# 새 브랜치 생성
-git checkout -b feature/your-feature-name
-
-# 브랜치 최신 상태 유지
-git fetch upstream
-git rebase upstream/main
-```
-
-### 커밋 메시지
-
-[Conventional Commits](https://www.conventionalcommits.org/) 규격을 따릅니다:
-
-```
-<type>(<scope>): <description>
-
-[선택적 본문]
-
-[선택적 푸터]
-```
-
-**타입:**
-
-- `feat`: 새 기능
-- `fix`: 버그 수정
-- `docs`: 문서 변경
-- `style`: 코드 스타일 변경 (포맷팅 등)
-- `refactor`: 코드 리팩토링
-- `test`: 테스트 추가 또는 수정
-- `chore`: 빌드 프로세스 또는 보조 도구 변경
-
-**예시:**
-
-```bash
-feat(redis): add connection pool monitoring
-
-fix(core): handle null key resolver gracefully
-
-docs(readme): add quick start guide
-
-test(mongo): add integration tests for rule store
-```
+1. upstream 동기화: `git fetch upstream && git rebase upstream/main`
+2. 기능 브랜치 생성: `git checkout -b feat/my-feature`
+3. 변경 사항 작성 (아래 표준 참조).
+4. `./mvnw -q spotless:apply`로 Java 코드 포맷 적용.
+5. `./mvnw test -pl <변경된-모듈> -am`으로 단위 테스트 통과 확인.
+6. [Conventional Commits](#커밋-메시지)를 사용하여 커밋.
+7. Push 후 PR을 열어주세요.
 
 ## 코딩 표준
 
-### Java 스타일 가이드
+### Java 스타일
 
-일부 수정 사항과 함께 [Google Java Style Guide](https://google.github.io/styleguide/javaguide.html)를 따릅니다:
+* **Google Java Format**은 Spotless로 적용됩니다. 모든 커밋 전에
+  `./mvnw spotless:apply`를 실행하세요. `spotless:check`를 통과하지 못한 PR은
+  CI에서 거부됩니다.
+* **2칸 들여쓰기**; 탭 사용 금지.
+* **Java 11 언어 레벨** 적용 모듈: `fluxgate-core`, `fluxgate-redis-ratelimiter`,
+  `fluxgate-mongo-adapter`, `fluxgate-control-support`, `fluxgate-spring-boot2-starter`.
+  이 모듈들에서는 `record`, `switch` 표현식, 텍스트 블록(`"""`), `var`,
+  `Stream.toList()`, `String.formatted` 사용 금지.
+* **Java 17 언어 레벨**: `fluxgate-spring-boot3-starter`만 해당.
+* **SLF4J 로깅**: `private static final Logger log = LoggerFactory.getLogger(MyClass.class);`
+  `System.out.println`이나 `java.util.logging` 사용 금지.
+* **Javadoc**: 모든 `public` 타입과 메서드에 작성. 같은 파일의 이웃한 Javadoc과
+  동일한 스타일 사용.
 
-1. **들여쓰기**: 4 스페이스 (탭 아님)
-2. **줄 길이**: 최대 120자
-3. **중괄호**: 제어문에 항상 중괄호 사용
+### Spring Boot 2 미러 요구 사항
 
-### 코드 품질
+boot2(`fluxgate-spring-boot2-starter`)와 boot3(`fluxgate-spring-boot3-starter`) 스타터는
+`jakarta.*` → `javax.*` 임포트를 제외하고 바이트 수준으로 동일하게 유지됩니다.
+boot3 스타터 변경 시 반드시 boot2 스타터에도 임포트 치환을 적용하여 미러링해야 합니다.
+PR 체크리스트가 이를 상기시켜 줍니다.
 
-- 명확한 변수/메서드 이름으로 자체 문서화 코드 작성
-- 모든 public 클래스와 메서드에 Javadoc 추가
-- 메서드를 집중적이고 작게 유지 (30줄 미만 권장)
-- SOLID 원칙 준수
-- 코드 중복 방지
+### 커밋 메시지
 
-### Javadoc 요구 사항
-
-모든 public API에 Javadoc이 있어야 합니다:
-
-```java
-/**
- * Rate Limiter에서 토큰을 소비하려고 시도합니다.
- *
- * @param context 클라이언트 정보를 포함하는 요청 컨텍스트
- * @param ruleSet 적용할 Rate Limit 규칙
- * @param tokens 소비할 토큰 수
- * @return Rate Limit 검사 결과
- * @throws IllegalArgumentException tokens가 1 미만인 경우
- */
-public RateLimitResult tryConsume(RequestContext context, RateLimitRuleSet ruleSet, long tokens);
-```
-
-### 패키지 구조
+FluxGate는 [Conventional Commits](https://www.conventionalcommits.org/ko/)를 사용합니다:
 
 ```
-org.fluxgate
-├── core                 # 핵심 추상화 및 인터페이스
-│   ├── config          # 설정 클래스
-│   ├── context         # 요청 컨텍스트
-│   ├── handler         # Rate Limit 핸들러
-│   ├── key             # 키 해석
-│   └── ratelimiter     # Rate Limiter 구현체
-├── redis               # Redis 전용 구현
-├── adapter.mongo       # MongoDB 어댑터
-└── spring              # Spring Boot 통합
+feat(redis): 원자적 소비를 위한 멀티밴드 Lua 스크립트 추가
+fix(core): RateLimitResponse의 nanosToMillis 반올림 수정
+docs(boot3): trusted-proxies 속성 문서화
+test(mongo): 규칙 재로드를 위한 Testcontainers IT 추가
+chore(deps): bucket4j를 8.15.0으로 업그레이드
 ```
+
+타입: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `chore`, `ci`, `revert`.
+
+주요 변경(breaking change): 타입 뒤에 `!` 추가 (`feat!:`) 및 `BREAKING CHANGE:` 푸터 포함.
+
+### CHANGELOG
+
+사용자에게 보이는 모든 변경 사항은 [CHANGELOG.md](CHANGELOG.md)의
+`## [Unreleased]` 아래에 항목을 추가하세요.
+[Keep a Changelog](https://keepachangelog.com/ko/) 섹션을 사용하세요:
+`Added`, `Changed`, `Fixed`, `Deprecated`, `Removed`, `Security`.
 
 ## 테스트
 
-### 테스트 카테고리
+### 테스트 계층
 
-1. **단위 테스트** - 개별 클래스를 격리하여 테스트
-2. **통합 테스트** - 컴포넌트 상호작용 테스트
-3. **End-to-End 테스트** - 완전한 흐름 테스트
+| 계층 | 명령 | Docker 필요? | 파일 패턴 |
+|---|---|---|---|
+| 단위 | `./mvnw test` | 아니요 | `*Test.java` (`*IntegrationTest`, `*IT` 제외) |
+| 통합 | `./mvnw verify` | 예 (또는 환경 변수) | `*IntegrationTest.java`, `*IT.java` |
+
+단위 테스트는 외부 서비스 없이 실행되어야 합니다. 통합 테스트는 Testcontainers를
+사용하며, 적합한 Docker 데몬이나 환경 변수 URI가 없으면 자동으로 건너뜁니다.
+`@Disabled` 대신 기존 `RedisContainerSupport` / `MongoContainerSupport` 기반
+클래스를 통해 `Assumptions.assumeTrue(dockerAvailable)`을 사용하세요.
+
+### 커버리지
+
+신규 코드는 기존 라인 80% / 브랜치 70% 커버리지 임계값을 유지해야 합니다.
+JaCoCo 보고서는 `./mvnw verify` 후 `target/site/jacoco/index.html`에서 확인할 수 있습니다.
 
 ### 테스트 작성
 
-- 설명적인 테스트 메서드 이름 사용
-- Arrange-Act-Assert 패턴 따르기
-- 단위 테스트에서 외부 의존성 Mock 처리
-- 테스트 분류를 위해 `@Tag` 사용
-
-```java
-
-@Test
-@DisplayName("Rate Limit 초과 시 요청을 거부해야 함")
-void shouldRejectWhenRateLimitExceeded() {
-    // Arrange
-    RateLimiter limiter = createLimiter(10);
-    consumeTokens(limiter, 10);
-
-    // Act
-    RateLimitResult result = limiter.tryConsume(context, ruleSet, 1);
-
-    // Assert
-    assertThat(result.isAllowed()).isFalse();
-    assertThat(result.getRemainingTokens()).isZero();
-}
-```
-
-### 테스트 커버리지
-
-- 최소 80% 코드 커버리지 목표
-- 비즈니스 로직과 엣지 케이스 테스트에 집중
-- 단순한 getter/setter는 테스트하지 않음
+* 모든 동작 변경은 변경 _전에_ 실패하고 _후에_ 통과하는 회귀 테스트가 필요합니다.
+* `assertj` 플루언트 어설션을 사용하세요; 순수 JUnit `assertEquals`는 지양합니다.
+* 테스트 이름은 `givenX_whenY_thenZ` 또는 파일에서 사용하는 명령형 동사 형식을 따르세요.
 
 ## 변경 사항 제출
 
-### 제출 전 확인 사항
-
-1. **인프라 시작** (실행 중이 아닌 경우):
-   ```bash
-   docker compose -f docker/full.yml up -d
-   ```
-
-2. **브랜치 업데이트**:
-   ```bash
-   git fetch upstream
-   git rebase upstream/main
-   ```
-
-3. **코드 포맷팅 적용**:
-   ```bash
-   ./mvnw spotless:apply
-   ```
-
-4. **모든 테스트 및 검증 실행**:
-   ```bash
-   ./mvnw clean verify
-   ```
-
-   이 명령은 다음을 실행합니다:
-    - 코드 컴파일
-    - 단위 테스트
-    - 통합 테스트
-    - 코드 커버리지 검사 (JaCoCo)
-    - 코드 포맷팅 검사 (Spotless)
-
-### Pull Request 생성
-
-1. 브랜치를 Fork한 저장소에 Push:
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-
-2. GitHub에서 Pull Request 열기
-
-3. PR 템플릿 작성:
-    - 변경 사항에 대한 명확한 설명
-    - 관련 이슈 번호
-    - 수행한 테스트
-    - 스크린샷 (UI 변경 시)
-
-### PR 체크리스트
-
-- [ ] 코드가 프로젝트 스타일 가이드를 따름
-- [ ] 모든 테스트가 로컬에서 통과
-- [ ] 새 코드에 적절한 테스트 커버리지 있음
-- [ ] 새 public API에 Javadoc 추가됨
-- [ ] 필요시 README 업데이트됨
-- [ ] 주요 변경 사항에 대해 CHANGELOG 업데이트됨
+1. `main`을 대상으로 PR을 여세요.
+2. [PR 템플릿](.github/PULL_REQUEST_TEMPLATE.md)을 빠짐없이 작성하세요.
+3. CI 매트릭스는 Java 11, 17, 21로 실행됩니다; 세 버전 모두 통과해야 합니다.
+4. 리뷰 코멘트는 14일 이내에 처리해주세요. 그렇지 않으면 대기열 관리를 위해
+   PR이 닫힐 수 있습니다.
 
 ## 리뷰 프로세스
 
-### 기대할 수 있는 것
+모든 병합된 변경 사항에는 [@rojae](https://github.com/rojae)의 승인이 최소 1개
+필요합니다. 리뷰는 최선을 다해 진행되며, 간단한 변경의 경우 1~2주를 예상하세요.
+복잡한 변경은 더 오래 걸릴 수 있습니다 — 먼저 이슈를 열어 설계를 논의하세요.
 
-1. **자동화된 검사** 먼저 실행 (CI/CD)
-2. 메인테이너의 **코드 리뷰**
-3. 코멘트로 **피드백** 제공
-4. 모든 요구 사항 충족 시 **승인**
-5. 메인테이너에 의한 **머지**
+## 좋은 첫 번째 이슈
 
-### 피드백에 응답하기
+[`good first issue`](https://github.com/OpenFluxGate/fluxgate/labels/good%20first%20issue)
+레이블이 붙은 이슈들은 신규 기여자를 위해 선정된 것입니다. 이 이슈들은:
 
-- 제안에 열린 마음 갖기
-- 피드백이 불명확하면 질문하기
-- 요청된 변경 사항 신속히 처리하기
-- 처리된 대화는 해결됨으로 표시하기
+* 이슈 본문에 명확한 수락 기준이 있습니다.
+* 코드베이스의 제한된 영역을 다룹니다.
+* 테스트 전략이 개요로 제시되어 있습니다.
 
-### 머지 후
-
-- 기능 브랜치 삭제
-- 최신 변경 사항 Pull:
-  ```bash
-  git checkout main
-  git pull upstream main
-  ```
-
-## 도움 받기
-
-- **질문/버그**: [GitHub Issue](https://github.com/OpenFluxGate/fluxgate/issues) 열기
-- **보안**: security@openfluxgate.org로 이메일 (공개 이슈 열지 마세요)
-
-## 인정
-
-기여자는 다음에서 인정받습니다:
-
-- 릴리스 노트
-- GitHub 기여자 목록
-- 프로젝트 문서
-
-FluxGate에 기여해 주셔서 감사합니다!☺️
+작업하려면 이슈에 댓글을 남겨 관리자가 할당할 수 있게 해주세요. 막히면 이슈에서
+질문하세요 — 기초적인 질문도 환영합니다.

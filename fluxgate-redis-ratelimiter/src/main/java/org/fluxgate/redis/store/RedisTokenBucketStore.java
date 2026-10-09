@@ -2,12 +2,17 @@ package org.fluxgate.redis.store;
 
 import io.lettuce.core.RedisCommandExecutionException;
 import io.lettuce.core.RedisNoScriptException;
+import java.time.DayOfWeek;
 import java.time.Duration;
+import java.time.ZonedDateTime;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.fluxgate.core.config.QuotaPeriod;
+import org.fluxgate.core.config.RateLimitAlgorithm;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.exception.InvalidRuleConfigException;
 import org.fluxgate.core.exception.ScriptExecutionException;
@@ -52,6 +57,18 @@ public class RedisTokenBucketStore {
   private static final int RESULT_SIZE = 7;
   private static final long MICROS_PER_SECOND = 1_000_000L;
   private static final long NANOS_PER_MICRO = 1_000L;
+
+  /**
+   * Maximum value of {@code capacity × window_micros} that Lua can represent exactly.
+   *
+   * <p>Redis Lua runs on an IEEE-754 double with a 53-bit mantissa, so integers up to 2^53 =
+   * 9,007,199,254,740,992 are exact. The token-bucket refill formula multiplies {@code elapsed ×
+   * capacity / window_micros}; if {@code capacity × window_micros} exceeds this bound the
+   * intermediate product loses precision and the refill amount is wrong. This constant is used by
+   * the IEEE-754 guard in {@link #tryConsume(List, List, long)} to reject offending configurations
+   * before they reach Redis.
+   */
+  static final long IEEE_754_MAX_PRODUCT = 9_007_199_254_740_992L; // 2^53
 
   /**
    * Default upper bound on a bucket TTL.
@@ -198,6 +215,9 @@ public class RedisTokenBucketStore {
 
     // Fail before touching Redis: a band whose capacity is below the requested permits can
     // never serve the request, so returning a wait time would send the caller into a retry loop.
+    // For TOKEN_BUCKET bands also guard against the IEEE-754 double precision limit: the Lua
+    // refill formula computes elapsed × capacity / window_micros; if capacity × window_micros
+    // exceeds 2^53 the intermediate product loses precision and the refill amount is wrong.
     for (RateLimitBand band : bands) {
       if (permits > band.getCapacity()) {
         throw new InvalidRuleConfigException(
@@ -209,21 +229,43 @@ public class RedisTokenBucketStore {
                 + band.getCapacity()
                 + ")");
       }
+      if (band.getAlgorithm() == RateLimitAlgorithm.TOKEN_BUCKET) {
+        long windowMicros = toMicros(band);
+        if (band.getCapacity() > 0 && windowMicros > IEEE_754_MAX_PRODUCT / band.getCapacity()) {
+          throw new InvalidRuleConfigException(
+              "TOKEN_BUCKET band '"
+                  + band.getKeyLabel()
+                  + "': capacity ("
+                  + band.getCapacity()
+                  + ") × window_micros ("
+                  + windowMicros
+                  + ") exceeds 2^53 = "
+                  + IEEE_754_MAX_PRODUCT
+                  + "; the Lua token-bucket arithmetic would lose precision. "
+                  + "Reduce capacity or window, or use SLIDING_WINDOW / FIXED_WINDOW.");
+        }
+      }
     }
 
     // KEYS[1..n] = bucketKeys
-    // ARGV[1] = permits, then capacity / window_micros / reserved per band, and the
-    // bucket TTL cap last so the per-band triplets keep their indices.
+    // ARGV[1] = permits, ARGV[2] = max_bucket_ttl_seconds, then 5 values per band:
+    //   capacity, window_micros, algorithm_code, buckets_or_zero, window_end_micros_or_zero
     String[] keys = bucketKeys.toArray(new String[0]);
-    String[] args = new String[2 + 3 * bands.size()];
+    String[] args = new String[2 + 5 * bands.size()];
     args[0] = String.valueOf(permits);
+    args[1] = String.valueOf(maxBucketTtlSeconds);
     for (int i = 0; i < bands.size(); i++) {
       RateLimitBand band = bands.get(i);
-      args[1 + 3 * i] = String.valueOf(band.getCapacity());
-      args[2 + 3 * i] = String.valueOf(toMicros(band));
-      args[3 + 3 * i] = "0";
+      int base = 2 + 5 * i;
+      args[base] = String.valueOf(band.getCapacity());
+      args[base + 1] = String.valueOf(toMicros(band));
+      args[base + 2] = String.valueOf(algorithmCode(band.getAlgorithm()));
+      args[base + 3] =
+          band.getAlgorithm() == RateLimitAlgorithm.SLIDING_WINDOW
+              ? String.valueOf(band.getSlidingWindowBuckets())
+              : "0";
+      args[base + 4] = String.valueOf(computeWindowEndMicros(band));
     }
-    args[args.length - 1] = String.valueOf(maxBucketTtlSeconds);
 
     List<Long> result = executeScriptWithFallback(keys, args);
 
@@ -270,6 +312,70 @@ public class RedisTokenBucketStore {
     return Math.addExact(
         Math.multiplyExact(band.getWindow().getSeconds(), MICROS_PER_SECOND),
         band.getWindow().getNano() / 1_000L);
+  }
+
+  /**
+   * Returns the Lua algorithm code for the given {@link RateLimitAlgorithm}.
+   *
+   * <p>Codes must match the constants defined in {@code token_bucket_consume.lua}: {@code
+   * ALG_TOKEN_BUCKET=1}, {@code ALG_SLIDING_WINDOW=2}, {@code ALG_FIXED_WINDOW=3}.
+   */
+  private static int algorithmCode(RateLimitAlgorithm algorithm) {
+    switch (algorithm) {
+      case TOKEN_BUCKET:
+        return 1;
+      case SLIDING_WINDOW:
+        return 2;
+      case FIXED_WINDOW:
+        return 3;
+      default:
+        throw new InvalidRuleConfigException("Unknown algorithm: " + algorithm);
+    }
+  }
+
+  /**
+   * Returns the absolute window-end timestamp in microseconds for a {@link
+   * org.fluxgate.core.config.RateLimitAlgorithm#FIXED_WINDOW} band with a calendar-aligned {@link
+   * QuotaPeriod}, or {@code 0} for all other cases.
+   *
+   * <p>When {@code 0} is passed to the Lua script, the script derives the window end from the
+   * current Redis time using {@code floor(now_micros / window_micros) + 1} — suitable for
+   * non-calendar-aligned fixed windows. Calendar-aligned windows must be computed in Java because
+   * the alignment depends on the configured {@link java.time.ZoneId} (e.g. midnight in {@code
+   * America/New_York} is not midnight UTC).
+   *
+   * @param band the rate limit band
+   * @return microseconds since epoch for the end of the current calendar period, or {@code 0}
+   */
+  private static long computeWindowEndMicros(RateLimitBand band) {
+    if (band.getAlgorithm() != RateLimitAlgorithm.FIXED_WINDOW) {
+      return 0L;
+    }
+    QuotaPeriod period = band.getQuotaPeriod();
+    if (period == null) {
+      return 0L; // non-calendar aligned: Lua derives from now
+    }
+    ZonedDateTime now = ZonedDateTime.now(band.getZoneId());
+    ZonedDateTime periodEnd;
+    switch (period) {
+      case DAILY:
+        periodEnd = now.toLocalDate().plusDays(1).atStartOfDay(band.getZoneId());
+        break;
+      case WEEKLY:
+        // Start of the next ISO week (Monday midnight).
+        periodEnd =
+            now.toLocalDate()
+                .with(TemporalAdjusters.next(DayOfWeek.MONDAY))
+                .atStartOfDay(band.getZoneId());
+        break;
+      case MONTHLY:
+        periodEnd =
+            now.toLocalDate().withDayOfMonth(1).plusMonths(1).atStartOfDay(band.getZoneId());
+        break;
+      default:
+        return 0L;
+    }
+    return periodEnd.toInstant().toEpochMilli() * 1000L;
   }
 
   /**

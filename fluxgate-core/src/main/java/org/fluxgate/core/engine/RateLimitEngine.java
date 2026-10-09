@@ -1,9 +1,14 @@
 package org.fluxgate.core.engine;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import org.fluxgate.core.config.AccessControl;
+import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.match.PathPatternMatcher;
+import org.fluxgate.core.match.SimpleAntPathMatcher;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.ratelimiter.RateLimiter;
@@ -11,8 +16,9 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 
 /**
  * High-level entry point for rate limiting. Responsibilities: - Resolve {@link RateLimitRuleSet} by
- * id via {@link RateLimitRuleSetProvider} - Delegate actual token consumption to {@link
- * RateLimiter} - Define behavior when rule set is missing
+ * id via {@link RateLimitRuleSetProvider} - Evaluate {@link AccessControl} before delegating to the
+ * limiter - Delegate actual token consumption to {@link RateLimiter} - Define behavior when rule
+ * set is missing
  *
  * <p>This is the canonical entry point: Spring starters wire {@code
  * fluxgate.ratelimit.missing-rule-behavior} onto {@link OnMissingRuleSetStrategy} and expose the
@@ -22,6 +28,9 @@ public final class RateLimitEngine {
 
   /** Prefix of the synthetic key reported when no rule set exists and the strategy is DENY. */
   private static final String MISSING_RULE_SET_KEY_PREFIX = "missing-rule-set:";
+
+  /** Prefix of the synthetic key reported when access control denies the request. */
+  private static final String DENIED_KEY_PREFIX = "denied:";
 
   /** Strategy when no rule set is found for a given id. */
   public enum OnMissingRuleSetStrategy {
@@ -36,7 +45,7 @@ public final class RateLimitEngine {
 
     /**
      * Fail-closed: reject the request without applying any rate limiting. The returned result has
-     * no matched rule, {@code nanosToWaitForRefill = 0} and a synthetic key of the form {@code
+     * no matched rule, {@code nanosToWait = 0} and a synthetic key of the form {@code
      * missing-rule-set:<id>} so the rejection is traceable in metrics and logs.
      */
     DENY
@@ -45,6 +54,7 @@ public final class RateLimitEngine {
   private final RateLimitRuleSetProvider ruleSetProvider;
   private final RateLimiter rateLimiter;
   private final OnMissingRuleSetStrategy onMissingRuleSetStrategy;
+  private final PathPatternMatcher pathMatcher;
 
   private RateLimitEngine(Builder builder) {
     this.ruleSetProvider =
@@ -53,6 +63,8 @@ public final class RateLimitEngine {
     this.onMissingRuleSetStrategy =
         Objects.requireNonNull(
             builder.onMissingRuleSetStrategy, "onMissingRuleSetStrategy must not be null");
+    this.pathMatcher =
+        builder.pathMatcher != null ? builder.pathMatcher : SimpleAntPathMatcher.INSTANCE;
   }
 
   /**
@@ -82,6 +94,10 @@ public final class RateLimitEngine {
    * OnMissingRuleSetStrategy}, and a {@link RateLimiter} that breaks its contract by returning
    * {@code null} raises an {@link IllegalStateException} instead of leaking the null to callers.
    *
+   * <p>Access control is evaluated before calling the limiter: {@link AccessControl.Decision#DENY}
+   * returns a rejected result immediately; {@link AccessControl.Decision#ALLOW_BYPASS} returns an
+   * allowed result without consuming any tokens.
+   *
    * @param ruleSetId the rule set to apply (must not be null)
    * @param context request-scoped information (must not be null)
    * @param permits number of permits to consume
@@ -96,7 +112,27 @@ public final class RateLimitEngine {
       return onMissingRuleSet(ruleSetId);
     }
 
-    RateLimitResult result = rateLimiter.tryConsume(context, optionalRuleSet.get(), permits);
+    RateLimitRuleSet ruleSet = optionalRuleSet.get();
+
+    // ===== access control =====
+    AccessControl accessControl = ruleSet.getAccessControl();
+    if (!accessControl.isEmpty()) {
+      RateLimitKey resolvedKey = resolveKeyForAccessControl(context, ruleSet);
+      AccessControl.Decision decision = accessControl.evaluate(resolvedKey);
+      if (decision == AccessControl.Decision.DENY) {
+        return RateLimitResult.builder(RateLimitKey.of(DENIED_KEY_PREFIX + resolvedKey.value()))
+            .allowed(false)
+            .remainingTokens(0L)
+            .nanosToWaitForRefill(0L)
+            .build();
+      }
+      if (decision == AccessControl.Decision.ALLOW_BYPASS) {
+        return RateLimitResult.allowedWithoutRule();
+      }
+    }
+
+    // ===== delegate to limiter =====
+    RateLimitResult result = rateLimiter.tryConsume(context, ruleSet, permits, pathMatcher);
     if (result == null) {
       throw new IllegalStateException(
           "RateLimiter "
@@ -105,6 +141,27 @@ public final class RateLimitEngine {
               + ruleSetId);
     }
     return result;
+  }
+
+  /**
+   * Resolves the rate limit key used for access control evaluation.
+   *
+   * <p>Uses the first matching rule (highest priority) from the rule set. Falls back to a synthetic
+   * IP key when no rules match.
+   */
+  private RateLimitKey resolveKeyForAccessControl(
+      RequestContext context, RateLimitRuleSet ruleSet) {
+    List<RateLimitRule> matching = ruleSet.getMatchingRules(context, pathMatcher);
+    if (!matching.isEmpty()) {
+      try {
+        return ruleSet.getKeyResolver().resolve(context, matching.get(0));
+      } catch (Exception e) {
+        // fall through to IP fallback
+      }
+    }
+    // fallback: synthetic IP key
+    String ip = context.getClientIp();
+    return RateLimitKey.of("ip:" + (ip != null && !ip.isEmpty() ? ip : "unknown"));
   }
 
   private RateLimitResult onMissingRuleSet(String ruleSetId) {
@@ -130,6 +187,7 @@ public final class RateLimitEngine {
     private RateLimitRuleSetProvider ruleSetProvider;
     private RateLimiter rateLimiter;
     private OnMissingRuleSetStrategy onMissingRuleSetStrategy = OnMissingRuleSetStrategy.THROW;
+    private PathPatternMatcher pathMatcher;
 
     private Builder() {}
 
@@ -163,6 +221,19 @@ public final class RateLimitEngine {
      */
     public Builder onMissingRuleSetStrategy(OnMissingRuleSetStrategy strategy) {
       this.onMissingRuleSetStrategy = strategy;
+      return this;
+    }
+
+    /**
+     * Sets the path pattern matcher used to filter applicable rules. Defaults to {@link
+     * SimpleAntPathMatcher#INSTANCE} (case-sensitive).
+     *
+     * @param pathMatcher the path matcher (null restores the default)
+     * @return this builder
+     * @since 0.4.0
+     */
+    public Builder pathMatcher(PathPatternMatcher pathMatcher) {
+      this.pathMatcher = pathMatcher;
       return this;
     }
 

@@ -10,6 +10,8 @@ import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.exception.MissingRateLimitKeyException;
 import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.match.PathPatternMatcher;
+import org.fluxgate.core.match.SimpleAntPathMatcher;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
@@ -65,29 +67,59 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
   private final Set<String> ttlClampWarnedRules = ConcurrentHashMap.newKeySet();
 
   /**
+   * Path pattern matcher used to filter applicable rules via {@link
+   * RateLimitRuleSet#getMatchingRules}.
+   */
+  private final PathPatternMatcher pathMatcher;
+
+  /**
    * Create a new RedisRateLimiter with the given token bucket store.
+   *
+   * <p>Uses {@link SimpleAntPathMatcher#INSTANCE} as the path pattern matcher.
    *
    * @param tokenBucketStore Redis-backed token bucket store
    */
   public RedisRateLimiter(RedisTokenBucketStore tokenBucketStore) {
+    this(tokenBucketStore, SimpleAntPathMatcher.INSTANCE);
+  }
+
+  /**
+   * Create a new RedisRateLimiter with the given token bucket store and path matcher.
+   *
+   * <p>The matcher is used to evaluate {@link RateLimitRuleSet#getMatchingRules} on every call, so
+   * only rules whose {@link org.fluxgate.core.config.RuleMatcher} matches the incoming request are
+   * enforced.
+   *
+   * @param tokenBucketStore Redis-backed token bucket store
+   * @param pathMatcher path pattern matcher for rule filtering
+   */
+  public RedisRateLimiter(RedisTokenBucketStore tokenBucketStore, PathPatternMatcher pathMatcher) {
     this.tokenBucketStore =
         Objects.requireNonNull(tokenBucketStore, "tokenBucketStore must not be null");
+    this.pathMatcher = Objects.requireNonNull(pathMatcher, "pathMatcher must not be null");
   }
 
   @Override
   public RateLimitResult tryConsume(
       RequestContext context, RateLimitRuleSet ruleSet, long permits) {
+    return tryConsume(context, ruleSet, permits, pathMatcher);
+  }
+
+  @Override
+  public RateLimitResult tryConsume(
+      RequestContext context, RateLimitRuleSet ruleSet, long permits, PathPatternMatcher matcher) {
 
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(ruleSet, "ruleSet must not be null");
+    Objects.requireNonNull(matcher, "matcher must not be null");
 
     if (permits <= 0) {
       throw new IllegalArgumentException("permits must be > 0");
     }
 
-    List<RateLimitRule> rules = ruleSet.getRules();
-    if (rules == null || rules.isEmpty()) {
-      log.debug("No rules in ruleSet {}, nothing to enforce", ruleSet.getId());
+    List<RateLimitRule> rules = ruleSet.getMatchingRules(context, matcher);
+    if (rules.isEmpty()) {
+      log.debug("No matching rules in ruleSet {}, nothing to enforce", ruleSet.getId());
       return record(context, ruleSet, RateLimitResult.allowedWithoutRule());
     }
 
@@ -103,10 +135,7 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
     Binding binding = null;
 
     for (RateLimitRule rule : rules) {
-      if (!rule.isEnabled()) {
-        continue;
-      }
-
+      // rules from getMatchingRules are already enabled and match the request path/method
       List<RateLimitBand> bands = rule.getBands();
       if (bands == null || bands.isEmpty()) {
         continue;
@@ -150,8 +179,8 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
     }
 
     if (binding == null) {
-      // Every rule is disabled or has no bands: nothing to enforce, and no quota to advertise.
-      log.debug("No enabled rule with bands in ruleSet {}, nothing to enforce", ruleSet.getId());
+      // All matching rules have empty band lists: nothing to enforce.
+      log.debug("No rule with bands in ruleSet {}, nothing to enforce", ruleSet.getId());
       return record(context, ruleSet, RateLimitResult.allowedWithoutRule());
     }
 

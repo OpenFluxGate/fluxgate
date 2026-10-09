@@ -1,5 +1,6 @@
 package org.fluxgate.spring.autoconfigure;
 
+import java.util.List;
 import org.fluxgate.core.engine.RateLimitEngine;
 import org.fluxgate.core.engine.RateLimitEngine.OnMissingRuleSetStrategy;
 import org.fluxgate.core.exception.MissingConfigurationException;
@@ -7,6 +8,7 @@ import org.fluxgate.core.handler.FluxgateRateLimitHandler;
 import org.fluxgate.core.key.KeyResolver;
 import org.fluxgate.core.key.LimitScopeKeyResolver;
 import org.fluxgate.core.key.MissingKeyBehavior;
+import org.fluxgate.core.match.PathPatternMatcher;
 import org.fluxgate.core.ratelimiter.RateLimiter;
 import org.fluxgate.core.ratelimiter.impl.bucket4j.Bucket4jRateLimiter;
 import org.fluxgate.core.resilience.ResilientExecutor;
@@ -19,6 +21,9 @@ import org.fluxgate.spring.properties.FluxgateProperties;
 import org.fluxgate.spring.properties.FluxgateProperties.FallbackMode;
 import org.fluxgate.spring.properties.FluxgateProperties.RateLimitProperties;
 import org.fluxgate.spring.properties.FluxgateProperties.RateLimiterMode;
+import org.fluxgate.spring.properties.FluxgateProperties.RuleSetProperties;
+import org.fluxgate.spring.rule.PropertiesRuleSetProvider;
+import org.fluxgate.spring.rule.SpringAntPathMatcherAdapter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
@@ -234,36 +239,105 @@ public class FluxgateRateLimiterAutoConfiguration {
   }
 
   /**
+   * Creates the {@link PathPatternMatcher} bean that is passed into the engine and limiters.
+   *
+   * <p>Uses Spring's {@link org.springframework.util.AntPathMatcher} as the implementation so users
+   * get the same Ant matching semantics as the rest of the Spring ecosystem. Case-sensitivity is
+   * controlled by {@code fluxgate.ratelimit.case-sensitive-patterns} (default {@code true}).
+   *
+   * @return the path pattern matcher
+   */
+  @Bean
+  @ConditionalOnMissingBean(PathPatternMatcher.class)
+  public PathPatternMatcher fluxgatePathPatternMatcher() {
+    boolean caseSensitive = properties.getRatelimit().isCaseSensitivePatterns();
+    log.info("Creating SpringAntPathMatcherAdapter (caseSensitive={})", caseSensitive);
+    return new SpringAntPathMatcherAdapter(caseSensitive);
+  }
+
+  /**
+   * Creates a {@link PropertiesRuleSetProvider} when the user has declared at least one rule set
+   * under {@code fluxgate.ratelimit.rule-sets}.
+   *
+   * <p>All rule sets are built eagerly during startup, so configuration errors surface before the
+   * first request arrives. The provider is registered under {@code propertiesRuleSetProvider} so
+   * {@link FluxgateMongoAutoConfiguration} can compose it with the Mongo-backed provider.
+   *
+   * @param keyResolver the key resolver to attach to every rule set
+   * @return the properties-backed rule set provider
+   */
+  @Bean(name = "propertiesRuleSetProvider")
+  @ConditionalOnMissingBean(name = "propertiesRuleSetProvider")
+  @Conditional(RuleSetsConfiguredCondition.class)
+  public PropertiesRuleSetProvider propertiesRuleSetProvider(KeyResolver keyResolver) {
+    List<RuleSetProperties> ruleSets = properties.getRatelimit().getRuleSets();
+    log.info("Creating PropertiesRuleSetProvider with {} rule set(s) from YAML", ruleSets.size());
+    PropertiesRuleSetProvider provider = new PropertiesRuleSetProvider(ruleSets, keyResolver);
+    logStartupSummary(provider);
+    return provider;
+  }
+
+  /**
    * Creates the canonical {@link RateLimitEngine}.
    *
    * <p>{@code fluxgate.ratelimit.missing-rule-behavior} is wired onto {@link
-   * OnMissingRuleSetStrategy} here, which is the only place that decision is now taken.
+   * OnMissingRuleSetStrategy} here, which is the only place that decision is now taken. The {@link
+   * PathPatternMatcher} bean is passed in so the engine uses Spring's Ant matcher instead of the
+   * built-in simple matcher.
    *
    * @param ruleSetProvider the rule set provider (the caching one when hot reload is enabled)
    * @param rateLimiter the primary limiter (the resilient wrapper when present)
+   * @param pathMatcherProvider optional path matcher (always present because we register one above)
    * @return the engine
    */
   @Bean
   @ConditionalOnMissingBean(RateLimitEngine.class)
   @ConditionalOnBean({RateLimiter.class, RateLimitRuleSetProvider.class})
   public RateLimitEngine fluxgateRateLimitEngine(
-      RateLimitRuleSetProvider ruleSetProvider, RateLimiter rateLimiter) {
+      RateLimitRuleSetProvider ruleSetProvider,
+      RateLimiter rateLimiter,
+      ObjectProvider<PathPatternMatcher> pathMatcherProvider) {
     OnMissingRuleSetStrategy strategy =
         properties.getRatelimit().isDenyWhenRuleMissing()
             ? OnMissingRuleSetStrategy.DENY
             : OnMissingRuleSetStrategy.ALLOW;
 
+    PathPatternMatcher pathMatcher = pathMatcherProvider.getIfAvailable();
+
     log.info(
-        "Creating RateLimitEngine: limiter={}, ruleSetProvider={}, onMissingRuleSet={}",
+        "Creating RateLimitEngine: limiter={}, ruleSetProvider={}, onMissingRuleSet={},"
+            + " pathMatcher={}",
         rateLimiter.getClass().getSimpleName(),
         ruleSetProvider.getClass().getSimpleName(),
-        strategy);
+        strategy,
+        pathMatcher != null ? pathMatcher.getClass().getSimpleName() : "default");
 
-    return RateLimitEngine.builder()
-        .ruleSetProvider(ruleSetProvider)
-        .rateLimiter(rateLimiter)
-        .onMissingRuleSetStrategy(strategy)
-        .build();
+    RateLimitEngine.Builder builder =
+        RateLimitEngine.builder()
+            .ruleSetProvider(ruleSetProvider)
+            .rateLimiter(rateLimiter)
+            .onMissingRuleSetStrategy(strategy);
+
+    if (pathMatcher != null) {
+      builder.pathMatcher(pathMatcher);
+    }
+
+    return builder.build();
+  }
+
+  /** Logs a one-block INFO summary of rule sources, counts, algorithms and failure behaviour. */
+  private void logStartupSummary(PropertiesRuleSetProvider provider) {
+    RateLimitProperties rlp = properties.getRatelimit();
+    StringBuilder sb = new StringBuilder();
+    sb.append("\n=== FluxGate startup summary ===");
+    sb.append("\n  Rule source    : YAML properties (fluxgate.ratelimit.rule-sets)");
+    sb.append("\n  Rule sets      : ").append(provider.size());
+    sb.append("\n  Rule set ids   : ").append(provider.ruleSetIds());
+    sb.append("\n  Failure behav. : ").append(rlp.isAllowWhenLimiterFails() ? "ALLOW" : "DENY");
+    sb.append("\n  Missing rule   : ").append(rlp.isDenyWhenRuleMissing() ? "DENY" : "ALLOW");
+    sb.append("\n  Case-sensitive : ").append(rlp.isCaseSensitivePatterns());
+    sb.append("\n================================");
+    log.info(sb.toString());
   }
 
   /**
@@ -447,5 +521,25 @@ public class FluxgateRateLimiterAutoConfiguration {
     return Binder.get(environment)
         .bind("fluxgate.ratelimit.mode", RateLimiterMode.class)
         .orElse(RateLimiterMode.AUTO);
+  }
+
+  /**
+   * Matches when at least one rule set is declared under {@code fluxgate.ratelimit.rule-sets}.
+   *
+   * <p>Uses {@link Binder} so that indexed-list properties ({@code rule-sets[0].id}, etc.) are
+   * detected even when an explicit size property is absent.
+   */
+  public static final class RuleSetsConfiguredCondition implements Condition {
+
+    @Override
+    public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
+      return Binder.get(context.getEnvironment())
+          .bind(
+              "fluxgate.ratelimit.rule-sets",
+              org.springframework.boot.context.properties.bind.Bindable.listOf(
+                  FluxgateProperties.RuleSetProperties.class))
+          .map(list -> !list.isEmpty())
+          .orElse(Boolean.FALSE);
+    }
   }
 }

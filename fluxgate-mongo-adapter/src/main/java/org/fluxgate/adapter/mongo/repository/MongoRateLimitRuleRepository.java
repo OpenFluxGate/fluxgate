@@ -12,6 +12,7 @@ import org.bson.Document;
 import org.fluxgate.adapter.mongo.converter.RateLimitRuleConverter;
 import org.fluxgate.adapter.mongo.converter.RateLimitRuleMongoConverter;
 import org.fluxgate.adapter.mongo.model.RateLimitRuleDocument;
+import org.fluxgate.core.config.AccessControl;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.spi.RateLimitRuleRepository;
 
@@ -75,6 +76,89 @@ public class MongoRateLimitRuleRepository implements RateLimitRuleRepository {
   public int deleteByRuleSetId(String ruleSetId) {
     DeleteResult result = collection.deleteMany(Filters.eq("ruleSetId", ruleSetId));
     return (int) result.getDeletedCount();
+  }
+
+  /**
+   * Returns the rule-set-level {@link AccessControl} for the given rule set id.
+   *
+   * <p>The access control is stored redundantly on every rule document for the rule set (see {@link
+   * RateLimitRuleDocument}). This method reads the first document and extracts the embedded
+   * access-control lists. Returns {@link AccessControl#EMPTY} when the rule set has no rules or
+   * when the first document carries no access-control data (0.3.x documents).
+   *
+   * @param ruleSetId the rule set id to look up
+   * @return the access control (never null)
+   * @since 0.4.0
+   */
+  public AccessControl findAccessControlByRuleSetId(String ruleSetId) {
+    Document first = collection.find(Filters.eq("ruleSetId", ruleSetId)).limit(1).first();
+    if (first == null) {
+      return AccessControl.EMPTY;
+    }
+    RateLimitRuleDocument doc = RateLimitRuleMongoConverter.fromBson(first);
+    return RateLimitRuleConverter.toAccessControl(doc);
+  }
+
+  /**
+   * Saves the rule-set-level access control by embedding it into every rule document for the rule
+   * set. Creates no new documents; only updates existing ones.
+   *
+   * <p>Call this after saving rules to ensure access control survives a round-trip.
+   *
+   * @param ruleSetId the rule set id
+   * @param allowedIps allowed IP CIDRs (may be null)
+   * @param deniedIps denied IP CIDRs (may be null)
+   * @param allowedKeys allowed resolved key values (may be null)
+   * @param deniedKeys denied resolved key values (may be null)
+   * @since 0.4.0
+   */
+  public void saveAccessControl(
+      String ruleSetId,
+      List<String> allowedIps,
+      List<String> deniedIps,
+      java.util.Set<String> allowedKeys,
+      java.util.Set<String> deniedKeys) {
+    org.bson.conversions.Bson updateDoc =
+        buildAccessControlUpdate(allowedIps, deniedIps, allowedKeys, deniedKeys);
+    if (updateDoc != null) {
+      collection.updateMany(Filters.eq("ruleSetId", ruleSetId), updateDoc);
+    }
+  }
+
+  private org.bson.conversions.Bson buildAccessControlUpdate(
+      List<String> allowedIps,
+      List<String> deniedIps,
+      java.util.Set<String> allowedKeys,
+      java.util.Set<String> deniedKeys) {
+    List<org.bson.conversions.Bson> updates = new ArrayList<>();
+    setOrUnset(
+        updates,
+        "allowedIps",
+        allowedIps != null && !allowedIps.isEmpty() ? new ArrayList<>(allowedIps) : null);
+    setOrUnset(
+        updates,
+        "deniedIps",
+        deniedIps != null && !deniedIps.isEmpty() ? new ArrayList<>(deniedIps) : null);
+    setOrUnset(
+        updates,
+        "allowedKeys",
+        allowedKeys != null && !allowedKeys.isEmpty() ? new ArrayList<>(allowedKeys) : null);
+    setOrUnset(
+        updates,
+        "deniedKeys",
+        deniedKeys != null && !deniedKeys.isEmpty() ? new ArrayList<>(deniedKeys) : null);
+    if (updates.isEmpty()) {
+      return null;
+    }
+    return com.mongodb.client.model.Updates.combine(updates);
+  }
+
+  private void setOrUnset(List<org.bson.conversions.Bson> updates, String field, Object value) {
+    if (value != null) {
+      updates.add(com.mongodb.client.model.Updates.set(field, value));
+    } else {
+      updates.add(com.mongodb.client.model.Updates.unset(field));
+    }
   }
 
   /**

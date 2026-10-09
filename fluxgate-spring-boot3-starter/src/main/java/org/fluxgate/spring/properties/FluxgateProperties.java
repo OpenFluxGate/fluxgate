@@ -821,6 +821,54 @@ public class FluxgateProperties {
     public void setFailOnMissingHandler(boolean failOnMissingHandler) {
       this.failOnMissingHandler = failOnMissingHandler;
     }
+
+    /**
+     * YAML-defined rule sets.
+     *
+     * <p>When non-empty a {@code PropertiesRuleSetProvider} is registered automatically. If MongoDB
+     * is also enabled, the two sources are composed: YAML rules take precedence and MongoDB is used
+     * as a fallback for rule set ids not found in YAML.
+     *
+     * <pre>
+     * fluxgate:
+     *   ratelimit:
+     *     rule-sets:
+     *       - id: api-limits
+     *         description: Default API limits
+     *         access-control:
+     *           denied-ips: [203.0.113.0/24]
+     *           allowed-keys: [key:internal-service]
+     *         rules:
+     *           - id: per-ip-100rpm
+     *             scope: PER_IP
+     *             key-strategy-id: ip
+     *             on-limit-exceed-policy: REJECT_REQUEST
+     *             matcher:
+     *               path-patterns: [/api/**]
+     *             bands:
+     *               - capacity: 100
+     *                 window: 60s
+     * </pre>
+     */
+    private List<RuleSetProperties> ruleSets = new java.util.ArrayList<>();
+
+    /**
+     * Returns the list of YAML-defined rule sets. Empty when no rule sets are configured.
+     *
+     * @return the rule sets list (never null)
+     */
+    public List<RuleSetProperties> getRuleSets() {
+      return ruleSets;
+    }
+
+    /**
+     * Sets the YAML-defined rule sets.
+     *
+     * @param ruleSets the rule sets (must not be null)
+     */
+    public void setRuleSets(List<RuleSetProperties> ruleSets) {
+      this.ruleSets = ruleSets != null ? ruleSets : new java.util.ArrayList<>();
+    }
   }
 
   /**
@@ -1508,6 +1556,431 @@ public class FluxgateProperties {
       public void setMaxMessageAge(Duration maxMessageAge) {
         this.maxMessageAge = maxMessageAge;
       }
+    }
+  }
+
+  // ===== YAML-defined rule set nested properties =====
+
+  /**
+   * Properties for a single YAML-defined rule set (under {@code fluxgate.ratelimit.rule-sets[n]}).
+   *
+   * @since 0.4.0
+   */
+  public static class RuleSetProperties {
+
+    /** Unique rule set identifier (required). */
+    private String id;
+
+    /** Optional human-readable description. */
+    private String description;
+
+    /** Access-control rules evaluated before any rate limiter is consulted. */
+    @org.springframework.boot.context.properties.NestedConfigurationProperty
+    private AccessControlProperties accessControl = new AccessControlProperties();
+
+    /** The rate limit rules that belong to this rule set. */
+    private List<RuleProperties> rules = new java.util.ArrayList<>();
+
+    public String getId() {
+      return id;
+    }
+
+    public void setId(String id) {
+      this.id = id;
+    }
+
+    public String getDescription() {
+      return description;
+    }
+
+    public void setDescription(String description) {
+      this.description = description;
+    }
+
+    public AccessControlProperties getAccessControl() {
+      return accessControl;
+    }
+
+    public void setAccessControl(AccessControlProperties accessControl) {
+      this.accessControl = accessControl != null ? accessControl : new AccessControlProperties();
+    }
+
+    public List<RuleProperties> getRules() {
+      return rules;
+    }
+
+    public void setRules(List<RuleProperties> rules) {
+      this.rules = rules != null ? rules : new java.util.ArrayList<>();
+    }
+  }
+
+  /**
+   * Properties for the rule-set-level access control (under {@code
+   * fluxgate.ratelimit.rule-sets[n].access-control}).
+   *
+   * @since 0.4.0
+   */
+  public static class AccessControlProperties {
+
+    /**
+     * Allowed IP CIDRs. Matching requests bypass rate limiting entirely ({@code ALLOW_BYPASS}).
+     * Denied rules take precedence over allowed ones.
+     */
+    private List<String> allowedIps = new java.util.ArrayList<>();
+
+    /** Denied IP CIDRs. Matching requests are rejected immediately ({@code DENY}). */
+    private List<String> deniedIps = new java.util.ArrayList<>();
+
+    /**
+     * Allowed resolved key values (e.g. {@code "user:alice"}, {@code "key:internal-service"}).
+     * Matching requests bypass rate limiting.
+     */
+    private List<String> allowedKeys = new java.util.ArrayList<>();
+
+    /** Denied resolved key values. Matching requests are rejected immediately. */
+    private List<String> deniedKeys = new java.util.ArrayList<>();
+
+    public List<String> getAllowedIps() {
+      return allowedIps;
+    }
+
+    public void setAllowedIps(List<String> allowedIps) {
+      this.allowedIps = allowedIps != null ? allowedIps : new java.util.ArrayList<>();
+    }
+
+    public List<String> getDeniedIps() {
+      return deniedIps;
+    }
+
+    public void setDeniedIps(List<String> deniedIps) {
+      this.deniedIps = deniedIps != null ? deniedIps : new java.util.ArrayList<>();
+    }
+
+    public List<String> getAllowedKeys() {
+      return allowedKeys;
+    }
+
+    public void setAllowedKeys(List<String> allowedKeys) {
+      this.allowedKeys = allowedKeys != null ? allowedKeys : new java.util.ArrayList<>();
+    }
+
+    public List<String> getDeniedKeys() {
+      return deniedKeys;
+    }
+
+    public void setDeniedKeys(List<String> deniedKeys) {
+      this.deniedKeys = deniedKeys != null ? deniedKeys : new java.util.ArrayList<>();
+    }
+  }
+
+  /**
+   * Properties for a single rate limit rule (under {@code
+   * fluxgate.ratelimit.rule-sets[n].rules[m]}).
+   *
+   * @since 0.4.0
+   */
+  public static class RuleProperties {
+
+    /** Unique rule identifier (required within a rule set). */
+    private String id;
+
+    /** Display name (defaults to {@code id} when absent). */
+    private String name;
+
+    /** Whether this rule is active. Default {@code true}. */
+    private boolean enabled = true;
+
+    /**
+     * Priority within the rule set. Higher values are evaluated first; ties are broken by rule id
+     * ascending. Default {@code 0}.
+     */
+    private int priority = 0;
+
+    /** Scope that determines which bucket a request maps to. Default {@code PER_IP}. */
+    private org.fluxgate.core.config.LimitScope scope = org.fluxgate.core.config.LimitScope.PER_IP;
+
+    /** Key strategy identifier (e.g. {@code "ip"}, {@code "userId"}). Default {@code "ip"}. */
+    private String keyStrategyId = "ip";
+
+    /** Policy applied when the limit is exceeded. Default {@code REJECT_REQUEST}. */
+    private org.fluxgate.core.config.OnLimitExceedPolicy onLimitExceedPolicy =
+        org.fluxgate.core.config.OnLimitExceedPolicy.REJECT_REQUEST;
+
+    /** Arbitrary user-defined attributes passed through to the core rule. */
+    private java.util.Map<String, Object> attributes = new java.util.LinkedHashMap<>();
+
+    /** Predicate that decides whether this rule applies to a given request. */
+    @org.springframework.boot.context.properties.NestedConfigurationProperty
+    private MatcherProperties matcher = new MatcherProperties();
+
+    /** Rate limit bands that define the limits for this rule. */
+    private List<BandProperties> bands = new java.util.ArrayList<>();
+
+    public String getId() {
+      return id;
+    }
+
+    public void setId(String id) {
+      this.id = id;
+    }
+
+    public String getName() {
+      return name;
+    }
+
+    public void setName(String name) {
+      this.name = name;
+    }
+
+    public boolean isEnabled() {
+      return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+      this.enabled = enabled;
+    }
+
+    public int getPriority() {
+      return priority;
+    }
+
+    public void setPriority(int priority) {
+      this.priority = priority;
+    }
+
+    public org.fluxgate.core.config.LimitScope getScope() {
+      return scope;
+    }
+
+    public void setScope(org.fluxgate.core.config.LimitScope scope) {
+      this.scope = scope;
+    }
+
+    public String getKeyStrategyId() {
+      return keyStrategyId;
+    }
+
+    public void setKeyStrategyId(String keyStrategyId) {
+      this.keyStrategyId = keyStrategyId;
+    }
+
+    public org.fluxgate.core.config.OnLimitExceedPolicy getOnLimitExceedPolicy() {
+      return onLimitExceedPolicy;
+    }
+
+    public void setOnLimitExceedPolicy(
+        org.fluxgate.core.config.OnLimitExceedPolicy onLimitExceedPolicy) {
+      this.onLimitExceedPolicy = onLimitExceedPolicy;
+    }
+
+    public java.util.Map<String, Object> getAttributes() {
+      return attributes;
+    }
+
+    public void setAttributes(java.util.Map<String, Object> attributes) {
+      this.attributes = attributes != null ? attributes : new java.util.LinkedHashMap<>();
+    }
+
+    public MatcherProperties getMatcher() {
+      return matcher;
+    }
+
+    public void setMatcher(MatcherProperties matcher) {
+      this.matcher = matcher != null ? matcher : new MatcherProperties();
+    }
+
+    public List<BandProperties> getBands() {
+      return bands;
+    }
+
+    public void setBands(List<BandProperties> bands) {
+      this.bands = bands != null ? bands : new java.util.ArrayList<>();
+    }
+  }
+
+  /**
+   * Properties for the request matcher of a rule (under {@code
+   * fluxgate.ratelimit.rule-sets[n].rules[m].matcher}).
+   *
+   * @since 0.4.0
+   */
+  public static class MatcherProperties {
+
+    /**
+     * Allowed HTTP methods (upper-case). Empty means any method matches.
+     *
+     * <p>Example: {@code [GET, POST]}
+     */
+    private List<String> methods = new java.util.ArrayList<>();
+
+    /**
+     * Ant-style path include patterns. Empty means any path matches.
+     *
+     * <p>Example: {@code [/api/**, /v2/**]}
+     */
+    private List<String> pathPatterns = new java.util.ArrayList<>();
+
+    /**
+     * Ant-style path exclude patterns. Exclusion beats inclusion.
+     *
+     * <p>Example: {@code [/api/health, /api/metrics]}
+     */
+    private List<String> excludePathPatterns = new java.util.ArrayList<>();
+
+    /**
+     * Header equality constraints (lower-cased header name → expected exact value).
+     *
+     * <p>Example: {@code {"x-tier": "premium"}}
+     */
+    private java.util.Map<String, String> headerEquals = new java.util.LinkedHashMap<>();
+
+    /**
+     * Header names (lower-cased) that must be present in the request.
+     *
+     * <p>Example: {@code [x-api-key]}
+     */
+    private List<String> headerPresent = new java.util.ArrayList<>();
+
+    public List<String> getMethods() {
+      return methods;
+    }
+
+    public void setMethods(List<String> methods) {
+      this.methods = methods != null ? methods : new java.util.ArrayList<>();
+    }
+
+    public List<String> getPathPatterns() {
+      return pathPatterns;
+    }
+
+    public void setPathPatterns(List<String> pathPatterns) {
+      this.pathPatterns = pathPatterns != null ? pathPatterns : new java.util.ArrayList<>();
+    }
+
+    public List<String> getExcludePathPatterns() {
+      return excludePathPatterns;
+    }
+
+    public void setExcludePathPatterns(List<String> excludePathPatterns) {
+      this.excludePathPatterns =
+          excludePathPatterns != null ? excludePathPatterns : new java.util.ArrayList<>();
+    }
+
+    public java.util.Map<String, String> getHeaderEquals() {
+      return headerEquals;
+    }
+
+    public void setHeaderEquals(java.util.Map<String, String> headerEquals) {
+      this.headerEquals = headerEquals != null ? headerEquals : new java.util.LinkedHashMap<>();
+    }
+
+    public List<String> getHeaderPresent() {
+      return headerPresent;
+    }
+
+    public void setHeaderPresent(List<String> headerPresent) {
+      this.headerPresent = headerPresent != null ? headerPresent : new java.util.ArrayList<>();
+    }
+  }
+
+  /**
+   * Properties for a single rate limit band (under {@code
+   * fluxgate.ratelimit.rule-sets[n].rules[m].bands[k]}).
+   *
+   * @since 0.4.0
+   */
+  public static class BandProperties {
+
+    /** Maximum number of requests (tokens) allowed within the window (required). */
+    private long capacity;
+
+    /**
+     * Time window duration (required). Supports Spring Boot's Duration binding ({@code 60s}, {@code
+     * 1m}, {@code PT1H}).
+     */
+    private Duration window;
+
+    /** Rate limiting algorithm. Default {@code TOKEN_BUCKET}. */
+    private org.fluxgate.core.config.RateLimitAlgorithm algorithm =
+        org.fluxgate.core.config.RateLimitAlgorithm.TOKEN_BUCKET;
+
+    /**
+     * Calendar-aligned quota period. Only valid with {@code algorithm: FIXED_WINDOW}. Default
+     * {@code null}.
+     */
+    private org.fluxgate.core.config.QuotaPeriod quotaPeriod;
+
+    /**
+     * Time zone for calendar alignment. Accepts IANA zone ids (e.g. {@code UTC}, {@code
+     * America/New_York}). Default {@code UTC}.
+     */
+    private String zoneId = "UTC";
+
+    /**
+     * Number of sub-buckets for the {@code SLIDING_WINDOW} algorithm. Must be in [2, 60]. Default
+     * {@code 10}.
+     */
+    private int slidingWindowBuckets = 10;
+
+    /**
+     * Optional human-readable label for metrics / admin UI. Drives the storage bucket key when set.
+     */
+    private String label;
+
+    public long getCapacity() {
+      return capacity;
+    }
+
+    public void setCapacity(long capacity) {
+      this.capacity = capacity;
+    }
+
+    public Duration getWindow() {
+      return window;
+    }
+
+    public void setWindow(Duration window) {
+      this.window = window;
+    }
+
+    public org.fluxgate.core.config.RateLimitAlgorithm getAlgorithm() {
+      return algorithm;
+    }
+
+    public void setAlgorithm(org.fluxgate.core.config.RateLimitAlgorithm algorithm) {
+      this.algorithm = algorithm;
+    }
+
+    public org.fluxgate.core.config.QuotaPeriod getQuotaPeriod() {
+      return quotaPeriod;
+    }
+
+    public void setQuotaPeriod(org.fluxgate.core.config.QuotaPeriod quotaPeriod) {
+      this.quotaPeriod = quotaPeriod;
+    }
+
+    public String getZoneId() {
+      return zoneId;
+    }
+
+    public void setZoneId(String zoneId) {
+      this.zoneId = zoneId;
+    }
+
+    public int getSlidingWindowBuckets() {
+      return slidingWindowBuckets;
+    }
+
+    public void setSlidingWindowBuckets(int slidingWindowBuckets) {
+      this.slidingWindowBuckets = slidingWindowBuckets;
+    }
+
+    public String getLabel() {
+      return label;
+    }
+
+    public void setLabel(String label) {
+      this.label = label;
     }
   }
 

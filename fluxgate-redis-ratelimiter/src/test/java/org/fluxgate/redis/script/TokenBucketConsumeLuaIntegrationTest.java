@@ -411,14 +411,15 @@ class TokenBucketConsumeLuaIntegrationTest {
 
   // ===== Helpers =====
 
+  /** TOKEN_BUCKET band (algorithm code 1, buckets=0, window_end=0). */
   private static String[] band(long capacity, long windowMicros) {
-    return new String[] {String.valueOf(capacity), String.valueOf(windowMicros), "0"};
+    return new String[] {String.valueOf(capacity), String.valueOf(windowMicros), "1", "0", "0"};
   }
 
   private static String[] bands(String[]... bands) {
-    String[] flat = new String[bands.length * 3];
+    String[] flat = new String[bands.length * 5];
     for (int i = 0; i < bands.length; i++) {
-      System.arraycopy(bands[i], 0, flat, i * 3, 3);
+      System.arraycopy(bands[i], 0, flat, i * 5, 5);
     }
     return flat;
   }
@@ -429,11 +430,11 @@ class TokenBucketConsumeLuaIntegrationTest {
 
   private static List<Long> consume(
       long permits, long maxBucketTtlSeconds, String[] bandArgs, String... keys) {
-    // ARGV = permits, one triplet per band, then the bucket TTL cap last
+    // ARGV[1]=permits, ARGV[2]=max_bucket_ttl_seconds, then 5 values per band
     String[] args = new String[2 + bandArgs.length];
     args[0] = String.valueOf(permits);
-    System.arraycopy(bandArgs, 0, args, 1, bandArgs.length);
-    args[args.length - 1] = String.valueOf(maxBucketTtlSeconds);
+    args[1] = String.valueOf(maxBucketTtlSeconds);
+    System.arraycopy(bandArgs, 0, args, 2, bandArgs.length);
     return eval(keys, args);
   }
 

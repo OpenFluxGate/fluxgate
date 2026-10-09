@@ -20,6 +20,10 @@ English | [한국어](README.ko.md)
   - [Hot Reload](en/architecture/hot-reload.md) - Reload strategies, listener order, bucket reset
 - [Algorithm Analysis](en/architecture/algorithm-analysis.md) - Token bucket complexity and the Lua optimizations
 
+### Guides
+
+- [**@RateLimit Annotation Guide**](en/guides/annotation.md) - `@EnableFluxgateAspect`, every annotation attribute, exception handling, non-web usage, filter vs. aspect decision table
+
 ### Customization
 
 - [Request Context](en/customization/request-context.md) - Customizing request context, and setting identity from the authenticated principal

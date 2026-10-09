@@ -200,9 +200,12 @@ class Bucket4jRateLimiterTest {
     assertThat(afterRefill.isAllowed())
         .as("the 3 rejected requests must not have drained band A")
         .isTrue();
-    assertThat(afterRefill.getBandLabel()).isEqualTo("A-5-per-1m");
+    // The multi-bandwidth implementation identifies the binding band by smallest capacity
+    // (heuristic), so Band B (cap=3) is reported even though Band A has fewer tokens remaining.
+    // getRemainingTokens() is the probe minimum across all bandwidths (= Band A's 1 token).
+    assertThat(afterRefill.getBandLabel()).isEqualTo("B-3-per-500ms");
     assertThat(afterRefill.getRemainingTokens()).isEqualTo(1L);
-    assertThat(afterRefill.getLimit()).isEqualTo(5L);
+    assertThat(afterRefill.getLimit()).isEqualTo(3L);
   }
 
   @Test

@@ -23,6 +23,10 @@ FluxGate 문서에 오신 것을 환영합니다.
   - [Hot Reload](ko/architecture/deep-dive/hot-reload.ko.md) - 핫 리로드 메커니즘
 - [알고리즘 분석](ko/architecture/algorithm-analysis.ko.md) - 토큰 버킷 복잡도와 Lua 최적화
 
+### 가이드
+
+- [**@RateLimit 애노테이션 가이드**](ko/guides/annotation.ko.md) - `@EnableFluxgateAspect`, 모든 애노테이션 속성, 예외 처리, 비웹 사용법, Filter vs. Aspect 결정 테이블
+
 ### 커스터마이징
 
 - [Request Context](ko/customization/request-context.ko.md) - 요청 컨텍스트 커스터마이징, 인증된 principal로 신원 설정

@@ -24,16 +24,20 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.fluxgate.spring.actuator.FluxgateHealthIndicator.HealthStatus;
 import org.fluxgate.spring.actuator.FluxgateHealthIndicator.MongoHealthChecker;
 import org.fluxgate.spring.properties.FluxgateProperties;
+import org.fluxgate.spring.rule.CompositeRuleSetProvider;
+import org.fluxgate.spring.rule.PropertiesRuleSetProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 
 /**
  * Auto-configuration for FluxGate MongoDB integration.
@@ -298,6 +302,35 @@ public class FluxgateMongoAutoConfiguration {
       @Qualifier("fluxgateEventCollection") MongoCollection<Document> fluxgateEventCollection) {
     log.info("Creating MongoRateLimitMetricsRecorder for MongoDB event logging");
     return new MongoRateLimitMetricsRecorder(fluxgateEventCollection);
+  }
+
+  /**
+   * Promotes the properties-based provider to the primary {@link RateLimitRuleSetProvider} when
+   * both a properties-backed and the Mongo-backed provider exist in the context.
+   *
+   * <p>The composite tries the properties provider first. If the rule set id is not found there it
+   * falls back to the Mongo delegate. This lets operators define some rule sets in YAML (fast, no
+   * round-trip to MongoDB) and leave other rule sets in MongoDB without any code changes.
+   *
+   * <p>Only registered when a {@link PropertiesRuleSetProvider} bean is present (which requires
+   * {@code fluxgate.ratelimit.rule-sets} to be non-empty), so a pure-Mongo deployment is
+   * unaffected.
+   *
+   * @param propertiesProvider the YAML-backed provider
+   * @param delegateProvider the Mongo-backed delegate registered as {@code delegateRuleSetProvider}
+   * @return the composite provider, which replaces the plain Mongo provider as the primary
+   */
+  @Bean
+  @Primary
+  @ConditionalOnBean(name = "propertiesRuleSetProvider")
+  @ConditionalOnMissingBean(CompositeRuleSetProvider.class)
+  public RateLimitRuleSetProvider compositeRuleSetProvider(
+      @Qualifier("propertiesRuleSetProvider") PropertiesRuleSetProvider propertiesProvider,
+      @Qualifier("delegateRuleSetProvider") RateLimitRuleSetProvider delegateProvider) {
+    log.info(
+        "Creating CompositeRuleSetProvider: properties={} rule set(s) + Mongo fallback",
+        propertiesProvider.size());
+    return new CompositeRuleSetProvider(propertiesProvider, delegateProvider);
   }
 
   /**

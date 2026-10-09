@@ -242,17 +242,20 @@ class RedisTokenBucketStoreMockTest {
     // when
     store.tryConsume("my-bucket-key", band, 1);
 
-    // then: ARGV = [permits, capacity, window_micros, reserved, max_bucket_ttl_seconds]
+    // then: ARGV = [permits, maxTtl, capacity, window_micros, algCode, bucketsOrZero, windowEnd]
     verify(connectionProvider)
         .evalsha(
             eq("test-sha-123"),
             eq(new String[] {"my-bucket-key"}),
-            eq(new String[] {"1", "100", String.valueOf(MINUTE_MICROS), "0", DEFAULT_TTL_ARG}));
+            eq(
+                new String[] {
+                  "1", DEFAULT_TTL_ARG, "100", String.valueOf(MINUTE_MICROS), "1", "0", "0"
+                }));
   }
 
   @Test
-  @DisplayName("The bucket TTL cap is the last ARGV, so the band triplets keep their indices")
-  void shouldPassTheConfiguredBucketTtlCapLast() {
+  @DisplayName("The bucket TTL cap is ARGV[2] and the band quintuples follow at ARGV[3+]")
+  void shouldPassTheConfiguredBucketTtlCapAtArgv2() {
     RedisTokenBucketStore capped =
         new RedisTokenBucketStore(connectionProvider, Duration.ofHours(6));
     RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
@@ -268,7 +271,7 @@ class RedisTokenBucketStoreMockTest {
         .evalsha(
             eq("test-sha-123"),
             eq(new String[] {"my-bucket-key"}),
-            eq(new String[] {"1", "100", String.valueOf(MINUTE_MICROS), "0", "21600"}));
+            eq(new String[] {"1", "21600", "100", String.valueOf(MINUTE_MICROS), "1", "0", "0"}));
   }
 
   @Test
@@ -284,8 +287,8 @@ class RedisTokenBucketStoreMockTest {
   }
 
   @Test
-  @DisplayName("Multi-band call passes one key and three ARGV per band")
-  void shouldPassOneArgumentTripletPerBand() {
+  @DisplayName("Multi-band call passes one key and five ARGV per band, with maxTtl at ARGV[2]")
+  void shouldPassOneArgumentQuintetPerBand() {
     List<RateLimitBand> bands =
         List.of(
             RateLimitBand.builder(Duration.ofSeconds(1), 10).label("fast").build(),
@@ -297,6 +300,8 @@ class RedisTokenBucketStoreMockTest {
 
     store.tryConsume(List.of("k-fast", "k-slow"), bands, 1);
 
+    // New layout: [permits, maxTtl, cap1, window1, algCode1, buckets1, windowEnd1,
+    //                              cap2, window2, algCode2, buckets2, windowEnd2]
     verify(connectionProvider)
         .evalsha(
             eq("test-sha-123"),
@@ -304,13 +309,17 @@ class RedisTokenBucketStoreMockTest {
             eq(
                 new String[] {
                   "1",
+                  DEFAULT_TTL_ARG,
                   "10",
                   "1000000",
+                  "1",
+                  "0",
                   "0",
                   "2",
                   String.valueOf(MINUTE_MICROS),
+                  "1",
                   "0",
-                  DEFAULT_TTL_ARG
+                  "0"
                 }));
   }
 

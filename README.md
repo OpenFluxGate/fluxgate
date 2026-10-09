@@ -103,42 +103,200 @@ delegates to `RateLimitEngine`, which resolves the rule set and calls a `RateLim
 
 ## Quick Start
 
+Two paths: **Path A** needs nothing but Java and Maven — it runs an in-memory limiter that
+is perfect for a first demo or a single-instance service. **Path B** adds Redis for
+distributed, multi-instance rate limiting, and an optional MongoDB step for dynamic rule
+management without restarts.
+
 ### Prerequisites
 
-- Java 11+ with Spring Boot 2.7.x, or Java 17+ with Spring Boot 3.x
-- Maven 3.8+
-- Redis 6.0+ (for distributed rate limiting; not needed in `IN_MEMORY` mode)
-- MongoDB 4.4+ (optional, for rule management)
+- Java 17+ and Maven 3.8+ (Path A)
+- Java 11 with Spring Boot 2.7 is also supported via `fluxgate-spring-boot2-starter`
+- Docker (Path B, to start Redis/MongoDB)
 
-### 1. Add Dependencies
+---
+
+### Path A — In-Memory (no infrastructure required)
+
+This path works with nothing but Java and Maven. Copy-paste the four steps below; the app
+will start and enforce a 5-requests-per-minute limit per client IP.
+
+#### A-1. Add the dependency
 
 ```xml
-<!-- For Spring Boot 3.x (Java 17+) -->
+<!-- Spring Boot 3.x (Java 17+) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
     <version>0.3.7</version>
 </dependency>
+```
 
-<!-- For Spring Boot 2.7.x (Java 11+). 2.7 is required, not just supported: the starter
-     uses @AutoConfiguration, a 2.7 API. Boot 2.7 is OSS end-of-life - plan the move to
-     the boot3 starter. -->
-<!--
+#### A-2. Configure `application.yml`
+
+```yaml
+# application.yml
+fluxgate:
+  redis:
+    enabled: false          # no Redis needed
+  ratelimit:
+    mode: IN_MEMORY         # per-instance token bucket (fine for one process)
+    default-rule-set-id: api-limits
+    include-patterns:
+      - /api/**
+    exclude-patterns:
+      - /actuator/**
+  reload:
+    enabled: false          # no hot-reload needed in this mode
+```
+
+#### A-3. Enable the filter and define rules
+
+```java
+import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
+import org.fluxgate.core.config.LimitScope;
+import org.fluxgate.core.config.RateLimitBand;
+import org.fluxgate.core.config.RateLimitRule;
+import org.fluxgate.core.key.LimitScopeKeyResolver;
+import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
+import org.fluxgate.core.spi.RateLimitRuleSetProvider;
+import org.fluxgate.spring.annotation.EnableFluxgateFilter;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
+
+@SpringBootApplication
+@EnableFluxgateFilter                          // activates the rate-limit filter
+public class MyApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(MyApplication.class, args);
+    }
+
+    @Bean
+    public RateLimitRuleSetProvider ruleSetProvider() {
+        RateLimitRule rule = RateLimitRule.builder("per-ip")
+            .scope(LimitScope.PER_IP)
+            .ruleSetId("api-limits")
+            .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 5)
+                .label("5-per-60s")
+                .build())
+            .build();
+
+        RateLimitRuleSet ruleSet = RateLimitRuleSet.builder("api-limits")
+            .rules(List.of(rule))
+            .keyResolver(new LimitScopeKeyResolver())  // required
+            .build();
+
+        return id -> "api-limits".equals(id) ? Optional.of(ruleSet) : Optional.empty();
+    }
+}
+```
+
+#### A-4. See it in action
+
+Start the application, then run:
+
+```bash
+for i in $(seq 1 7); do
+    printf "Request %d: " $i
+    curl -s -w "HTTP %{http_code}\n" -o /tmp/body_$i.txt http://localhost:8080/api/hello
+done
+
+# Expected output (5-request/min limit):
+# Request 1: HTTP 200
+# Request 2: HTTP 200
+# Request 3: HTTP 200
+# Request 4: HTTP 200
+# Request 5: HTTP 200
+# Request 6: HTTP 429     ← rate limited
+# Request 7: HTTP 429
+```
+
+The 429 response includes standard rate limit headers and an RFC 9457 problem body:
+
+```
+HTTP/1.1 429
+X-RateLimit-Limit: 5
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: <epoch-seconds>
+RateLimit-Limit: 5
+RateLimit-Remaining: 0
+RateLimit-Reset: 60
+RateLimit-Policy: 5;w=60
+Retry-After: 12
+Content-Type: application/problem+json;charset=UTF-8
+
+{"type":"about:blank","title":"Too Many Requests","status":429,
+ "detail":"Rate limit exceeded, retry after 12 seconds","retryAfterMillis":11923}
+```
+
+> **Verified** — the output above was captured against a real running instance of the
+> sample app at commit `feature/review-overhaul`.
+
+---
+
+### Path B — Redis (distributed, production-grade)
+
+#### B-1. Start Redis
+
+```bash
+# docker/redis-standalone.yml ships with the project (ports bind to 127.0.0.1 only)
+docker compose -f docker/redis-standalone.yml up -d
+```
+
+#### B-2. Add dependencies
+
+```xml
+<!-- Boot 3 starter -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
-    <artifactId>fluxgate-spring-boot2-starter</artifactId>
+    <artifactId>fluxgate-spring-boot3-starter</artifactId>
     <version>0.3.7</version>
 </dependency>
--->
-
-<!-- For Redis-backed rate limiting -->
+<!-- Redis rate limiter (Lua-based, atomic) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
     <version>0.3.7</version>
 </dependency>
+```
 
-<!-- For MongoDB rule management (optional) -->
+#### B-3. Configure `application.yml`
+
+Keep the programmatic `ruleSetProvider` bean from Path A-3, or switch to MongoDB for
+dynamic rules (see below). The only change to the yml is enabling Redis:
+
+```yaml
+fluxgate:
+  redis:
+    enabled: true
+    uri: redis://localhost:6379
+  ratelimit:
+    mode: AUTO              # uses Redis when enabled, in-memory fallback otherwise
+    default-rule-set-id: api-limits
+    failure-behavior: DENY
+    missing-rule-behavior: DENY
+    include-patterns:
+      - /api/**
+    exclude-patterns:
+      - /actuator/**
+```
+
+#### B-4 (optional) — Dynamic rules via MongoDB
+
+Skip this step if a programmatic `ruleSetProvider` bean is enough.
+
+```bash
+# Start MongoDB (credentials match docker/mongo.yml)
+docker compose -f docker/mongo.yml up -d
+```
+
+Add the MongoDB adapter:
+
+```xml
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
@@ -146,109 +304,64 @@ delegates to `RateLimitEngine`, which resolves the rule set and calls a `RateLim
 </dependency>
 ```
 
-### 2. Configure Application
+Add MongoDB config to `application.yml`:
 
 ```yaml
-# application.yml
 fluxgate:
-  redis:
-    enabled: true
-    uri: redis://localhost:6379
   mongo:
     enabled: true
-    uri: mongodb://localhost:27017/fluxgate
+    # credentials from docker/mongo.yml — change these in any real deployment
+    uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
-  ratelimit:
-    default-rule-set-id: api-limits
-    failure-behavior: DENY
-    missing-rule-behavior: DENY
-    trust-client-ip-header: false
-    include-patterns:
-      - /api/**
-    exclude-patterns:
-      - /health
-      - /actuator/**
+    ddl-auto: create        # creates indexes on first start
 ```
 
-Every key above is read from properties. `include-patterns`, `exclude-patterns`,
-`filter-order` and `default-rule-set-id` take precedence over the matching
-`@EnableFluxgateFilter` attribute, so a deployment can retune the filter without
-recompiling. Note that `/*` matches a **single** path segment; use `/**` for nested
-paths.
-
-FluxGate's Spring Boot auto-configuration is fail-closed by default. A version upgrade is enough for auto-configured applications to deny limiter failures and missing rules with HTTP 429, and forwarded client IP headers are ignored unless `fluxgate.ratelimit.trust-client-ip-header=true` is explicitly set behind a trusted proxy — in which case you should also list the proxies in `fluxgate.ratelimit.trusted-proxies`.
-
-Redis bucket keys use the `fluxgate:bucket:{<ruleSetId>:<ruleId>:<keyValue>}:<bandLabel>` layout, and resolved key values carry a scope prefix (`ip:`, `user:`, `key:`, `custom:`, or `global`). In shared Redis deployments, isolate tenants with distinct rule set IDs and include tenant identity in custom key strategies; do not rely on a shared global rule set for multiple tenants.
-
-### 3. Enable Rate Limiting Filter
-
-```java
-@SpringBootApplication
-@EnableFluxgateFilter
-public class MyApplication {
-    public static void main(String[] args) {
-        SpringApplication.run(MyApplication.class, args);
-    }
-}
-```
-
-No `handler` attribute and no custom handler class are needed. With a `RateLimiter`
-(Redis or in-memory) and a `RateLimitRuleSetProvider` (MongoDB or your own bean) on the
-context, the starter registers `EngineBackedRateLimitHandler` for you. Define your own
-`FluxgateRateLimitHandler` bean only when you want to replace that — for example to call a
-central rate limit service over HTTP.
-
-### 4. Development without Redis
-
-For local development and tests, run the in-memory limiter instead. Limits then apply
-**per instance**, which is fine for one process and wrong for a cluster:
-
-```yaml
-fluxgate:
-  redis:
-    enabled: false
-  ratelimit:
-    mode: IN_MEMORY           # or AUTO, which falls back to in-memory when Redis is off
-    default-rule-set-id: api-limits
-```
-
-Supply the rules from code instead of MongoDB:
-
-```java
-@Bean
-public RateLimitRuleSetProvider ruleSetProvider() {
-    RateLimitRule rule = RateLimitRule.builder("per-ip")
-        .scope(LimitScope.PER_IP)
-        .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).build())
-        .ruleSetId("api-limits")
-        .build();
-
-    RateLimitRuleSet ruleSet = RateLimitRuleSet.builder("api-limits")
-        .rules(List.of(rule))
-        .build();
-
-    return ruleSetId -> "api-limits".equals(ruleSetId)
-        ? Optional.of(ruleSet)
-        : Optional.empty();
-}
-```
-
-For tests, `fluxgate-testkit` packages exactly this wiring behind
-`FluxgateInMemoryExtension` and `FluxgateTestRules` — see
-[fluxgate-testkit/README.md](fluxgate-testkit/README.md).
-
-### 5. Test Rate Limiting
+**Seed the rule set** (the app will not limit anything until a matching rule exists):
 
 ```bash
-# Send 12 requests (with 10 req/min limit)
-for i in {1..12}; do
-  curl -s -o /dev/null -w "Request $i: %{http_code}\n" http://localhost:8080/api/hello
-done
-
-# Expected output:
-# Request 1-10: 200
-# Request 11-12: 429 (Too Many Requests)
+# Using mongosh (install from https://www.mongodb.com/try/download/shell)
+mongosh "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin" --eval '
+db.rate_limit_rules.insertOne({
+  id: "per-ip",
+  name: "Default IP rule",
+  enabled: true,
+  ruleSetId: "api-limits",
+  scope: "PER_IP",
+  onLimitExceedPolicy: "REJECT_REQUEST",
+  bands: [{ capacity: NumberLong(10), windowMs: NumberLong(60000) }]
+})
+'
 ```
+
+Or use the programmatic seeder in `fluxgate-samples/fluxgate-sample-mongo` (see
+[samples/README](fluxgate-samples/README.md)).
+
+#### B-5. Enable the filter
+
+Same `@EnableFluxgateFilter` annotation as in step A-3. When the MongoDB adapter is on
+the classpath and `fluxgate.mongo.enabled=true`, the starter wires `MongoRuleSetProvider`
+automatically — no `ruleSetProvider` bean needed.
+
+#### B-6. Test
+
+Same `curl` loop as Path A-4. The only difference is that limits are now shared across
+every instance that connects to the same Redis.
+
+---
+
+### Notes on `include-patterns` and hot reload
+
+`include-patterns`, `exclude-patterns`, `filter-order`, and `default-rule-set-id` in
+`application.yml` take precedence over the matching `@EnableFluxgateFilter` attribute.
+Note that `/*` matches a **single** path segment; use `/**` for nested paths.
+
+FluxGate's auto-configuration is fail-closed by default (`failure-behavior: DENY`,
+`missing-rule-behavior: DENY`). Forwarded client IP headers are ignored unless
+`fluxgate.ratelimit.trust-client-ip-header=true` is set; when you enable that, also list
+trusted proxy CIDRs in `fluxgate.ratelimit.trusted-proxies`.
+
+For tests, `fluxgate-testkit` packages in-memory wiring behind `FluxgateInMemoryExtension`
+and `FluxgateTestRules` — see [fluxgate-testkit/README.md](fluxgate-testkit/README.md).
 
 ## Deployment Patterns
 
@@ -341,7 +454,7 @@ All defaults below are the values in `FluxgateProperties` and
 | `fluxgate.redis.fail-fast` | `false` | Fail application startup when Redis is unreachable. Default connects lazily and reconnects in the background |
 | `fluxgate.redis.max-bucket-ttl` | `7d` | Upper bound on a bucket's TTL. Bounds how much Redis memory a forged-identity caller can pin down with a long window |
 | `fluxgate.mongo.enabled` | `false` | Enable the MongoDB adapter |
-| `fluxgate.mongo.uri` | `mongodb://localhost:27017/fluxgate` | MongoDB connection URI |
+| `fluxgate.mongo.uri` | `mongodb://localhost:27017/fluxgate` | MongoDB connection URI. For authenticated instances use `mongodb://user:pass@host:27017/db?authSource=admin` (see Quick Start for the docker/mongo.yml credentials) |
 | `fluxgate.mongo.database` | `fluxgate` | MongoDB database name |
 | `fluxgate.mongo.rule-collection` | `rate_limit_rules` | Collection holding rate limit rules |
 | `fluxgate.mongo.event-collection` | _(unset)_ | Collection for rate limit events (optional) |
@@ -444,7 +557,8 @@ The `fluxgate.mongo.ddl-auto` property controls how FluxGate handles MongoDB col
 fluxgate:
   mongo:
     enabled: true
-    uri: mongodb://localhost:27017/fluxgate
+    # docker/mongo.yml credentials — change these in any real deployment
+    uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
     rule-collection: my_rate_limit_rules    # Custom collection name
     event-collection: my_rate_limit_events  # Optional: enable event logging
@@ -811,6 +925,7 @@ FluxGate is honest about what it does not do yet:
 - [Spring Boot 3 Starter](fluxgate-spring-boot3-starter/README.md) - Auto-configuration and full property reference
 - [Testkit](fluxgate-testkit/README.md) - In-memory handler, rule builders, JUnit 5 extension, benchmarks
 - [Documentation Index](docs/README.md) - Architecture deep dives, customization guides, migration notes
+- [@RateLimit Annotation Guide](docs/en/guides/annotation.md) - `@EnableFluxgateAspect`, all annotation attributes, `throwOnReject`, `@RestControllerAdvice` example, non-web usage, filter vs. aspect table
 - [Migrating to 0.4](docs/en/operations/migration-0.4.md) - Upgrade impact from 0.3.x
 - [Changelog](CHANGELOG.md) - What changed, with the breaking list
 - [Security Policy](SECURITY.md) - Reporting, secure defaults, tenant isolation

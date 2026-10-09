@@ -122,3 +122,9 @@ jobs:
             fluxgate-mongo-adapter/target/*.jar
             fluxgate-spring-boot2-starter/target/*.jar
             fluxgate-spring-boot3-starter/target/*.jar
+
+      - name: Upload SBOM to GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          files: target/bom.json

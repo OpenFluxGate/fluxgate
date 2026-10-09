@@ -41,13 +41,15 @@ public final class RateLimitKey {
    * Returns the key value.
    *
    * @return the key string
+   * @deprecated since 0.4.0 and scheduled for removal; use {@link #value()} instead
    */
+  @Deprecated(since = "0.4.0", forRemoval = true)
   public String key() {
     return key;
   }
 
   /**
-   * Returns the key value. Alias for {@link #key()}.
+   * Returns the key value.
    *
    * @return the key string
    */

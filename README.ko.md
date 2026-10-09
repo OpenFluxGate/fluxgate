@@ -104,14 +104,24 @@
 
 ## 빠른 시작
 
+두 가지 경로로 시작할 수 있습니다. **경로 A**는 Java와 Maven만 있으면 됩니다 — 인프라 없이
+즉시 실행 가능한 인메모리 Limiter입니다. **경로 B**는 Redis를 추가해 분산 Rate Limiting을
+구현하고, 선택적으로 MongoDB로 동적 규칙 관리까지 확장합니다.
+
 ### 사전 요구 사항
 
-- Java 11+ / Spring Boot 2.7.x, 또는 Java 17+ / Spring Boot 3.x
-- Maven 3.8+
-- Redis 6.0+ (분산 Rate Limiting용. `IN_MEMORY` 모드에서는 불필요)
-- MongoDB 4.4+ (선택사항, 규칙 관리용)
+- Java 17+ 및 Maven 3.8+ (경로 A)
+- Java 11 / Spring Boot 2.7도 `fluxgate-spring-boot2-starter`로 지원
+- Docker (경로 B, Redis/MongoDB 시작용)
 
-### 1. 의존성 추가
+---
+
+### 경로 A — 인메모리 (인프라 불필요)
+
+Java와 Maven만 있으면 됩니다. 아래 네 단계를 복사하면 앱이 시작되고 클라이언트 IP별로
+분당 5건 제한이 적용됩니다.
+
+#### A-1. 의존성 추가
 
 ```xml
 <!-- Spring Boot 3.x (Java 17+) -->
@@ -120,26 +130,171 @@
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
     <version>0.3.7</version>
 </dependency>
+```
 
-<!-- Spring Boot 2.7.x (Java 11+). 2.7은 "지원"이 아니라 "필수"입니다: 스타터가
-     2.7 API인 @AutoConfiguration을 사용합니다. Boot 2.7은 OSS EOL이므로 boot3
-     스타터로의 이전을 계획하세요. -->
-<!--
+#### A-2. `application.yml` 설정
+
+```yaml
+# application.yml
+fluxgate:
+  redis:
+    enabled: false          # Redis 불필요
+  ratelimit:
+    mode: IN_MEMORY         # 인스턴스별 토큰 버킷 (단일 프로세스에 적합)
+    default-rule-set-id: api-limits
+    include-patterns:
+      - /api/**
+    exclude-patterns:
+      - /actuator/**
+  reload:
+    enabled: false          # 이 모드에서는 핫 리로드 불필요
+```
+
+#### A-3. 필터 활성화 및 규칙 정의
+
+```java
+import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
+import org.fluxgate.core.config.LimitScope;
+import org.fluxgate.core.config.RateLimitBand;
+import org.fluxgate.core.config.RateLimitRule;
+import org.fluxgate.core.key.LimitScopeKeyResolver;
+import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
+import org.fluxgate.core.spi.RateLimitRuleSetProvider;
+import org.fluxgate.spring.annotation.EnableFluxgateFilter;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
+
+@SpringBootApplication
+@EnableFluxgateFilter                          // Rate Limit 필터 활성화
+public class MyApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(MyApplication.class, args);
+    }
+
+    @Bean
+    public RateLimitRuleSetProvider ruleSetProvider() {
+        RateLimitRule rule = RateLimitRule.builder("per-ip")
+            .scope(LimitScope.PER_IP)
+            .ruleSetId("api-limits")
+            .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 5)
+                .label("5-per-60s")
+                .build())
+            .build();
+
+        RateLimitRuleSet ruleSet = RateLimitRuleSet.builder("api-limits")
+            .rules(List.of(rule))
+            .keyResolver(new LimitScopeKeyResolver())  // 필수
+            .build();
+
+        return id -> "api-limits".equals(id) ? Optional.of(ruleSet) : Optional.empty();
+    }
+}
+```
+
+#### A-4. 동작 확인
+
+앱을 시작한 뒤 실행:
+
+```bash
+for i in $(seq 1 7); do
+    printf "Request %d: " $i
+    curl -s -w "HTTP %{http_code}\n" -o /tmp/body_$i.txt http://localhost:8080/api/hello
+done
+
+# 예상 출력 (분당 5건 제한):
+# Request 1: HTTP 200
+# Request 2: HTTP 200
+# Request 3: HTTP 200
+# Request 4: HTTP 200
+# Request 5: HTTP 200
+# Request 6: HTTP 429     ← Rate Limited
+# Request 7: HTTP 429
+```
+
+429 응답에는 표준 Rate Limit 헤더와 RFC 9457 problem body가 포함됩니다:
+
+```
+HTTP/1.1 429
+X-RateLimit-Limit: 5
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: <epoch-seconds>
+RateLimit-Limit: 5
+RateLimit-Remaining: 0
+RateLimit-Reset: 60
+RateLimit-Policy: 5;w=60
+Retry-After: 12
+Content-Type: application/problem+json;charset=UTF-8
+
+{"type":"about:blank","title":"Too Many Requests","status":429,
+ "detail":"Rate limit exceeded, retry after 12 seconds","retryAfterMillis":11923}
+```
+
+> **검증 완료** — 위 출력은 실제 실행 중인 샘플 앱(`feature/review-overhaul` 커밋)에서 캡처했습니다.
+
+---
+
+### 경로 B — Redis (분산, 프로덕션용)
+
+#### B-1. Redis 시작
+
+```bash
+# docker/redis-standalone.yml이 프로젝트에 포함되어 있습니다 (포트는 127.0.0.1에만 바인딩)
+docker compose -f docker/redis-standalone.yml up -d
+```
+
+#### B-2. 의존성 추가
+
+```xml
+<!-- Boot 3 스타터 -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
-    <artifactId>fluxgate-spring-boot2-starter</artifactId>
+    <artifactId>fluxgate-spring-boot3-starter</artifactId>
     <version>0.3.7</version>
 </dependency>
--->
-
-<!-- Redis 기반 Rate Limiting -->
+<!-- Redis Rate Limiter (Lua 기반, 원자적) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
     <version>0.3.7</version>
 </dependency>
+```
 
-<!-- MongoDB 규칙 관리 (선택사항) -->
+#### B-3. `application.yml` 설정
+
+경로 A-3의 프로그래매틱 `ruleSetProvider` 빈을 그대로 유지하거나, MongoDB로 동적 규칙을 사용하세요 (아래 참고). yml에서 Redis만 활성화하면 됩니다:
+
+```yaml
+fluxgate:
+  redis:
+    enabled: true
+    uri: redis://localhost:6379
+  ratelimit:
+    mode: AUTO              # Redis 활성화 시 Redis 사용, 아니면 인메모리 폴백
+    default-rule-set-id: api-limits
+    failure-behavior: DENY
+    missing-rule-behavior: DENY
+    include-patterns:
+      - /api/**
+    exclude-patterns:
+      - /actuator/**
+```
+
+#### B-4 (선택) — MongoDB 동적 규칙
+
+프로그래매틱 `ruleSetProvider` 빈으로 충분하면 이 단계는 건너뛰세요.
+
+```bash
+# MongoDB 시작 (credentials는 docker/mongo.yml 기준)
+docker compose -f docker/mongo.yml up -d
+```
+
+Maven 의존성 추가:
+
+```xml
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
@@ -147,112 +302,62 @@
 </dependency>
 ```
 
-### 2. 애플리케이션 설정
+`application.yml`에 MongoDB 설정 추가:
 
 ```yaml
-# application.yml
 fluxgate:
-  redis:
-    enabled: true
-    uri: redis://localhost:6379
   mongo:
     enabled: true
-    uri: mongodb://localhost:27017/fluxgate
+    # docker/mongo.yml 자격증명 — 실제 배포에서는 변경하세요
+    uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
-  ratelimit:
-    default-rule-set-id: api-limits
-    failure-behavior: DENY
-    missing-rule-behavior: DENY
-    trust-client-ip-header: false
-    include-patterns:
-      - /api/**
-    exclude-patterns:
-      - /health
-      - /actuator/**
+    ddl-auto: create        # 최초 시작 시 인덱스 생성
 ```
 
-위 키는 모두 프로퍼티에서 읽힙니다. `include-patterns`, `exclude-patterns`, `filter-order`,
-`default-rule-set-id`는 대응하는 `@EnableFluxgateFilter` 애트리뷰트보다 **우선**하므로,
-재컴파일 없이 배포 단계에서 필터를 조정할 수 있습니다. `/*`는 경로 세그먼트 **하나**만
-매칭한다는 점에 주의하세요. 중첩 경로에는 `/**`를 사용해야 합니다.
-
-FluxGate의 Spring Boot 자동 설정은 기본이 fail-closed입니다. 버전 업그레이드만으로 자동 설정
-애플리케이션은 Limiter 실패와 룰셋 부재를 HTTP 429로 거부하며, 전달된 클라이언트 IP 헤더는
-`fluxgate.ratelimit.trust-client-ip-header=true`를 신뢰 프록시 뒤에서 명시적으로 설정하지 않는 한
-무시됩니다. 이때 `fluxgate.ratelimit.trusted-proxies`에 프록시 목록도 함께 지정해야 합니다.
-
-Redis 버킷 키는 `fluxgate:bucket:{<ruleSetId>:<ruleId>:<keyValue>}:<bandLabel>` 레이아웃을 사용하며,
-해석된 키 값에는 스코프 접두사(`ip:`, `user:`, `key:`, `custom:`, `global`)가 붙습니다. Redis를 공유하는
-배포에서는 테넌트별로 서로 다른 룰셋 ID를 사용하고 커스텀 키 전략에 테넌트 식별자를 포함하세요.
-여러 테넌트가 하나의 전역 룰셋을 공유하게 두어서는 안 됩니다.
-
-### 3. Rate Limiting 필터 활성화
-
-```java
-@SpringBootApplication
-@EnableFluxgateFilter
-public class MyApplication {
-    public static void main(String[] args) {
-        SpringApplication.run(MyApplication.class, args);
-    }
-}
-```
-
-`handler` 애트리뷰트도, 직접 만든 핸들러 클래스도 필요하지 않습니다. 컨텍스트에 `RateLimiter`
-(Redis 또는 인메모리)와 `RateLimitRuleSetProvider`(MongoDB 또는 직접 정의한 빈)가 있으면 스타터가
-`EngineBackedRateLimitHandler`를 자동 등록합니다. 중앙 Rate Limit 서비스를 HTTP로 호출하는 등
-기본 핸들러를 대체하고 싶을 때만 `FluxgateRateLimitHandler` 빈을 직접 정의하세요.
-
-### 4. Redis 없이 개발하기
-
-로컬 개발과 테스트에서는 인메모리 Limiter를 사용할 수 있습니다. 이때 제한은 **인스턴스별**로
-적용되므로, 단일 프로세스에서는 문제가 없지만 클러스터에서는 올바르지 않습니다:
-
-```yaml
-fluxgate:
-  redis:
-    enabled: false
-  ratelimit:
-    mode: IN_MEMORY           # AUTO로 두어도 Redis가 꺼져 있으면 인메모리로 내려갑니다
-    default-rule-set-id: api-limits
-```
-
-규칙은 MongoDB 대신 코드로 공급합니다:
-
-```java
-@Bean
-public RateLimitRuleSetProvider ruleSetProvider() {
-    RateLimitRule rule = RateLimitRule.builder("per-ip")
-        .scope(LimitScope.PER_IP)
-        .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).build())
-        .ruleSetId("api-limits")
-        .build();
-
-    RateLimitRuleSet ruleSet = RateLimitRuleSet.builder("api-limits")
-        .rules(List.of(rule))
-        .build();
-
-    return ruleSetId -> "api-limits".equals(ruleSetId)
-        ? Optional.of(ruleSet)
-        : Optional.empty();
-}
-```
-
-테스트에서는 `fluxgate-testkit`이 이 배선을 `FluxgateInMemoryExtension`과 `FluxgateTestRules`로
-포장해 제공합니다. [fluxgate-testkit/README.md](fluxgate-testkit/README.md)를 참고하세요.
-
-### 5. Rate Limiting 테스트
+**규칙 시딩** (매칭 규칙이 없으면 아무것도 제한되지 않습니다):
 
 ```bash
-# 12개 요청 전송 (10 req/min 제한)
-for i in {1..12}; do
-  curl -s -o /dev/null -w "Request $i: %{http_code}\n" http://localhost:8080/api/hello
-done
-
-# 예상 출력:
-# Request 1-10: 200
-# Request 11-12: 429 (Too Many Requests)
+# mongosh 사용 (https://www.mongodb.com/try/download/shell 에서 설치)
+mongosh "mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin" --eval '
+db.rate_limit_rules.insertOne({
+  id: "per-ip",
+  name: "Default IP rule",
+  enabled: true,
+  ruleSetId: "api-limits",
+  scope: "PER_IP",
+  onLimitExceedPolicy: "REJECT_REQUEST",
+  bands: [{ capacity: NumberLong(10), windowMs: NumberLong(60000) }]
+})
+'
 ```
+
+또는 `fluxgate-samples/fluxgate-sample-mongo`의 프로그래매틱 시더를 사용하세요
+([samples/README](fluxgate-samples/README.md) 참고).
+
+#### B-5. 필터 활성화
+
+경로 A-3의 `@EnableFluxgateFilter` 애노테이션 그대로 사용. MongoDB 어댑터가 클래스패스에 있고
+`fluxgate.mongo.enabled=true`이면 스타터가 `MongoRuleSetProvider`를 자동 등록합니다 — 별도
+`ruleSetProvider` 빈 불필요.
+
+#### B-6. 테스트
+
+경로 A-4의 `curl` 루프와 동일. 차이점은 이제 동일한 Redis에 연결된 모든 인스턴스가 제한을 공유한다는 것입니다.
+
+---
+
+### `include-patterns` 및 핫 리로드 참고사항
+
+`application.yml`의 `include-patterns`, `exclude-patterns`, `filter-order`, `default-rule-set-id`는
+대응하는 `@EnableFluxgateFilter` 애트리뷰트보다 **우선**합니다. `/*`는 경로 세그먼트 **하나**만
+매칭한다는 점에 주의하세요. 중첩 경로에는 `/**`를 사용해야 합니다.
+
+FluxGate 자동 설정은 기본이 fail-closed입니다(`failure-behavior: DENY`, `missing-rule-behavior: DENY`).
+전달된 클라이언트 IP 헤더는 `fluxgate.ratelimit.trust-client-ip-header=true`를 설정하지 않는 한 무시됩니다.
+이때 `fluxgate.ratelimit.trusted-proxies`에 신뢰 프록시 CIDR도 함께 지정하세요.
+
+테스트에서는 `fluxgate-testkit`이 인메모리 배선을 `FluxgateInMemoryExtension`과 `FluxgateTestRules`로
+포장해 제공합니다. [fluxgate-testkit/README.md](fluxgate-testkit/README.md)를 참고하세요.
 
 ## 배포 패턴
 
@@ -344,7 +449,7 @@ curl http://localhost:8083/api/hello
 | `fluxgate.redis.fail-fast` | `false` | Redis 연결 실패 시 기동 실패. 기본값은 지연 연결 + 백그라운드 재연결 |
 | `fluxgate.redis.max-bucket-ttl` | `7d` | 버킷 TTL 상한. 긴 윈도에서 위조 가능한 신원 키가 점유할 수 있는 Redis 메모리를 제한합니다 |
 | `fluxgate.mongo.enabled` | `false` | MongoDB 어댑터 활성화 |
-| `fluxgate.mongo.uri` | `mongodb://localhost:27017/fluxgate` | MongoDB 연결 URI |
+| `fluxgate.mongo.uri` | `mongodb://localhost:27017/fluxgate` | MongoDB 연결 URI. 인증이 필요한 경우 `mongodb://user:pass@host:27017/db?authSource=admin` 형식 사용 (빠른 시작의 docker/mongo.yml 자격증명 참고) |
 | `fluxgate.mongo.database` | `fluxgate` | MongoDB 데이터베이스명 |
 | `fluxgate.mongo.rule-collection` | `rate_limit_rules` | 규칙 컬렉션명 |
 | `fluxgate.mongo.event-collection` | _(미설정)_ | 이벤트 컬렉션명 (선택사항) |
@@ -447,7 +552,8 @@ curl http://localhost:8083/api/hello
 fluxgate:
   mongo:
     enabled: true
-    uri: mongodb://localhost:27017/fluxgate
+    # docker/mongo.yml 자격증명 — 실제 배포에서는 변경하세요
+    uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
     rule-collection: my_rate_limit_rules    # 커스텀 컬렉션명
     event-collection: my_rate_limit_events  # 선택: 이벤트 로깅 활성화
@@ -814,6 +920,7 @@ FluxGate가 아직 하지 못하는 것을 솔직히 적습니다:
 - [Spring Boot 3 Starter](fluxgate-spring-boot3-starter/README.md) - 자동 설정과 전체 프로퍼티 레퍼런스
 - [Testkit](fluxgate-testkit/README.md) - 인메모리 핸들러, 규칙 빌더, JUnit 5 확장, 벤치마크
 - [문서 색인](docs/README.ko.md) - 아키텍처 Deep Dive, 커스터마이징 가이드, 마이그레이션 노트
+- [@RateLimit 애노테이션 가이드](docs/ko/guides/annotation.ko.md) - `@EnableFluxgateAspect`, 전체 애노테이션 속성, `throwOnReject`, `@RestControllerAdvice` 예제, 비웹 사용, 필터 vs. Aspect 비교
 - [0.4 마이그레이션](docs/ko/operations/migration-0.4.ko.md) - 0.3.x에서 올라올 때의 영향
 - [CHANGELOG](CHANGELOG.md) - 변경 내역과 Breaking 목록
 - [보안 정책](SECURITY.md) - 신고 절차, 보안 기본값, 테넌트 격리

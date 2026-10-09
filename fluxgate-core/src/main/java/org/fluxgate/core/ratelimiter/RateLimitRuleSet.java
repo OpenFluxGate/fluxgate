@@ -2,12 +2,17 @@
 
 package org.fluxgate.core.ratelimiter;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+import org.fluxgate.core.config.AccessControl;
 import org.fluxgate.core.config.RateLimitRule;
+import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.exception.InvalidRuleConfigException;
 import org.fluxgate.core.key.KeyResolver;
+import org.fluxgate.core.match.PathPatternMatcher;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 
 /**
@@ -30,12 +35,17 @@ public final class RateLimitRuleSet {
   // Optional metrics hook
   private final RateLimitMetricsRecorder metricsRecorder;
 
+  // Optional access control
+  private final AccessControl accessControl;
+
   private RateLimitRuleSet(Builder builder) {
     this.id = Objects.requireNonNull(builder.id, "id must not be null");
     this.description = builder.description;
     this.rules = List.copyOf(builder.rules);
     this.keyResolver = Objects.requireNonNull(builder.keyResolver, "keyResolver must not be null");
     this.metricsRecorder = builder.metricsRecorder;
+    this.accessControl =
+        builder.accessControl != null ? builder.accessControl : AccessControl.EMPTY;
   }
 
   /**
@@ -84,6 +94,50 @@ public final class RateLimitRuleSet {
   }
 
   /**
+   * Returns the access control rules for this rule set. Never {@code null}; defaults to {@link
+   * AccessControl#EMPTY}.
+   *
+   * @return the access control (never null)
+   * @since 0.4.0
+   */
+  public AccessControl getAccessControl() {
+    return accessControl;
+  }
+
+  /**
+   * Returns the enabled rules whose {@link org.fluxgate.core.config.RuleMatcher} matches the given
+   * context, sorted by {@link RateLimitRule#getPriority() priority} descending then by rule id
+   * ascending for determinism.
+   *
+   * <p>The list defines the evaluation order: limiters should iterate it from index 0 (highest
+   * priority). {@link PathPatternMatcher} is not stored on the rule set; callers supply it on each
+   * call.
+   *
+   * @param context the current request context (must not be null)
+   * @param pathMatcher the Ant-style path matcher to use (must not be null)
+   * @return an unmodifiable, sorted list of matching rules (may be empty)
+   * @since 0.4.0
+   */
+  public List<RateLimitRule> getMatchingRules(
+      RequestContext context, PathPatternMatcher pathMatcher) {
+    Objects.requireNonNull(context, "context must not be null");
+    Objects.requireNonNull(pathMatcher, "pathMatcher must not be null");
+
+    List<RateLimitRule> matched = new ArrayList<>();
+    for (RateLimitRule rule : rules) {
+      if (rule.isEnabled() && rule.getMatcher().matches(context, pathMatcher)) {
+        matched.add(rule);
+      }
+    }
+    // priority DESC, then id ASC for determinism
+    matched.sort(
+        Comparator.comparingInt(RateLimitRule::getPriority)
+            .reversed()
+            .thenComparing(RateLimitRule::getId));
+    return Collections.unmodifiableList(matched);
+  }
+
+  /**
    * Creates a new builder for a rule set with the given id.
    *
    * @param id the rule set id (must not be null)
@@ -100,6 +154,7 @@ public final class RateLimitRuleSet {
     private List<RateLimitRule> rules = List.of();
     private KeyResolver keyResolver;
     private RateLimitMetricsRecorder metricsRecorder;
+    private AccessControl accessControl;
 
     /**
      * Constructs a builder for a rule set with the given id.
@@ -155,6 +210,18 @@ public final class RateLimitRuleSet {
     }
 
     /**
+     * Sets the access control rules. Defaults to {@link AccessControl#EMPTY} (no restrictions).
+     *
+     * @param accessControl the access control (null means no restrictions)
+     * @return this builder
+     * @since 0.4.0
+     */
+    public Builder accessControl(AccessControl accessControl) {
+      this.accessControl = accessControl;
+      return this;
+    }
+
+    /**
      * Builds the rule set.
      *
      * @return the rule set
@@ -182,11 +249,12 @@ public final class RateLimitRuleSet {
         && Objects.equals(description, that.description)
         && Objects.equals(rules, that.rules)
         && Objects.equals(keyResolver, that.keyResolver)
-        && Objects.equals(metricsRecorder, that.metricsRecorder);
+        && Objects.equals(metricsRecorder, that.metricsRecorder)
+        && Objects.equals(accessControl, that.accessControl);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(id, description, rules, keyResolver, metricsRecorder);
+    return Objects.hash(id, description, rules, keyResolver, metricsRecorder, accessControl);
   }
 }

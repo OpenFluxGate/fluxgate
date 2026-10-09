@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.fluxgate.core.exception.InvalidRuleConfigException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -550,14 +551,14 @@ class RateLimitRuleTest {
               .attribute("ratio", 0.75)
               .build();
 
-      // when / then
-      assertEquals(Integer.valueOf(5), rule.getAttribute("maxRetries", Integer.class));
-      assertEquals(Boolean.TRUE, rule.getAttribute("enabled", Boolean.class));
-      assertEquals(Double.valueOf(0.75), rule.getAttribute("ratio", Double.class));
+      // when / then — getAttribute now returns Optional<T>
+      assertEquals(Optional.of(Integer.valueOf(5)), rule.getAttribute("maxRetries", Integer.class));
+      assertEquals(Optional.of(Boolean.TRUE), rule.getAttribute("enabled", Boolean.class));
+      assertEquals(Optional.of(Double.valueOf(0.75)), rule.getAttribute("ratio", Double.class));
     }
 
     @Test
-    @DisplayName("getAttribute with type should return null for non-existing key")
+    @DisplayName("getAttribute with type should return empty Optional for non-existing key")
     void getAttribute_withType_shouldReturnNullForNonExistingKey() {
       // given
       RateLimitRule rule =
@@ -566,8 +567,8 @@ class RateLimitRuleTest {
               .attribute("tier", "premium")
               .build();
 
-      // when / then
-      assertNull(rule.getAttribute("nonExistent", String.class));
+      // when / then — returns Optional.empty() rather than null
+      assertEquals(Optional.empty(), rule.getAttribute("nonExistent", String.class));
     }
 
     @Test

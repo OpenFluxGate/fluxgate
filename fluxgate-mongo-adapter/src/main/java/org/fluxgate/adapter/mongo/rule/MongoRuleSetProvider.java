@@ -9,6 +9,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
+import org.fluxgate.core.config.AccessControl;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.exception.FluxgateOperationException;
 import org.fluxgate.core.exception.MongoConnectionException;
@@ -111,6 +113,13 @@ public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
     // Attach metrics recorder if available
     if (metricsRecorder != null) {
       builder.metricsRecorder(metricsRecorder);
+    }
+
+    // Extract rule-set-level access control from the repository when supported (0.4.0+)
+    if (ruleRepository instanceof MongoRateLimitRuleRepository) {
+      AccessControl accessControl =
+          ((MongoRateLimitRuleRepository) ruleRepository).findAccessControlByRuleSetId(ruleSetId);
+      builder.accessControl(accessControl);
     }
 
     return Optional.of(builder.build());

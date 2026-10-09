@@ -725,7 +725,7 @@ public class FluxgateRateLimitFilter implements Filter {
         } else {
             httpResponse.setStatus(429);  // Too Many Requests
             httpResponse.setHeader("Retry-After",
-                String.valueOf(result.getRetryAfterMs() / 1000));
+                String.valueOf(result.getRetryAfterMillis() / 1000));
             httpResponse.getWriter().write("Rate limit exceeded");
         }
     }

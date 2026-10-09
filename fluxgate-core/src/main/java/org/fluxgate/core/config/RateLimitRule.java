@@ -7,8 +7,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import org.fluxgate.core.exception.InvalidRuleConfigException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Core configuration object describing a rate limit rule. This rule is intentionally
@@ -20,6 +23,8 @@ import org.fluxgate.core.exception.InvalidRuleConfigException;
  * deserialisation.
  */
 public final class RateLimitRule {
+
+  private static final Logger log = LoggerFactory.getLogger(RateLimitRule.class);
 
   private final String id;
   private final String name;
@@ -70,6 +75,21 @@ public final class RateLimitRule {
    */
   private final Map<String, Object> attributes;
 
+  /**
+   * Priority of this rule within the rule set. Higher values win; ties are broken by rule id
+   * ascending for determinism.
+   *
+   * @since 0.4.0
+   */
+  private final int priority;
+
+  /**
+   * Predicate that decides whether this rule applies to a given request.
+   *
+   * @since 0.4.0
+   */
+  private final RuleMatcher matcher;
+
   private RateLimitRule(Builder builder) {
     this.id = Objects.requireNonNull(builder.id, "id must not be null");
     this.name = builder.name != null ? builder.name : builder.id;
@@ -90,6 +110,8 @@ public final class RateLimitRule {
         builder.attributes.isEmpty()
             ? Collections.emptyMap()
             : Collections.unmodifiableMap(new HashMap<>(builder.attributes));
+    this.priority = builder.priority;
+    this.matcher = builder.matcher != null ? builder.matcher : RuleMatcher.matchAll();
   }
 
   /**
@@ -200,20 +222,56 @@ public final class RateLimitRule {
   }
 
   /**
-   * Returns a specific attribute value cast to the expected type, or null if not present.
+   * Returns a specific attribute value cast to the expected type, or {@link Optional#empty()} if
+   * not present or the value cannot be cast to {@code type}.
    *
-   * <p>Example: {@code String tier = rule.getAttribute("tier", String.class);}
+   * <p>A type mismatch is logged at {@code DEBUG} level and never propagates as an exception.
+   *
+   * <p>Example: {@code Optional<String> tier = rule.getAttribute("tier", String.class);}
    *
    * @param key the attribute key
    * @param type the expected type
    * @param <T> the type parameter
-   * @return the attribute value cast to the expected type, or null if not found
-   * @throws ClassCastException if the value cannot be cast to the expected type
+   * @return an {@link Optional} containing the cast value, or empty if absent or incompatible
+   * @since 0.4.0
    */
-  @SuppressWarnings("unchecked")
-  public <T> T getAttribute(String key, Class<T> type) {
+  public <T> Optional<T> getAttribute(String key, Class<T> type) {
     Object value = attributes.get(key);
-    return value != null ? (T) value : null;
+    if (value == null) {
+      return Optional.empty();
+    }
+    try {
+      return Optional.of(type.cast(value));
+    } catch (ClassCastException e) {
+      log.debug(
+          "Attribute '{}' on rule '{}' is of type {} but expected {}; returning empty",
+          key,
+          id,
+          value.getClass().getName(),
+          type.getName());
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Returns the priority of this rule. Higher priority rules are evaluated first; ties are broken
+   * by rule id ascending.
+   *
+   * @return the priority (default 0)
+   * @since 0.4.0
+   */
+  public int getPriority() {
+    return priority;
+  }
+
+  /**
+   * Returns the matcher that decides whether this rule applies to a given request.
+   *
+   * @return the matcher (never null; defaults to {@link RuleMatcher#matchAll()})
+   * @since 0.4.0
+   */
+  public RuleMatcher getMatcher() {
+    return matcher;
   }
 
   /**
@@ -237,6 +295,8 @@ public final class RateLimitRule {
     private final List<RateLimitBand> bands = new ArrayList<>();
     private String ruleSetId; // optional
     private Map<String, Object> attributes = Collections.emptyMap();
+    private int priority = 0;
+    private RuleMatcher matcher;
 
     private Builder(String id) {
       this.id = Objects.requireNonNull(id, "id must not be null");
@@ -360,6 +420,32 @@ public final class RateLimitRule {
     }
 
     /**
+     * Sets the evaluation priority. Higher values are evaluated first; ties are broken by rule id
+     * ascending. Defaults to 0.
+     *
+     * @param priority the priority
+     * @return this builder
+     * @since 0.4.0
+     */
+    public Builder priority(int priority) {
+      this.priority = priority;
+      return this;
+    }
+
+    /**
+     * Sets the matcher that decides whether this rule applies to a given request. Defaults to
+     * {@link RuleMatcher#matchAll()}.
+     *
+     * @param matcher the matcher (must not be null)
+     * @return this builder
+     * @since 0.4.0
+     */
+    public Builder matcher(RuleMatcher matcher) {
+      this.matcher = Objects.requireNonNull(matcher, "matcher must not be null");
+      return this;
+    }
+
+    /**
      * Builds the rule.
      *
      * @return the rule
@@ -377,6 +463,7 @@ public final class RateLimitRule {
     if (!(o instanceof RateLimitRule)) return false;
     RateLimitRule that = (RateLimitRule) o;
     return enabled == that.enabled
+        && priority == that.priority
         && Objects.equals(id, that.id)
         && Objects.equals(name, that.name)
         && scope == that.scope
@@ -384,13 +471,24 @@ public final class RateLimitRule {
         && onLimitExceedPolicy == that.onLimitExceedPolicy
         && Objects.equals(bands, that.bands)
         && Objects.equals(ruleSetId, that.ruleSetId)
-        && Objects.equals(attributes, that.attributes);
+        && Objects.equals(attributes, that.attributes)
+        && Objects.equals(matcher, that.matcher);
   }
 
   @Override
   public int hashCode() {
     return Objects.hash(
-        id, name, enabled, scope, keyStrategyId, onLimitExceedPolicy, bands, ruleSetId, attributes);
+        id,
+        name,
+        enabled,
+        scope,
+        keyStrategyId,
+        onLimitExceedPolicy,
+        bands,
+        ruleSetId,
+        attributes,
+        priority,
+        matcher);
   }
 
   @Override
@@ -418,6 +516,10 @@ public final class RateLimitRule {
         + '\''
         + ", attributes="
         + attributes
+        + ", priority="
+        + priority
+        + ", matcher="
+        + matcher
         + '}';
   }
 }

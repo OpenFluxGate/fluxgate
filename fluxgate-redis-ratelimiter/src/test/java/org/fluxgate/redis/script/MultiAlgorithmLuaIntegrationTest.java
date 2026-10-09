@@ -1,0 +1,488 @@
+package org.fluxgate.redis.script;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+import io.lettuce.core.RedisCommandExecutionException;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import org.fluxgate.redis.config.RedisRateLimiterConfig;
+import org.fluxgate.redis.connection.RedisConnectionProvider;
+import org.fluxgate.redis.support.RedisContainerSupport;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+/**
+ * Integration tests for the multi-algorithm {@code token_bucket_consume.lua} executed against a
+ * real Redis.
+ *
+ * <p>These drive the script directly to cover algorithm-specific ARGV contracts, TTL/EXPIREAT
+ * semantics, boundary conditions, mixed-algorithm all-or-nothing atomicity, and the legacy
+ * TOKEN_BUCKET path.
+ *
+ * <p>The target comes from {@link RedisContainerSupport}: a supplied {@code FLUXGATE_REDIS_URI}, a
+ * Testcontainers {@code redis:7-alpine}, or the test is skipped.
+ */
+class MultiAlgorithmLuaIntegrationTest {
+
+  private static final String RUN_ID = RedisContainerSupport.newRunId();
+  private static final long SECOND_MICROS = 1_000_000L;
+  private static final long MINUTE_MICROS = 60 * SECOND_MICROS;
+  private static final long HOUR_MICROS = 3600 * SECOND_MICROS;
+  private static final long DEFAULT_MAX_TTL_SECONDS = Duration.ofDays(7).getSeconds();
+
+  // Return-array slots
+  private static final int ALLOWED = 0;
+  private static final int REJECTING_BAND = 1;
+  private static final int MIN_REMAINING = 2;
+  private static final int MICROS_TO_WAIT = 3;
+  private static final int RESET_TIME_MILLIS = 4;
+  private static final int LIMIT = 5;
+  private static final int BINDING_BAND = 6;
+
+  // Algorithm codes matching the Lua constants
+  private static final int ALG_TOKEN_BUCKET = 1;
+  private static final int ALG_SLIDING_WINDOW = 2;
+  private static final int ALG_FIXED_WINDOW = 3;
+
+  private static RedisRateLimiterConfig config;
+  private static RedisConnectionProvider redis;
+  private static LuaScriptRegistry scripts;
+
+  @BeforeAll
+  static void setUp() {
+    config = new RedisRateLimiterConfig(RedisContainerSupport.redisUri());
+    redis = config.getConnectionProvider();
+    scripts = new LuaScriptRegistry();
+    scripts.loadInto(redis);
+  }
+
+  @AfterAll
+  static void tearDown() {
+    if (config != null) {
+      RedisContainerSupport.deleteKeys(redis, keyPattern());
+      config.close();
+    }
+  }
+
+  // =========================================================================
+  // TOKEN_BUCKET — legacy behaviour must be unchanged
+  // =========================================================================
+
+  @Nested
+  @DisplayName("TOKEN_BUCKET")
+  class TokenBucket {
+
+    @Test
+    @DisplayName("Admits requests while tokens remain and then rejects — legacy behaviour")
+    void admitThenReject() {
+      String key = key("tb-admit");
+      String[] b = band(5, MINUTE_MICROS, ALG_TOKEN_BUCKET, 0, 0);
+
+      List<Long> first = consume(1, b, key);
+      assertThat(first.get(ALLOWED)).isEqualTo(1L);
+      assertThat(first.get(LIMIT)).isEqualTo(5L);
+      assertThat(first.get(MIN_REMAINING)).isEqualTo(4L);
+      assertThat(first.get(MICROS_TO_WAIT)).isZero();
+      assertThat(first.get(BINDING_BAND)).isEqualTo(1L);
+
+      for (int i = 0; i < 4; i++) {
+        assertThat(consume(1, b, key).get(ALLOWED)).isEqualTo(1L);
+      }
+
+      List<Long> rejected = consume(1, b, key);
+      assertThat(rejected.get(ALLOWED)).isZero();
+      assertThat(rejected.get(MIN_REMAINING)).isZero();
+      assertThat(rejected.get(MICROS_TO_WAIT)).isPositive();
+    }
+
+    @Test
+    @DisplayName("Bucket keys keep stable label format (100-per-60s) for TOKEN_BUCKET")
+    void stableKeyLabel() {
+      // Verify that the existing per-band key format is unaffected by the algorithm extension.
+      String key = key("tb-label-100-per-60s");
+      assertThat(key).endsWith("100-per-60s");
+      String[] b = band(100, 60 * SECOND_MICROS, ALG_TOKEN_BUCKET, 0, 0);
+      assertThat(consume(1, b, key).get(ALLOWED)).isEqualTo(1L);
+      long tokens = Long.parseLong(redis.hgetall(key).get("tokens"));
+      assertThat(tokens).isEqualTo(99L);
+    }
+  }
+
+  // =========================================================================
+  // SLIDING_WINDOW
+  // =========================================================================
+
+  @Nested
+  @DisplayName("SLIDING_WINDOW")
+  class SlidingWindow {
+
+    @Test
+    @DisplayName("Admits up to capacity then rejects")
+    void admitThenReject() {
+      String key = key("sw-admit");
+      String[] b = band(3, MINUTE_MICROS, ALG_SLIDING_WINDOW, 10, 0);
+
+      for (int i = 0; i < 3; i++) {
+        assertThat(consume(1, b, key).get(ALLOWED)).isEqualTo(1L);
+      }
+      List<Long> rejected = consume(1, b, key);
+      assertThat(rejected.get(ALLOWED)).isZero();
+      assertThat(rejected.get(MIN_REMAINING)).isZero();
+      assertThat(rejected.get(MICROS_TO_WAIT)).isPositive();
+      assertThat(rejected.get(LIMIT)).isEqualTo(3L);
+    }
+
+    @Test
+    @DisplayName("Remaining reflects how much capacity is still free")
+    void remainingReflectsCapacity() {
+      String key = key("sw-remaining");
+      String[] b = band(10, MINUTE_MICROS, ALG_SLIDING_WINDOW, 6, 0);
+
+      List<Long> result = consume(3, b, key);
+      assertThat(result.get(ALLOWED)).isEqualTo(1L);
+      assertThat(result.get(MIN_REMAINING)).isEqualTo(7L); // capacity 10 - 3 permits consumed
+    }
+
+    @Test
+    @DisplayName("Expired sub-buckets are dropped on allow — re-admission after one window")
+    void expiredSubBucketsDropped() {
+      // Use a very short window so we can manipulate sub-buckets via direct HSET.
+      // 10 sub-buckets × 1 s window = 100 ms each. We cannot sleep, so we seed the hash
+      // with a sub-bucket index that is guaranteed to be ancient (index 0).
+      String key = key("sw-drop");
+      // capacity=2, window=10 micros, 2 sub-buckets → sub_dur=5 micros
+      // current_sub is around now_micros / 5 ≈ huge index; index 0 is always expired.
+      redis.hset(key, "0", "2"); // seed an expired sub-bucket
+      // Because index 0 is far in the past (< oldest_valid), the sum is 0, so 2 permits allowed.
+      String[] b = band(2, 10L, ALG_SLIDING_WINDOW, 2, 0);
+      List<Long> result = consume(2, b, key);
+      assertThat(result.get(ALLOWED)).isEqualTo(1L);
+      // After pass 2 the expired field should have been deleted.
+      Map<String, String> hash = redis.hgetall(key);
+      assertThat(hash).doesNotContainKey("0");
+    }
+
+    @Test
+    @DisplayName("TTL is set to at least ceil(window_seconds × 1.1)")
+    void ttlIsSet() {
+      String key = key("sw-ttl");
+      String[] b = band(10, MINUTE_MICROS, ALG_SLIDING_WINDOW, 10, 0);
+      consume(1, b, key);
+      // 60 s × 1.1 = 66 s
+      assertThat(redis.ttl(key)).isBetween(64L, 66L);
+    }
+
+    @Test
+    @DisplayName("Rejected request does not increment any sub-bucket")
+    void rejectDoesNotMutateCounters() {
+      String key = key("sw-reject-nomut");
+      // capacity=1, 2 sub-buckets
+      String[] b = band(1, MINUTE_MICROS, ALG_SLIDING_WINDOW, 2, 0);
+      consume(1, b, key); // allowed; current sub-bucket gets count 1
+      Map<String, String> before = redis.hgetall(key);
+
+      consume(1, b, key); // rejected; must not change sub-bucket counts
+
+      Map<String, String> after = redis.hgetall(key);
+      assertThat(after).isEqualTo(before);
+    }
+
+    @Test
+    @DisplayName("reset_time_millis is approximately now + window for SLIDING_WINDOW")
+    void resetTimeMillisApproxNowPlusWindow() {
+      String key = key("sw-reset");
+      String[] b = band(5, MINUTE_MICROS, ALG_SLIDING_WINDOW, 10, 0);
+      List<Long> result = consume(1, b, key);
+      assertThat(result.get(ALLOWED)).isEqualTo(1L);
+
+      long now = System.currentTimeMillis();
+      long reset = result.get(RESET_TIME_MILLIS);
+      // reset ≈ now + window (60 s), within a generous tolerance for test latency
+      assertThat(reset).isBetween(now + 55_000L, now + 70_000L);
+    }
+
+    @Test
+    @DisplayName("permits > capacity is refused as an error")
+    void permitsExceedCapacity() {
+      String key = key("sw-overflow");
+      String[] b = band(3, MINUTE_MICROS, ALG_SLIDING_WINDOW, 5, 0);
+      assertThatThrownBy(() -> consume(4, b, key))
+          .isInstanceOf(RedisCommandExecutionException.class)
+          .hasMessageContaining("permits exceed capacity");
+    }
+  }
+
+  // =========================================================================
+  // FIXED_WINDOW
+  // =========================================================================
+
+  @Nested
+  @DisplayName("FIXED_WINDOW")
+  class FixedWindow {
+
+    @Test
+    @DisplayName("Admits up to capacity within a window then rejects")
+    void admitThenReject() {
+      String key = key("fw-admit");
+      // window_end = now + 10 s (in the future so the window does not expire mid-test)
+      long windowEnd = (System.currentTimeMillis() + 10_000L) * 1000L;
+      String[] b = band(3, MINUTE_MICROS, ALG_FIXED_WINDOW, 0, windowEnd);
+
+      for (int i = 0; i < 3; i++) {
+        assertThat(consume(1, b, key).get(ALLOWED)).isEqualTo(1L);
+      }
+      List<Long> rejected = consume(1, b, key);
+      assertThat(rejected.get(ALLOWED)).isZero();
+      assertThat(rejected.get(MIN_REMAINING)).isZero();
+      assertThat(rejected.get(MICROS_TO_WAIT)).isPositive();
+      assertThat(rejected.get(LIMIT)).isEqualTo(3L);
+    }
+
+    @Test
+    @DisplayName("EXPIREAT is set to the supplied window_end (within 2 seconds of TTL)")
+    void expireatIsSet() {
+      String key = key("fw-expireat");
+      long windowEndSeconds = (System.currentTimeMillis() / 1000L) + 30L;
+      long windowEndMicros = windowEndSeconds * 1_000_000L;
+      String[] b = band(10, 30 * SECOND_MICROS, ALG_FIXED_WINDOW, 0, windowEndMicros);
+
+      consume(1, b, key);
+
+      // TTL should be approximately 30 s (EXPIREAT at window_end)
+      long ttl = redis.ttl(key);
+      assertThat(ttl).isBetween(28L, 30L);
+    }
+
+    @Test
+    @DisplayName("Calendar rollover: a new window_end starts a fresh counter")
+    void calendarRollover() {
+      // Simulate rolling over: the first call uses a window_end 1 second from now,
+      // the second call uses a different window_end further in the future.
+      // Since the first key expires (EXPIREAT), the second call sees count=0.
+      long now = System.currentTimeMillis();
+      long firstWindowEnd = (now + 1_000L) * 1000L; // 1 s from now
+      long secondWindowEnd = (now + 60_000L) * 1000L; // 60 s from now
+
+      String keyFirst = key("fw-rollover-w1");
+      String keySecond = key("fw-rollover-w2");
+
+      String[] bFirst = band(2, HOUR_MICROS, ALG_FIXED_WINDOW, 0, firstWindowEnd);
+      String[] bSecond = band(2, HOUR_MICROS, ALG_FIXED_WINDOW, 0, secondWindowEnd);
+
+      // Fill the first window.
+      consume(1, bFirst, keyFirst);
+      consume(1, bFirst, keyFirst);
+      assertThat(consume(1, bFirst, keyFirst).get(ALLOWED)).isZero(); // full
+
+      // A key for the second window is independent: count starts at 0.
+      assertThat(consume(1, bSecond, keySecond).get(ALLOWED)).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("Rejected request does not increment the counter")
+    void rejectDoesNotIncrementCounter() {
+      String key = key("fw-reject-nomut");
+      long windowEnd = (System.currentTimeMillis() + 10_000L) * 1000L;
+      String[] b = band(2, HOUR_MICROS, ALG_FIXED_WINDOW, 0, windowEnd);
+
+      consume(1, b, key);
+      consume(1, b, key); // now at capacity=2
+
+      // Rejected request must not change the counter.
+      List<Long> rejected = consume(1, b, key);
+      assertThat(rejected.get(ALLOWED)).isZero();
+      assertThat(rejected.get(MIN_REMAINING)).isZero();
+
+      // A second rejected request also sees remaining=0, proving the first rejection did not
+      // increment the counter (which would have freed tokens and allowed this one).
+      List<Long> rejected2 = consume(1, b, key);
+      assertThat(rejected2.get(ALLOWED)).isZero();
+      assertThat(rejected2.get(MIN_REMAINING)).isZero();
+    }
+
+    @Test
+    @DisplayName("reset_time_millis matches the supplied window_end")
+    void resetTimeMatchesWindowEnd() {
+      long windowEndMs = System.currentTimeMillis() + 30_000L;
+      long windowEndMicros = windowEndMs * 1000L;
+      String key = key("fw-reset");
+      String[] b = band(5, MINUTE_MICROS, ALG_FIXED_WINDOW, 0, windowEndMicros);
+
+      List<Long> result = consume(1, b, key);
+      assertThat(result.get(ALLOWED)).isEqualTo(1L);
+      // reset_time_millis = floor(window_end_micros / 1000)
+      assertThat(result.get(RESET_TIME_MILLIS)).isEqualTo(windowEndMs);
+    }
+  }
+
+  // =========================================================================
+  // Mixed-algorithm all-or-nothing atomicity
+  // =========================================================================
+
+  @Nested
+  @DisplayName("Mixed-algorithm single rule")
+  class MixedAlgorithm {
+
+    @Test
+    @DisplayName("Rejection by FIXED_WINDOW band does not mutate the TOKEN_BUCKET band")
+    void fwRejectDoesNotDrainTb() {
+      String keyTb = key("mix-tb");
+      String keyFw = key("mix-fw");
+
+      long windowEnd = (System.currentTimeMillis() + 10_000L) * 1000L;
+
+      // TOKEN_BUCKET band: capacity=10, FIXED_WINDOW band: capacity=1
+      String[] tbBand = band(10, MINUTE_MICROS, ALG_TOKEN_BUCKET, 0, 0);
+      String[] fwBand = band(1, MINUTE_MICROS, ALG_FIXED_WINDOW, 0, windowEnd);
+      String[] bothBands = bands(tbBand, fwBand);
+
+      // First request: both bands allow.
+      List<Long> first = consume(1, bothBands, keyTb, keyFw);
+      assertThat(first.get(ALLOWED)).isEqualTo(1L);
+
+      // Second request: FW band is full; TB band must NOT have lost a token.
+      List<Long> rejected = consume(1, bothBands, keyTb, keyFw);
+      assertThat(rejected.get(ALLOWED)).isZero();
+      assertThat(rejected.get(REJECTING_BAND)).isEqualTo(2L); // FW is band 2
+
+      // TB bucket should still have 9 tokens (only one was consumed by the first request).
+      Map<String, String> tbHash = redis.hgetall(keyTb);
+      assertThat(Long.parseLong(tbHash.get("tokens"))).isEqualTo(9L);
+    }
+
+    @Test
+    @DisplayName("Rejection by SLIDING_WINDOW band does not mutate the TOKEN_BUCKET band")
+    void swRejectDoesNotDrainTb() {
+      String keyTb = key("mix-sw-tb");
+      String keySw = key("mix-sw-sw");
+
+      String[] tbBand = band(10, MINUTE_MICROS, ALG_TOKEN_BUCKET, 0, 0);
+      String[] swBand = band(1, MINUTE_MICROS, ALG_SLIDING_WINDOW, 2, 0);
+      String[] both = bands(tbBand, swBand);
+
+      // First request: both allow.
+      assertThat(consume(1, both, keyTb, keySw).get(ALLOWED)).isEqualTo(1L);
+
+      // Second request: SW full.
+      List<Long> rejected = consume(1, both, keyTb, keySw);
+      assertThat(rejected.get(ALLOWED)).isZero();
+      assertThat(rejected.get(REJECTING_BAND)).isEqualTo(2L);
+
+      // TB must still have 9 tokens.
+      assertThat(Long.parseLong(redis.hgetall(keyTb).get("tokens"))).isEqualTo(9L);
+    }
+
+    @Test
+    @DisplayName("All-pass multi-algorithm: both bands are consumed together")
+    void allPassMultiAlgorithm() {
+      String keyTb = key("mix-pass-tb");
+      String keySw = key("mix-pass-sw");
+
+      String[] tbBand = band(5, MINUTE_MICROS, ALG_TOKEN_BUCKET, 0, 0);
+      String[] swBand = band(5, MINUTE_MICROS, ALG_SLIDING_WINDOW, 5, 0);
+      String[] both = bands(tbBand, swBand);
+
+      List<Long> result = consume(2, both, keyTb, keySw);
+      assertThat(result.get(ALLOWED)).isEqualTo(1L);
+
+      // Both buckets should reflect the consumption.
+      assertThat(Long.parseLong(redis.hgetall(keyTb).get("tokens"))).isEqualTo(3L);
+      // SW: sum = 2, remaining = 5 - 2 = 3
+      assertThat(result.get(MIN_REMAINING)).isEqualTo(3L);
+    }
+  }
+
+  // =========================================================================
+  // Error replies
+  // =========================================================================
+
+  @Nested
+  @DisplayName("Error replies")
+  class Errors {
+
+    @Test
+    @DisplayName("Unknown algorithm code returns error")
+    void unknownAlgorithmCode() {
+      String key = key("err-alg");
+      String[] b = band(10, MINUTE_MICROS, 99, 0, 0); // code 99 is invalid
+      assertThatThrownBy(() -> consume(1, b, key))
+          .isInstanceOf(RedisCommandExecutionException.class)
+          .hasMessageContaining("unknown algorithm code");
+    }
+
+    @Test
+    @DisplayName("SLIDING_WINDOW with buckets < 2 returns error")
+    void slidingWindowTooFewBuckets() {
+      String key = key("err-sw-buckets");
+      String[] b = band(10, MINUTE_MICROS, ALG_SLIDING_WINDOW, 1, 0); // < 2 buckets
+      assertThatThrownBy(() -> consume(1, b, key))
+          .isInstanceOf(RedisCommandExecutionException.class)
+          .hasMessageContaining("buckets must be >= 2");
+    }
+
+    @Test
+    @DisplayName("ARGV count mismatch returns error")
+    void argvLengthMismatch() {
+      String key = key("err-argv");
+      // manually craft wrong arg count: 2 + 4 values (should be 2 + 5)
+      String[] args = {
+        "1", String.valueOf(DEFAULT_MAX_TTL_SECONDS), "10", String.valueOf(MINUTE_MICROS), "1", "0"
+      }; // only 4 band args, not 5
+      assertThatThrownBy(
+              () -> redis.eval(scripts.getTokenBucketConsumeScript(), new String[] {key}, args))
+          .isInstanceOf(RedisCommandExecutionException.class)
+          .hasMessageContaining("expected");
+    }
+  }
+
+  // =========================================================================
+  // Helpers
+  // =========================================================================
+
+  /** Builds a 5-element per-band arg array for the new ARGV layout. */
+  private static String[] band(
+      long capacity, long windowMicros, int algCode, int buckets, long windowEnd) {
+    return new String[] {
+      String.valueOf(capacity),
+      String.valueOf(windowMicros),
+      String.valueOf(algCode),
+      String.valueOf(buckets),
+      String.valueOf(windowEnd)
+    };
+  }
+
+  private static String[] bands(String[]... bands) {
+    String[] flat = new String[bands.length * 5];
+    for (int i = 0; i < bands.length; i++) {
+      System.arraycopy(bands[i], 0, flat, i * 5, 5);
+    }
+    return flat;
+  }
+
+  private static List<Long> consume(long permits, String[] bandArgs, String... keys) {
+    return consume(permits, DEFAULT_MAX_TTL_SECONDS, bandArgs, keys);
+  }
+
+  private static List<Long> consume(
+      long permits, long maxTtlSeconds, String[] bandArgs, String... keys) {
+    // ARGV[1]=permits, ARGV[2]=max_bucket_ttl_seconds, then 5 values per band
+    String[] args = new String[2 + bandArgs.length];
+    args[0] = String.valueOf(permits);
+    args[1] = String.valueOf(maxTtlSeconds);
+    System.arraycopy(bandArgs, 0, args, 2, bandArgs.length);
+    return redis.eval(scripts.getTokenBucketConsumeScript(), keys, args);
+  }
+
+  private static String key(String name) {
+    return RedisContainerSupport.KEY_PREFIX + "bucket:{multi-alg-" + RUN_ID + "}:" + name;
+  }
+
+  private static String keyPattern() {
+    return RedisContainerSupport.KEY_PREFIX + "bucket:{multi-alg-" + RUN_ID + "}:*";
+  }
+}

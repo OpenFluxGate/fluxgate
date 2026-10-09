@@ -1,6 +1,7 @@
 package org.fluxgate.core.ratelimiter;
 
 import org.fluxgate.core.context.RequestContext;
+import org.fluxgate.core.match.PathPatternMatcher;
 
 /**
  * Central abstraction for rate limiting engine.
@@ -29,4 +30,28 @@ public interface RateLimiter {
    * @return the rate limit result
    */
   RateLimitResult tryConsume(RequestContext context, RateLimitRuleSet ruleSet, long permits);
+
+  /**
+   * Try to consume the specified number of permits, using the supplied path matcher to filter
+   * applicable rules via {@link RateLimitRuleSet#getMatchingRules}.
+   *
+   * <p>Implementations may override this method to honour the matcher directly (for example to
+   * iterate only the rules returned by {@code ruleSet.getMatchingRules(context, pathMatcher)}). The
+   * default delegates to {@link #tryConsume(RequestContext, RateLimitRuleSet, long)}, which ignores
+   * the matcher.
+   *
+   * @param context request-scoped information (IP, userId, path, etc.)
+   * @param ruleSet rule set to apply
+   * @param permits number of permits to consume
+   * @param pathMatcher the path pattern matcher used to filter rules
+   * @return the rate limit result
+   * @since 0.4.0
+   */
+  default RateLimitResult tryConsume(
+      RequestContext context,
+      RateLimitRuleSet ruleSet,
+      long permits,
+      PathPatternMatcher pathMatcher) {
+    return tryConsume(context, ruleSet, permits);
+  }
 }
