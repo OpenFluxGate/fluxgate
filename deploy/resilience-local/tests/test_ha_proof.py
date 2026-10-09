@@ -205,6 +205,7 @@ class RestorationTests(unittest.TestCase):
                        'obj': lambda *args, **kwargs: {'items': [{'metadata': {'name': pod},
                                'spec': {'nodeName': node}} for pod, node in placements.items()]},
                        'home_failover_targets': MODULE['home_failover_targets'], 'policy': policy,
+                       'repair_replica_chains': lambda *args: [],
                        'bucket': bucket, 'redis': redis, 'route_header': None, 'route_restore': None,
                        'sustained_traffic': lambda *args, **kwargs: (3, [{'status': 200}] * 3),
                        'record': lambda name, **data: records.append((name, data))}
@@ -288,6 +289,95 @@ class MongoPrimaryTests(unittest.TestCase):
         self.assertEqual(environment['mongo_primary'](), 'mongo-1')
         self.assertIn('hello:1', calls[0])
         self.assertIn('replSetGetStatus:1', calls[0])
+
+
+class ReplicaRepairTests(unittest.TestCase):
+    def topology(self):
+        return {f'id{i}': {'pod': f'redis-{i}-0', 'flags': ['master'] if i < 3 else ['slave'],
+                'primary': '-' if i < 3 else f'id{i % 3}',
+                'slots': [f'{i * 5461}-{16383 if i == 2 else (i + 1) * 5461 - 1}'] if i < 3 else []}
+                for i in range(9)}
+
+    def targets(self, nodes):
+        return MODULE['replica_reparent_targets'](nodes, [f'redis-{i}-0' for i in range(9)])
+
+    def test_existing_direct_replicas_need_no_repair(self):
+        self.assertEqual(self.targets(self.topology()), [])
+
+    def test_chained_replica_reparents_only_to_its_existing_shard_primary(self):
+        nodes = self.topology()
+        nodes['id8']['primary'] = 'id5'
+        self.assertEqual(self.targets(nodes), [{'pod': 'redis-8-0', 'identity': 'id8',
+                         'previous_primary_id': 'id5', 'primary_id': 'id2', 'primary_pod': 'redis-2-0'}])
+
+    def test_foreign_shard_cycle_slots_unhealthy_or_missing_member_rejected(self):
+        for change in ('foreign-shard', 'cycle', 'replica-slots', 'failed-master', 'two-masters', 'missing'):
+            with self.subTest(change=change):
+                nodes = self.topology()
+                if change == 'foreign-shard': nodes['id8']['primary'] = 'id1'
+                elif change == 'cycle': nodes['id8']['primary'], nodes['id5']['primary'] = 'id5', 'id8'
+                elif change == 'replica-slots': nodes['id8']['slots'] = ['1']
+                elif change == 'failed-master': nodes['id2']['flags'].append('fail')
+                elif change == 'two-masters': nodes['id5'].update(flags=['master'], primary='-', slots=['1'])
+                else: nodes.pop('id8')
+                with self.assertRaises(AssertionError): self.targets(nodes)
+
+
+    def repair(self, disagreement=False, drift=None, expired=False):
+        nodes = self.topology()
+        nodes['id8']['primary'] = 'id5'
+        pods = [f'redis-{i}-0' for i in range(9)]
+        commands, budgets = [], []
+        clock = Clock()
+        if expired: clock.now = 180
+
+        def topology(pod=None):
+            view = copy.deepcopy(nodes)
+            if pod is not None:
+                next(node for node in view.values() if node['pod'] == pod)['flags'].append('myself')
+            if disagreement and pod == 'redis-7-0': view['id8']['primary'] = 'id2'
+            return view
+
+        def redis(pod, args):
+            commands.append((pod, args))
+            if args == ['CLUSTER', 'INFO']:
+                return 'cluster_state:ok\ncluster_slots_ok:16384\ncluster_known_nodes:9'
+            if args == ['INFO', 'replication']:
+                return 'role:master' if pod == 'redis-2-0' else 'master_link_status:up'
+            self.assertEqual((pod, args), ('redis-8-0', ['CLUSTER', 'REPLICATE', 'id2']))
+            nodes['id8']['primary'] = 'id2'
+            return 'OK'
+
+        def wait(label, action, budget):
+            budgets.append(budget)
+            if budget <= 0: raise RuntimeError('Original restoration deadline expired')
+            return action(), 0
+
+        environment = {'fixture': {'redis_pods': pods}, 'time': clock, 'wait': wait,
+                       'topology': topology, 'redis': redis,
+                       'replica_reparent_targets': MODULE['replica_reparent_targets'],
+                       'policy': lambda: {'revision': 2 if drift == 'policy' else 1},
+                       'bucket': lambda: {'tokens': '1' if drift == 'counter' else '0'}}
+        function = nested_function('repair_replica_chains')
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(SCRIPT), 'exec'), environment)
+        repairs = environment['repair_replica_chains'](180, {'revision': 1}, {'tokens': '0'})
+        self.assertTrue(all(0 < budget <= 180 for budget in budgets))
+        self.assertEqual([entry for entry in commands if entry[1][:2] == ['CLUSTER', 'REPLICATE']],
+                         [('redis-8-0', ['CLUSTER', 'REPLICATE', 'id2'])])
+        self.assertFalse(any(args[0] in ('FLUSHALL', 'FLUSHDB', 'DEL', 'RESET', 'FAILOVER')
+                             or 'FORCE' in args or 'TAKEOVER' in args for _, args in commands))
+        self.assertTrue(repairs[0]['operator_assisted'])
+        self.assertTrue(repairs[0]['policy_exact_preserved'] and repairs[0]['ha_counter_exact_preserved'])
+        return repairs
+
+    def test_actual_repair_orchestration_uses_only_normal_same_shard_replicate(self):
+        self.repair()
+
+    def test_consensus_deadline_and_policy_counter_drift_block_repair_proof(self):
+        with self.assertRaises(AssertionError): self.repair(disagreement=True)
+        with self.assertRaisesRegex(RuntimeError, 'deadline'): self.repair(expired=True)
+        for drift in ('policy', 'counter'):
+            with self.subTest(drift=drift), self.assertRaises(AssertionError): self.repair(drift=drift)
 
 
 if __name__ == '__main__':

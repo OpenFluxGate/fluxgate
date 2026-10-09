@@ -161,6 +161,39 @@ def verified_mongo_primary(observation, pods, namespace):
     return registered[host]
 
 
+
+def replica_reparent_targets(nodes, registered_pods):
+    expected = {f'redis-{i}-0' for i in range(9)}
+    assert set(registered_pods) == expected and len(nodes) == 9
+    assert {node['pod'] for node in nodes.values()} == expected
+    families = {pod: int(pod.split('-')[1]) % 3 for pod in expected}
+    primaries = {}
+    for identity, node in nodes.items():
+        assert not set(node['flags']).intersection({'fail', 'fail?', 'handshake', 'noaddr'})
+        family = families[node['pod']]
+        if 'master' in node['flags']:
+            assert 'slave' not in node['flags'] and node['slots'] and family not in primaries
+            primaries[family] = identity
+        else:
+            assert 'slave' in node['flags'] and not node['slots']
+    assert set(primaries) == {0, 1, 2}, 'Each configured shard must retain exactly one owning primary'
+    targets = []
+    for identity, node in nodes.items():
+        if 'master' in node['flags']:
+            continue
+        family, seen, current = families[node['pod']], {identity}, node['primary']
+        while current != primaries[family]:
+            assert current in nodes and current not in seen, 'Replica chain is missing or cyclic'
+            ancestor = nodes[current]
+            assert families[ancestor['pod']] == family and 'slave' in ancestor['flags'], 'Replica chain crosses configured shards'
+            seen.add(current)
+            current = ancestor['primary']
+        if node['primary'] != current:
+            targets.append({'pod': node['pod'], 'identity': identity, 'previous_primary_id': node['primary'],
+                            'primary_id': current, 'primary_pod': nodes[current]['pod']})
+    return sorted(targets, key=lambda target: target['pod'])
+
+
 def main():
     if not __debug__:
         raise RuntimeError('Assertions disabled; run Python without -O')
@@ -422,8 +455,8 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             break
         raise RuntimeError('Dense actual Gateway recovery exceeded the original 30s fault budget')
 
-    def topology():
-        pod = diagnostic_pods(fixture['redis_pods'])[0]
+    def topology(pod=None):
+        pod = pod or diagnostic_pods(fixture['redis_pods'])[0]
         lines = redis(pod, ['CLUSTER', 'NODES']).splitlines()
         result = {}
         for line in lines:
@@ -556,6 +589,47 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                       for p in obj('pods', selector='app=fluxgate-authz')['items']
                       for c in p['status'].get('containerStatuses', []))
 
+    def repair_replica_chains(deadline, preserved_policy, preserved_bucket):
+        def plan():
+            nodes = topology()
+            targets = replica_reparent_targets(nodes, fixture['redis_pods'])
+            if not targets:
+                return targets
+            canonical = lambda view: {identity: (node['pod'], sorted(set(node['flags']) - {'myself'}),
+                                                node['primary'], sorted(node['slots'])) for identity, node in view.items()}
+            for pod in fixture['redis_pods']:
+                view = topology(pod)
+                assert [node['pod'] for node in view.values() if 'myself' in node['flags']] == [pod], 'Redis view is not from its registered source Pod'
+                assert replica_reparent_targets(view, fixture['redis_pods']) == targets
+                assert canonical(view) == canonical(nodes), 'Redis members disagree on the repair topology'
+                info = redis(pod, ['CLUSTER', 'INFO'])
+                assert 'cluster_state:ok' in info and 'cluster_slots_ok:16384' in info and 'cluster_known_nodes:9' in info
+            for target in targets:
+                assert 'role:master' in redis(target['primary_pod'], ['INFO', 'replication'])
+                assert 'master_link_status:up' in redis(target['pod'], ['INFO', 'replication'])
+            return targets
+        repairs = []
+        targets, _ = wait('Consistent registered Redis replica repair topology', plan, max(0, deadline - time.monotonic()))
+        for target in targets:
+            current_targets, _ = wait('Revalidate normal replica repair', plan, max(0, deadline - time.monotonic()))
+            assert target in current_targets, 'Replica repair target changed before the command'
+            assert redis(target['pod'], ['CLUSTER', 'REPLICATE', target['primary_id']]) == 'OK'
+            def repaired():
+                nodes = topology()
+                assert nodes[target['identity']]['primary'] == target['primary_id']
+                assert 'master_link_status:up' in redis(target['pod'], ['INFO', 'replication'])
+                return True
+            wait('Direct replica link restored', repaired, max(0, deadline - time.monotonic()))
+            assert policy() == preserved_policy, 'Replica repair changed the published policy'
+            try:
+                current_bucket = bucket()
+            except StopIteration:
+                current_bucket = None
+            assert current_bucket == preserved_bucket, 'Replica repair changed the exact HA quota bucket'
+            repairs.append(dict(target, command='CLUSTER REPLICATE', operator_assisted=True,
+                                policy_exact_preserved=True, ha_counter_exact_preserved=True))
+        return repairs
+
     def full_restore(started, preserve_promoted_roles=False):
         nonlocal restore_deadline
         restore_deadline = started + 180
@@ -598,17 +672,21 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             return {'ready_counts': counts, 'mongo_healthy_voters': 3, 'redis_primaries': 3, 'redis_linked_replicas': 6,
                     'redis_shard_placement': actual_shards, 'replica_migration_disabled_on_all_members': True}
         try:
+            def preservation_baseline():
+                committed_policy = policy()
+                try:
+                    raw_bucket = bucket()
+                except StopIteration:
+                    raw_bucket = None
+                return committed_policy, raw_bucket
+            (preserved_policy, preserved_bucket), _ = wait('Committed policy and HA counter available for restoration', preservation_baseline, max(0, restore_deadline - time.monotonic()))
+            replica_repairs = repair_replica_chains(restore_deadline, preserved_policy, preserved_bucket)
             remaining = restore_deadline - time.monotonic()
             state, _ = wait('Complete fixture restoration', healthy, max(0, remaining))
             before_nodes = topology()
             placements = {p['metadata']['name']: p['spec']['nodeName'] for p in obj('pods', selector='app=redis')['items']}
             targets = home_failover_targets(before_nodes, placements)
             before_primary_nodes = {identity: placements[node['pod']] for identity, node in before_nodes.items() if 'master' in node['flags']}
-            preserved_policy = policy()
-            try:
-                preserved_bucket = bucket()
-            except StopIteration:
-                preserved_bucket = None
             failbacks = [] if preserve_promoted_roles else targets
             for target in failbacks:
                 current = topology()[target['identity']]
@@ -618,6 +696,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                 def promoted_home():
                     actual = topology()[target['identity']]
                     assert 'master' in actual['flags'] and actual['slots']
+                    replica_repairs.extend(repair_replica_chains(restore_deadline, preserved_policy, preserved_bucket))
                     return healthy()
                 state, _ = wait('Normal operator-assisted home primary failover', promoted_home, max(0, restore_deadline - time.monotonic()))
             assert policy() == preserved_policy, 'Role balancing changed the published policy'
@@ -635,7 +714,8 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             state['redis_primary_nodes_distinct'] = distinct_primary_nodes
             state['placement_restoration_deferred'] = preserve_promoted_roles
             elapsed, responses = sustained_traffic(started, 180, expected_header=(route_header, None) if route_header else None)
-            record('redis-primary-placement-restoration', performed=bool(failbacks), command='CLUSTER FAILOVER' if failbacks else None,
+            record('redis-primary-placement-restoration', performed=bool(failbacks or replica_repairs), command='CLUSTER FAILOVER' if failbacks else 'CLUSTER REPLICATE' if replica_repairs else None,
+                   replica_repairs=replica_repairs,
                    placement_restoration_deferred=preserve_promoted_roles, home_roles_pending=bool(home_failover_targets(after_nodes, placements)),
                    actual_primary_nodes_distinct=distinct_primary_nodes,
                    before_topology=before_nodes, after_topology=after_nodes,
