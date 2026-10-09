@@ -42,6 +42,25 @@ git remote add upstream https://github.com/OpenFluxGate/fluxgate.git
 
 ## 개발 환경 설정
 
+### 빠른 시작
+
+처음 클론한 상태에서 빌드 통과까지:
+
+```bash
+# 1. 단위 테스트만 — JDK만 있으면 되고 Docker는 필요 없음
+./mvnw test
+
+# 2. 통합 테스트 포함 전체 빌드 — Docker가 실행 중이어야 함
+#    (Testcontainers가 Redis와 MongoDB를 자동으로 띄움)
+./mvnw verify
+
+# 3. 커밋 전 포맷 적용
+./mvnw spotless:apply
+```
+
+1~3단계에서는 컨테이너를 직접 띄울 필요가 없습니다. 아래 내용은 오래 띄워 두는 로컬 서비스,
+Redis 클러스터 테스트, 샘플 실행이 필요할 때 참고하세요.
+
 ### 인프라 시작
 
 `docker/` 디렉토리에 Docker Compose 파일이 있습니다:
@@ -87,6 +106,24 @@ export FLUXGATE_MONGO_DB=fluxgate
 ./mvnw verify -DskipITs
 ```
 
+Redis 클러스터 프로필은 실행 중인 클러스터가 필요합니다:
+
+```bash
+docker compose -f docker/redis-cluster.yml up -d
+./mvnw -pl fluxgate-redis-ratelimiter -Predis-cluster-it verify
+docker compose -f docker/redis-cluster.yml down
+```
+
+### 문제 해결
+
+| 증상 | 해결 |
+|---|---|
+| 통합 테스트가 건너뛰어짐 | Docker가 꺼져 있어 Testcontainers가 시작하지 못한 경우입니다. Docker를 켜고 `./mvnw verify`를 다시 실행하세요. |
+| `docker compose up` 시 `port is already allocated` | 다른 Redis/MongoDB가 `6379`/`27017`을 쓰고 있습니다. 내리거나, compose 없이 Testcontainers가 임의 포트를 쓰게 두세요. |
+| `container name "/redis-cluster-test" is already in use` | 이전 실행의 정지된 컨테이너가 남아 있습니다: `docker rm redis-cluster-test`. |
+| MongoDB `Authentication failed` | 예전 Docker 볼륨이 다른 비밀번호로 만들어진 경우입니다. `docker compose -f docker/mongo.yml down -v`로 초기화하세요 (로컬 데이터 삭제). |
+| 모듈이 형제 모듈의 `SNAPSHOT`을 못 찾음 | `-am`을 붙여 의존 모듈을 소스에서 함께 빌드하세요 (`./mvnw test -pl <모듈> -am`). |
+
 ## 변경 사항 만들기
 
 1. upstream 동기화: `git fetch upstream && git rebase upstream/main`
@@ -96,6 +133,9 @@ export FLUXGATE_MONGO_DB=fluxgate
 5. `./mvnw test -pl <변경된-모듈> -am`으로 단위 테스트 통과 확인.
 6. [Conventional Commits](#커밋-메시지)를 사용하여 커밋.
 7. Push 후 PR을 열어주세요.
+
+로컬 환경·도구 파일(`.env*`, `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.omc/`)은 커밋하지 마세요. 모두 gitignore 대상입니다.
+커밋 메시지와 PR에는 AI 표기 트레일러를 넣지 않습니다.
 
 ## 코딩 표준
 

@@ -43,6 +43,25 @@ git remote add upstream https://github.com/OpenFluxGate/fluxgate.git
 
 ## Development Setup
 
+### Quick Start
+
+From a fresh clone to a green build:
+
+```bash
+# 1. Unit tests only — needs just a JDK, no Docker
+./mvnw test
+
+# 2. Full build with integration tests — Docker must be running
+#    (Testcontainers starts Redis and MongoDB for you)
+./mvnw verify
+
+# 3. Format before committing
+./mvnw spotless:apply
+```
+
+You do not need to start any containers by hand for steps 1–3. The sections below are for
+running against long-lived local services, the Redis Cluster tests, and the samples.
+
 ### Start Infrastructure
 
 We provide Docker Compose files in the `docker/` directory:
@@ -88,6 +107,24 @@ export FLUXGATE_MONGO_DB=fluxgate
 ./mvnw verify -DskipITs
 ```
 
+The Redis Cluster profile needs a running cluster:
+
+```bash
+docker compose -f docker/redis-cluster.yml up -d
+./mvnw -pl fluxgate-redis-ratelimiter -Predis-cluster-it verify
+docker compose -f docker/redis-cluster.yml down
+```
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Integration tests are skipped | Docker is not running (Testcontainers cannot start). Start Docker and re-run `./mvnw verify`. |
+| `port is already allocated` on `docker compose up` | Another Redis/MongoDB is using `6379`/`27017`. Stop it, or skip the compose files and let Testcontainers pick random ports. |
+| `container name "/redis-cluster-test" is already in use` | A stopped container from an earlier run exists: `docker rm redis-cluster-test`. |
+| MongoDB `Authentication failed` | An old Docker volume was created with a different password. Reset it with `docker compose -f docker/mongo.yml down -v` (deletes local data). |
+| A module cannot resolve a sibling `SNAPSHOT` | Build with `-am` (`./mvnw test -pl <module> -am`) so dependencies are built from source. |
+
 ## Making Changes
 
 1. Sync with upstream: `git fetch upstream && git rebase upstream/main`
@@ -97,6 +134,9 @@ export FLUXGATE_MONGO_DB=fluxgate
 5. Run `./mvnw test -pl <changed-modules> -am` to verify unit tests pass.
 6. Commit using [Conventional Commits](#commit-messages).
 7. Push and open a pull request.
+
+Do not commit local environment or tool files: `.env*`, `CLAUDE.md`, `AGENTS.md`, `.claude/`,
+`.omc/` are gitignored. Commit messages and pull requests must not carry AI attribution trailers.
 
 ## Coding Standards
 
