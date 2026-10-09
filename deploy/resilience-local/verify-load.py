@@ -256,7 +256,14 @@ def worker(config):
         "latency_origin": "scheduled arrival, including dispatch/queue delay"}
     control = client.request(-1, time.monotonic(), "GET", config["load_path"], config["api_key"], 200)
     report["backend_positive_control"] = control
-    passed = control["status"] == 200 and control["body_valid"]
+    passed = control["status"] == 200 and control["body_valid"] and control["error"] is None
+    if not passed:
+        report["result"] = "FAIL"
+        report["failure_stage"] = "initial-backend-positive-control"
+        return report
+    if config["phase"] == "control":
+        report["result"] = "PASS"
+        return report
     if config["phase"] in ("load", "all"):
         with concurrent.futures.ThreadPoolExecutor(max_workers=128) as pool:
             warmup = fixed_arrivals(client, pool, 100, 5)
@@ -299,6 +306,23 @@ def require_success(process, label):
     return process.stdout
 
 
+def generator_policy(namespace, run_label, gateway_namespace, selector, target_port):
+    """Only this invocation's Pod may reach CoreDNS and the exact Gateway workload."""
+    return {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
+            "metadata": {"name": run_label, "namespace": namespace,
+                         "labels": {"fluxgate.io/load-run": run_label}},
+            "spec": {"podSelector": {"matchLabels": {"fluxgate.io/load-run": run_label}},
+                     "policyTypes": ["Egress"], "egress": [
+                         {"to": [{"namespaceSelector": {"matchLabels": {
+                             "kubernetes.io/metadata.name": "kube-system"}},
+                                  "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
+                          "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
+                         {"to": [{"namespaceSelector": {"matchLabels": {
+                             "kubernetes.io/metadata.name": gateway_namespace}},
+                                  "podSelector": {"matchLabels": selector}}],
+                          "ports": [{"protocol": "TCP", "port": target_port}]}]}}
+
+
 def live(args):
     fixture_path = Path(args.fixture).resolve()
     if fixture_path.is_dir():
@@ -310,6 +334,21 @@ def live(args):
                                                              "-o", "json"]), "namespace guard"))
     if namespace["metadata"].get("labels", {}).get("fluxgate.io/environment") != "local-ephemeral":
         raise ValueError("requires local-ephemeral namespace label")
+    if fixture["gateway_namespace"] != "envoy-gateway-system":
+        raise ValueError("requires isolated fixture Gateway namespace")
+    service = json.loads(require_success(kubectl(fixture, ["get", "service", fixture["gateway_service"],
+                                                          "-n", fixture["gateway_namespace"], "-o", "json"]),
+                                        "Gateway identity guard"))
+    selector = service["spec"].get("selector", {})
+    if (selector.get("gateway.envoyproxy.io/owning-gateway-name") != "fluxgate-resilience-gateway"
+            or selector.get("gateway.envoyproxy.io/owning-gateway-namespace") != fixture["namespace"]):
+        raise ValueError("Gateway service must select exact isolated fixture workload")
+    port = int(fixture.get("gateway_port", 80))
+    matching_ports = [p for p in service["spec"]["ports"]
+                      if p["port"] == port and p.get("protocol", "TCP") == "TCP"]
+    if len(matching_ports) != 1 or not isinstance(matching_ports[0].get("targetPort"), int):
+        raise ValueError("requires exact numeric Gateway target port")
+    target_port = matching_ports[0]["targetPort"]
     def private_key(field):
         key_path = Path(fixture[field]).resolve()
         if key_path.stat().st_mode & 0o077:
@@ -322,20 +361,24 @@ def live(args):
     api_key = private_key("api_key_file")
     quota_key = private_key("quota_api_key_file") if args.phase in ("quota", "all") else None
     config = {"service": fixture["gateway_service"] + "." + fixture["gateway_namespace"]
-              + ".svc.cluster.local", "port": int(fixture.get("gateway_port", 80)),
+              + ".svc.cluster.local", "port": port,
               "host": fixture["gateway_host"], "load_path": fixture["load_path"],
               "quota_path": fixture["quota_path"], "api_key": api_key,
               "quota_api_key": quota_key, "phase": args.phase}
     pod_name = "fluxgate-load-" + uuid.uuid4().hex[:12]
     pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {
         "name": pod_name, "namespace": fixture["namespace"],
-        "labels": {"app": "fluxgate-load-generator", "fluxgate.io/environment": "local-ephemeral"}},
+        "labels": {"app": "fluxgate-load-generator", "fluxgate.io/environment": "local-ephemeral",
+                   "fluxgate.io/load-run": pod_name}},
         "spec": {"restartPolicy": "Never", "automountServiceAccountToken": False,
+                 "terminationGracePeriodSeconds": 1,
                  "containers": [{"name": "generator", "image": fixture.get("generator_image", "python:3.12-alpine"),
                                  "command": ["python3", "-c", "import time; time.sleep(7200)"],
                                  "resources": {"requests": {"cpu": "250m", "memory": "64Mi"},
                                                "limits": {"cpu": "2", "memory": "256Mi"}}}]}}
     try:
+        policy = generator_policy(fixture["namespace"], pod_name, fixture["gateway_namespace"], selector, target_port)
+        require_success(kubectl(fixture, ["create", "-f", "-"], json.dumps(policy)), "generator egress policy")
         require_success(kubectl(fixture, ["create", "-f", "-"], json.dumps(pod)), "generator creation")
         require_success(kubectl(fixture, ["wait", "--for=condition=Ready", "pod/" + pod_name,
                                          "-n", fixture["namespace"], "--timeout=180s"]), "generator readiness")
@@ -352,9 +395,23 @@ def live(args):
                             "generator_pod": pod_name, "transport": "in-cluster HTTP/1.1 keepalive"}
         return report
     finally:
-        cleanup = kubectl(fixture, ["delete", "pod", pod_name, "-n", fixture["namespace"],
-                                    "--ignore-not-found=true", "--wait=true", "--timeout=60s"])
-        require_success(cleanup, "generator cleanup")
+        failures = []
+        for kind in ("pod", "networkpolicy"):
+            try:
+                found = require_success(kubectl(fixture, ["get", kind, pod_name,
+                    "-n", fixture["namespace"], "--ignore-not-found=true", "-o", "json"]),
+                    "generator cleanup ownership check")
+                if not found.strip():
+                    continue
+                if json.loads(found)["metadata"].get("labels", {}).get("fluxgate.io/load-run") != pod_name:
+                    raise RuntimeError("refusing cleanup of a resource owned by another invocation")
+                cleanup = kubectl(fixture, ["delete", kind, pod_name, "-n", fixture["namespace"],
+                                            "--ignore-not-found=true", "--wait=true", "--timeout=60s"])
+                require_success(cleanup, "generator " + kind + " cleanup")
+            except Exception:
+                failures.append(kind)
+        if failures:
+            raise RuntimeError("generator-owned resource cleanup failed")
 
 
 def self_check():
@@ -438,14 +495,37 @@ def self_check():
     client.local.connection = connection
     truncated = client.request(0, time.monotonic(), "GET", "/fixture", None, 200)
     assert truncated["status"] == "ERROR" and truncated["error"] == "transport-error"
+    original_client = GatewayClient
+
+    class FailedControlClient:
+        def __init__(self, config):
+            pass
+
+        def request(self, *args):
+            return {"status": "ERROR", "body_valid": True, "error": "transport-error"}
+
+    try:
+        globals()["GatewayClient"] = FailedControlClient
+        stopped = worker({"phase": "all", "load_path": "/load", "api_key": "offline-placeholder"})
+        assert stopped["result"] == "FAIL" and stopped["failure_stage"] == "initial-backend-positive-control"
+        assert not any(key in stopped for key in ("warmup", "baseline", "characterization", "mixed", "quota"))
+    finally:
+        globals()["GatewayClient"] = original_client
+    policy = generator_policy("fluxgate-resilience", "unique-run", "envoy-gateway-system",
+                              {"owning-gateway": "isolated-gateway"}, 10080)
+    assert policy["spec"]["podSelector"] == {"matchLabels": {"fluxgate.io/load-run": "unique-run"}}
+    assert policy["spec"]["policyTypes"] == ["Egress"]
+    assert {p["port"] for rule in policy["spec"]["egress"] for p in rule["ports"]} == {53, 10080}
+    assert all("namespaceSelector" in target and "podSelector" in target
+               for rule in policy["spec"]["egress"] for target in rule["to"])
     assert percentile([1, 2, 3, 4, 5], 0.95) == 5
-    print(json.dumps({"result": "PASS", "self_checks": 14}))
+    print(json.dumps({"result": "PASS", "self_checks": 16}))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixture")
-    parser.add_argument("--phase", choices=("load", "quota", "all"), default="load")
+    parser.add_argument("--phase", choices=("control", "load", "quota", "all"), default="load")
     parser.add_argument("--output", help="sanitized JSON output, written only after complete PASS")
     parser.add_argument("--self-check", action="store_true")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
