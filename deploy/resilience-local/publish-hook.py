@@ -153,10 +153,171 @@ def checked(args, data=None, timeout=120):
     return result.stdout
 
 
+def save_state(path, state):
+    path.write_text(json.dumps(state))
+    path.chmod(0o600)
+
+
+def cleanup_probe(kube, state_path):
+    if not state_path.exists():
+        return {'passed': True, 'pod_absent': True, 'network_policy_absent': True, 'no_op': True}
+    if state_path.stat().st_mode & 0o077:
+        raise RuntimeError('publication state permissions must be private')
+    state = json.loads(state_path.read_text())
+    # Legacy state names an application Pod. Never delete a service Pod.
+    if not state.get('probe_owned'):
+        return {'passed': True, 'pod_absent': True, 'network_policy_absent': True, 'no_op': True}
+    name = state['pod']
+    if not name.startswith('fluxgate-publication-') or len(name) != len('fluxgate-publication-') + 32:
+        raise RuntimeError('invalid owned publication probe identity')
+    failures, cleaned = [], []
+    for resource in state.get('owned_resources', []):
+        kind, resource_name = resource['kind'], resource['name']
+        try:
+            if (kind not in ('pod', 'networkpolicy') or
+                    resource_name not in (name, name + '-egress', name + '-ingress')):
+                raise RuntimeError('unexpected publication resource')
+            data = checked(kube + ['get', kind, resource_name, '--ignore-not-found=true', '-o', 'json',
+                                  '--request-timeout=5s'], timeout=5)
+            uid = resource.get('uid')
+            if data.strip():
+                current = json.loads(data)
+                if (current['metadata'].get('labels', {}).get('fluxgate.io/publication-probe') != name
+                        or (uid and current['metadata']['uid'] != uid)):
+                    raise RuntimeError('publication cleanup ownership or UID mismatch')
+                uid = current['metadata']['uid']
+                grace = ['--grace-period=3'] if kind == 'pod' else []
+                checked(kube + ['delete', kind, resource_name, '--wait=true', '--timeout=10s',
+                                '--request-timeout=10s'] + grace, timeout=15)
+            remaining = checked(kube + ['get', kind, resource_name, '--ignore-not-found=true', '-o', 'json',
+                                       '--request-timeout=5s'], timeout=5)
+            if remaining.strip():
+                raise RuntimeError('publication resource remains after deletion')
+            cleaned.append({'kind': kind, 'name': resource_name, 'uid': uid, 'absent': True})
+        except Exception:
+            failures.append(kind)
+    state['cleanup_resources'] = cleaned
+    state['cleanup_complete'] = not failures
+    save_state(state_path, state)
+    if failures:
+        raise RuntimeError('publication cleanup failed: ' + ','.join(failures))
+    return {'passed': True, 'pod_absent': True, 'network_policy_absent': True,
+            'resources': cleaned}
+
+
+def create_probe(kube, fixture, state, state_path):
+    name, labels = state['pod'], {'fluxgate.io/publication-probe': state['pod']}
+    resources = [
+        {'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy',
+         'metadata': {'name': name + '-egress', 'labels': labels},
+         'spec': {'podSelector': {'matchLabels': labels}, 'policyTypes': ['Ingress', 'Egress'],
+                  'ingress': [], 'egress': [
+                      {'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'kube-system'}},
+                               'podSelector': {'matchLabels': {'k8s-app': 'kube-dns'}}}],
+                       'ports': [{'protocol': p, 'port': 53} for p in ('UDP', 'TCP')]},
+                      {'to': [{'podSelector': {'matchLabels': {'app': 'mongo'}}}],
+                       'ports': [{'protocol': 'TCP', 'port': 27017}]}]}},
+        {'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy',
+         'metadata': {'name': name + '-ingress', 'labels': labels},
+         'spec': {'podSelector': {'matchLabels': {'app': 'mongo'}}, 'policyTypes': ['Ingress'],
+                  'ingress': [{'from': [{'podSelector': {'matchLabels': labels}}],
+                               'ports': [{'protocol': 'TCP', 'port': 27017}]}]}},
+        {'apiVersion': 'v1', 'kind': 'Pod',
+         'metadata': {'name': name, 'labels': {**labels, 'app': 'fluxgate-publication-probe'}},
+         'spec': {'automountServiceAccountToken': False, 'restartPolicy': 'Never', 'terminationGracePeriodSeconds': 3,
+                  'nodeName': 'fluxgate-resilience-control-plane',
+                  'securityContext': {'runAsNonRoot': True, 'runAsUser': 10001, 'runAsGroup': 10001},
+                  'containers': [{'name': 'publisher', 'image': fixture['image'], 'imagePullPolicy': 'Never',
+                                  'command': ['/bin/sh', '-c', 'while :; do sleep 300; done'],
+                                  'env': [{'name': 'JAVA_TOOL_OPTIONS',
+                                           'value': '-Xmx64m -XX:ActiveProcessorCount=1'}],
+                                  'resources': {'requests': {'cpu': '100m', 'memory': '96Mi'},
+                                                'limits': {'cpu': '1', 'memory': '192Mi'}},
+                                  'securityContext': {'allowPrivilegeEscalation': False,
+                                                      'capabilities': {'drop': ['ALL']}}}]}}
+    ]
+    for resource in resources:
+        entry = {'kind': resource['kind'].lower(), 'name': resource['metadata']['name'], 'uid': None}
+        state['owned_resources'].append(entry)
+        save_state(state_path, state)  # Even an ambiguous create has an owned name/label for cleanup.
+        result = json.loads(checked(kube + ['create', '-f', '-', '-o', 'json'], json.dumps(resource).encode()))
+        entry['uid'] = result['metadata']['uid']
+        save_state(state_path, state)
+    checked(kube + ['wait', '--for=condition=Ready', 'pod/' + name, '--timeout=60s'], timeout=70)
+    state['pod_uid'] = state['owned_resources'][-1]['uid']
+    deployed_sha = checked(kube + ['exec', name, '--', 'sha256sum', '/app/app.jar']).decode().split()[0]
+    if deployed_sha != state['jar_sha256']:
+        raise RuntimeError('publication probe artifact differs from deployed service')
+    # The service selector must never route authorization requests to this tool.
+    for service in json.loads(checked(kube + ['get', 'services', '-o', 'json']))['items']:
+        selector = service['spec'].get('selector', {})
+        if selector and all(resources[-1]['metadata']['labels'].get(k) == v for k, v in selector.items()):
+            raise RuntimeError('publication probe selected by a service')
+    save_state(state_path, state)
+
+
+def self_check():
+    from unittest.mock import patch
+    checks = 0
+    with tempfile.TemporaryDirectory(prefix='publication-probe-unit-') as tmp:
+        directory = Path(tmp)
+        for fault in (None, 'missing', 'duplicate'):
+            jar = directory / 'fixture.jar'
+            with zipfile.ZipFile(jar, 'w') as archive:
+                for index, prefix in enumerate(PROBE_LIBRARIES):
+                    if fault == 'missing' and index == 0:
+                        continue
+                    archive.writestr('BOOT-INF/lib/' + prefix + '1.jar', b'fixture')
+                    if fault == 'duplicate' and index == 0:
+                        archive.writestr('BOOT-INF/lib/' + prefix + '2.jar', b'fixture')
+                archive.writestr('BOOT-INF/lib/unneeded-1.jar', b'not selected')
+            target = directory / ('extract-' + str(fault))
+            target.mkdir()
+            try:
+                libraries = extract_probe_libraries(jar, target)
+                assert fault is None and len(libraries) == 8 and not (target / 'unneeded-1.jar').exists()
+            except RuntimeError:
+                assert fault is not None
+            checks += 1
+        for fault in (None, 'uid', 'delete', 'legacy'):
+            name = 'fluxgate-publication-' + 'a' * 32
+            state = {'probe_owned': fault != 'legacy', 'pod': name,
+                     'owned_resources': [{'kind': 'pod', 'name': name, 'uid': 'owned'},
+                                         {'kind': 'networkpolicy', 'name': name + '-egress', 'uid': 'owned'}]}
+            path = directory / 'state.json'
+            save_state(path, state)
+            deleted = []
+            def fake_checked(args, *unused, **keywords):
+                action, kind, resource_name = args[:3]
+                if action == 'delete':
+                    deleted.append(kind)
+                    if fault == 'delete' and kind == 'pod':
+                        raise RuntimeError('offline deletion failure')
+                    return b''
+                if kind in deleted:
+                    return b''
+                return json.dumps({'metadata': {'uid': 'foreign' if fault == 'uid' and kind == 'pod' else 'owned',
+                                    'labels': {'fluxgate.io/publication-probe': name}}}).encode()
+            with patch.dict(globals(), checked=fake_checked):
+                try:
+                    result = cleanup_probe([], path)
+                    assert fault in (None, 'legacy') and result['passed']
+                except RuntimeError:
+                    assert fault in ('uid', 'delete')
+            if fault in ('uid', 'delete'):
+                assert 'networkpolicy' in deleted, 'one failed resource must not skip other cleanup'
+            if fault in ('uid', 'legacy'):
+                assert 'pod' not in deleted, 'never delete a foreign or application Pod'
+            checks += 1
+    print(json.dumps({'result': 'PASS', 'self_checks': checks}))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--fixture', required=True, type=Path)
+    parser.add_argument('--fixture', type=Path)
+    parser.add_argument('--self-check', action='store_true')
     parser.add_argument('--prepare', action='store_true')
+    parser.add_argument('--cleanup', action='store_true', help='remove only owned probe resources and verify absence')
     parser.add_argument('--resolve-rejected', action='store_true',
                         help='after recovery, prove the same ambiguous operation never became active')
     parser.add_argument('--expect', choices=('success', 'rejected'), default='success')
@@ -165,11 +326,18 @@ def main():
     parser.add_argument('--jar', type=Path, default=Path(__file__).resolve().parents[2] /
                         'fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.3.7.jar')
     args = parser.parse_args()
+    if args.self_check:
+        if not __debug__:
+            parser.error('Python optimization disables proof assertions')
+        self_check()
+        return
+    if args.fixture is None:
+        parser.error('--fixture required for live publication proof')
     if args.prepare and args.resolve_rejected:
         parser.error('--prepare and --resolve-rejected are mutually exclusive')
     if not 1 <= args.deadline <= 30:
         parser.error('--deadline must be 1..30 seconds')
-    if not args.prepare and args.output is None:
+    if not args.prepare and not args.cleanup and args.output is None:
         parser.error('--output required before any publication attempt')
     os.umask(0o077)
     fixture_path = args.fixture / 'fixture.json' if args.fixture.is_dir() else args.fixture
@@ -184,7 +352,13 @@ def main():
     if namespace['metadata']['labels'].get('fluxgate.io/environment') != 'local-ephemeral':
         raise RuntimeError('isolated namespace guard missing')
     state_path = fixture_path.parent / 'publication-hook-state.json'
+    if args.cleanup:
+        if args.prepare or args.resolve_rejected:
+            parser.error('--cleanup cannot prepare or publish')
+        print(json.dumps(cleanup_probe(kube, state_path)))
+        return
     if args.prepare:
+        cleanup_probe(kube, state_path)
         deployment = json.loads(checked(kube + ['get', 'deployment/' + fixture.get(
             'authz_deployment', 'fluxgate-authz'), '-o', 'json']))
         selector = ','.join(k + '=' + v for k, v in deployment['spec']['selector']['matchLabels'].items())
@@ -192,11 +366,18 @@ def main():
         selected_pod = next(p for p in pods if not p['metadata'].get('deletionTimestamp') and
                             any(c['type'] == 'Ready' and c['status'] == 'True'
                                 for c in p.get('status', {}).get('conditions', [])))
-        pod = selected_pod['metadata']['name']
+        source_pod = selected_pod['metadata']['name']
         jar_sha = hashlib.sha256(args.jar.read_bytes()).hexdigest()
-        deployed_sha = checked(kube + ['exec', pod, '--', 'sha256sum', '/app/app.jar']).decode().split()[0]
+        deployed_sha = checked(kube + ['exec', source_pod, '--', 'sha256sum', '/app/app.jar']).decode().split()[0]
         if deployed_sha != jar_sha:
             raise RuntimeError('publication helper artifact differs from deployed application')
+        pod = 'fluxgate-publication-' + uuid.uuid4().hex
+        state = {'pod': pod, 'probe_owned': True, 'owned_resources': [],
+                 'source_authz_pod': source_pod, 'source_authz_pod_uid': selected_pod['metadata']['uid'],
+                 'jar_sha256': jar_sha, 'ruleSetId': fixture.get('rule_set_id', 'resilience-limits'),
+                 'operationId': 'resilience-' + uuid.uuid4().hex}
+        save_state(state_path, state)
+        create_probe(kube, fixture, state, state_path)
         remote = '/tmp/publication-proof-' + uuid.uuid4().hex
         with tempfile.TemporaryDirectory(prefix='publication-compiler-', dir=fixture_path.parent) as tmp:
             directory = Path(tmp)
@@ -212,11 +393,9 @@ def main():
                         tar.add(path, arcname=path.name)
             checked(kube + ['exec', pod, '--', 'mkdir', '-p', remote])
             checked(kube + ['exec', '-i', pod, '--', 'tar', 'xz', '-C', remote], archive.getvalue())
-        state = {'pod': pod, 'pod_uid': selected_pod['metadata']['uid'],
-                 'jar_sha256': jar_sha, 'ruleSetId': fixture.get('rule_set_id', 'resilience-limits'),
-                 'remote': remote, 'operationId': 'resilience-' + uuid.uuid4().hex,
-                 'probe_libraries': libraries, 'archive_bytes': len(archive.getvalue()),
-                 'archive_sha256': hashlib.sha256(archive.getvalue()).hexdigest()}
+        state.update(remote=remote, probe_libraries=libraries, archive_bytes=len(archive.getvalue()),
+                     archive_sha256=hashlib.sha256(archive.getvalue()).hexdigest())
+        save_state(state_path, state)
     else:
         state = json.loads(state_path.read_text())
     uri_path = Path(fixture['mongo_uri_file'])
@@ -244,9 +423,8 @@ def main():
                            for c in current_pod.get('status', {}).get('conditions', []))):
             raise RuntimeError('publication helper Pod changed or became unready during preparation')
         state['baseline'] = records[0]
-        state_path.write_text(json.dumps(state))
-        state_path.chmod(0o600)
-        print('Publication helper prepared on an existing authz process; epoch preserved')
+        save_state(state_path, state)
+        print('Publication helper prepared in its own bounded Pod; artifact and epoch preserved')
     else:
         args.output.write_text(json.dumps(records[0], indent=2) + '\n')
         args.output.chmod(0o600)
