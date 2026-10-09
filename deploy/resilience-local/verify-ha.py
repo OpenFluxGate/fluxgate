@@ -470,6 +470,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             resolution = json.loads(resolution_file.read_text())
             assert resolution['passed'] and resolution['published'] is False
             assert resolution['commitStatus'] == 'not-published-after-majority-recovery'
+            assert resolution['majorityCommitBarrier'] is True
             assert resolution['operationId'] == blocked['operationId']
             assert policy() == baseline
             record('mongo-no-quorum-majority-resolution', observation=blocked, resolution=resolution, active_pointer_unchanged=True)

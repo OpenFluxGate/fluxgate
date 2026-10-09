@@ -39,6 +39,29 @@ public final class PublicationProbe {
       long expected = ((Number) baseline.get("revision")).longValue();
       String epoch = baseline.getString("counterEpoch");
       String operation = input.getString("operationId");
+      if (input.getBoolean("resolveRejected", false)) {
+        // A last-committed read alone can precede an ambiguous write's commit.
+        // Majority-ack a later, harmless oplog entry before inspecting the pointer.
+        var database = client.getDatabase("fluxgate");
+        var barriers = database.getCollection("fluxgate_resilience_commit_barriers")
+            .withWriteConcern(database.getWriteConcern().withW("majority"));
+        barriers.replaceOne(com.mongodb.client.model.Filters.eq("_id", operation),
+            new Document("_id", operation).append("actor", "local-resilience-proof"),
+            new com.mongodb.client.model.ReplaceOptions().upsert(true));
+        Document active = repository.findActive(id).orElseThrow();
+        if (!active.getString("snapshotId").equals(baseline.getString("snapshotId"))
+            || ((Number) active.get("revision")).longValue() != expected
+            || !active.getString("counterEpoch").equals(epoch)
+            || !active.getString("checksum").equals(baseline.getString("checksum")))
+          throw new IllegalStateException("ambiguous attempt changed the majority active policy");
+        System.out.println("PROOF:" + new Document("passed", true).append("published", false)
+            .append("operationId", operation).append("revision", expected)
+            .append("counterEpoch", epoch).append("snapshotId", active.getString("snapshotId"))
+            .append("commitStatus", "not-published-after-majority-recovery")
+            .append("majorityCommitBarrier", true)
+            .append("majorityReadVerified", true).toJson());
+        return;
+      }
       var rules = baseline.getList("rules", Document.class);
       rules.get(0).put("name", "Resilience metadata proof " + operation);
       var failures = new ArrayList<String>();
@@ -61,6 +84,8 @@ public final class PublicationProbe {
               || !active.getString("checksum").equals(result.getString("checksum"))
               || !replay.getString("snapshotId").equals(result.getString("snapshotId")))
             throw new IllegalStateException("publication coherence or idempotency failed");
+          if (System.nanoTime() > deadline)
+            throw new IllegalStateException("successful publication exceeded recovery deadline");
           Document evidence = new Document("passed", true).append("published", true)
               .append("operationId", operation)
               .append("beforeRevision", expected).append("revision", result.get("revision"))
@@ -81,7 +106,8 @@ public final class PublicationProbe {
             System.out.println("PROOF:" + new Document("passed", true)
                 .append("operationId", operation).append("beforeRevision", expected)
                 .append("counterEpoch", epoch)
-                .append("published", false).append("attempts", failures.size())
+                .append("published", null).append("commitStatus", "unknown")
+                .append("requiresRecoveryResolution", true).append("attempts", failures.size())
                 .append("availabilityFailureClasses", failures)
                 .append("elapsedSeconds", (System.nanoTime() - start) / 1e9).toJson());
             return;
@@ -106,12 +132,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fixture', required=True, type=Path)
     parser.add_argument('--prepare', action='store_true')
+    parser.add_argument('--resolve-rejected', action='store_true',
+                        help='after recovery, prove the same ambiguous operation never became active')
     parser.add_argument('--expect', choices=('success', 'rejected'), default='success')
     parser.add_argument('--deadline', type=int, default=30)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--jar', type=Path, default=Path(__file__).resolve().parents[2] /
                         'fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.3.7.jar')
     args = parser.parse_args()
+    if args.prepare and args.resolve_rejected:
+        parser.error('--prepare and --resolve-rejected are mutually exclusive')
+    if not 1 <= args.deadline <= 30:
+        parser.error('--deadline must be 1..30 seconds')
+    if not args.prepare and args.output is None:
+        parser.error('--output required before any publication attempt')
     os.umask(0o077)
     fixture_path = args.fixture / 'fixture.json' if args.fixture.is_dir() else args.fixture
     fixture = json.loads(fixture_path.read_text())
@@ -151,16 +185,17 @@ def main():
                         tar.add(path, arcname=path.name)
             checked(kube + ['exec', pod, '--', 'mkdir', '-p', remote])
             checked(kube + ['exec', '-i', pod, '--', 'tar', 'xz', '-C', remote], archive.getvalue())
-        state = {'pod': pod, 'remote': remote}
+        state = {'pod': pod, 'remote': remote, 'operationId': 'resilience-' + uuid.uuid4().hex}
     else:
         state = json.loads(state_path.read_text())
     uri_path = Path(fixture['mongo_uri_file'])
     if uri_path.stat().st_mode & 0o077:
         raise RuntimeError('private Mongo URI file required')
     payload = dict(uri=uri_path.read_text().strip(), prepare=args.prepare,
+                   resolveRejected=args.resolve_rejected,
                    ruleSetId=fixture.get('rule_set_id', 'resilience-limits'),
                    expect=args.expect, deadline=args.deadline,
-                   operationId='resilience-' + uuid.uuid4().hex)
+                   operationId=state['operationId'])
     if not args.prepare:
         payload['baseline'] = state['baseline']
     output = checked(kube + ['exec', '-i', state['pod'], '--', 'java', '-cp',
@@ -176,8 +211,6 @@ def main():
         state_path.chmod(0o600)
         print('Publication helper prepared on an existing authz process; epoch preserved')
     else:
-        if args.output is None:
-            raise RuntimeError('--output required')
         args.output.write_text(json.dumps(records[0], indent=2) + '\n')
         args.output.chmod(0o600)
         print('Publication proof:', json.dumps(records[0]))

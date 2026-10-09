@@ -3,7 +3,6 @@ package org.fluxgate.adapter.mongo.policy;
 import com.mongodb.MongoWriteException;
 import com.mongodb.ReadConcern;
 import com.mongodb.ReadPreference;
-import com.mongodb.WriteConcern;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.Filters;
@@ -69,7 +68,7 @@ public final class MongoPolicyRepository {
         .getCollection(name)
         .withReadPreference(ReadPreference.primary())
         .withReadConcern(ReadConcern.MAJORITY)
-        .withWriteConcern(WriteConcern.MAJORITY);
+        .withWriteConcern(database.getWriteConcern().withW("majority"));
   }
 
   public Optional<Document> findActive(String id) {
