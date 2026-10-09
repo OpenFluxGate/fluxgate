@@ -93,6 +93,25 @@ def validate_publisher_cleanup(result):
     assert result.get('passed') is True and result.get('pod_absent') is True and result.get('network_policy_absent') is True, 'Publication probe cleanup absence is unverified'
 
 
+def home_failover_targets(redis_nodes, placements):
+    homes = ['redis-' + str(i) + '-0' for i in range(3)]
+    by_pod = {node['pod']: (identity, node) for identity, node in redis_nodes.items()}
+    assert len({placements[pod] for pod in homes}) == 3, 'Redis home primaries must occupy three distinct nodes'
+    owning_shards = []
+    targets = []
+    for pod in homes:
+        identity, node = by_pod[pod]
+        assert not set(node['flags']).intersection({'fail', 'fail?', 'handshake', 'noaddr'})
+        if 'master' in node['flags']:
+            owning_shards.append(identity)
+        else:
+            assert 'slave' in node['flags'] and not node['slots'], 'Only healthy replicas without slots may fail over'
+            owning_shards.append(node['primary'])
+            targets.append({'pod': pod, 'identity': identity, 'previous_primary_id': node['primary']})
+    assert len(set(owning_shards)) == 3, 'Home members must represent three different shards'
+    return targets
+
+
 def main():
     if not __debug__:
         raise RuntimeError('Assertions disabled; run Python without -O')
@@ -462,6 +481,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
     def full_restore(started):
         nonlocal restore_deadline
         restore_deadline = started + 180
+        restoration_started = utc_milestone()
         def healthy():
             nodes = obj('nodes')['items']
             assert {n['metadata']['name'] for n in nodes} == expected_nodes
@@ -502,7 +522,44 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         try:
             remaining = restore_deadline - time.monotonic()
             state, _ = wait('Complete fixture restoration', healthy, max(0, remaining))
+            before_nodes = topology()
+            placements = {p['metadata']['name']: p['spec']['nodeName'] for p in obj('pods', selector='app=redis')['items']}
+            targets = home_failover_targets(before_nodes, placements)
+            before_primary_nodes = {identity: placements[node['pod']] for identity, node in before_nodes.items() if 'master' in node['flags']}
+            preserved_policy = policy()
+            try:
+                preserved_bucket = bucket()
+            except StopIteration:
+                preserved_bucket = None
+            for target in targets:
+                current = topology()[target['identity']]
+                assert 'slave' in current['flags'] and not current['slots']
+                assert 'master_link_status:up' in redis(target['pod'], ['INFO', 'replication'])
+                assert redis(target['pod'], ['CLUSTER', 'FAILOVER']) == 'OK'
+                def promoted_home():
+                    actual = topology()[target['identity']]
+                    assert 'master' in actual['flags'] and actual['slots']
+                    return healthy()
+                state, _ = wait('Normal operator-assisted home primary failover', promoted_home, max(0, restore_deadline - time.monotonic()))
+            assert policy() == preserved_policy, 'Role balancing changed the published policy'
+            try:
+                after_bucket = bucket()
+            except StopIteration:
+                after_bucket = None
+            assert after_bucket == preserved_bucket, 'Role balancing changed the exact HA quota bucket'
+            after_nodes = topology()
+            after_primary_nodes = {identity: placements[node['pod']] for identity, node in after_nodes.items() if 'master' in node['flags']}
+            assert len(after_primary_nodes) == 3 and len(set(after_primary_nodes.values())) == 3
+            assert not home_failover_targets(after_nodes, placements), 'Redis home roles were not restored'
+            state['redis_primary_nodes_distinct'] = True
             elapsed, responses = sustained_traffic(started, 180, expected_header=(route_header, None) if route_header else None)
+            record('redis-primary-placement-restoration', performed=bool(targets), command='CLUSTER FAILOVER' if targets else None,
+                   before_topology=before_nodes, after_topology=after_nodes,
+                   before_placements=before_primary_nodes, after_placements=after_primary_nodes,
+                   policy=preserved_policy, policy_exact_preserved=True, raw_bucket_before=preserved_bucket,
+                   raw_bucket_after=after_bucket, ha_counter_exact_preserved=True,
+                   timestamps={'started': restoration_started, 'completed': utc_milestone()},
+                   shared_restore_elapsed_seconds=elapsed, automatic_placement_claim=False)
             state.update({'restore_seconds': elapsed, 'sustained_gateway': responses, 'original_route_restored': route_restore is not None})
             record('complete-fixture-restoration', **state)
             return state
@@ -532,6 +589,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                          'volumeMounts': [{'name': 'key', 'mountPath': '/key', 'readOnly': True}]}],
                      'volumes': [{'name': 'key', 'secret': {'secretName': probe_secret, 'defaultMode': 256}}]}})
         kube(['-n', ns, 'wait', '--for=condition=Ready', 'pod/' + probe, '--timeout=180s'], timeout=190)
+        full_restore(time.monotonic())
         baseline = policy()
         redis_baseline = topology()
         record('baseline', policy=baseline, redis=redis_baseline, actual_redis_shard_placement=shard_placement(redis_baseline),
@@ -606,7 +664,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
                    script_provenance=script_provenance, script_exists_old_primary_before_flush=True, cache_absent_before_promotion=True, cache_loaded_after_real_request=True, authz_processes_unchanged=authz_before, rpo='Observed counter preserved; asynchronous replication is not zero-loss consensus')
             fault_deadline = None
             signal(old_primary['pod'], 'CONT')
-            wait('Redis old member recovery', lambda: request(fixture['load_path'], {200}), 30)
+            full_restore(time.monotonic())
         if args.phase in ('all', 'mongo'):
             failure_phase = 'mongo-election-publication'
             phase_evidence = {}
@@ -661,6 +719,7 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
             failure_phase = 'worker-stop'
             phase_evidence = {}
             outage_samples = []
+            full_restore(time.monotonic())
             controller_ns = fixture['gateway_namespace']
             lease_name = '5b9825d2.gateway.envoyproxy.io'
             old_holder = obj('lease', lease_name, namespace=controller_ns)['spec']['holderIdentity']
