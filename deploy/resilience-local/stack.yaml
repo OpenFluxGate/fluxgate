@@ -10,6 +10,8 @@ kind: Deployment
 metadata: {name: fluxgate-authz, namespace: fluxgate-resilience}
 spec:
   replicas: 2
+  strategy:
+    rollingUpdate: {maxSurge: 0, maxUnavailable: 1}
   selector:
     matchLabels: {app: fluxgate-authz}
   template:
@@ -80,6 +82,8 @@ kind: Deployment
 metadata: {name: echo, namespace: fluxgate-resilience}
 spec:
   replicas: 2
+  strategy:
+    rollingUpdate: {maxSurge: 0, maxUnavailable: 1}
   selector:
     matchLabels: {app: echo}
   template:
@@ -117,6 +121,9 @@ spec:
     kubernetes:
       envoyDeployment:
         replicas: 2
+        strategy:
+          type: RollingUpdate
+          rollingUpdate: {maxSurge: 0, maxUnavailable: 1}
         container:
           resources:
             requests: {cpu: 50m, memory: 96Mi}
