@@ -139,7 +139,7 @@ class RateLimitEngineMatchingTest {
       assertThat(result.isAllowed()).isFalse();
       assertThat(result.getNanosToWaitForRefill()).isEqualTo(0L);
       assertThat(result.getKey()).isNotNull();
-      assertThat(result.getKey().value()).startsWith("denied:");
+      assertThat(result.getKey().value()).isEqualTo("denied:ip:172.16.1.5");
     }
 
     @Test
@@ -203,7 +203,8 @@ class RateLimitEngineMatchingTest {
       RateLimitResult result = engine(rs, failingLimiter).check("test", ctx);
 
       assertThat(result.isAllowed()).isFalse();
-      assertThat(result.getKey().value()).startsWith("denied:");
+      // the denial came from the client IP, not from the rule's user key
+      assertThat(result.getKey().value()).isEqualTo("denied:ip:10.1.2.3");
     }
 
     @Test
@@ -271,7 +272,11 @@ class RateLimitEngineMatchingTest {
               .endpoint("/api/x")
               .method("GET")
               .build();
-      assertThat(engine(rs, failingLimiter).check("test", ctx).isAllowed()).isFalse();
+      RateLimitResult result = engine(rs, failingLimiter).check("test", ctx);
+
+      assertThat(result.isAllowed()).isFalse();
+      // the denied key, not the first rule's key
+      assertThat(result.getKey().value()).isEqualTo("denied:key:bad");
     }
 
     private RateLimitRule highPriorityIpRule() {

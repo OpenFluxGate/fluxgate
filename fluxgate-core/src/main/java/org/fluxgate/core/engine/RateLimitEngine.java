@@ -124,7 +124,7 @@ public final class RateLimitEngine {
           accessControl.evaluate(context.getClientIp(), primaryKey, resolvedKeys);
       if (decision == AccessControl.Decision.DENY) {
         return RateLimitResult.builder(
-                RateLimitKey.of(DENIED_KEY_PREFIX + resolvedKeys.get(0).value()))
+                deniedKey(accessControl, context.getClientIp(), resolvedKeys))
             .allowed(false)
             .remainingTokens(0L)
             .nanosToWaitForRefill(0L)
@@ -185,6 +185,27 @@ public final class RateLimitEngine {
       }
     }
     return primaryKey;
+  }
+
+  /**
+   * Builds the synthetic key reported for a denied request, naming the cause: {@code
+   * denied:ip:<clientIp>} when the client IP is denied, otherwise {@code denied:<key>} for the
+   * first denied key.
+   */
+  private static RateLimitKey deniedKey(
+      AccessControl accessControl, String clientIp, List<RateLimitKey> keys) {
+    if (clientIp != null
+        && !clientIp.isEmpty()
+        && !accessControl.getDeniedIps().isEmpty()
+        && accessControl.getDeniedIps().contains(clientIp)) {
+      return RateLimitKey.of(DENIED_KEY_PREFIX + "ip:" + clientIp);
+    }
+    for (RateLimitKey key : keys) {
+      if (accessControl.getDeniedKeys().contains(key.value())) {
+        return RateLimitKey.of(DENIED_KEY_PREFIX + key.value());
+      }
+    }
+    return RateLimitKey.of(DENIED_KEY_PREFIX + keys.get(0).value());
   }
 
   private RateLimitResult onMissingRuleSet(String ruleSetId) {

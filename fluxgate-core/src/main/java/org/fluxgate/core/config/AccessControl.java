@@ -30,17 +30,20 @@ import org.fluxgate.core.match.CidrSet;
  *     .allowedKeys(Set.of("key:admin-key-abc"))
  *     .build();
  *
- * // DENY beats allow: a key in both deny and allow is always denied
- * ac.evaluate(RateLimitKey.of("ip:10.0.0.5"));       // DENY
- * ac.evaluate(RateLimitKey.of("key:admin-key-abc"));  // ALLOW_BYPASS
- * ac.evaluate(RateLimitKey.of("user:alice"));         // NO_OPINION
+ * RateLimitKey admin = RateLimitKey.of("key:admin-key-abc");
+ * RateLimitKey alice = RateLimitKey.of("user:alice");
+ *
+ * // DENY beats allow: a denied client IP is denied even with an allowed key
+ * ac.evaluate("10.0.0.5", admin, List.of(admin));     // DENY
+ * ac.evaluate("192.0.2.1", admin, List.of(admin));    // ALLOW_BYPASS
+ * ac.evaluate("192.0.2.1", alice, List.of(alice));    // NO_OPINION
  * }</pre>
  *
  * @since 0.4.0
  */
 public final class AccessControl {
 
-  /** The decision returned by {@link AccessControl#evaluate(RateLimitKey)}. */
+  /** The decision returned by {@link AccessControl#evaluate(String, RateLimitKey, Collection)}. */
   public enum Decision {
     /**
      * The requester is explicitly allowed and rate limiting should be skipped entirely (bypass).
@@ -122,9 +125,16 @@ public final class AccessControl {
    * <p>Deny always wins: if the key matches a deny rule it is denied even if it also matches an
    * allow rule.
    *
+   * <p><b>Warning:</b> the IP lists are only checked when the key itself is an {@code ip:} key. For
+   * {@code PER_USER} / {@code PER_API_KEY} / custom keys the client IP is <em>not</em> checked, so
+   * a denied IP is not blocked and an allowed IP does not bypass limiting.
+   *
    * @param key the resolved rate limit key (must not be null)
    * @return the access control decision
+   * @deprecated since 0.4.0; use {@link #evaluate(String, RateLimitKey, Collection)}, which checks
+   *     the request's client IP for every rule scope.
    */
+  @Deprecated
   public Decision evaluate(RateLimitKey key) {
     Objects.requireNonNull(key, "key must not be null");
     String value = key.value();

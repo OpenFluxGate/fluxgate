@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 @DisplayName("AccessControl Tests")
+@SuppressWarnings("deprecation") // also covers the legacy single-key evaluate(RateLimitKey)
 class AccessControlTest {
 
   // ===== EMPTY constant =====
