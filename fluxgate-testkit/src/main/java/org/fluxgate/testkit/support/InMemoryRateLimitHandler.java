@@ -134,8 +134,9 @@ public final class InMemoryRateLimitHandler implements FluxgateRateLimitHandler 
   }
 
   /**
-   * Returns the number of live buckets, which is a useful assertion in its own right: a rule with
-   * two bands and three distinct callers should hold six buckets, not three.
+   * Returns the number of live buckets, which is a useful assertion in its own right: all bands of
+   * a rule share one bucket per caller, so a rule with two bands and three distinct callers holds
+   * three buckets.
    *
    * @return the number of buckets currently held
    */

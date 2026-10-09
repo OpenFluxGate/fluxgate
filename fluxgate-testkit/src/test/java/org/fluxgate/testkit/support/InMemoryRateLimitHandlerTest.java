@@ -91,20 +91,24 @@ class InMemoryRateLimitHandlerTest {
       RateLimitRuleSet ruleSet =
           FluxgateTestRules.rule("per-ip")
               .perIp()
-              .band(Duration.ofSeconds(1), 1)
-              .band(Duration.ofMinutes(1), 10)
+              .band(Duration.ofMinutes(1), 3)
+              .band(Duration.ofHours(1), 4)
               .toRuleSet(RULE_SET);
       InMemoryRateLimitHandler handler = InMemoryRateLimitHandler.withRuleSet(ruleSet);
       RequestContext context = from("10.0.0.1");
 
-      RateLimitAssertions.assertAllowed(handler.tryConsume(context, RULE_SET));
+      // minute band 3 -> 1, hour band 4 -> 2
+      RateLimitAssertions.assertAllowed(handler.tryConsume(context, RULE_SET, 2L));
 
-      // The 1-per-second band is empty, so the request is rejected. The minute band must not be
-      // charged for it: three further rejections still leave the minute band with 9 tokens.
+      // The minute band cannot serve 2 permits, so these are rejected. The hour band must not be
+      // charged for them: had it been, it would be empty and the next request rejected too.
       for (int i = 0; i < 3; i++) {
-        RateLimitAssertions.assertRejected(handler.tryConsume(context, RULE_SET));
+        RateLimitAssertions.assertRejected(handler.tryConsume(context, RULE_SET, 2L));
       }
-      assertThat(handler.getRateLimiter().size()).isEqualTo(2);
+      RateLimitAssertions.assertAllowed(handler.tryConsume(context, RULE_SET, 1L));
+
+      // All bands of one rule share a single multi-bandwidth bucket per caller.
+      assertThat(handler.bucketCount()).isEqualTo(1);
     }
 
     @Test
