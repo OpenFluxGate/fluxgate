@@ -85,7 +85,8 @@ class MongoPolicyRepositoryIntegrationTest {
               .withWriteConcern(WriteConcern.W1.withWTimeout(2000, TimeUnit.MILLISECONDS));
       MongoPolicyRepository observed = new MongoPolicyRepository(observedDatabase, collection);
       Document first =
-          observed.publish("s", 0, List.of(rule(100)), new Document(), false, null, "batch", "admin");
+          observed.publish(
+              "s", 0, List.of(rule(100)), new Document(), false, null, "batch", "admin");
       assertThat(commands).hasSize(1);
       BsonDocument command = commands.get(0);
       assertThat(command.getString("createIndexes").getValue())
@@ -116,8 +117,9 @@ class MongoPolicyRepositoryIntegrationTest {
           .containsExactlyInAnyOrderElementsOf(expectedKeys);
       assertThat(
               observed
-                  .publish("s", 0, List.of(rule(100)), new Document(), false, null, "batch", "admin")
-              .getString("snapshotId"))
+                  .publish(
+                      "s", 0, List.of(rule(100)), new Document(), false, null, "batch", "admin")
+                  .getString("snapshotId"))
           .isEqualTo(first.getString("snapshotId"));
       assertThat(observed.history("s", 10)).hasSize(1);
       assertThat(commands).hasSize(1);
