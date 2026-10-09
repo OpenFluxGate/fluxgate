@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build only the isolated three-node local HA fixture; never inject faults."""
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -16,6 +17,172 @@ HERE = Path(__file__).resolve().parent
 NS = 'fluxgate-resilience'
 CONTEXT = 'kind-fluxgate-resilience'
 NODE_IMAGE = 'kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f'
+MONGO_PRESET = {'electionTimeoutMillis': 5000, 'catchUpTimeoutMillis': 2000}
+
+
+def preset_config(config):
+    expected_hosts = {f'mongo-{i}.mongo.{NS}.svc.cluster.local:27017' for i in range(3)}
+    members = config.get('members', [])
+    if (config.get('_id') != 'rs0' or len(members) != 3
+            or {m.get('host') for m in members} != expected_hosts
+            or {m.get('_id') for m in members} != {0, 1, 2}
+            or any(m.get('arbiterOnly', False) or m.get('votes', 1) != 1 for m in members)):
+        raise ValueError('preset requires the exact owned three-data-member rs0')
+    updated = copy.deepcopy(config)
+    updated.setdefault('settings', {}).update(MONGO_PRESET)
+    if updated != config:
+        updated['version'] = config['version'] + 1
+    return updated
+
+
+def apply_mongo_preset(kube, mongo, wait, fixture, run):
+    if fixture.get('context') != CONTEXT or fixture.get('namespace') != NS:
+        raise ValueError('preset requires exact local fixture context and namespace')
+    namespace = json.loads(kube(['get', 'namespace', NS, '-o', 'json']))
+    if namespace['metadata'].get('labels', {}).get('fluxgate.io/environment') != 'local-ephemeral':
+        raise ValueError('preset requires local-ephemeral ownership label')
+    nodes = json.loads(kube(['get', 'nodes', '-o', 'json']))['items']
+    names = {node['metadata']['name'] for node in nodes}
+    if (len(nodes) != 3 or len(names) != 3 or names != set(fixture['node_container_names'])
+            or any(not name.startswith(NS + '-') for name in names)):
+        raise ValueError('preset requires exact owned three-node fixture')
+    for name in sorted(names):
+        labels = json.loads(run(['docker', 'inspect', '--format', '{{json .Config.Labels}}', name]))
+        if labels.get('io.x-k8s.kind.cluster') != NS:
+            raise ValueError('preset node Docker cluster ownership mismatch')
+    pods = json.loads(kube(['-n', NS, 'get', 'pods', '-l', 'app=mongo', '-o', 'json']))['items']
+    if ({p['metadata']['name'] for p in pods} != {'mongo-0', 'mongo-1', 'mongo-2'}
+            or len(pods) != 3 or any(p['spec'].get('nodeName') not in names for p in pods)):
+        raise ValueError('preset requires exactly three owned Mongo Pods')
+
+    def read(pod, command):
+        # Extended JSON preserves replicaSetId and other BSON fields on reconfig.
+        encoded = json.dumps(json.dumps(command))
+        return json.loads(mongo(pod, 'print(EJSON.stringify(admin.runCommand(EJSON.parse(' + encoded + '))));'))
+
+    def primary_status():
+        status = read('mongo-0', {'replSetGetStatus': 1})
+        if status.get('ok') != 1 or status.get('set') != 'rs0' or len(status.get('members', [])) != 3:
+            raise ValueError('preset replica set status mismatch')
+        if any(m.get('health') != 1 or m.get('state') not in (1, 2) for m in status['members']):
+            raise ValueError('preset requires healthy primary and two secondaries')
+        primary = [m for m in status['members'] if m['state'] == 1]
+        if len(primary) != 1:
+            raise ValueError('preset requires exactly one confirmed primary')
+        return primary[0]['name'].split('.')[0]
+
+    primary = wait('Mongo preset healthy primary', primary_status)
+    current = read(primary, {'replSetGetConfig': 1, 'commitmentStatus': True})
+    if current.get('ok') != 1 or current.get('commitmentStatus') is not True:
+        raise ValueError('previous Mongo configuration must be majority committed')
+    config = current['config']
+    updated = preset_config(config)
+    if updated != config:
+        # Ordinary primary reconfiguration preserves all fields; never force it.
+        result = read(primary, {'replSetReconfig': updated, 'maxTimeMS': 10000})
+        if result.get('ok') != 1:
+            raise ValueError('ordinary primary Mongo reconfiguration failed')
+
+    def committed_everywhere():
+        primary_now = primary_status()
+        committed = read(primary_now, {'replSetGetConfig': 1, 'commitmentStatus': True})
+        if committed.get('ok') != 1 or committed.get('commitmentStatus') is not True:
+            raise ValueError('Mongo preset configuration not majority committed')
+        authoritative = committed['config']
+        if authoritative != updated:
+            raise ValueError('Mongo configuration changed during preset application')
+        for pod in ('mongo-0', 'mongo-1', 'mongo-2'):
+            observed = read(pod, {'replSetGetConfig': 1})
+            status = read(pod, {'replSetGetStatus': 1})
+            if (observed.get('ok') != 1 or observed.get('config') != authoritative
+                    or status.get('ok') != 1 or status.get('set') != 'rs0'
+                    or status.get('myState') not in (1, 2)
+                    or len(status.get('members', [])) != 3
+                    or any(m.get('health') != 1 or m.get('state') not in (1, 2)
+                           for m in status['members'])):
+                raise ValueError('all three members must confirm the committed preset')
+        return True
+    wait('Mongo preset committed on all three members', committed_everywhere, seconds=60)
+    print('Local Mongo timing preset majority committed and confirmed on all three members', flush=True)
+
+
+def preset_self_check():
+    config = {'_id': 'rs0', 'version': 7, 'term': 2,
+              'members': [{'_id': i, 'host': f'mongo-{i}.mongo.{NS}.svc.cluster.local:27017',
+                           'priority': 1, 'votes': 1} for i in range(3)],
+              'writeConcernMajorityJournalDefault': True,
+              'settings': {'electionTimeoutMillis': 10000, 'catchUpTimeoutMillis': -1,
+                           'getLastErrorDefaults': {'w': 1, 'wtimeout': 0},
+                           'replicaSetId': {'$oid': '012345678901234567890123'}}}
+    updated = preset_config(config)
+    assert config['version'] == 7 and updated['version'] == 8
+    assert updated['members'] == config['members'] and updated['term'] == config['term']
+    assert updated['writeConcernMajorityJournalDefault'] is True
+    assert updated['settings']['getLastErrorDefaults'] == config['settings']['getLastErrorDefaults']
+    assert updated['settings']['replicaSetId'] == config['settings']['replicaSetId']
+    assert all(updated['settings'][k] == v for k, v in MONGO_PRESET.items())
+    assert preset_config(updated) == updated
+    for invalid in (dict(config, _id='production'), dict(config, members=config['members'][:2]),
+                    dict(config, members=[dict(m, host='foreign:27017') for m in config['members']])):
+        try:
+            preset_config(invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('foreign replica configuration accepted')
+    node_names = [NS + '-control-plane', NS + '-worker', NS + '-worker2']
+    fixture = {'context': CONTEXT, 'namespace': NS, 'node_container_names': node_names}
+    state, calls = [copy.deepcopy(config)], []
+    def kube(command):
+        if 'namespace' in command:
+            return json.dumps({'metadata': {'labels': {'fluxgate.io/environment': 'local-ephemeral'}}})
+        if 'nodes' in command:
+            return json.dumps({'items': [{'metadata': {'name': n}} for n in node_names]})
+        return json.dumps({'items': [{'metadata': {'name': f'mongo-{i}'},
+                                     'spec': {'nodeName': node_names[i]}} for i in range(3)]})
+    def mongo(pod, source):
+        command = json.loads(json.loads(source.split('EJSON.parse(', 1)[1].rsplit('))));', 1)[0]))
+        calls.append((pod, command))
+        if 'replSetReconfig' in command:
+            assert pod == 'mongo-1' and 'force' not in command
+            state[0] = command['replSetReconfig']
+            return json.dumps({'ok': 1})
+        if 'replSetGetConfig' in command:
+            return json.dumps({'ok': 1, 'config': state[0], 'commitmentStatus': True})
+        return json.dumps({'ok': 1, 'set': 'rs0', 'myState': 1 if pod == 'mongo-1' else 2,
+                           'members': [{'name': m['host'], 'state': 1 if i == 1 else 2, 'health': 1}
+                                       for i, m in enumerate(config['members'])]})
+    def run(command):
+        return json.dumps({'io.x-k8s.kind.cluster': NS})
+    def wait(label, action, seconds=180):
+        return action()
+    apply_mongo_preset(kube, mongo, wait, fixture, run)
+    assert state[0] == updated
+    assert {pod for pod, command in calls if command == {'replSetGetConfig': 1}} == {'mongo-0', 'mongo-1', 'mongo-2'}
+    assert {pod for pod, command in calls if 'replSetGetStatus' in command} == {'mongo-0', 'mongo-1', 'mongo-2'}
+    before = len([command for _, command in calls if 'replSetReconfig' in command])
+    apply_mongo_preset(kube, mongo, wait, fixture, run)
+    assert len([command for _, command in calls if 'replSetReconfig' in command]) == before
+    try:
+        apply_mongo_preset(kube, mongo, wait, dict(fixture, context='production'), run)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('foreign fixture accepted')
+    for bad_kube, bad_run, bad_mongo in (
+            (lambda command: json.dumps({'metadata': {'labels': {}}}), run, mongo),
+            (kube, lambda command: json.dumps({'io.x-k8s.kind.cluster': 'foreign'}), mongo),
+            (kube, run, lambda pod, source: json.dumps({'ok': 1, 'config': state[0],
+                                                        'commitmentStatus': False})
+             if 'replSetGetConfig' in source else mongo(pod, source))):
+        try:
+            apply_mongo_preset(bad_kube, bad_mongo, wait, fixture, bad_run)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('ownership or uncommitted configuration accepted')
+    assert len([command for _, command in calls if 'replSetReconfig' in command]) == before
+    print('Mongo preset offline contract checks passed; no cluster accessed')
 
 
 def main():
@@ -23,8 +190,24 @@ def main():
     parser.add_argument('--fixture', type=Path, help='Private directory; existing files are reused')
     parser.add_argument('--image', default='fluxgate-envoy-extauth:resilience')
     parser.add_argument('--stores-only', action='store_true', help='Leave authz scaled to zero until final image is accepted')
+    parser.add_argument('--apply-mongo-preset', action='store_true', help='Only apply and verify timing settings on an existing owned local fixture')
+    parser.add_argument('--self-check', action='store_true', help='Run offline Mongo preset contract checks')
     args = parser.parse_args()
+    if args.self_check:
+        preset_self_check()
+        return
     os.umask(0o077)
+    if args.apply_mongo_preset:
+        if args.fixture is None:
+            parser.error('--apply-mongo-preset requires the original --fixture directory')
+        fixture_path = args.fixture.resolve() / 'fixture.json'
+        if fixture_path.stat().st_mode & 0o077:
+            raise ValueError('existing fixture must be private')
+        preset_fixture = json.loads(fixture_path.read_text())
+        expected_kubeconfig = args.fixture.resolve() / 'kubeconfig'
+        if (Path(preset_fixture['kubeconfig']).resolve() != expected_kubeconfig
+                or expected_kubeconfig.stat().st_mode & 0o077):
+            raise ValueError('preset requires original private fixture kubeconfig')
     directory = (args.fixture or Path(tempfile.mkdtemp(prefix='fluxgate-resilience-'))).resolve()
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     directory.chmod(0o700)
@@ -77,6 +260,10 @@ const conn=new Mongo('mongodb://admin:'+encodeURIComponent(password)+'@127.0.0.1
                 if time.monotonic() >= end:
                     raise RuntimeError(f'{label} did not become ready within {seconds}s') from None
                 time.sleep(2)
+
+    if args.apply_mongo_preset:
+        apply_mongo_preset(kube, mongo, wait, preset_fixture, run)
+        return
 
     print('Creating isolated kind/Calico cluster', flush=True)
     clusters = run(['kind', 'get', 'clusters']).splitlines()
@@ -220,7 +407,7 @@ const conn=new Mongo('mongodb://admin:'+encodeURIComponent(password)+'@127.0.0.1
         kube(['-n', NS, 'rollout', 'status', f'statefulset/{store}', '--timeout=600s'], timeout=650)
     members = [{'id': i, 'host': f'mongo-{i}.mongo.{NS}.svc.cluster.local:27017'} for i in range(3)]
     initiate = f'''let status;try {{status=admin.runCommand({{replSetGetStatus:1}});}} catch(e) {{if(e.code!==94)throw e;status={{ok:0}};}}
-if(status.ok!==1) {{const r=admin.runCommand({{replSetInitiate:{{_id:'rs0',members:{json.dumps(members).replace('"id":', '"_id":')}}}}});if(r.ok!==1)quit(2);}}
+if(status.ok!==1) {{const r=admin.runCommand({{replSetInitiate:{{_id:'rs0',members:{json.dumps(members).replace('"id":', '"_id":')},settings:{json.dumps(MONGO_PRESET)}}}}});if(r.ok!==1)quit(2);}}
 print('REPLICA_SET_INITIALIZED');'''
     wait('Mongo authentication/initiation', lambda: mongo('mongo-0', initiate))
     def mongo_ready():
@@ -229,6 +416,8 @@ print('REPLICA_SET_INITIALIZED');'''
         assert sum(m.get('state') == 1 for m in status['members']) == 1 and all(m.get('health') == 1 for m in status['members'])
         return status
     mongo_status = wait('Mongo three-member quorum', mongo_ready)
+    apply_mongo_preset(kube, mongo, wait,
+                       {'context': CONTEXT, 'namespace': NS, 'node_container_names': nodes}, run)
     primary = next(m['name'].split('.')[0] for m in mongo_status['members'] if m['state'] == 1)
     mongo(primary, '''const target=conn.getDB('fluxgate');if(!target.getUser('fluxgate'))target.createUser({user:'fluxgate',pwd:fs.readFileSync('/app-credentials/mongo-app-password','utf8').trim(),roles:[{role:'readWrite',db:'fluxgate'}],writeConcern:{w:'majority',wtimeout:2000}});print('APP_USER_READY');''')
     redis_pods = json.loads(kube(['-n', NS, 'get', 'pods', '-l', 'app=redis', '-o', 'json']))['items']
