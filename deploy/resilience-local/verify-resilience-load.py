@@ -267,6 +267,10 @@ def fault_arguments(fixture_file, fault, proof):
                  "--phase", fault, "--proof", str(proof / "ha")]
     if fault == "mongo":
         arguments.append("--prepared-publisher")
+    elif fault == "redis":
+        # Automatic recovery remains measured; optional operator home failback
+        # belongs after this full observation and before the next experiment.
+        arguments.append("--preserve-promoted-roles")
     return arguments
 
 def coordinate(args):
@@ -648,6 +652,7 @@ def self_check():
                         return process
                     assert name == "verify-ha.py" and not start_new_session
                     assert ("--prepared-publisher" in arguments) == (fault == "mongo")
+                    assert ("--preserve-promoted-roles" in arguments) == (fault == "redis")
                     assert events.index("marker-ready") < events.index("started:verify-ha.py")
                     ha_dir = proof / "ha"; ha_dir.mkdir()
                     (ha_dir / "ha.json").write_text('{}')
@@ -720,7 +725,12 @@ def self_check():
         assert evidence["exit_code"] == -15 and processes[0][0] == "publisher_preparation"
     finally:
         os.killpg, subprocess.Popen = original_killpg, original_popen
-    print(json.dumps({"result": "PASS", "self_checks": len(invalid) + 10 + rejected_polls + ordering_checks + 1}))
+    for fault in ("redis", "mongo"):
+        arguments = fault_arguments(Path("private/fixture.json"), fault, Path("private/proof"))
+        assert arguments[arguments.index("--phase") + 1] == fault
+        assert ("--preserve-promoted-roles" in arguments) == (fault == "redis")
+        assert ("--prepared-publisher" in arguments) == (fault == "mongo")
+    print(json.dumps({"result": "PASS", "self_checks": len(invalid) + 12 + rejected_polls + ordering_checks + 1}))
 
 
 def main():
