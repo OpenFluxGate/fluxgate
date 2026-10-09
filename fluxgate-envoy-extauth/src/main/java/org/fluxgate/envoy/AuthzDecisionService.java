@@ -1,63 +1,37 @@
 package org.fluxgate.envoy;
 
-import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
-import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.engine.RateLimitEngine;
-import org.fluxgate.core.match.PathPatternMatcher;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
-import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
-import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-/** Applies exactly one server-selected FluxGate rule before Envoy forwards a request. */
+/** Delegates Envoy checks to the existing FluxGate engine and its configured rule provider. */
 @Service
 public final class AuthzDecisionService {
   private static final Logger log = LoggerFactory.getLogger(AuthzDecisionService.class);
 
   private final RateLimitEngine engine;
-  private final RateLimitRuleSetProvider provider;
-  private final PathPatternMatcher matcher;
   private final String ruleSetId;
 
   public AuthzDecisionService(
       RateLimitEngine engine,
-      RateLimitRuleSetProvider provider,
-      PathPatternMatcher matcher,
       @Value("${fluxgate.envoy.rule-set-id:gateway-pilot}") String ruleSetId) {
     this.engine = Objects.requireNonNull(engine, "engine");
-    this.provider = Objects.requireNonNull(provider, "provider");
-    this.matcher = Objects.requireNonNull(matcher, "matcher");
     this.ruleSetId = Objects.requireNonNull(ruleSetId, "ruleSetId");
   }
 
   public AuthzDecision decide(RequestContext context) {
     try {
-      Optional<RateLimitRuleSet> configured = provider.findById(ruleSetId);
-      if (configured.isEmpty()) {
-        log.error("Envoy authorization rule set is missing: {}", ruleSetId);
-        return AuthzDecision.of(503);
-      }
-      List<RateLimitRule> matched = configured.get().getMatchingRules(context, matcher);
-      if (matched.size() != 1 || matched.get(0).getBands().isEmpty()) {
-        log.error(
-            "Envoy authorization requires exactly one matching rule with a band: {}", ruleSetId);
-        return AuthzDecision.of(503);
-      }
-
       RateLimitResult result = engine.check(ruleSetId, context, 1L);
       if (result.isAllowed()) {
-        return result.hasRule()
-                || result.getDecisionReason() == RateLimitResult.DecisionReason.ACCESS_BYPASS
-            ? AuthzDecision.of(200)
-            : AuthzDecision.of(503);
+        return AuthzDecision.of(200);
       }
-      if (result.getDecisionReason() == RateLimitResult.DecisionReason.ACCESS_DENIED) {
+      if (result.getDecisionReason() == RateLimitResult.DecisionReason.ACCESS_DENIED
+          || result.getDecisionReason() == RateLimitResult.DecisionReason.MISSING_KEY) {
         return AuthzDecision.of(403);
       }
       if (result.getDecisionReason() == RateLimitResult.DecisionReason.QUOTA) {

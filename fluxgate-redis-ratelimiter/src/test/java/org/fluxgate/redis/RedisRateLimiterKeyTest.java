@@ -114,6 +114,7 @@ class RedisRateLimiterKeyTest {
       assertThat(result.getMatchedRule()).isNotNull();
       assertThat(result.getMatchedRule().getId()).isEqualTo("test-rule");
       assertThat(result.getPolicy()).isEqualTo(OnLimitExceedPolicy.REJECT_REQUEST);
+      assertThat(result.getDecisionReason()).isEqualTo(RateLimitResult.DecisionReason.MISSING_KEY);
     }
   }
 }

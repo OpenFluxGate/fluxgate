@@ -313,6 +313,7 @@ class Bucket4jRateLimiterTest {
     assertThat(result.getKey().value()).isEqualTo("missing-key:TEST_RULE");
     assertThat(result.getNanosToWaitForRefill()).isZero();
     assertThat(result.getLimit()).isEqualTo(-1L);
+    assertThat(result.getDecisionReason()).isEqualTo(RateLimitResult.DecisionReason.MISSING_KEY);
   }
 
   // --- 6) Bucket cache is bounded --------------------------------------

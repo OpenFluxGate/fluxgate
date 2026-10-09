@@ -237,6 +237,7 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
     log.debug("Rejecting request because no rate limit key could be resolved: {}", e.getMessage());
     return RateLimitResult.builder(RateLimitKey.of("missing-key:" + rule.getId()))
         .allowed(false)
+        .decisionReason(RateLimitResult.DecisionReason.MISSING_KEY)
         .matchedRule(rule)
         .policy(rule.getOnLimitExceedPolicy())
         .remainingTokens(0L)

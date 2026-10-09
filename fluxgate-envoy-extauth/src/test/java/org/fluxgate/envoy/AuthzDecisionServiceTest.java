@@ -12,7 +12,6 @@ import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.engine.RateLimitEngine;
 import org.fluxgate.core.key.LimitScopeKeyResolver;
 import org.fluxgate.core.key.RateLimitKey;
-import org.fluxgate.core.match.SimpleAntPathMatcher;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.ratelimiter.RateLimiter;
@@ -47,7 +46,7 @@ class AuthzDecisionServiceTest {
             .rateLimiter(limiter)
             .onMissingRuleSetStrategy(RateLimitEngine.OnMissingRuleSetStrategy.DENY)
             .build();
-    return new AuthzDecisionService(engine, provider, SimpleAntPathMatcher.INSTANCE, "pilot");
+    return new AuthzDecisionService(engine, "pilot");
   }
 
   @Test
@@ -89,11 +88,7 @@ class AuthzDecisionServiceTest {
   }
 
   @Test
-  void noRuleOrMultipleRulesReturns503BeforeConsumption() {
-    RateLimiter never =
-        (ctx, rs, permits) -> {
-          throw new AssertionError("limiter called");
-        };
+  void noMatchingRuleKeepsTheExistingFluxGateAllowDecision() {
     RateLimitRule nonmatching =
         RateLimitRule.builder("other")
             .name("other")
@@ -101,13 +96,28 @@ class AuthzDecisionServiceTest {
             .matcher(RuleMatcher.builder().addPathPattern("/other/**").build())
             .addBand(RateLimitBand.builder(Duration.ofSeconds(60), 1).build())
             .build();
-    assertThat(service(List.of(nonmatching), AccessControl.EMPTY, never).decide(request).status())
-        .isEqualTo(503);
     assertThat(
-            service(List.of(rule("one"), rule("two")), AccessControl.EMPTY, never)
+            service(
+                    List.of(nonmatching),
+                    AccessControl.EMPTY,
+                    (ctx, rs, permits) -> RateLimitResult.allowedWithoutRule())
                 .decide(request)
                 .status())
-        .isEqualTo(503);
+        .isEqualTo(200);
+  }
+
+  @Test
+  void multipleMatchingRulesReachTheExistingLimiter() {
+    RateLimitRule first = rule("one");
+    assertThat(
+            service(
+                    List.of(first, rule("two")),
+                    AccessControl.EMPTY,
+                    (ctx, rs, permits) ->
+                        RateLimitResult.allowed(RateLimitKey.of("global"), first, 0, 0))
+                .decide(request)
+                .status())
+        .isEqualTo(200);
   }
 
   @Test
@@ -137,13 +147,31 @@ class AuthzDecisionServiceTest {
   }
 
   @Test
-  void failOpenResultWithoutRuleStillReturns503() {
+  void missingIdentityIsRejectedWithoutAQuotaRetryHeader() {
+    RateLimitRule rule = rule("one");
+    AuthzDecision decision =
+        service(
+                List.of(rule),
+                AccessControl.EMPTY,
+                (ctx, rs, permits) ->
+                    RateLimitResult.builder(RateLimitKey.of("missing-key:one"))
+                        .allowed(false)
+                        .matchedRule(rule)
+                        .decisionReason(RateLimitResult.DecisionReason.MISSING_KEY)
+                        .build())
+            .decide(request);
+    assertThat(decision.status()).isEqualTo(403);
+    assertThat(decision.retryAfterSeconds()).isZero();
+  }
+
+  @Test
+  void noMatchingRuleFollowsTheExistingFluxGateAllowDecision() {
     AuthzDecisionService service =
         service(
             List.of(rule("one")),
             AccessControl.EMPTY,
             (ctx, rs, permits) -> RateLimitResult.allowedWithoutRule());
-    assertThat(service.decide(request).status()).isEqualTo(503);
+    assertThat(service.decide(request).status()).isEqualTo(200);
   }
 
   @Test
@@ -169,7 +197,7 @@ class AuthzDecisionServiceTest {
             .onMissingRuleSetStrategy(RateLimitEngine.OnMissingRuleSetStrategy.DENY)
             .build();
     assertThat(
-            new AuthzDecisionService(engine, provider, SimpleAntPathMatcher.INSTANCE, "pilot")
+            new AuthzDecisionService(engine, "pilot")
                 .decide(request)
                 .status())
         .isEqualTo(503);

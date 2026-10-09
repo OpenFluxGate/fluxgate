@@ -383,6 +383,7 @@ public class Bucket4jRateLimiter implements RateLimiter {
     RateLimitResult.Builder builder =
         RateLimitResult.builder(RateLimitKey.of("missing-key:" + e.getRuleId()))
             .allowed(false)
+            .decisionReason(RateLimitResult.DecisionReason.MISSING_KEY)
             .remainingTokens(0L)
             .nanosToWaitForRefill(0L)
             .limit(-1L)

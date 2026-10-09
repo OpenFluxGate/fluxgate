@@ -1,6 +1,6 @@
 # 로컬 Envoy Gateway + FluxGate 시연
 
-이 예제는 Java 판정 서비스가 Redis의 **전역 버킷**(2회/60초)을 사용해 `/api` 경로를 보호한다. 클라이언트가 보낸 `X-Forwarded-For`, 사용자 ID, rule-set ID는 판정에 사용하지 않는다. 사용자별 할당량은 신뢰 가능한 프록시 체인과 인증된 ID 전파를 별도로 설계한 다음 추가해야 한다.
+이 예제에서 Envoy는 MongoDB나 Redis에 직접 연결하지 않는다. Envoy가 Java 판정 서비스로 요청을 보내면, 서비스가 MongoDB의 `fluxgate.rate_limit_rules`에서 규칙을 읽고 Redis의 버킷을 집행한다. 판정 이벤트는 MongoDB의 `rate_limit_events`에 기록된다. 샘플은 `/api/**`에 적용되는 전역 규칙 두 개를 사용하며, 더 엄격한 규칙이 2회/60초를 제한한다. 클라이언트가 보낸 `X-Forwarded-For`, 사용자 ID, rule-set ID는 판정에 사용하지 않는다. 사용자별 할당량은 신뢰 가능한 프록시 체인과 인증된 ID 전파를 별도로 설계한 다음 추가해야 한다.
 
 ## 준비 및 배포
 
@@ -16,6 +16,7 @@ kubectl --context kind-fluxgate-eg -n envoy-gateway-system wait deployment/envoy
 docker build -f fluxgate-envoy-extauth/Dockerfile -t fluxgate-envoy-extauth:local .
 kind load docker-image fluxgate-envoy-extauth:local --name fluxgate-eg
 kubectl --context kind-fluxgate-eg apply -f deploy/envoy-gateway-local/pilot.yaml
+kubectl --context kind-fluxgate-eg -n fluxgate-pilot rollout status deployment/mongo --timeout=180s
 kubectl --context kind-fluxgate-eg -n fluxgate-pilot rollout status deployment/redis --timeout=180s
 kubectl --context kind-fluxgate-eg -n fluxgate-pilot rollout status deployment/fluxgate-authz --timeout=180s
 kubectl --context kind-fluxgate-eg -n fluxgate-pilot rollout status deployment/echo --timeout=180s
@@ -31,12 +32,19 @@ ENVOY_SERVICE=$(kubectl --context kind-fluxgate-eg -n envoy-gateway-system get s
 kubectl --context kind-fluxgate-eg -n envoy-gateway-system port-forward "service/${ENVOY_SERVICE}" 8888:80
 ```
 
-다른 터미널에서 Redis의 새 버킷을 쓰도록 약 60초 기다리거나 로컬 실험 전용 Redis를 재시작한 뒤 테스트한다. 첫 두 요청은 `200`, 세 번째는 `429`와 `Retry-After`가 예상된다.
+다른 터미널에서 Redis의 새 버킷을 쓰도록 약 60초 기다린 뒤 테스트한다. 첫 두 요청은 `200`, 세 번째는 `429`와 `Retry-After`가 예상된다.
 
 ```bash
 curl -i http://127.0.0.1:8888/api/items
 curl -i http://127.0.0.1:8888/api/items
 curl -i http://127.0.0.1:8888/api/items
+```
+
+규칙과 판정 이벤트는 다음처럼 직접 확인할 수 있다. 이 샘플의 MongoDB 데이터는 `emptyDir`에 있으므로 Pod 재생성 시 사라진다.
+
+```bash
+kubectl --context kind-fluxgate-eg -n fluxgate-pilot exec deployment/mongo -- mongosh fluxgate --quiet --eval 'printjson({rules:db.rate_limit_rules.countDocuments({}),events:db.rate_limit_events.countDocuments({})})'
+kubectl --context kind-fluxgate-eg -n fluxgate-pilot exec deployment/redis -- redis-cli DBSIZE
 ```
 
 Redis 장애 시 판정 서비스의 응답은 `503`이어야 한다. Pod가 완전히 사라지기 전에 요청하면 기존 연결로 `429`가 나올 수 있으므로 삭제 완료를 기다린다. `OPTIONS`도 같은 판정을 거친다. 실험이 끝나면 Redis를 복구한다.

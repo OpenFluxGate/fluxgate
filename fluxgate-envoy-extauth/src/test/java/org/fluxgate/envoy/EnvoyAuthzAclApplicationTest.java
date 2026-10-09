@@ -10,7 +10,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
 
-@ActiveProfiles("acl-demo")
+@ActiveProfiles({"pilot", "acl-demo"})
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = {"fluxgate.redis.uri=redis://127.0.0.1:1", "fluxgate.redis.timeout-ms=100"})

@@ -7,7 +7,13 @@ fluxgate:
   reload:
     enabled: false
   envoy:
-    rule-set-id: gateway-pilot
+    rule-set-id: ${FLUXGATE_RULE_SET_ID:default-limits}
+  mongo:
+    enabled: true
+    uri: ${FLUXGATE_MONGO_URI:mongodb://localhost:27017/fluxgate}
+    database: ${FLUXGATE_MONGO_DB:fluxgate}
+    rule-collection: rate_limit_rules
+    event-collection: rate_limit_events
   redis:
     enabled: true
     uri: ${FLUXGATE_REDIS_URI:redis://localhost:6379}
@@ -19,12 +25,3 @@ fluxgate:
     filter-enabled: false
     fallback:
       mode: NONE
-    rule-sets:
-      - id: gateway-pilot
-        rules:
-          - id: pilot-global
-            scope: GLOBAL
-            key-strategy-id: global
-            bands:
-              - capacity: 2
-                window: 60s

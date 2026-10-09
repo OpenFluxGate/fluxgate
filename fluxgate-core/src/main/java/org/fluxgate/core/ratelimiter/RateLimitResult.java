@@ -19,6 +19,7 @@ public final class RateLimitResult {
   public enum DecisionReason {
     UNSPECIFIED,
     QUOTA,
+    MISSING_KEY,
     ACCESS_DENIED,
     ACCESS_BYPASS,
     MISSING_RULE_SET,

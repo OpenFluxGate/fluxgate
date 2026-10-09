@@ -1,0 +1,16 @@
+# Local-only smoke-test rule. Normal startup reads Studio's MongoDB rules instead.
+fluxgate:
+  mongo:
+    enabled: false
+  envoy:
+    rule-set-id: gateway-pilot
+  ratelimit:
+    rule-sets:
+      - id: gateway-pilot
+        rules:
+          - id: pilot-global
+            scope: GLOBAL
+            key-strategy-id: global
+            bands:
+              - capacity: 2
+                window: 60s
