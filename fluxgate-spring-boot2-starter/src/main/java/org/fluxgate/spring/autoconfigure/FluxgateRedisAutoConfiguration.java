@@ -1,6 +1,8 @@
 package org.fluxgate.spring.autoconfigure;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import org.fluxgate.core.ratelimiter.RateLimiter;
 import org.fluxgate.redis.RedisRateLimiter;
 import org.fluxgate.redis.config.RedisRateLimiterConfig;
@@ -17,6 +19,7 @@ import org.fluxgate.spring.properties.FluxgateProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -235,23 +238,32 @@ public class FluxgateRedisAutoConfiguration {
    *   <li>Cluster state and node count (for cluster mode)
    * </ul>
    *
-   * @param configProvider lazy provider for the Redis configuration
+   * <p>R6: the check never creates the lazy Redis configuration. Creating it opens a blocking
+   * connection, and while Redis is down every health probe would retry (and pay) that connection
+   * attempt. Until the configuration exists - created by the limiter's own background connect or by
+   * {@code fail-fast} - the check reports DOWN from the limiter's connection state; once it exists,
+   * the check runs over the established connection.
+   *
+   * @param beanFactory used to find out whether the Redis configuration has been created
+   * @param connectionStateProvider the Redis limiter's connection state, when there is one
    * @return RedisHealthChecker for actuator health endpoint
    */
   @Bean
   @ConditionalOnMissingBean(RedisHealthChecker.class)
   public RedisHealthChecker redisHealthChecker(
-      ObjectProvider<RedisRateLimiterConfig> configProvider) {
+      ConfigurableListableBeanFactory beanFactory,
+      ObjectProvider<RedisConnectionState> connectionStateProvider) {
     log.info("Creating FluxGate RedisHealthChecker");
 
-    // Resolved per check: reporting DOWN while the connection is still being established is the
-    // point of the lazy bootstrap.
     return () -> {
-      RedisRateLimiterConfig config;
-      try {
-        config = configProvider.getObject();
-      } catch (RuntimeException e) {
-        return HealthStatus.down("Redis is not connected: " + e.getMessage());
+      RedisRateLimiterConfig config = createdConfig(beanFactory);
+      if (config == null) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        RedisConnectionState state = connectionStateProvider.getIfUnique();
+        if (state != null) {
+          details.put("failedAttempts", state.getFailedAttempts());
+        }
+        return HealthStatus.down("Redis connection not established yet", details);
       }
 
       RedisHealthCheckerImpl.HealthCheckResult result =
@@ -261,5 +273,19 @@ public class FluxgateRedisAutoConfiguration {
       }
       return HealthStatus.down(result.message(), result.details());
     };
+  }
+
+  /**
+   * Returns the Redis configuration only if a singleton of it has already been created.
+   *
+   * @return the created configuration, or null without triggering its creation
+   */
+  private static RedisRateLimiterConfig createdConfig(ConfigurableListableBeanFactory beanFactory) {
+    for (String name : beanFactory.getBeanNamesForType(RedisRateLimiterConfig.class, true, false)) {
+      if (beanFactory.containsSingleton(name)) {
+        return beanFactory.getBean(name, RedisRateLimiterConfig.class);
+      }
+    }
+    return null;
   }
 }

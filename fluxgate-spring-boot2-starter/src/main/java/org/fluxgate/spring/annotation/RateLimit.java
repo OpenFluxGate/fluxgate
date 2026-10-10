@@ -71,8 +71,9 @@ public @interface RateLimit {
   /**
    * Maximum number of concurrent requests that can wait for refill.
    *
-   * <p><b>Ignored since 0.4.0.</b> The wait semaphore became aspect-wide, because a semaphore
-   * created per invocation limited nothing at all; this attribute is read nowhere. Configure {@code
+   * <p><b>Ignored since 0.4.0.</b> A semaphore created per invocation limited nothing at all, so
+   * the wait permits are now one application-wide {@code FluxgateWaitPermits} bean shared by the
+   * filter and the aspect; this attribute is read nowhere. Configure {@code
    * fluxgate.ratelimit.wait-for-refill.max-concurrent-waits} instead.
    *
    * @return maximum concurrent waiting requests (not honoured)
@@ -101,8 +102,9 @@ public @interface RateLimit {
    * the 429 response directly.
    *
    * <p>Enable this to render the error with a {@code @ControllerAdvice} in the application's own
-   * format. The exception is thrown regardless of this flag when the invocation has no servlet
-   * response to write to, such as a scheduled task or a message listener.
+   * format. The exception is thrown regardless of this flag unless the annotated method is a Spring
+   * MVC request handler running in a servlet request, for example for a service method, a scheduled
+   * task or a message listener.
    *
    * @return true to throw on rejection, false to write the response
    */

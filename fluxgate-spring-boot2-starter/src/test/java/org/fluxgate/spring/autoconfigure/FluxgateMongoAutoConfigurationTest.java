@@ -12,7 +12,9 @@ import static org.mockito.Mockito.when;
 
 import com.mongodb.MongoException;
 import com.mongodb.client.ListCollectionNamesIterable;
+import com.mongodb.client.ListIndexesIterable;
 import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
 import com.mongodb.client.model.IndexOptions;
 import com.mongodb.client.model.Indexes;
@@ -304,7 +306,13 @@ class FluxgateMongoAutoConfigurationTest {
               })
           .when(mockIterable)
           .into(any());
-      when(mockDatabase.getCollection("existing_collection")).thenReturn(null);
+      MongoCollection<Document> mockCollection =
+          collectionWithIndexes(
+              new Document("name", "_id_").append("key", new Document("_id", 1)),
+              new Document("name", "ruleSetId_1_id_1_unique")
+                  .append("key", new Document("ruleSetId", 1).append("id", 1))
+                  .append("unique", true));
+      when(mockDatabase.getCollection("existing_collection")).thenReturn(mockCollection);
 
       FluxgateMongoAutoConfiguration config = new FluxgateMongoAutoConfiguration(properties);
 
@@ -343,10 +351,10 @@ class FluxgateMongoAutoConfigurationTest {
 
       // Then
       verify(mockDatabase).createCollection("new_collection");
-      // Every request resolves its rule set by ruleSetId: without this index that is a scan.
-      verify(mockCollection).createIndex(Indexes.ascending("ruleSetId"));
+      // The adapter's indexes: unique (ruleSetId, id) also serves the ruleSetId lookups.
       verify(mockCollection)
           .createIndex(eq(Indexes.ascending("ruleSetId", "id")), any(IndexOptions.class));
+      verify(mockCollection).createIndex(eq(Indexes.ascending("id")), any(IndexOptions.class));
     }
 
     @Test
@@ -379,7 +387,27 @@ class FluxgateMongoAutoConfigurationTest {
 
       // Then
       verify(mockDatabase, never()).createCollection(any());
-      verify(mockCollection).createIndex(Indexes.ascending("ruleSetId"));
+      verify(mockCollection)
+          .createIndex(eq(Indexes.ascending("ruleSetId", "id")), any(IndexOptions.class));
+    }
+
+    /** A rule collection mock whose listIndexes() returns {@code indexes}. */
+    @SuppressWarnings("unchecked")
+    private MongoCollection<Document> collectionWithIndexes(Document... indexes) {
+      MongoCollection<Document> collection = mock(MongoCollection.class);
+      ListIndexesIterable<Document> iterable = mock(ListIndexesIterable.class);
+      when(collection.listIndexes()).thenReturn(iterable);
+      when(iterable.iterator())
+          .thenAnswer(invocation -> cursorOver(Arrays.asList(indexes).iterator()));
+      return collection;
+    }
+
+    @SuppressWarnings("unchecked")
+    private MongoCursor<Document> cursorOver(java.util.Iterator<Document> documents) {
+      MongoCursor<Document> cursor = mock(MongoCursor.class);
+      when(cursor.hasNext()).thenAnswer(invocation -> documents.hasNext());
+      when(cursor.next()).thenAnswer(invocation -> documents.next());
+      return cursor;
     }
 
     /** A rule collection mock whose index creation can be verified. */

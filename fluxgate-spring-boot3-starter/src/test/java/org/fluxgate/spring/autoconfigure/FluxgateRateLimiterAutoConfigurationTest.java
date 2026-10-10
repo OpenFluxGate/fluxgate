@@ -1,6 +1,7 @@
 package org.fluxgate.spring.autoconfigure;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.util.List;
@@ -23,6 +24,7 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.fluxgate.spring.handler.EngineBackedRateLimitHandler;
 import org.fluxgate.spring.handler.LazyRedisRateLimiter;
 import org.fluxgate.spring.handler.MissingRuleSetProviderRateLimitHandler;
+import org.fluxgate.spring.handler.RateLimiterUnavailableException;
 import org.fluxgate.spring.handler.RedisConnectionState;
 import org.fluxgate.spring.handler.ResilientRateLimiter;
 import org.fluxgate.spring.reload.handler.InMemoryBucketResetHandler;
@@ -280,12 +282,13 @@ class FluxgateRateLimiterAutoConfigurationTest {
               "fluxgate.redis.timeout-ms=200")
           .run(
               context -> {
-                RateLimitResponse response =
-                    context
-                        .getBean(FluxgateRateLimitHandler.class)
-                        .tryConsume(
-                            RequestContext.builder().clientIp("10.0.0.1").build(), "orders");
-                assertThat(response.isAllowed()).isFalse();
+                // Item 10: a failed limiter is "unavailable" (HTTP 503), not "limit exceeded".
+                FluxgateRateLimitHandler handler = context.getBean(FluxgateRateLimitHandler.class);
+                assertThatThrownBy(
+                        () ->
+                            handler.tryConsume(
+                                RequestContext.builder().clientIp("10.0.0.1").build(), "orders"))
+                    .isInstanceOf(RateLimiterUnavailableException.class);
               });
     }
 
@@ -412,12 +415,12 @@ class FluxgateRateLimiterAutoConfigurationTest {
     void shouldRejectByDefaultBecauseFailureBehaviourIsDeny() {
       redisOnlyRunner.run(
           context -> {
-            RateLimitResponse response =
-                context
-                    .getBean(FluxgateRateLimitHandler.class)
-                    .tryConsume(RequestContext.builder().clientIp("10.0.0.1").build(), "orders");
-            assertThat(response.isAllowed()).isFalse();
-            assertThat(response.getRetryAfterMillis()).isZero();
+            FluxgateRateLimitHandler handler = context.getBean(FluxgateRateLimitHandler.class);
+            assertThatThrownBy(
+                    () ->
+                        handler.tryConsume(
+                            RequestContext.builder().clientIp("10.0.0.1").build(), "orders"))
+                .isInstanceOf(RateLimiterUnavailableException.class);
           });
     }
 
@@ -440,13 +443,15 @@ class FluxgateRateLimiterAutoConfigurationTest {
     void shouldAlsoApplyToWeightedPermits() {
       redisOnlyRunner.run(
           context ->
-              assertThat(
-                      context
-                          .getBean(FluxgateRateLimitHandler.class)
-                          .tryConsume(
-                              RequestContext.builder().clientIp("10.0.0.1").build(), "orders", 5L)
-                          .isAllowed())
-                  .isFalse());
+              assertThatThrownBy(
+                      () ->
+                          context
+                              .getBean(FluxgateRateLimitHandler.class)
+                              .tryConsume(
+                                  RequestContext.builder().clientIp("10.0.0.1").build(),
+                                  "orders",
+                                  5L))
+                  .isInstanceOf(RateLimiterUnavailableException.class));
     }
 
     @Test
@@ -560,13 +565,12 @@ class FluxgateRateLimiterAutoConfigurationTest {
           .withPropertyValues("fluxgate.ratelimit.missing-rule-behavior=DENY")
           .run(
               context -> {
-                RateLimitResponse response =
-                    context
-                        .getBean(FluxgateRateLimitHandler.class)
-                        .tryConsume(
-                            RequestContext.builder().clientIp("10.0.0.1").build(), "unknown");
-                assertThat(response.isAllowed()).isFalse();
-                assertThat(response.getRetryAfterMillis()).isZero();
+                FluxgateRateLimitHandler handler = context.getBean(FluxgateRateLimitHandler.class);
+                assertThatThrownBy(
+                        () ->
+                            handler.tryConsume(
+                                RequestContext.builder().clientIp("10.0.0.1").build(), "unknown"))
+                    .isInstanceOf(RateLimiterUnavailableException.class);
               });
     }
 

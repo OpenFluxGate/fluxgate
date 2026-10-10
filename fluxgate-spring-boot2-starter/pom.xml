@@ -9,7 +9,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.3.7</version>
+        <version>0.4.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>fluxgate-spring-boot2-starter</artifactId>
@@ -123,12 +123,18 @@
             <version>1.7.36</version>
         </dependency>
 
-        <!-- Logstash Logback Encoder -->
+        <!-- Jackson, used to parse signed rule reload messages; version managed in the root pom.
+
+             It used to arrive only transitively through logstash-logback-encoder. -->
+
         <dependency>
-            <groupId>net.logstash.logback</groupId>
-            <artifactId>logstash-logback-encoder</artifactId>
-            <version>7.4</version>
+
+            <groupId>com.fasterxml.jackson.core</groupId>
+
+            <artifactId>jackson-databind</artifactId>
+
         </dependency>
+
 
         <!-- Micrometer for Prometheus metrics (optional) -->
         <dependency>
@@ -187,6 +193,29 @@
             <version>${spring.version}</version>
             <scope>test</scope>
         </dependency>
+
+        <!-- MockMvc: the default RateLimitExceededException mapping through a real DispatcherServlet -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webmvc</artifactId>
+            <version>${spring.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Contract test: messages signed by the control plane must verify here -->
+        <dependency>
+            <groupId>io.github.openfluxgate</groupId>
+            <artifactId>fluxgate-control-support</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Testcontainers: disposable MongoDB for the auto-configuration integration tests -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -198,6 +227,8 @@
                     <source>11</source>
                     <target>11</target>
                     <release>11</release>
+                    <!-- Keep parameter names, as the Boot 3 starter does -->
+                    <parameters>true</parameters>
                 </configuration>
             </plugin>
 
@@ -221,30 +252,10 @@
                 <artifactId>maven-surefire-plugin</artifactId>
             </plugin>
 
-            <!-- JaCoCo with exclusions for auto-configuration classes that require external services -->
+            <!-- JaCoCo: every class is measured, including auto-configurations and reload code -->
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
-                <configuration>
-                    <excludes>
-                        <!-- AutoConfiguration classes require Spring context for testing -->
-                        <exclude>org/fluxgate/spring/autoconfigure/*AutoConfiguration.class</exclude>
-                        <exclude>org/fluxgate/spring/actuator/*</exclude>
-                        <!-- Exclude auto-configurations that require external MongoDB/Redis services -->
-                        <exclude>**/FluxgateMongoAutoConfiguration.class</exclude>
-                        <exclude>**/FluxgateRedisAutoConfiguration.class</exclude>
-                        <exclude>**/FluxgateReloadAutoConfiguration.class</exclude>
-                        <!-- Exclude reload package classes that require Redis/Caffeine for testing -->
-                        <exclude>**/reload/cache/**</exclude>
-                        <exclude>**/reload/strategy/**</exclude>
-                        <exclude>**/reload/handler/**</exclude>
-                        <!-- Exclude properties inner classes -->
-                        <exclude>**/FluxgateProperties$ReloadProperties.class</exclude>
-                        <exclude>**/FluxgateProperties$ReloadProperties$*.class</exclude>
-                        <exclude>**/FluxgateProperties$MissingRuleBehavior.class</exclude>
-                        <exclude>**/FluxgateProperties$WaitForRefillProperties.class</exclude>
-                    </excludes>
-                </configuration>
             </plugin>
         </plugins>
     </build>

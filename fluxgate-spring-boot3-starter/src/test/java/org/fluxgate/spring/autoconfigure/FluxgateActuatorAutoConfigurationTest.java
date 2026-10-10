@@ -9,7 +9,6 @@ import org.springframework.boot.actuate.health.HttpCodeStatusMapper;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /** Tests for {@link FluxgateActuatorAutoConfiguration}. */
@@ -51,41 +50,11 @@ class FluxgateActuatorAutoConfigurationTest {
         });
   }
 
-  // ===== N16: DEGRADED -> HTTP status mapper =====
+  // ===== R1: no replacement HttpCodeStatusMapper =====
 
   @Test
-  void shouldRegisterDegradedHttpCodeStatusMapperByDefault() {
-    contextRunner.run(
-        context -> assertThat(context).hasBean("fluxgateDegradedHttpCodeStatusMapper"));
-  }
-
-  @Test
-  void shouldMapDegradedTo503ByDefault() {
-    contextRunner.run(
-        context -> {
-          HttpCodeStatusMapper mapper = context.getBean(HttpCodeStatusMapper.class);
-          // Our bean's sole responsibility is DEGRADED -> 503
-          assertThat(
-                  mapper.getStatusCode(
-                      new org.springframework.boot.actuate.health.Status("DEGRADED")))
-              .isEqualTo(503);
-        });
-  }
-
-  @Test
-  void shouldNotRegisterDegradedHttpCodeStatusMapperWhenStatusIsZero() {
-    contextRunner
-        .withPropertyValues("fluxgate.actuator.health.degraded-http-status=0")
-        .run(
-            context -> assertThat(context).doesNotHaveBean("fluxgateDegradedHttpCodeStatusMapper"));
-  }
-
-  @Test
-  void shouldNotRegisterDegradedHttpCodeStatusMapperWhenStatusIsNegative() {
-    contextRunner
-        .withPropertyValues("fluxgate.actuator.health.degraded-http-status=-1")
-        .run(
-            context -> assertThat(context).doesNotHaveBean("fluxgateDegradedHttpCodeStatusMapper"));
+  void shouldNotRegisterAnHttpCodeStatusMapper() {
+    contextRunner.run(context -> assertThat(context).doesNotHaveBean(HttpCodeStatusMapper.class));
   }
 
   @Test
@@ -102,16 +71,5 @@ class FluxgateActuatorAutoConfigurationTest {
                               new org.springframework.boot.actuate.health.Status("DEGRADED")))
                   .isEqualTo(200);
             });
-  }
-
-  /**
-   * User-defined {@link HttpCodeStatusMapper} stub for testing {@code @ConditionalOnMissingBean}.
-   */
-  @Configuration
-  static class CustomMapperConfig {
-    @Bean
-    HttpCodeStatusMapper userMapper() {
-      return status -> 200;
-    }
   }
 }

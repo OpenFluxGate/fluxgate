@@ -3,6 +3,7 @@ package org.fluxgate.spring.autoconfigure;
 import java.util.Objects;
 import java.util.Optional;
 import org.fluxgate.adapter.mongo.rule.MongoRuleSetProvider;
+import org.fluxgate.adapter.mongo.spi.RuleSetAccessControlSource;
 import org.fluxgate.core.key.KeyResolver;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
@@ -24,6 +25,13 @@ import org.springframework.beans.factory.ObjectProvider;
  * reimplementing keeps the store error handling - a MongoDB failure is a FluxGate exception, not an
  * empty rule set - in one place.
  *
+ * <p>The rule-set-level access control comes from a {@link RuleSetAccessControlSource}, resolved
+ * together with the metrics recorder: the first source bean (in {@code @Order} order) that is not
+ * the repository itself, or else the repository when it implements the SPI (as {@code
+ * MongoRateLimitRuleRepository} does). A repository decorator that does not implement the SPI
+ * therefore keeps access control as long as a source bean is defined; when there is neither, a
+ * single WARN says that access control is not loaded.
+ *
  * <p>Composes with {@code RuleCache.getOrLoad}: the caching provider calls {@link
  * #findById(String)} as the loader, so a miss triggers exactly one MongoDB query per rule set id.
  */
@@ -34,6 +42,7 @@ class LazyMetricsMongoRuleSetProvider implements RateLimitRuleSetProvider {
   private final RateLimitRuleRepository ruleRepository;
   private final KeyResolver keyResolver;
   private final ObjectProvider<RateLimitMetricsRecorder> metricsRecorderProvider;
+  private final ObjectProvider<RuleSetAccessControlSource> accessControlSourceProvider;
 
   private volatile MongoRuleSetProvider delegate;
 
@@ -41,9 +50,18 @@ class LazyMetricsMongoRuleSetProvider implements RateLimitRuleSetProvider {
       RateLimitRuleRepository ruleRepository,
       KeyResolver keyResolver,
       ObjectProvider<RateLimitMetricsRecorder> metricsRecorderProvider) {
+    this(ruleRepository, keyResolver, metricsRecorderProvider, null);
+  }
+
+  LazyMetricsMongoRuleSetProvider(
+      RateLimitRuleRepository ruleRepository,
+      KeyResolver keyResolver,
+      ObjectProvider<RateLimitMetricsRecorder> metricsRecorderProvider,
+      ObjectProvider<RuleSetAccessControlSource> accessControlSourceProvider) {
     this.ruleRepository = Objects.requireNonNull(ruleRepository, "ruleRepository must not be null");
     this.keyResolver = Objects.requireNonNull(keyResolver, "keyResolver must not be null");
     this.metricsRecorderProvider = metricsRecorderProvider;
+    this.accessControlSourceProvider = accessControlSourceProvider;
   }
 
   @Override
@@ -68,11 +86,43 @@ class LazyMetricsMongoRuleSetProvider implements RateLimitRuleSetProvider {
           } else {
             log.info("No metrics recorder available");
           }
-          resolved = new MongoRuleSetProvider(ruleRepository, keyResolver, recorder);
+          resolved =
+              new MongoRuleSetProvider(
+                  ruleRepository, keyResolver, recorder, resolveAccessControlSource());
           delegate = resolved;
         }
       }
     }
     return resolved;
+  }
+
+  /**
+   * Picks the access control source: an explicit bean first, then the repository itself. Runs once,
+   * while the delegate is built, so the WARN below is logged at most once.
+   */
+  private RuleSetAccessControlSource resolveAccessControlSource() {
+    RuleSetAccessControlSource explicit =
+        accessControlSourceProvider == null
+            ? null
+            : accessControlSourceProvider
+                .orderedStream()
+                .filter(source -> source != ruleRepository)
+                .findFirst()
+                .orElse(null);
+    if (explicit != null) {
+      log.info("Using rule set access control source: {}", explicit.getClass().getName());
+      return explicit;
+    }
+    if (ruleRepository instanceof RuleSetAccessControlSource) {
+      return (RuleSetAccessControlSource) ruleRepository;
+    }
+    log.warn(
+        "Rule set access control is not loaded: the RateLimitRuleRepository bean ({}) does not "
+            + "implement RuleSetAccessControlSource and no RuleSetAccessControlSource bean is "
+            + "defined, so allow/deny lists stored with the rules are ignored. Define a "
+            + "RuleSetAccessControlSource bean (for example the wrapped "
+            + "MongoRateLimitRuleRepository) to enforce them.",
+        ruleRepository.getClass().getName());
+    return null;
   }
 }

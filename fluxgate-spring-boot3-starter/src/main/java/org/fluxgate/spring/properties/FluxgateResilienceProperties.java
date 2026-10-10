@@ -136,9 +136,9 @@ public class FluxgateResilienceProperties {
      * Number of <em>consecutive</em> failures before opening the circuit.
      *
      * <p>Not set by default, which leaves the sliding-window rule ({@link
-     * #getFailureRateThreshold()} over {@link #getSlidingWindowSize()}) in charge. Setting it
-     * forces the legacy consecutive-failure rule instead, so only set it when that is what you
-     * want.
+     * #getFailureRateThreshold()} over {@link #getSlidingWindowSize()}) in charge. Setting it also
+     * applies the legacy consecutive-failure rule: the circuit then opens on whichever of the two
+     * is met first.
      */
     private Integer failureThreshold;
 

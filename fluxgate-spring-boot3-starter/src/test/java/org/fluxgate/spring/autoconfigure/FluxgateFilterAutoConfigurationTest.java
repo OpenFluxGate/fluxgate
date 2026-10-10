@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.fluxgate.core.context.RequestContext;
+import org.fluxgate.core.exception.MissingConfigurationException;
 import org.fluxgate.core.handler.FluxgateRateLimitHandler;
 import org.fluxgate.core.handler.RateLimitResponse;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
@@ -526,6 +527,30 @@ class FluxgateFilterAutoConfigurationTest {
     }
 
     @Test
+    @DisplayName("should render the 503 with response.unavailable-body-template")
+    void shouldHonourTheUnavailableBodyTemplate() {
+      webContextRunner
+          .withUserConfiguration(EnabledConfig.class)
+          .withPropertyValues(
+              "fluxgate.ratelimit.missing-rule-behavior=DENY",
+              "fluxgate.ratelimit.response.body-template={\"code\":\"RATE_LIMITED\"}",
+              "fluxgate.ratelimit.response.unavailable-body-template={\"code\":\"DOWN\"}")
+          .run(
+              context -> {
+                FluxgateRateLimitFilter filter = context.getBean(FluxgateRateLimitFilter.class);
+                MockHttpServletResponse response = new MockHttpServletResponse();
+
+                filter.doFilter(
+                    new MockHttpServletRequest("GET", "/api/users"),
+                    response,
+                    new MockFilterChain());
+
+                assertThat(response.getStatus()).isEqualTo(503);
+                assertThat(response.getContentAsString()).isEqualTo("{\"code\":\"DOWN\"}");
+              });
+    }
+
+    @Test
     @DisplayName("should let a RateLimitResponseWriter bean own the body")
     void shouldLetACustomWriterOwnTheBody() {
       webContextRunner
@@ -908,6 +933,88 @@ class FluxgateFilterAutoConfigurationTest {
       webContextRunner
           .withUserConfiguration(EnabledConfig.class)
           .withBean(StubRuleSetProvider.class)
+          .run(context -> assertThat(context).hasSingleBean(FluxgateRateLimitFilter.class));
+    }
+  }
+
+  // ==================== fail-on-missing-handler ====================
+
+  @Nested
+  @DisplayName("fail-on-missing-handler")
+  @ExtendWith(OutputCaptureExtension.class)
+  class FailOnMissingHandlerTests {
+
+    /** The starter's own limiter wiring with no rule source: the default dependency setup. */
+    private final WebApplicationContextRunner defaultRunner =
+        new WebApplicationContextRunner()
+            .withConfiguration(
+                AutoConfigurations.of(
+                    FluxgateResilienceAutoConfiguration.class,
+                    FluxgateRedisAutoConfiguration.class,
+                    FluxgateRateLimiterAutoConfiguration.class,
+                    FluxgateFilterAutoConfiguration.class))
+            .withUserConfiguration(EnabledConfig.class);
+
+    @Test
+    @DisplayName("should refuse to start the filter with no handler when the property is true")
+    void shouldFailStartupWithDefaultConfiguration() {
+      defaultRunner
+          .withPropertyValues("fluxgate.ratelimit.fail-on-missing-handler=true")
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .isInstanceOf(MissingConfigurationException.class)
+                    .hasMessageContaining("fluxgate.ratelimit.fail-on-missing-handler")
+                    .hasMessageContaining("no RateLimitRuleSetProvider")
+                    .hasMessageContaining(
+                        "Enable fluxgate.mongo, declare fluxgate.ratelimit.rule-sets, define a"
+                            + " RateLimitRuleSetProvider bean, or supply your own"
+                            + " FluxgateRateLimitHandler")
+                    .hasMessageNotContaining("delegateRuleSetProvider");
+              });
+    }
+
+    @Test
+    @DisplayName("should refuse to start when neither a limiter nor a rule source exists")
+    void shouldFailStartupWithNothingAtAll() {
+      webContextRunner
+          .withUserConfiguration(EnabledConfig.class)
+          .withPropertyValues("fluxgate.ratelimit.fail-on-missing-handler=true")
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .rootCause()
+                    .isInstanceOf(MissingConfigurationException.class)
+                    .hasMessageContaining("neither a RateLimiter nor a RateLimitRuleSetProvider");
+              });
+    }
+
+    @Test
+    @DisplayName("should start and only warn when the property is false (the default)")
+    void shouldWarnAndStartWhenFalse(CapturedOutput output) {
+      defaultRunner
+          .withPropertyValues("fluxgate.ratelimit.fail-on-missing-handler=false")
+          .run(
+              context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context).hasSingleBean(FluxgateRateLimitFilter.class);
+                assertThat(output)
+                    .contains(
+                        "No FluxgateRateLimitHandler available (a RateLimiter bean exists but no"
+                            + " RateLimitRuleSetProvider)");
+              });
+    }
+
+    @Test
+    @DisplayName("should start when the property is true and a handler exists")
+    void shouldStartWhenAHandlerExists() {
+      webContextRunner
+          .withUserConfiguration(EnabledConfig.class)
+          .withBean(TestHandler.class)
+          .withPropertyValues("fluxgate.ratelimit.fail-on-missing-handler=true")
           .run(context -> assertThat(context).hasSingleBean(FluxgateRateLimitFilter.class));
     }
   }

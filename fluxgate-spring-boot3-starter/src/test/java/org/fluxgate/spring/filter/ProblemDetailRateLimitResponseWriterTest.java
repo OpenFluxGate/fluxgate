@@ -78,4 +78,49 @@ class ProblemDetailRateLimitResponseWriterTest {
     assertThat(response.getStatus()).isEqualTo(200);
     assertThat(response.getContentAsString()).isEqualTo("already sent");
   }
+
+  @Test
+  void shouldRenderTheSharedTemplateWith503WhenUnavailable() throws Exception {
+    MockHttpServletResponse response = new MockHttpServletResponse();
+
+    new ProblemDetailRateLimitResponseWriter(
+            null, "{\"status\":{status},\"ms\":{retryAfterMillis}}")
+        .writeUnavailable(request, response, 4000);
+
+    assertThat(response.getStatus()).isEqualTo(503);
+    assertThat(response.getContentAsString()).isEqualTo("{\"status\":503,\"ms\":4000}");
+  }
+
+  @Test
+  void shouldUseTheUnavailableTemplateFor503Only() throws Exception {
+    ProblemDetailRateLimitResponseWriter writer =
+        new ProblemDetailRateLimitResponseWriter(
+            null, "{\"code\":\"RATE_LIMITED\"}", "{\"code\":\"UNAVAILABLE\",\"s\":{status}}");
+
+    MockHttpServletResponse unavailable = new MockHttpServletResponse();
+    writer.writeUnavailable(request, unavailable, -1);
+    MockHttpServletResponse limited = new MockHttpServletResponse();
+    writer.write(request, limited, RateLimitResponse.rejected(1000));
+    MockHttpServletResponse tooCostly = new MockHttpServletResponse();
+    writer.writeCostExceeded(request, tooCostly, 50, 10);
+
+    assertThat(unavailable.getStatus()).isEqualTo(503);
+    assertThat(unavailable.getContentAsString()).isEqualTo("{\"code\":\"UNAVAILABLE\",\"s\":503}");
+    assertThat(limited.getContentAsString()).isEqualTo("{\"code\":\"RATE_LIMITED\"}");
+    assertThat(tooCostly.getContentAsString()).isEqualTo("{\"code\":\"RATE_LIMITED\"}");
+  }
+
+  @Test
+  void shouldUseTheUnavailableTemplateEvenWithoutA429Template() throws Exception {
+    ProblemDetailRateLimitResponseWriter writer =
+        new ProblemDetailRateLimitResponseWriter(null, null, "{\"code\":\"UNAVAILABLE\"}");
+
+    MockHttpServletResponse unavailable = new MockHttpServletResponse();
+    writer.writeUnavailable(request, unavailable, -1);
+    MockHttpServletResponse limited = new MockHttpServletResponse();
+    writer.write(request, limited, RateLimitResponse.rejected(1000));
+
+    assertThat(unavailable.getContentAsString()).isEqualTo("{\"code\":\"UNAVAILABLE\"}");
+    assertThat(limited.getContentAsString()).contains("\"status\":429");
+  }
 }

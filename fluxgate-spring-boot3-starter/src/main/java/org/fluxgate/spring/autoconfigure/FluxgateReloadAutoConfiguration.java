@@ -59,7 +59,8 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
  * <p>Strategy selection:
  *
  * <ul>
- *   <li>AUTO - Uses Pub/Sub if Redis is available, otherwise falls back to Polling
+ *   <li>AUTO - Uses Pub/Sub if Redis is enabled and Pub/Sub may be used (see below), otherwise
+ *       Polling
  *   <li>PUBSUB - Uses Redis Pub/Sub only (requires Redis)
  * </ul>
  *
@@ -157,7 +158,8 @@ public class FluxgateReloadAutoConfiguration {
    *   <li>NONE - Returns NoOpReloadStrategy
    *   <li>POLLING - Returns PollingReloadStrategy
    *   <li>PUBSUB - Returns RedisPubSubReloadStrategy (requires Redis URI)
-   *   <li>AUTO - Uses Pub/Sub if Redis enabled, otherwise Polling
+   *   <li>AUTO - Uses Pub/Sub if Redis is enabled and a secret is set (or allow-unsigned=true),
+   *       otherwise Polling
    * </ul>
    *
    * <p>Provider resolution: looks first for a bean named {@code delegateRuleSetProvider}, then for
@@ -284,14 +286,17 @@ public class FluxgateReloadAutoConfiguration {
         pubsubProps.getChannel(),
         signed);
 
-    return new RedisPubSubReloadStrategy(
-        redisUri,
-        pubsubProps.getChannel(),
-        pubsubProps.isRetryOnFailure(),
-        pubsubProps.getRetryInterval(),
-        timeout,
-        pubsubProps.getSecret(),
-        pubsubProps.getMaxMessageAge());
+    RedisPubSubReloadStrategy strategy =
+        new RedisPubSubReloadStrategy(
+            redisUri,
+            pubsubProps.getChannel(),
+            pubsubProps.isRetryOnFailure(),
+            pubsubProps.getRetryInterval(),
+            timeout,
+            pubsubProps.getSecret(),
+            pubsubProps.getMaxMessageAge());
+    strategy.setAcceptLegacySigned(pubsubProps.isAcceptLegacySigned());
+    return strategy;
   }
 
   /** Whether Pub/Sub may be used: a signing secret is set, or unsigned messages are allowed. */

@@ -7,10 +7,11 @@ import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BiConsumer;
+import java.util.function.UnaryOperator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,7 +42,14 @@ import org.slf4j.LoggerFactory;
  *
  * <p>N-13: the number of distinct {@code endpoint} tag values is capped. Endpoints past the cap are
  * reported as {@code other}, so a caller inventing paths cannot grow the registry, and the
- * Prometheus scrape, without bound.
+ * Prometheus scrape, without bound. Endpoints are normalized like {@link MicrometerMetricsRecorder}
+ * does ({@code /api/users/123} becomes {@code /api/users/{id}}).
+ *
+ * <p>Created with {@link #FluxgateMetrics(MeterRegistry, MicrometerMetricsRecorder)} - as the
+ * auto-configuration does - the endpoint tag comes from the recorder: it honours {@code
+ * fluxgate.metrics.include-endpoint} and {@code endpoint-normalization}, and shares the recorder's
+ * tag budget, so a limiter failure on an endpoint past the budget is counted under {@code other}
+ * rather than dropped.
  */
 public class FluxgateMetrics {
 
@@ -54,8 +62,11 @@ public class FluxgateMetrics {
   private static final String TAG_ACTION = "action";
   private static final String TAG_EXCEPTION = "exception";
 
+  /** Name of the limiter failure counter. */
+  public static final String LIMITER_FAILURES = METRIC_PREFIX + ".limiter.failures";
+
   /** Endpoint tag value every endpoint past the cardinality cap collapses into. */
-  static final String OTHER_ENDPOINT = "other";
+  static final String OTHER_ENDPOINT = EndpointTags.OTHER_ENDPOINT;
 
   /**
    * Default cap on distinct endpoint tag values, matching {@code
@@ -64,10 +75,9 @@ public class FluxgateMetrics {
   static final int DEFAULT_MAX_ENDPOINT_TAGS = 1000;
 
   private final MeterRegistry registry;
-  private final int maxEndpointTags;
 
-  /** Endpoint tag values already handed to the registry, so their number stays bounded. */
-  private final Set<String> knownEndpoints = ConcurrentHashMap.newKeySet();
+  /** Maps a request path to its endpoint tag value, or null to omit the tag. */
+  private final UnaryOperator<String> endpointTag;
 
   /**
    * Strong references to the gauge values.
@@ -94,8 +104,26 @@ public class FluxgateMetrics {
    *     beyond it are reported as {@code other}
    */
   public FluxgateMetrics(MeterRegistry registry, int maxEndpointTags) {
+    this(registry, new EndpointTags(true, true, maxEndpointTags)::tag);
+  }
+
+  /**
+   * Creates the metrics facade tagging endpoints exactly like the given recorder: same {@code
+   * include-endpoint} and normalization settings, and the same budget of distinct values.
+   *
+   * @param registry the Micrometer registry
+   * @param endpointSource the recorder whose endpoint tag policy and budget are shared
+   * @since 0.4.0
+   */
+  public FluxgateMetrics(MeterRegistry registry, MicrometerMetricsRecorder endpointSource) {
+    this(
+        registry,
+        Objects.requireNonNull(endpointSource, "endpointSource must not be null")::endpointTag);
+  }
+
+  private FluxgateMetrics(MeterRegistry registry, UnaryOperator<String> endpointTag) {
     this.registry = Objects.requireNonNull(registry, "registry must not be null");
-    this.maxEndpointTags = maxEndpointTags > 0 ? maxEndpointTags : Integer.MAX_VALUE;
+    this.endpointTag = endpointTag;
     log.info("FluxGate metrics initialized with registry: {}", registry.getClass().getSimpleName());
   }
 
@@ -168,10 +196,15 @@ public class FluxgateMetrics {
    */
   public void recordLimiterFailure(
       String ruleSetId, String endpoint, String action, Throwable cause) {
-    Counter.builder(METRIC_PREFIX + ".limiter.failures")
-        .description("FluxGate rate limiter failures")
-        .tag(TAG_RULE_SET, sanitize(ruleSetId))
-        .tag(TAG_ENDPOINT, boundedEndpoint(endpoint))
+    Counter.Builder builder =
+        Counter.builder(LIMITER_FAILURES)
+            .description("FluxGate rate limiter failures")
+            .tag(TAG_RULE_SET, sanitize(ruleSetId));
+    String endpointValue = endpointTag.apply(endpoint);
+    if (endpointValue != null) {
+      builder.tag(TAG_ENDPOINT, endpointValue);
+    }
+    builder
         .tag(TAG_ACTION, sanitize(action))
         .tag(TAG_EXCEPTION, cause != null ? cause.getClass().getSimpleName() : "unknown")
         .register(registry)
@@ -185,9 +218,7 @@ public class FluxgateMetrics {
             .description("FluxGate rate limit counter")
             .tag(TAG_RULE_SET, sanitize(ruleSetId));
 
-    if (endpoint != null && !endpoint.isEmpty()) {
-      builder.tag(TAG_ENDPOINT, boundedEndpoint(endpoint));
-    }
+    tagEndpoint(builder::tag, endpoint);
     if (result != null && !result.isEmpty()) {
       builder.tag(TAG_RESULT, result);
     }
@@ -200,29 +231,19 @@ public class FluxgateMetrics {
             .description("FluxGate rate limit processing time")
             .tag(TAG_RULE_SET, sanitize(ruleSetId));
 
-    if (endpoint != null && !endpoint.isEmpty()) {
-      builder.tag(TAG_ENDPOINT, boundedEndpoint(endpoint));
-    }
+    tagEndpoint(builder::tag, endpoint);
     return builder.register(registry);
   }
 
-  /**
-   * Sanitizes an endpoint and keeps the set of distinct values bounded.
-   *
-   * <p>The cap is shared by every meter, so one invented path costs one series in total. Everything
-   * past the cap becomes {@link #OTHER_ENDPOINT}, which keeps the metric usable instead of dropping
-   * the measurement.
-   */
-  String boundedEndpoint(String endpoint) {
-    String sanitized = sanitize(endpoint);
-    if (knownEndpoints.contains(sanitized)) {
-      return sanitized;
+  /** Adds the endpoint tag of a request meter when there is an endpoint and it is tagged. */
+  private void tagEndpoint(BiConsumer<String, String> tagger, String endpoint) {
+    if (endpoint == null || endpoint.isEmpty()) {
+      return;
     }
-    if (knownEndpoints.size() >= maxEndpointTags) {
-      return OTHER_ENDPOINT;
+    String value = endpointTag.apply(endpoint);
+    if (value != null) {
+      tagger.accept(TAG_ENDPOINT, value);
     }
-    knownEndpoints.add(sanitized);
-    return sanitized;
   }
 
   private String sanitize(String value) {

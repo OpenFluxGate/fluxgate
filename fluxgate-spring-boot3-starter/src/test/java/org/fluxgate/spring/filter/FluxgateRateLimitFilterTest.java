@@ -9,6 +9,7 @@ import static org.mockito.Mockito.*;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import org.fluxgate.core.constants.FluxgateConstants;
@@ -159,11 +160,28 @@ class FluxgateRateLimitFilterTest {
 
   @Test
   void shouldExtractClientIpFromXForwardedFor() throws Exception {
+    // Explicitly trusting X-Forwarded-For and failing open: the legacy constructors no longer do.
+    filter =
+        new FluxgateRateLimitFilter(
+            handler,
+            RULE_SET_ID,
+            new String[] {"/**"},
+            new String[] {},
+            false,
+            5000,
+            50,
+            null,
+            "X-Forwarded-For",
+            true,
+            true);
     // Given
     when(request.getRequestURI()).thenReturn("/api/users");
     when(request.getMethod()).thenReturn("GET");
-    when(request.getHeader("X-Forwarded-For"))
-        .thenReturn("203.0.113.50, 70.41.3.18, 150.172.238.178");
+    when(request.getHeaders("X-Forwarded-For"))
+        .thenAnswer(
+            invocation ->
+                java.util.Collections.enumeration(
+                    java.util.List.of("203.0.113.50, 70.41.3.18, 150.172.238.178")));
 
     RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
     when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID))).thenReturn(allowedResult);
@@ -200,7 +218,9 @@ class FluxgateRateLimitFilterTest {
 
     when(request.getRequestURI()).thenReturn("/api/users");
     when(request.getMethod()).thenReturn("GET");
-    when(request.getHeader("X-Forwarded-For")).thenReturn("203.0.113.50");
+    when(request.getHeaders("X-Forwarded-For"))
+        .thenAnswer(
+            invocation -> java.util.Collections.enumeration(java.util.List.of("203.0.113.50")));
     when(request.getRemoteAddr()).thenReturn("10.0.0.10");
 
     RateLimitResponse allowedResult = RateLimitResponse.allowed(50, 0);
@@ -283,11 +303,26 @@ class FluxgateRateLimitFilterTest {
     // Then
     verify(filterChain, never()).doFilter(request, response);
     verify(handler, never()).tryConsume(any(), any());
-    verify(response).setStatus(429);
+    // Item 10: unavailable or unconfigured rate limiting is 503, not 429.
+    verify(response).setStatus(503);
   }
 
   @Test
   void shouldFailOpenOnHandlerException() throws Exception {
+    // Explicitly trusting X-Forwarded-For and failing open: the legacy constructors no longer do.
+    filter =
+        new FluxgateRateLimitFilter(
+            handler,
+            RULE_SET_ID,
+            new String[] {"/**"},
+            new String[] {},
+            false,
+            5000,
+            50,
+            null,
+            "X-Forwarded-For",
+            true,
+            true);
     // Given
     when(request.getRequestURI()).thenReturn("/api/users");
     when(request.getMethod()).thenReturn("GET");
@@ -334,7 +369,8 @@ class FluxgateRateLimitFilterTest {
 
     // Then
     verify(filterChain, never()).doFilter(request, response);
-    verify(response).setStatus(429);
+    // Item 10: unavailable or unconfigured rate limiting is 503, not 429.
+    verify(response).setStatus(503);
   }
 
   @Test
@@ -1012,6 +1048,20 @@ class FluxgateRateLimitFilterTest {
 
   @Test
   void shouldCallTheChainOnceWhenTheLimiterFailsOpen() throws Exception {
+    // Explicitly trusting X-Forwarded-For and failing open: the legacy constructors no longer do.
+    filter =
+        new FluxgateRateLimitFilter(
+            handler,
+            RULE_SET_ID,
+            new String[] {"/**"},
+            new String[] {},
+            false,
+            5000,
+            50,
+            null,
+            "X-Forwarded-For",
+            true,
+            true);
     // Given
     when(request.getRequestURI()).thenReturn("/api/orders");
     when(request.getMethod()).thenReturn("POST");
@@ -1042,7 +1092,8 @@ class FluxgateRateLimitFilterTest {
 
     // Then
     verify(filterChain, never()).doFilter(any(), any());
-    verify(response).setStatus(429);
+    // Item 10: unavailable or unconfigured rate limiting is 503, not 429.
+    verify(response).setStatus(503);
   }
 
   // ===== H-6: path normalization =====
@@ -1225,7 +1276,8 @@ class FluxgateRateLimitFilterTest {
     when(request.getRequestURI()).thenReturn("/api/users");
     when(request.getMethod()).thenReturn("GET");
     when(request.getRemoteAddr()).thenReturn("203.0.113.9");
-    when(request.getHeader("X-Forwarded-For")).thenReturn("1.2.3.4");
+    when(request.getHeaders("X-Forwarded-For"))
+        .thenAnswer(invocation -> java.util.Collections.enumeration(java.util.List.of("1.2.3.4")));
     when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
         .thenReturn(RateLimitResponse.allowed(50, 0));
 
@@ -1245,8 +1297,11 @@ class FluxgateRateLimitFilterTest {
     when(request.getRequestURI()).thenReturn("/api/users");
     when(request.getMethod()).thenReturn("GET");
     when(request.getRemoteAddr()).thenReturn("10.0.0.5");
-    when(request.getHeader("X-Forwarded-For"))
-        .thenReturn("9.9.9.9, 203.0.113.50, 192.168.1.7, 10.0.0.5");
+    when(request.getHeaders("X-Forwarded-For"))
+        .thenAnswer(
+            invocation ->
+                java.util.Collections.enumeration(
+                    java.util.List.of("9.9.9.9, 203.0.113.50, 192.168.1.7, 10.0.0.5")));
     when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
         .thenReturn(RateLimitResponse.allowed(50, 0));
 
@@ -1266,7 +1321,9 @@ class FluxgateRateLimitFilterTest {
     when(request.getRequestURI()).thenReturn("/api/users");
     when(request.getMethod()).thenReturn("GET");
     when(request.getRemoteAddr()).thenReturn("10.0.0.5");
-    when(request.getHeader("X-Forwarded-For")).thenReturn("not-an-ip");
+    when(request.getHeaders("X-Forwarded-For"))
+        .thenAnswer(
+            invocation -> java.util.Collections.enumeration(java.util.List.of("not-an-ip")));
     when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
         .thenReturn(RateLimitResponse.allowed(50, 0));
 
@@ -1634,6 +1691,59 @@ class FluxgateRateLimitFilterTest {
 
     // Then
     assertThat(recorded).containsExactly(RULE_SET_ID + " /api/users GET");
+  }
+
+  @Test
+  void aFailingDurationRecorderDoesNotFailTheRequest() throws Exception {
+    // Given
+    filter =
+        filterBuilder()
+            .durationRecorder(
+                (ruleSetId, endpoint, method, duration) -> {
+                  throw new IllegalStateException("metrics backend down");
+                })
+            .build();
+
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
+        .thenReturn(RateLimitResponse.allowed(50, 0));
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    verify(filterChain, times(1)).doFilter(request, response);
+    verify(handler, times(1)).tryConsume(any(RequestContext.class), eq(RULE_SET_ID));
+  }
+
+  @Test
+  void aDurationRecorderThrowingACheckedExceptionDoesNotFailTheRequest() throws Exception {
+    // Given
+    filter =
+        filterBuilder()
+            .durationRecorder(
+                (ruleSetId, endpoint, method, duration) ->
+                    sneakyThrow(new IOException("metrics backend down")))
+            .build();
+
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
+        .thenReturn(RateLimitResponse.allowed(50, 0));
+
+    // When
+    filter.doFilterInternal(request, response, filterChain);
+
+    // Then
+    verify(filterChain, times(1)).doFilter(request, response);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <T extends Throwable> void sneakyThrow(Throwable t) throws T {
+    throw (T) t;
   }
 
   // ===== test fixtures =====

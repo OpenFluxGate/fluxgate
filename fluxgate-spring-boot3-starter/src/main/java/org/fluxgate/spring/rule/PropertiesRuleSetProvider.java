@@ -1,5 +1,6 @@
 package org.fluxgate.spring.rule;
 
+import java.time.DateTimeException;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -7,14 +8,17 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import org.fluxgate.core.config.AccessControl;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.config.RuleMatcher;
 import org.fluxgate.core.match.CidrSet;
+import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.fluxgate.spring.properties.FluxgateProperties.AccessControlProperties;
@@ -45,17 +49,44 @@ public final class PropertiesRuleSetProvider implements RateLimitRuleSetProvider
 
   private final Map<String, RateLimitRuleSet> ruleSets;
 
+  /** Supplies the metrics recorder on first use; null when no recorder is ever attached. */
+  private final Supplier<RateLimitMetricsRecorder> metricsRecorderSupplier;
+
+  /** The rule sets with the metrics recorder attached, built on the first lookup. */
+  private volatile Map<String, RateLimitRuleSet> recordedRuleSets;
+
   /**
-   * Builds the provider from a list of rule set properties.
+   * Builds the provider from a list of rule set properties, without a metrics recorder.
    *
    * @param ruleSetPropertiesList the YAML-bound rule set list (may be empty, must not be null)
    * @param keyResolver the key resolver to attach to every rule set
-   * @throws IllegalArgumentException when a rule set or rule is missing a required field, or when a
-   *     band configuration is invalid
+   * @throws IllegalArgumentException when a rule set or rule is missing a required field, a rule id
+   *     appears twice in one rule set, or a band configuration (window, zone id) is invalid
    */
   public PropertiesRuleSetProvider(
       List<RuleSetProperties> ruleSetPropertiesList,
       org.fluxgate.core.key.KeyResolver keyResolver) {
+    this(ruleSetPropertiesList, keyResolver, null);
+  }
+
+  /**
+   * Builds the provider from a list of rule set properties.
+   *
+   * <p>The rule sets are built and validated immediately. The metrics recorder is resolved from
+   * {@code metricsRecorderSupplier} on the first lookup and attached to every rule set then, the
+   * same way the MongoDB provider resolves it, because the recorder (a composite of every recorder
+   * bean) may not exist yet while this provider is being created.
+   *
+   * @param ruleSetPropertiesList the YAML-bound rule set list (may be empty, must not be null)
+   * @param keyResolver the key resolver to attach to every rule set
+   * @param metricsRecorderSupplier supplies the recorder on first use (nullable; may return null)
+   * @throws IllegalArgumentException when a rule set or rule is missing a required field, a rule id
+   *     appears twice in one rule set, or a band configuration (window, zone id) is invalid
+   */
+  public PropertiesRuleSetProvider(
+      List<RuleSetProperties> ruleSetPropertiesList,
+      org.fluxgate.core.key.KeyResolver keyResolver,
+      Supplier<RateLimitMetricsRecorder> metricsRecorderSupplier) {
     Map<String, RateLimitRuleSet> map = new LinkedHashMap<>();
     for (RuleSetProperties rsp : ruleSetPropertiesList) {
       RateLimitRuleSet ruleSet = buildRuleSet(rsp, keyResolver);
@@ -67,11 +98,52 @@ public final class PropertiesRuleSetProvider implements RateLimitRuleSetProvider
           "Loaded YAML rule set '{}' ({} rule(s))", ruleSet.getId(), ruleSet.getRules().size());
     }
     this.ruleSets = Collections.unmodifiableMap(map);
+    this.metricsRecorderSupplier = metricsRecorderSupplier;
   }
 
   @Override
   public Optional<RateLimitRuleSet> findById(String ruleSetId) {
-    return Optional.ofNullable(ruleSets.get(ruleSetId));
+    return Optional.ofNullable(effectiveRuleSets().get(ruleSetId));
+  }
+
+  /** The rule sets to serve: with the metrics recorder attached once it can be resolved. */
+  private Map<String, RateLimitRuleSet> effectiveRuleSets() {
+    if (metricsRecorderSupplier == null) {
+      return ruleSets;
+    }
+    Map<String, RateLimitRuleSet> resolved = recordedRuleSets;
+    if (resolved == null) {
+      synchronized (this) {
+        resolved = recordedRuleSets;
+        if (resolved == null) {
+          resolved = withRecorder(metricsRecorderSupplier.get());
+          recordedRuleSets = resolved;
+        }
+      }
+    }
+    return resolved;
+  }
+
+  private Map<String, RateLimitRuleSet> withRecorder(RateLimitMetricsRecorder recorder) {
+    if (recorder == null) {
+      log.info("No metrics recorder available for the YAML rule sets");
+      return ruleSets;
+    }
+    log.info("Attaching {} to the YAML rule sets", recorder.getClass().getSimpleName());
+    Map<String, RateLimitRuleSet> map = new LinkedHashMap<>();
+    for (RateLimitRuleSet ruleSet : ruleSets.values()) {
+      RateLimitRuleSet.Builder builder =
+          RateLimitRuleSet.builder(ruleSet.getId())
+              .keyResolver(ruleSet.getKeyResolver())
+              .rules(ruleSet.getRules())
+              .accessControl(ruleSet.getAccessControl())
+              .metricsRecorder(recorder);
+      if (ruleSet.getDescription() != null) {
+        builder.description(ruleSet.getDescription());
+      }
+      map.put(ruleSet.getId(), builder.build());
+    }
+    return Collections.unmodifiableMap(map);
   }
 
   /** Returns the number of rule sets loaded from properties. */
@@ -95,8 +167,14 @@ public final class PropertiesRuleSetProvider implements RateLimitRuleSetProvider
     }
 
     List<RateLimitRule> rules = new ArrayList<>();
+    Set<String> ruleIds = new HashSet<>();
     for (RuleProperties rp : rsp.getRules()) {
-      rules.add(buildRule(rp, id));
+      RateLimitRule rule = buildRule(rp, id);
+      if (!ruleIds.add(rule.getId())) {
+        throw new IllegalArgumentException(
+            "Duplicate rule id '" + rule.getId() + "' in rule set '" + id + "'");
+      }
+      rules.add(rule);
     }
 
     AccessControl ac = buildAccessControl(rsp.getAccessControl());
@@ -166,7 +244,7 @@ public final class PropertiesRuleSetProvider implements RateLimitRuleSetProvider
     if (!methods.isEmpty()) {
       Set<String> methodSet = new HashSet<>();
       for (String m : methods) {
-        methodSet.add(m.toUpperCase());
+        methodSet.add(m.toUpperCase(Locale.ROOT));
       }
       builder.methods(methodSet);
     }
@@ -190,6 +268,10 @@ public final class PropertiesRuleSetProvider implements RateLimitRuleSetProvider
       throw new IllegalArgumentException(
           "Rule '" + ruleId + "': a band is missing its required 'window' field");
     }
+    if (bp.getWindow().isZero() || bp.getWindow().isNegative()) {
+      throw new IllegalArgumentException(
+          "Rule '" + ruleId + "': a band has a non-positive window " + bp.getWindow());
+    }
     if (bp.getCapacity() <= 0) {
       throw new IllegalArgumentException(
           "Rule '" + ruleId + "': a band has non-positive capacity " + bp.getCapacity());
@@ -199,9 +281,10 @@ public final class PropertiesRuleSetProvider implements RateLimitRuleSetProvider
     if (bp.getZoneId() != null && !bp.getZoneId().isEmpty()) {
       try {
         zoneId = ZoneId.of(bp.getZoneId());
-      } catch (Exception e) {
-        log.warn("Rule '{}': unknown zoneId '{}', falling back to UTC", ruleId, bp.getZoneId());
-        zoneId = ZoneOffset.UTC;
+      } catch (DateTimeException e) {
+        // A silent UTC fallback moved every calendar quota boundary without anyone noticing.
+        throw new IllegalArgumentException(
+            "Rule '" + ruleId + "': unknown zoneId '" + bp.getZoneId() + "'", e);
       }
     } else {
       zoneId = ZoneOffset.UTC;

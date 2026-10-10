@@ -19,8 +19,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>This handler exists so that situation is named once, at startup, in terms of the piece that is
  * actually missing, and then behaves exactly as the documented failure behaviour says: {@code
- * ALLOW} lets requests through, {@code DENY} rejects them with no wait time. Set {@code
- * fluxgate.ratelimit.fail-on-missing-handler=true} to fail the boot instead of running like this.
+ * ALLOW} lets requests through, {@code DENY} rejects them with HTTP 503 ({@link
+ * RateLimiterUnavailableException}). Set {@code fluxgate.ratelimit.fail-on-missing-handler=true} to
+ * fail the boot instead of running like this.
  */
 public class MissingRuleSetProviderRateLimitHandler implements FluxgateRateLimitHandler {
 
@@ -54,7 +55,8 @@ public class MissingRuleSetProviderRateLimitHandler implements FluxgateRateLimit
     if (allowRequests) {
       return RateLimitResponse.allowed(-1L, 0L);
     }
-    return RateLimitResponse.rejected(0L);
+    throw new RateLimiterUnavailableException(
+        "No RateLimitRuleSetProvider is configured (failure-behavior=DENY)");
   }
 
   /**

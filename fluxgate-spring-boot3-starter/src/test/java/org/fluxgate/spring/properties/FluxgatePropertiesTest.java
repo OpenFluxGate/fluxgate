@@ -51,6 +51,7 @@ class FluxgatePropertiesTest {
     assertThat(properties.getRatelimit().getResponse().getContentType())
         .isEqualTo("application/problem+json");
     assertThat(properties.getRatelimit().getResponse().getBodyTemplate()).isNull();
+    assertThat(properties.getRatelimit().getResponse().getUnavailableBodyTemplate()).isNull();
     assertThat(properties.getMetrics().isEndpointNormalization()).isTrue();
     assertThat(properties.getMetrics().getMaxEndpointTags()).isEqualTo(1000);
     assertThat(properties.getRatelimit().getMissingRuleBehavior())
@@ -530,5 +531,15 @@ class FluxgatePropertiesTest {
     assertThat(properties.getRatelimit().getIdentity().getUserIdHeader())
         .isEqualTo("X-Tenant-User");
     assertThat(properties.getRatelimit().getIdentity().getApiKeyHeader()).isEqualTo("X-Tenant-Key");
+  }
+
+  @Test
+  void pubSubReplayWindowDefaultsToTheStrategyDefaultOfSixtySeconds() {
+    FluxgateProperties properties = new FluxgateProperties();
+
+    assertThat(properties.getReload().getPubsub().getMaxMessageAge())
+        .isEqualTo(java.time.Duration.ofSeconds(60))
+        .isEqualTo(
+            org.fluxgate.spring.reload.strategy.RedisPubSubReloadStrategy.DEFAULT_MAX_MESSAGE_AGE);
   }
 }

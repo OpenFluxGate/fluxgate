@@ -8,6 +8,8 @@ import org.fluxgate.core.key.MissingKeyBehavior;
 import org.fluxgate.spring.filter.IdentitySource;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
+import org.springframework.validation.Errors;
+import org.springframework.validation.Validator;
 
 /**
  * Configuration properties for FluxGate Spring Boot Starter.
@@ -31,11 +33,10 @@ import org.springframework.boot.context.properties.NestedConfigurationProperty;
  *     uri: redis://localhost:6379
  *   ratelimit:
  *     enabled: true
- *     filter-enabled: true
  * </pre>
  */
 @ConfigurationProperties(prefix = "fluxgate")
-public class FluxgateProperties {
+public class FluxgateProperties implements Validator {
 
   /** MongoDB configuration for rule storage. */
   @NestedConfigurationProperty private MongoProperties mongo = new MongoProperties();
@@ -104,6 +105,134 @@ public class FluxgateProperties {
   }
 
   // =========================================================================
+  // Validation
+  // =========================================================================
+
+  /**
+   * Supports validating {@link FluxgateProperties} itself; Spring Boot applies it while binding.
+   *
+   * @param clazz the class to validate
+   * @return true for {@link FluxgateProperties}
+   */
+  @Override
+  public boolean supports(Class<?> clazz) {
+    return FluxgateProperties.class.isAssignableFrom(clazz);
+  }
+
+  /**
+   * Rejects values that cannot work, so the application fails to start instead of misbehaving at
+   * runtime: non-positive timeouts, intervals, TTLs and sizes, a negative wait, no wait permits.
+   * Values documented as "zero disables" (negative cache TTL, Pub/Sub backstop, event retention)
+   * stay allowed.
+   *
+   * <p>Implemented as a self-validator rather than with Bean Validation annotations so it applies
+   * whether or not a Bean Validation provider is on the classpath. Spring Boot runs a properties
+   * class that implements {@link Validator} while binding it, without {@code @Validated}. The class
+   * is deliberately not annotated with {@code @Validated}: that would make Spring Boot also
+   * bootstrap Bean Validation whenever the validation API is on the classpath (springdoc brings
+   * it), and the application would then fail to start when no provider such as Hibernate Validator
+   * is present.
+   *
+   * @param target the properties to validate
+   * @param errors collects the violations
+   */
+  @Override
+  public void validate(Object target, Errors errors) {
+    FluxgateProperties props = (FluxgateProperties) target;
+    RedisProperties redisProps = props.getRedis();
+    positive(errors, "redis.timeoutMs", "redis.timeout-ms", redisProps.getTimeoutMs());
+    positive(errors, "redis.maxBucketTtl", "redis.max-bucket-ttl", redisProps.getMaxBucketTtl());
+
+    RateLimitProperties rateLimit = props.getRatelimit();
+    positive(
+        errors,
+        "ratelimit.fallback.maxBuckets",
+        "ratelimit.fallback.max-buckets",
+        rateLimit.getFallback().getMaxBuckets());
+    positive(
+        errors,
+        "ratelimit.fallback.expireAfterAccess",
+        "ratelimit.fallback.expire-after-access",
+        rateLimit.getFallback().getExpireAfterAccess());
+    WaitForRefillProperties wait = rateLimit.getWaitForRefill();
+    if (wait.getMaxWaitTimeMs() < 0) {
+      reject(
+          errors,
+          "ratelimit.waitForRefill.maxWaitTimeMs",
+          "ratelimit.wait-for-refill.max-wait-time-ms",
+          "must be >= 0",
+          wait.getMaxWaitTimeMs());
+    }
+    positive(
+        errors,
+        "ratelimit.waitForRefill.maxConcurrentWaits",
+        "ratelimit.wait-for-refill.max-concurrent-waits",
+        wait.getMaxConcurrentWaits());
+
+    ReloadProperties reloadProps = props.getReload();
+    positive(errors, "reload.cache.ttl", "reload.cache.ttl", reloadProps.getCache().getTtl());
+    positive(
+        errors,
+        "reload.cache.maxSize",
+        "reload.cache.max-size",
+        reloadProps.getCache().getMaxSize());
+    notNegative(
+        errors,
+        "reload.cache.negativeTtl",
+        "reload.cache.negative-ttl",
+        reloadProps.getCache().getNegativeTtl());
+    positive(
+        errors,
+        "reload.polling.interval",
+        "reload.polling.interval",
+        reloadProps.getPolling().getInterval());
+    notNegative(
+        errors,
+        "reload.polling.initialDelay",
+        "reload.polling.initial-delay",
+        reloadProps.getPolling().getInitialDelay());
+    positive(
+        errors,
+        "reload.pubsub.retryInterval",
+        "reload.pubsub.retry-interval",
+        reloadProps.getPubsub().getRetryInterval());
+    notNegative(
+        errors,
+        "reload.pubsub.backstopPollingInterval",
+        "reload.pubsub.backstop-polling-interval",
+        reloadProps.getPubsub().getBackstopPollingInterval());
+    positive(
+        errors,
+        "reload.pubsub.maxMessageAge",
+        "reload.pubsub.max-message-age",
+        reloadProps.getPubsub().getMaxMessageAge());
+  }
+
+  private static void positive(Errors errors, String field, String property, long value) {
+    if (value <= 0) {
+      reject(errors, field, property, "must be > 0", value);
+    }
+  }
+
+  private static void positive(Errors errors, String field, String property, Duration value) {
+    if (value == null || value.isZero() || value.isNegative()) {
+      reject(errors, field, property, "must be a positive duration", value);
+    }
+  }
+
+  private static void notNegative(Errors errors, String field, String property, Duration value) {
+    if (value == null || value.isNegative()) {
+      reject(errors, field, property, "must be zero or a positive duration", value);
+    }
+  }
+
+  private static void reject(
+      Errors errors, String field, String property, String rule, Object value) {
+    errors.rejectValue(
+        field, "fluxgate.invalid", "fluxgate." + property + " " + rule + " (got " + value + ")");
+  }
+
+  // =========================================================================
   // Nested Configuration Classes
   // =========================================================================
 
@@ -135,7 +264,10 @@ public class FluxgateProperties {
      * DDL auto mode for MongoDB collections.
      *
      * <ul>
-     *   <li>VALIDATE - Only validate that collections exist (default)
+     *   <li>VALIDATE - Create nothing; fail startup unless the rule collection has a unique {@code
+     *       (ruleSetId, id)} index that enforces uniqueness for every rule - not {@code sparse},
+     *       without a {@code partialFilterExpression} and with the {@code simple} collation
+     *       (default)
      *   <li>CREATE - Create collections and indexes if they don't exist
      * </ul>
      */
@@ -215,7 +347,10 @@ public class FluxgateProperties {
 
   /** DDL auto mode for MongoDB collections. */
   public enum DdlAuto {
-    /** Only validate that collections exist. Throws error if missing. */
+    /**
+     * Create nothing; fail startup unless the rule collection has a unique {@code (ruleSetId, id)}
+     * index that is neither sparse nor partial and uses the {@code simple} collation.
+     */
     VALIDATE,
     /** Create collections and indexes if they don't exist. */
     CREATE
@@ -447,8 +582,12 @@ public class FluxgateProperties {
      *
      * <ul>
      *   <li>ALLOW - Allow the request (fail-open)
-     *   <li>DENY - Deny the request (default, fail-closed)
+     *   <li>DENY - Deny the request with HTTP 503 (default, fail-closed)
      * </ul>
+     *
+     * <p>Only limiter failures are covered. A rule set that cannot be built ({@code
+     * InvalidRuleConfigException}) is a configuration error and is answered with HTTP 503 under
+     * either value; a request cost above the capacity of a band is a client error (HTTP 429).
      */
     private FailureBehavior failureBehavior = FailureBehavior.DENY;
 
@@ -586,11 +725,22 @@ public class FluxgateProperties {
      * Whether a missing or unusable rate limiting setup should fail the application startup instead
      * of degrading silently.
      *
-     * <p>When {@code true} and a {@link org.fluxgate.core.ratelimiter.RateLimiter} bean exists but
-     * no {@link org.fluxgate.core.spi.RateLimitRuleSetProvider} is available (so no limit can
-     * actually be enforced), the application context will refuse to start. Default {@code false}:
-     * the {@link org.fluxgate.spring.handler.MissingRuleSetProviderRateLimitHandler} logs one
-     * startup ERROR and applies {@code failure-behavior} instead.
+     * <p>When {@code true} the application context refuses to start if no limit can actually be
+     * enforced:
+     *
+     * <ul>
+     *   <li>a {@link org.fluxgate.core.ratelimiter.RateLimiter} bean exists but no {@link
+     *       org.fluxgate.core.spi.RateLimitRuleSetProvider}, and Redis is enabled or {@code
+     *       fluxgate.ratelimit.mode} is set (where the stopgap handler would otherwise be
+     *       registered), or
+     *   <li>the filter ({@code @EnableFluxgateFilter}) or the aspect
+     *       ({@code @EnableFluxgateAspect}) finds no {@link
+     *       org.fluxgate.core.handler.FluxgateRateLimitHandler} at all.
+     * </ul>
+     *
+     * <p>Default {@code false}: the first case registers {@link
+     * org.fluxgate.spring.handler.MissingRuleSetProviderRateLimitHandler}, which logs one startup
+     * ERROR, and the second logs one WARN; both then apply {@code failure-behavior}.
      */
     private boolean failOnMissingHandler = false;
 
@@ -968,7 +1118,11 @@ public class FluxgateProperties {
     /** Maximum number of buckets held by the in-memory fallback limiter. */
     private long maxBuckets = 100_000L;
 
-    /** Idle time after which an in-memory fallback bucket is evicted. */
+    /**
+     * Minimum idle time after which an in-memory fallback bucket is evicted. A bucket whose longest
+     * band window is longer stays until it has been idle for that window instead, so expiry never
+     * resets a partially consumed long quota.
+     */
     private Duration expireAfterAccess = Duration.ofHours(1);
 
     public FallbackMode getMode() {
@@ -1012,7 +1166,10 @@ public class FluxgateProperties {
     DENY
   }
 
-  /** Behavior when rate limiter execution fails. */
+  /**
+   * Behavior when rate limiter execution fails. Configuration errors such as a rule set that cannot
+   * be built are not limiter failures and are always answered with HTTP 503.
+   */
   public enum FailureBehavior {
     /** Allow the request to proceed (fail-open). */
     ALLOW,
@@ -1036,7 +1193,7 @@ public class FluxgateProperties {
    *     waitForRefill:
    *       enabled: true
    *       maxWaitTimeMs: 5000
-   *       maxConcurrentWaits: 100
+   *       maxConcurrentWaits: 50
    * </pre>
    */
   public static class WaitForRefillProperties {
@@ -1044,8 +1201,12 @@ public class FluxgateProperties {
     /**
      * Enable WAIT_FOR_REFILL behavior. When false, requests exceeding the limit are immediately
      * rejected even if the rule has WAIT_FOR_REFILL policy.
+     *
+     * <p>Unset (the default) behaves as false for rule policies but still lets
+     * {@code @RateLimit(waitForRefill = true)} wait. Setting it explicitly to false is a global
+     * kill switch: no request or invocation waits, whatever the annotation says.
      */
-    private boolean enabled = false;
+    private Boolean enabled;
 
     /**
      * Maximum time to wait for token refill in milliseconds. If the required wait time exceeds this
@@ -1060,7 +1221,7 @@ public class FluxgateProperties {
     private long maxWaitTimeMs = 5000;
 
     /**
-     * Maximum number of concurrent waiting requests. A single semaphore, shared by the filter or
+     * Maximum number of concurrent waiting requests. A single semaphore, shared by the filter and
      * the aspect, limits how many requests may be parked at the same time; the rest are rejected
      * immediately. Default: 50.
      *
@@ -1072,11 +1233,21 @@ public class FluxgateProperties {
     private int maxConcurrentWaits = 50;
 
     public boolean isEnabled() {
-      return enabled;
+      return Boolean.TRUE.equals(enabled);
     }
 
     public void setEnabled(boolean enabled) {
       this.enabled = enabled;
+    }
+
+    /**
+     * Whether {@code enabled} was explicitly set to false, which also stops annotation-requested
+     * waits.
+     *
+     * @return true when waiting is switched off globally
+     */
+    public boolean disablesAllWaits() {
+      return Boolean.FALSE.equals(enabled);
     }
 
     public long getMaxWaitTimeMs() {
@@ -1115,8 +1286,8 @@ public class FluxgateProperties {
 
     /**
      * Write the legacy {@code X-RateLimit-Limit}, {@code X-RateLimit-Remaining} and {@code
-     * X-RateLimit-Reset} (epoch seconds) headers, plus {@code Retry-After} on rejection. Default
-     * true.
+     * X-RateLimit-Reset} (epoch seconds) headers. Default true. {@code Retry-After} is written on
+     * every rejection regardless of this switch.
      */
     private boolean includeLegacyHeaders = true;
 
@@ -1135,9 +1306,18 @@ public class FluxgateProperties {
     /**
      * Optional body replacing the default problem document. The placeholders {@code {status}},
      * {@code {retryAfterSeconds}}, {@code {retryAfterMillis}}, {@code {remaining}} and {@code
-     * {limit}} are substituted.
+     * {limit}} are substituted. It renders the 429 responses and, unless {@code
+     * unavailable-body-template} is set, also the 503 sent when rate limiting is unavailable, with
+     * {@code {status}} set to 503 and unknown values as {@code -1}.
      */
     private String bodyTemplate;
+
+    /**
+     * Optional body for the 503 sent when rate limiting is unavailable or not configured, with the
+     * same placeholders as {@code body-template}. Unset, the 503 uses {@code body-template} (or the
+     * default problem document when that is unset too).
+     */
+    private String unavailableBodyTemplate;
 
     public boolean isIncludeLegacyHeaders() {
       return includeLegacyHeaders;
@@ -1169,6 +1349,14 @@ public class FluxgateProperties {
 
     public void setBodyTemplate(String bodyTemplate) {
       this.bodyTemplate = bodyTemplate;
+    }
+
+    public String getUnavailableBodyTemplate() {
+      return unavailableBodyTemplate;
+    }
+
+    public void setUnavailableBodyTemplate(String unavailableBodyTemplate) {
+      this.unavailableBodyTemplate = unavailableBodyTemplate;
     }
   }
 
@@ -1277,9 +1465,11 @@ public class FluxgateProperties {
        * partial functionality (e.g. the Redis limiter is unreachable and the circuit has opened),
        * so {@code 503} is a safer default to signal load balancers and health check probes.
        *
-       * <p>Set to {@code 0} or a negative value to disable the automatic mapping bean and keep
-       * Spring Boot's default behaviour. A user-defined {@code HttpCodeStatusMapper} bean always
-       * takes precedence regardless of this setting.
+       * <p>Contributed as the lowest-precedence default for {@code
+       * management.endpoint.health.status.http-mapping.degraded}, alongside Boot's own {@code DOWN}
+       * and {@code OUT_OF_SERVICE} to {@code 503} defaults, so an explicit mapping always wins. Set
+       * to {@code 0} or a negative value to contribute nothing. A user-defined {@code
+       * HttpCodeStatusMapper} bean always takes precedence regardless of this setting.
        */
       private int degradedHttpStatus = 503;
 
@@ -1315,7 +1505,8 @@ public class FluxgateProperties {
    * <p>Supports multiple strategies:
    *
    * <ul>
-   *   <li>AUTO - Automatically select best strategy (Pub/Sub if Redis available, else Polling)
+   *   <li>AUTO - Pub/Sub when Redis is enabled and a secret is set (or allow-unsigned=true),
+   *       otherwise Polling
    *   <li>PUBSUB - Use Redis Pub/Sub for real-time notifications
    *   <li>POLLING - Periodically check for changes
    *   <li>NONE - Disable hot reload (always fetch fresh from provider)
@@ -1345,7 +1536,8 @@ public class FluxgateProperties {
      * Reload strategy to use.
      *
      * <ul>
-     *   <li>AUTO - Use Pub/Sub if Redis is available, otherwise use Polling
+     *   <li>AUTO - Pub/Sub when Redis is enabled and a secret is set (or allow-unsigned=true),
+     *       otherwise Polling
      *   <li>PUBSUB - Use Redis Pub/Sub only
      *   <li>POLLING - Use periodic polling only
      *   <li>NONE - Disable caching and always fetch fresh rules
@@ -1529,8 +1721,24 @@ public class FluxgateProperties {
        * applied when {@link #getSecret()} is set, because an unsigned message has no trustworthy
        * timestamp to compare against. Keep it well above the clock skew between control plane and
        * data plane.
+       *
+       * <p>Defaults to 60 seconds, the replay window the control plane's signed {@code
+       * RuleChangeMessage} is designed for and the default of {@code RedisPubSubReloadStrategy}.
+       * Every message seen inside the window is remembered to reject duplicates, so a longer window
+       * also means more remembered messages.
        */
-      private Duration maxMessageAge = Duration.ofMinutes(5);
+      private Duration maxMessageAge = Duration.ofSeconds(60);
+
+      /**
+       * Accept signed schema version 1 messages (no nonce, no channel binding).
+       *
+       * <p>{@code true} by default so a data plane can be upgraded before its pre-0.4 control
+       * planes; the first version 1 message accepted is reported at WARN. Set it to {@code false}
+       * once every publisher signs version 2. Only applied when {@link #getSecret()} is set.
+       *
+       * @since 0.4.0
+       */
+      private boolean acceptLegacySigned = true;
 
       public String getChannel() {
         return channel;
@@ -1586,6 +1794,14 @@ public class FluxgateProperties {
 
       public void setMaxMessageAge(Duration maxMessageAge) {
         this.maxMessageAge = maxMessageAge;
+      }
+
+      public boolean isAcceptLegacySigned() {
+        return acceptLegacySigned;
+      }
+
+      public void setAcceptLegacySigned(boolean acceptLegacySigned) {
+        this.acceptLegacySigned = acceptLegacySigned;
       }
     }
   }

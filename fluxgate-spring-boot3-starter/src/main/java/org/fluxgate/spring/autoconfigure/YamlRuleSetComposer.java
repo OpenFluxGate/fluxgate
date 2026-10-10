@@ -2,6 +2,7 @@ package org.fluxgate.spring.autoconfigure;
 
 import java.util.List;
 import org.fluxgate.core.key.KeyResolver;
+import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.fluxgate.spring.properties.FluxgateProperties.RuleSetProperties;
@@ -43,11 +44,15 @@ final class YamlRuleSetComposer implements BeanPostProcessor {
 
   private final ObjectProvider<FluxgateProperties> properties;
   private final ObjectProvider<KeyResolver> keyResolver;
+  private final ObjectProvider<RateLimitMetricsRecorder> metricsRecorder;
 
   YamlRuleSetComposer(
-      ObjectProvider<FluxgateProperties> properties, ObjectProvider<KeyResolver> keyResolver) {
+      ObjectProvider<FluxgateProperties> properties,
+      ObjectProvider<KeyResolver> keyResolver,
+      ObjectProvider<RateLimitMetricsRecorder> metricsRecorder) {
     this.properties = properties;
     this.keyResolver = keyResolver;
+    this.metricsRecorder = metricsRecorder;
   }
 
   @Override
@@ -72,8 +77,11 @@ final class YamlRuleSetComposer implements BeanPostProcessor {
     if (ruleSets == null || ruleSets.isEmpty()) {
       return bean;
     }
+    FluxgateRateLimiterAutoConfiguration.warnAboutApiKeyRulesWithoutHeaderIdentity(
+        properties.getObject());
     PropertiesRuleSetProvider yaml =
-        new PropertiesRuleSetProvider(ruleSets, keyResolver.getObject());
+        new PropertiesRuleSetProvider(
+            ruleSets, keyResolver.getObject(), metricsRecorder::getIfUnique);
     log.info(
         "Composing {} YAML rule set(s) {} with '{}' ({}) as fallback. Bean '{}' is now a {}; inject"
             + " it as RateLimitRuleSetProvider, not as {}",

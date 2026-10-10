@@ -2,7 +2,12 @@ package org.fluxgate.spring.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.mock.web.MockHttpServletRequest;
 
 /** Unit tests for {@link RequestPathResolver}. */
@@ -85,6 +90,27 @@ class RequestPathResolverTest {
     // N-2: falling back to the raw URI prepended the context path, missed every include pattern
     // and switched rate limiting off silently.
     assertThat(resolve("/login%zz", "")).isEqualTo(RequestPathResolver.UNRESOLVABLE_PATH);
+  }
+
+  @Test
+  void shouldWarnOnceAboutUndecodablePathsAndSuppressRepeatsWithinTheInterval() {
+    Logger logger = (Logger) LoggerFactory.getLogger(RequestPathResolver.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      RequestPathResolver.resetUnresolvablePathWarnings();
+
+      for (int i = 0; i < 3; i++) {
+        assertThat(resolve("/login%zz", "")).isEqualTo(RequestPathResolver.UNRESOLVABLE_PATH);
+      }
+
+      assertThat(appender.list.stream().filter(e -> e.getLevel() == Level.WARN))
+          .as("the first undecodable path warns, the repeats within the interval do not")
+          .hasSize(1);
+    } finally {
+      logger.detachAppender(appender);
+    }
   }
 
   @Test
