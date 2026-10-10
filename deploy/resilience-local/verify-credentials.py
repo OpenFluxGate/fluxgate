@@ -713,8 +713,8 @@ class Proof:
     def redis_cold_restart(self, password, retired_password):
         chosen = None
         rule_set = self.f["rule_set_id"]
-        profiles = ((self.f["quota_rule_id"], "daily", b"TOKEN_BUCKET", b"86400000000"),
-                    (self.f["load_rule_id"], "hourly", b"FIXED_WINDOW", b"3600000000"))
+        profiles = ((self.f["quota_rule_id"], "daily", b"1", b"86400000000"),
+                    (self.f["load_rule_id"], "hourly", b"3", b"3600000000"))
         require(all(re.fullmatch(r"[A-Za-z0-9_-]+", identifier)
                     for identifier in (rule_set, *(profile[0] for profile in profiles))),
                 "fixture policy identifiers cannot safely select Redis metadata")
@@ -1456,8 +1456,22 @@ def redis_policy_selection_self_test():
                "quota_rule_id": "quota-rule", "load_rule_id": "load-rule"}
     prefix = "fluxgate:policy:fluxgate:bucket:{resilience-limits:quota-rule:"
     key = prefix + "api-key:rotation-test}:daily:epoch:c3RhYmxl"
-    metadata = b"revision\n7\ncapacity\n5\nwindow_micros\n86400000000\nalgorithm\nTOKEN_BUCKET"
+    root = Path(__file__).resolve().parents[2]
+    store = (root / "fluxgate-redis-ratelimiter/src/main/java/org/fluxgate/redis/store/RedisTokenBucketStore.java").read_text()
+    lua = (root / "fluxgate-redis-ratelimiter/src/main/resources/lua/token_bucket_consume.lua").read_text()
+    java_codes = dict(re.findall(r"case (TOKEN_BUCKET|FIXED_WINDOW):\s*return (\d+);", store))
+    lua_codes = dict(re.findall(r"local ALG_(TOKEN_BUCKET|FIXED_WINDOW)\s*=\s*(\d+)", lua))
+    require(java_codes == lua_codes and set(java_codes) == {"TOKEN_BUCKET", "FIXED_WINDOW"},
+            "Java/Lua algorithm code contract changed")
+    require("args[base + 2] = String.valueOf(algorithmCode(band.getAlgorithm()))" in store
+            and re.search(r"local alg\s*=\s*tonumber\(ARGV\[base \+ 3\]\)", lua) is not None
+            and re.search(r"algorithms\[i\]\s*=\s*alg", lua) is not None
+            and re.search(r"'algorithm',\s*algorithms\[i\]", lua) is not None,
+            "Lua no longer stores the numeric Java algorithm argument")
+    metadata = (b"revision\n7\ncapacity\n5\nwindow_micros\n86400000000\nalgorithm\n"
+                + java_codes["TOKEN_BUCKET"].encode())
     calls = []
+    band = "daily"
     scenario = "valid"
     def redis(pod, command, password=None, readonly=False):
         calls.append(command)
@@ -1466,11 +1480,14 @@ def redis_policy_selection_self_test():
         if command[0] == "KEYS":
             return b""  # Invented namespace contains no actual store metadata.
         if command[0] == "SCAN":
-            if command[3] == "fluxgate:policy:fluxgate:bucket:{resilience-limits:load-rule:*}:hourly*":
+            allowed = {"fluxgate:policy:fluxgate:bucket:{resilience-limits:quota-rule:*}:daily*",
+                       "fluxgate:policy:fluxgate:bucket:{resilience-limits:load-rule:*}:hourly*"}
+            require(command[3] in allowed, "metadata scan escaped fixture rules")
+            if command[3] != prefix + "*}:" + band + "*":
                 return b"0"
-            require(command == ["SCAN", "0", "MATCH", prefix + "*}:daily*", "COUNT", "100"],
+            require(command == ["SCAN", "0", "MATCH", prefix + "*}:" + band + "*", "COUNT", "100"],
                     "metadata selection did not bound the fixture namespace")
-            return b"0\n" + (prefix + "api-key:ordinary}:daily").encode() + b"\n" + key.encode()
+            return b"0\n" + (prefix + "api-key:ordinary}:" + band).encode() + b"\n" + key.encode()
         if command[0] == "TYPE":
             return b"hash"
         if command[0] == "HGETALL":
@@ -1501,6 +1518,18 @@ def redis_policy_selection_self_test():
             raise ProofError("ordinary hash or expiring metadata selected as persisted policy")
     require(redis_hash_contents(metadata) != redis_hash_contents(metadata.replace(b"revision\n7", b"revision\n8")),
             "policy retention comparison hid changed revision")
+    prefix = "fluxgate:policy:fluxgate:bucket:{resilience-limits:load-rule:"
+    band = "hourly"
+    key = prefix + "api-key:load-test}:hourly:epoch:c3RhYmxl"
+    metadata = (b"revision\n7\ncapacity\n10000000\nwindow_micros\n3600000000\nalgorithm\n"
+                + java_codes["FIXED_WINDOW"].encode())
+    scenario = "valid"
+    try:
+        proof.redis_cold_restart("offline-password", "offline-retired")
+    except Selected:
+        pass
+    else:
+        raise ProofError("actual FIXED_WINDOW algorithm code was not selected")
 
 
 def tls_alert_read_self_test():
