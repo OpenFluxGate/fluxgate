@@ -194,6 +194,7 @@ def sampler_worker(config, stop_path):
     slots = threading.BoundedSemaphore(24)
     jobs = queue.Queue(maxsize=24)
     shutdown = threading.Event()
+    positive_claimed = False
 
     def snapshot():  # Caller holds condition: pending and completed cannot disappear between reads.
         return {**anchor, "interval_ms": 100, "scheduled": sequence,
@@ -209,7 +210,7 @@ def sampler_worker(config, stop_path):
         private_write(config.get("progress_path", "/tmp/sampler-progress.json"), json.dumps(snapshot()))
 
     def worker():
-        nonlocal worker_failures
+        nonlocal worker_failures, positive_claimed
         while not shutdown.is_set():
             try:
                 index = jobs.get(timeout=.1)
@@ -242,19 +243,31 @@ def sampler_worker(config, stop_path):
                     service_latency_ms=(completed - began) * 1000,
                     completed_elapsed_seconds=completed - start)
                 with condition:
-                    samples.append(sample)
-                    pending.remove(index)
-                    try:
-                        if len(samples) == 1 and not shutdown.is_set():
-                            progress()
-                        if sample["status"] == 200 and sample["body_valid"] and not shutdown.is_set():
-                            private_write(config.get("positive_path", "/tmp/sampler-positive"), "yes")
-                    except Exception:
-                        worker_failures += 1  # No exception text or credential data in evidence.
-                    finally:
-                        slots.release()
-                        jobs.task_done()
-                        condition.notify_all()
+                    publish_positive = (sample["status"] == 200 and sample["body_valid"]
+                                        and not shutdown.is_set() and not positive_claimed)
+                    if publish_positive:
+                        positive_claimed = True
+                try:
+                    # One claimed marker write must not block the scheduler's condition.
+                    if publish_positive:
+                        private_write(config.get("positive_path", "/tmp/sampler-positive"), "yes")
+                except Exception:
+                    with condition:
+                        worker_failures += 1
+                finally:
+                    with condition:
+                        # Publish completion only after marker I/O; snapshots stay disjoint.
+                        samples.append(sample)
+                        pending.remove(index)
+                        try:
+                            if len(samples) == 1 and not shutdown.is_set():
+                                progress()
+                        except Exception:
+                            worker_failures += 1  # No exception text or credential data in evidence.
+                        finally:
+                            slots.release()
+                            jobs.task_done()
+                            condition.notify_all()
 
     workers = [threading.Thread(target=worker, daemon=True) for _ in range(24)]
     for thread in workers:
