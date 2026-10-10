@@ -14,11 +14,108 @@
         <java.version>17</java.version>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
-        <spring-boot.version>3.3.5</spring-boot.version>
+        <!-- Last OSS 3.5 release; this compatibility lane is not ongoing OSS maintenance. -->
+        <spring-boot.version>3.5.16</spring-boot.version>
+        <envoy.tomcat.version>10.1.60</envoy.tomcat.version>
+        <envoy.netty.version>4.1.137.Final</envoy.netty.version>
+        <envoy.jackson.version>2.21.7</envoy.jackson.version>
+        <envoy.lettuce.version>6.6.0.RELEASE</envoy.lettuce.version>
+        <envoy.mongodb.version>5.5.2</envoy.mongodb.version>
+        <envoy.micrometer.version>1.15.12</envoy.micrometer.version>
+        <envoy.slf4j.version>2.0.18</envoy.slf4j.version>
+        <envoy.logback.version>1.5.34</envoy.logback.version>
         <skipJacocoForPom>false</skipJacocoForPom>
     </properties>
     <dependencyManagement>
         <dependencies>
+            <!-- Local precedence is deliberate: inherited explicit management wins over an imported BOM. -->
+            <dependency>
+                <groupId>org.apache.tomcat.embed</groupId>
+                <artifactId>tomcat-embed-core</artifactId>
+                <version>${envoy.tomcat.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tomcat.embed</groupId>
+                <artifactId>tomcat-embed-el</artifactId>
+                <version>${envoy.tomcat.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tomcat.embed</groupId>
+                <artifactId>tomcat-embed-websocket</artifactId>
+                <version>${envoy.tomcat.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>${envoy.jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.lettuce</groupId>
+                <artifactId>lettuce-core</artifactId>
+                <version>${envoy.lettuce.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mongodb</groupId>
+                <artifactId>mongodb-driver-sync</artifactId>
+                <version>${envoy.mongodb.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mongodb</groupId>
+                <artifactId>mongodb-driver-core</artifactId>
+                <version>${envoy.mongodb.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mongodb</groupId>
+                <artifactId>bson</artifactId>
+                <version>${envoy.mongodb.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.mongodb</groupId>
+                <artifactId>bson-record-codec</artifactId>
+                <version>${envoy.mongodb.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-core</artifactId>
+                <version>${envoy.micrometer.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>${envoy.slf4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-classic</artifactId>
+                <version>${envoy.logback.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-core</artifactId>
+                <version>${envoy.logback.version}</version>
+            </dependency>
+            <!-- First-import precedence keeps these security lines aligned ahead of the Boot BOM. -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>${envoy.netty.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${envoy.jackson.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-bom</artifactId>
+                <version>${envoy.micrometer.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
