@@ -1,8 +1,8 @@
 # LTS-first Envoy / Studio integration review
 
-Code integration and required build/test verification are complete; **overall acceptance and enterprise 95/100 remain HOLD**. This report records reviewed contracts and retained evidence. Remaining runtime gates are not complete, and this is not production certification.
+Code integration and required build/test verification are complete; **overall acceptance and enterprise 95/100 remain HOLD**. This report records reviewed contracts and retained evidence. The latest local credential-rotation gate passed; separate production qualification remains incomplete.
 
-Isolated branches are core `feature/lts-envoy-integration` and Studio `feature/lts-policy-lifecycle`. The decision is **conflicts/build/tests PASS, current state PASS, credential-rotation availability HOLD**. The target LTS was not merged or pushed.
+Isolated branches are core `feature/lts-envoy-integration` and Studio `feature/lts-policy-lifecycle`. The decision is **conflicts/build/tests PASS, current state PASS, credential-rotation availability PASS under the declared host-relay topology**. The target LTS was not merged or pushed.
 
 ```mermaid
 flowchart LR
@@ -16,6 +16,18 @@ flowchart LR
 
 Envoy forwards the actual request after an allow decision. Java FluxGate queries MongoDB and Redis. The local runtime backend is echo; it does not prove execution of three separate Java, Go and Rust applications.
 
+
+## Latest local credential validation
+
+The uninstrumented full run on frozen verifier `3d1363e` passed with **all 3,829 scheduled requests returning exact-body HTTP 200 and zero omissions**: mTLS 2,022, API key 1,141, MongoDB/Redis stores 666. Every phase had zero pending work and worker/writer failures, completed drains and UID-checked owned Pod/NetworkPolicy cleanup. Protocol, full completion and rotation availability are true; the credential child and independent 19-check final state exited 0 with valid witnesses and no wrapper errors. [worker-sampler.json](evidence/2026-10-10-lts-integration/worker-sampler.json) consolidates phase results and original digests.
+
+The same sampler retains absolute 100 ms deadlines, 24 pending requests, fresh connections with a 2-second timeout, zero omissions and exact-body checks. Only the producer runs on host Python through explicit loopback API port-forward -> owned TCP relay Pod -> actual Gateway Service. The relay opens a fresh Service connection rather than pinning a rolling Envoy Pod. Its requests25m/32Mi, limits250m/128Mi and node weights100 remain unchanged; the host sampler is outside those Pod limits. This privileged observation path is not ordinary external ingress; the separate network-policy proof remains. No product module or dependency was added.
+
+The preceding paired-wait diagnostic observed approximately 262 ms delays in both same-parent sleep/select timers after swapping their wait methods. Main condition-lock wait peaked at 0.149 ms, so a wait-only patch was unsupported. It omitted one of 2,010 mTLS arrivals. Its parent also omitted `--credential-rollout`, invalidating the witness on expected authz replacement; that original failure is preserved. Numeric telemetry is diagnostic only, not acceptance. A precise GIL/VM cause remains unproven.
+
+A fresh **70-test Python suite and TLS self-test** passed on the integrated source, with independent source, parent and identity reviews. Existing Java 3,365/UI 13 build and JAR identities remain historical. **The omission gate is resolved under this local topology; production qualification and overall 95-point approval remain separately HOLD.**
+
+A fresh remote LTS check still identifies `7ee6a86101afe5ed5a9d6efb992e470430af046a`; merge-tree with the frozen host verifier reports zero conflicts. No merge or push was performed.
 
 ## Source and artifact boundaries
 
@@ -53,9 +65,9 @@ The immutable retained ledger binds these proofs to the integrated authz artifac
 | Normal load | 100 scheduled RPS × 60 s; 6,000 exact-body 200, zero omissions/errors; achieved 99.977 RPS; p95 6.5953 ms, p99 12.3227 ms. |
 | Combined Mongo | Selected fault phase accepted; final 6,000 all 200, p99 7.7462 ms; recorded RTO 23.641 s. `complete:false` identifies a selected phase, not full-suite completion. |
 | Combined Redis | Selected fault phase accepted; final 6,000 all 200, p99 9.0988 ms; recorded RTO 18.735 s. Same selected-phase boundary. |
-| Fresh credentials | Default f90: 3,833 scheduled, 3,827 exact-body 200, six omissions. CPU-allocation experiment: 3,832 scheduled, 3,826 exact-body 200, six omissions. Both completed all protocols but failed rotation availability; **HOLD**. |
+| Historical credentials | Default f90: 3,833 scheduled, 3,827 exact-body 200, six omissions. CPU-allocation experiment: 3,832 scheduled, 3,826 exact-body 200, six omissions. Both completed all protocols but failed rotation availability; **HOLD**. |
 | Fresh network | Independent actual exit 0 and valid witness under verifier 4cbb: 48 negative controls, 232 positive controls; stable identities/policies and verified cleanup. |
-| Final state | After the allocation experiment, all three node weights were restored to 100 with Docker CpuShares metadata still zero. The fresh f90 read-only checker passed all 19 checks with actual exit 0 and a valid witness. Current state success does not approve rotation availability. |
+| Historical final state | After the allocation experiment, all three node weights were restored to 100 with Docker CpuShares metadata still zero. The fresh f90 read-only checker passed all 19 checks with actual exit 0 and a valid witness. Current state success does not approve rotation availability. |
 
 A supplementary HA recovery-window gate rejected a fault503 request that began913ms before the window and completed1433ms after the window start, because it selects `completed >= start`. This does not establish failure of a newly started post-recovery request. [ha-window-diagnostic.json](evidence/2026-10-10-lts-integration/ha-window-diagnostic.json) retains this rejection separately from the original27-check terminal PASS; the supplementary condition was not weakened.
 
@@ -84,14 +96,14 @@ One uninstrumented HTTP process-isolation experiment on verifier `87df806` compl
 
 The original state checker then exited 1 at its Redis topology condition after completing 14 checks. A separate guarded baseline observed normal placement without a role-changing command and checked exact policy and HA-counter preservation (`complete:false`). A later independent read-only checker passed all 19 checks with exit 0 and a valid witness. [final-state.json](evidence/2026-10-10-lts-integration/final-state.json) retains both the original failure and later success; the precise cause of the initial assertion is not established.
 
-The unproven sampler complexity was reverted. Current validated source `7c43f23` restores the `c3f7fd` sampler, existing tests and executable mode, removing the two experimental test helpers. The candidate source and 80 passing controls remain historical experimental evidence. The current verifier passed a fresh 60-test run and self-test. Existing Java 3,365 and Studio UI 13 build results were not relabeled as new builds. **Repository cleanup is complete; credential availability and overall 95-point approval remain HOLD.**
+The unproven sampler complexity was reverted. The then-restored source `7c43f23` restores the `c3f7fd` sampler, existing tests and executable mode, removing the two experimental test helpers. The candidate source and 80 passing controls remain historical experimental evidence. That restored verifier passed a fresh 60-test run and self-test. Existing Java 3,365 and Studio UI 13 build results were not relabeled as new builds. **At that stage repository cleanup was complete while credential availability and overall 95-point approval remained HOLD; the latest host-relay result is separated above.**
 
 ### Retained evidence
 
-[acceptance.json](evidence/2026-10-10-lts-integration/acceptance.json) records each proof's actual invocation commit, JAR, terminal exit and SHA-256. Historical passing executions are not relabelled as runs of the new verifier. All five rejected credential attempts, historical healthy-path omissions, actual `NOREPLICAS` 503 responses and the private harness error remain evidence. A score of at least 95 is not approved; points in other categories cannot offset a failed mandatory gate.
+[acceptance.json](evidence/2026-10-10-lts-integration/acceptance.json) records each proof's actual invocation commit, JAR, terminal exit and SHA-256. Historical passing executions are not relabelled as runs of the new verifier. The first five rejected credential attempts and subsequent rejected diagnostics/comparison, historical healthy-path omissions, actual `NOREPLICAS` 503 responses and the private harness error remain evidence. A score of at least95 is not approved because production qualification remains incomplete. The current local credential gate passes without erasing earlier failures.
 
 The [Mongo migration procedure](../architecture/lts-mongo-identity-migration.md) requires explicit maintenance with writers stopped. No data deletion, counter reset or edits to other worktrees were used to align state.
 
 ## Scope and remaining limits
 
-These results cover an owned fixture with three kind nodes on one Docker Desktop VM and an echo backend. They do not prove independent host/AZ failure, off-host recovery, production storage/network, sustained soak, complete dependency/CVE coverage or supported-runtime operations. Store TLS/ACL hardening and production backup/restore remain separate gates. Historical scores are not transferred. Default and allocated healthy controls passed, but their subsequent full credential runs failed zero-omission availability. The earlier bounded healthy diagnostic did not reproduce omissions. The later instrumented full diagnostic and uninstrumented process-isolation comparison each recorded one omission; neither established the precise scheduling cause. Unproven process isolation was reverted. Further work requires a bounded cause-isolation experiment, rather than a speculative patch or blind full retry. The final local acceptance and benchmark score remain HOLD.
+These results cover an owned fixture with three kind nodes on one Docker Desktop VM and an echo backend. They do not prove independent host/AZ failure, off-host recovery, production storage/network, sustained soak, complete dependency/CVE coverage or supported-runtime operations. Store TLS/ACL hardening and production backup/restore remain separate gates. Historical scores are not transferred. Default and allocated healthy controls passed, but their subsequent full credential runs failed zero-omission availability. The earlier bounded healthy diagnostic did not reproduce omissions. The later instrumented full diagnostic and uninstrumented process-isolation comparison each recorded one omission; neither established the precise scheduling cause. Unproven process isolation was reverted. The subsequently reviewed host-relay topology passed the unchanged zero-omission gate in one uninstrumented full run. The local credential gate is PASS; overall release/production qualification and a separate benchmark score remain HOLD.

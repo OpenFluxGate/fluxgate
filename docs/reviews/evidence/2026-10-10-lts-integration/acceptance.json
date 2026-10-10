@@ -10,7 +10,7 @@
   "build_and_tests_passed": true,
   "current_state_passed": true,
   "credential_protocol_passed_in_rejected_run": true,
-  "credential_rotation_availability_accepted": false,
+  "credential_rotation_availability_accepted": true,
   "fresh_full_credential_progress_run_performed": true,
   "identities": {
     "core_build_commit": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
@@ -27,11 +27,11 @@
       "deploy/resilience-local/verify-credentials.py"
     ],
     "core_build_tree": "58288a739e89a7854f316ad4d9c6fca21ac55f53",
-    "boundary": "Historical executed/build identities remain unchanged; current restored validation and rejected process comparison have separate provenance. Java sources and JARs were not rebuilt or relabeled.",
-    "current_validated_checkout_commit": "7c43f2312b3833de106ec52c730a1919039107a3",
-    "current_validated_checkout_tree": "0f04e26e4fab0428b9fdbe069fc87e656ff5e49a",
-    "latest_full_experiment_verifier_commit": "87df806925bd8027477693c8e61c1b5839e3fe81",
-    "latest_full_experiment_verifier_tree": "be31bf2a31b54d69f5c49237a14eadd6104f0423",
+    "boundary": "Historical Java build/execution identities retained. Latest host-relay verifier and state checks have their own committed source and unchanged JARs.",
+    "current_validated_checkout_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "current_validated_checkout_tree": "fa7b3c2bf247d110889a057ebc71a3b2bb79c3f4",
+    "latest_full_experiment_verifier_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "latest_full_experiment_verifier_tree": "fa7b3c2bf247d110889a057ebc71a3b2bb79c3f4",
     "studio_readme_checkout_commit": "3017925132dadf8d095d9b726625e88495fd97d2"
   },
   "retained_ledger_sha256": "11d926938c306e9ea57258f4f455bb6e459d3b09679684d4c7f9c1699c871827",
@@ -50,8 +50,8 @@
     },
     {
       "file": "final-state.json",
-      "sha256": "450afa735ceaa9e318a4e04d53414c173eacf308a4e8fba99917102a9837d101",
-      "bytes": 3971
+      "sha256": "bf6a14e30161530bcc1e0c405a064b5423d744f0f838229161a0633e7bc4db27",
+      "bytes": 4894
     },
     {
       "file": "ha-window-diagnostic.json",
@@ -80,8 +80,8 @@
     },
     {
       "file": "merge-check.json",
-      "sha256": "04d3551bd379ced73c92dedf784ef828a2a7d59870e30855952fea417066c177",
-      "bytes": 1763
+      "sha256": "9c0c783d390b0867c461de31cd4418707456128a7147e812f41069f0e46ada20",
+      "bytes": 2194
     },
     {
       "file": "network.json",
@@ -110,21 +110,21 @@
     },
     {
       "file": "scheduling-diagnostic.json",
-      "sha256": "67fe765efb27c2caf7d2748e913c09cf053395135d9f1632d39e33f2b56b0321",
-      "bytes": 8310
+      "sha256": "cd417ac6c07f3f537d3496ffa44fceb807522b02a711d6eddf8d172cd378f7b5",
+      "bytes": 10099
     },
     {
       "file": "tests.json",
-      "sha256": "e8e3bfd8df258ba095b2111d748a9e4c03c4ccb6d9970a3163b7e7702717d944",
-      "bytes": 7604
+      "sha256": "4d831822e6087abcf747d717971cfd8f7503b7409b0e47c2834050a041069a85",
+      "bytes": 8525
     },
     {
       "file": "worker-sampler.json",
-      "sha256": "2f181acdb35b4cd199b5787be0a89767f0b55615f2aa1d08c6cc1231db9b16fe",
-      "bytes": 10222
+      "sha256": "3b344389c3374ea84aa93ecb5913b8b55129076be180adf7d3bdf4a1756b0986",
+      "bytes": 16315
     }
   ],
-  "blocking_gate": "Strict credential rotation availability remains HOLD: the instrumented full diagnostic and one uninstrumented process-isolation experiment each omitted one scheduled arrival. The latter original state checker also failed its Redis topology assertion; a separate guarded baseline required no role-changing commands, then a later read-only state checker passed19. These later checks do not erase either failure. Process isolation was reverted; no relaxed criteria or blind full retries.",
+  "blocking_gate": "Local strict credential availability now PASS under declared host/API-forward/owned-relay topology, with zero omitted schedules. Overall enterprise95/production qualification remains HOLD for the listed production limits; prior failed experiments are retained.",
   "limitations": [
     "One physical Docker Desktop host, not host/AZ failure qualification.",
     "Echo backend only; Java/Go/Rust application executions not all tested.",
@@ -338,21 +338,51 @@
     "acceptance_substitute": false
   },
   "current_verifier_tests": {
-    "tests": 60,
+    "tests": 70,
     "failures": 0,
     "errors": 0,
     "skipped": 0,
-    "source_commit": "7c43f2312b3833de106ec52c730a1919039107a3",
-    "source_sha256": "ea1fe97c1238e3cd5c110fd7ea8809e67d1a79b4b9f28ec1997929a767aa6a34",
+    "source_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "source_sha256": "ad1a177f6a4af77fc39ae164efe0ed6bcac7647e1b0745a2ea08ceaba382afb4",
     "log": {
-      "sha256": "cce7cd4a9ec3fc0f98e495a94e134d31eae8b0e5730e099016d6c60140152ddf",
-      "bytes": 10699
+      "sha256": "a8c499a513f5063a5ef2adef88898a1444db087c6e55fe04ce12fe7b6d825ff4",
+      "bytes": 170
     },
     "self_test_passed": true,
     "self_test_log": {
       "sha256": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0",
       "bytes": 165
     },
-    "boundary": "Fresh current restored sampler suite; experimental 80-test result is separate."
+    "observed_terminals": {
+      "sha256": "984783214d0c8438e236ae6a331950bfe679eab80b76447d2e25520bb82f6cc3",
+      "bytes": 2561
+    },
+    "boundary": "Fresh root actual0 tests on integrated uncommitted bytes, verified byte-identical to the frozen committed tool map; observed terminal metadata recorded afterward. Java artifacts and previous60/80 runs keep historical identities."
+  },
+  "latest_host_credential_confirmation": {
+    "evidence": "worker-sampler.json",
+    "accepted": true,
+    "source_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "actual_exit": 0,
+    "witness_valid": true,
+    "scheduled": 3829,
+    "exact_body_200": 3829,
+    "omitted_schedules": 0,
+    "protocol_passed": true,
+    "complete": true,
+    "final_state_actual_exit": 0,
+    "final_state_checks": 19,
+    "transport_scope": "Host Python -> loopback Kubernetes API port-forward -> owned relay -> actual Gateway Service -> Envoy -> Java FluxGate -> backend. Privileged observation path; separate ordinary network-policy proof is retained.",
+    "overall_enterprise_acceptance": false
+  },
+  "latest_host_source_merge_check": {
+    "source_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "remote_lts_commit": "7ee6a86101afe5ed5a9d6efb992e470430af046a",
+    "remote_lts_freshly_verified": true,
+    "actual_exit": 0,
+    "conflicts": 0,
+    "merge_performed": false,
+    "push_performed": false,
+    "boundary": "Read-only merge-tree after full credential proof; no LTS integration or deployment performed."
   }
 }

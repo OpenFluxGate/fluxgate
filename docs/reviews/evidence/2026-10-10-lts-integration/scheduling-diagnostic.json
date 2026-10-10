@@ -229,5 +229,50 @@
       "daemon_cpu_shares": 0
     },
     "source_commit": "c3f7fded23eb52d0c4c4ace14bf9336a1236825e"
+  },
+  "paired_wait_diagnostic": {
+    "diagnostic_only": true,
+    "accepted": false,
+    "source_commit": "1cdb4784f4f0e5edb14a101335161cd9d07540c6",
+    "source_sha256": "ea1fe97c1238e3cd5c110fd7ea8809e67d1a79b4b9f28ec1997929a767aa6a34",
+    "scheduled": 2010,
+    "exact_body_200": 2009,
+    "omitted_schedules": 1,
+    "credential_actual_exit": 1,
+    "witness_valid": false,
+    "wrapper_errors": [
+      {
+        "stage": "after_authz",
+        "exception_class": "GuardError"
+      }
+    ],
+    "witness_boundary": "The diagnostic parent omitted --credential-rollout, so expected authz replacement invalidated its witness. Original failure is retained without retrospective repair; numeric telemetry is diagnostic only.",
+    "raw": {
+      "sha256": "2de8bbeca650ba4f4290500cdfd93c0dc2e388a2d4eb8b00f2ba519c5b3bf67e",
+      "bytes": 6003770
+    },
+    "witness": {
+      "sha256": "9921bb01c076d418b46391bab7c0968994babd69588b5d90fa6009c404e8ae21",
+      "bytes": 7566
+    },
+    "log": {
+      "sha256": "07c1da2868bcb32dd50e54d8382bb94218be511608de57e231fbb1170905bcd5",
+      "bytes": 222
+    },
+    "numeric_analysis": {
+      "sha256": "dde772b2112d24372e2f309ce82d70e9880905483a1f4bb7875fa4bb86dd4b8f",
+      "bytes": 16566
+    },
+    "helper": {
+      "sha256": "8b999e7651b9424667a64edf57d0e322820ba2009d2907c370d2c1b93672b83b",
+      "bytes": 20726
+    },
+    "timer_swap_seconds": 100,
+    "both_timer_late_sequence": 1410,
+    "select_timer_deadline_overrun_ms": 262.347272,
+    "sleep_timer_deadline_overrun_ms": 262.649897,
+    "main_condition_acquire_max_ms": 0.148542,
+    "causal_claim": false,
+    "interpretation": "Both same-parent timers were delayed after swapping sleep/select methods. This does not support a wait-only repair or establish a GIL/VM cause."
   }
 }

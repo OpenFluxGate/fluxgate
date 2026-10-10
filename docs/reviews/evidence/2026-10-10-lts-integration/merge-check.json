@@ -50,5 +50,15 @@
     "performed_unix_ms": 1791613759354,
     "integration_source_commit": "b57418fb3612f71203cab6ccd62b5eea94b98091",
     "merge_tree": "1b0a6b7fb5df143d7b7d05449083935c580c1b91"
+  },
+  "latest_host_source_merge_check": {
+    "source_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "remote_lts_commit": "7ee6a86101afe5ed5a9d6efb992e470430af046a",
+    "remote_lts_freshly_verified": true,
+    "actual_exit": 0,
+    "conflicts": 0,
+    "merge_performed": false,
+    "push_performed": false,
+    "boundary": "Read-only merge-tree after full credential proof; no LTS integration or deployment performed."
   }
 }

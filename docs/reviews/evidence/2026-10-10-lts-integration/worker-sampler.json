@@ -295,5 +295,177 @@
       },
       "boundary": "Separate later read-only state check; does not reclassify the original failed state check or credential availability."
     }
+  },
+  "latest_host_sampler_confirmation": {
+    "schema": 1,
+    "accepted_local_credential_gate": true,
+    "uninstrumented": true,
+    "attempt_budget": 1,
+    "source_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "source_tree": "fa7b3c2bf247d110889a057ebc71a3b2bb79c3f4",
+    "source_sha256": "ad1a177f6a4af77fc39ae164efe0ed6bcac7647e1b0745a2ea08ceaba382afb4",
+    "java_build_source_commit": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
+    "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+    "studio_jar_sha256": "de3ed6b1e0a7046a18464b0d3e8102aacf7c463dbb1b39bcc0d820bd7895bb77",
+    "protocol_passed": true,
+    "full_protocol_complete": true,
+    "rotation_availability_passed": true,
+    "credential_actual_exit": 0,
+    "witness_valid": true,
+    "wrapper_error_count": 0,
+    "phases": [
+      {
+        "phase": "mtls",
+        "scheduled": 2022,
+        "backend_successes": 2022,
+        "omitted_schedules": 0,
+        "statuses": {
+          "200": 2022
+        },
+        "pending": 0,
+        "peak_inflight": 12,
+        "max_inflight": 24,
+        "interval_ms": 100,
+        "drain_complete": true,
+        "progress_writer_drained": true,
+        "progress_writer_failures": 0,
+        "worker_failures": 0,
+        "cleanup": {
+          "pod_absent": true,
+          "networkpolicy_absent": true,
+          "ownership_checked": true
+        },
+        "transport": "host Python + loopback API port-forward + owned relay to Gateway Service",
+        "sampler_runtime": {
+          "python": "3.14.7",
+          "program_sha256": "5f85a790a5edf17d55e18ea2bdd15ddc2cdb0b8883e93eaa1cebd0c9ebf8aeb9",
+          "relay_sha256": "d84196c6d7568a92a308ebd558b7a5eda56c41410f28cf7b53ce8c8b43c0ff80",
+          "relay_resources": {
+            "requests": {
+              "cpu": "25m",
+              "memory": "32Mi"
+            },
+            "limits": {
+              "cpu": "250m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      },
+      {
+        "phase": "api-key",
+        "scheduled": 1141,
+        "backend_successes": 1141,
+        "omitted_schedules": 0,
+        "statuses": {
+          "200": 1141
+        },
+        "pending": 0,
+        "peak_inflight": 3,
+        "max_inflight": 24,
+        "interval_ms": 100,
+        "drain_complete": true,
+        "progress_writer_drained": true,
+        "progress_writer_failures": 0,
+        "worker_failures": 0,
+        "cleanup": {
+          "pod_absent": true,
+          "networkpolicy_absent": true,
+          "ownership_checked": true
+        },
+        "transport": "host Python + loopback API port-forward + owned relay to Gateway Service",
+        "sampler_runtime": {
+          "python": "3.14.7",
+          "program_sha256": "ec5aeb1539c1443943842fdc29e52d2515cf6887105ab69b6d4a0ca1a60655c4",
+          "relay_sha256": "d84196c6d7568a92a308ebd558b7a5eda56c41410f28cf7b53ce8c8b43c0ff80",
+          "relay_resources": {
+            "requests": {
+              "cpu": "25m",
+              "memory": "32Mi"
+            },
+            "limits": {
+              "cpu": "250m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      },
+      {
+        "phase": "stores",
+        "scheduled": 666,
+        "backend_successes": 666,
+        "omitted_schedules": 0,
+        "statuses": {
+          "200": 666
+        },
+        "pending": 0,
+        "peak_inflight": 3,
+        "max_inflight": 24,
+        "interval_ms": 100,
+        "drain_complete": true,
+        "progress_writer_drained": true,
+        "progress_writer_failures": 0,
+        "worker_failures": 0,
+        "cleanup": {
+          "pod_absent": true,
+          "networkpolicy_absent": true,
+          "ownership_checked": true
+        },
+        "transport": "host Python + loopback API port-forward + owned relay to Gateway Service",
+        "sampler_runtime": {
+          "python": "3.14.7",
+          "program_sha256": "c40fcc9b6aa524640417d23a2abbe47d62f28242369f8dd2d727121f27e30f22",
+          "relay_sha256": "d84196c6d7568a92a308ebd558b7a5eda56c41410f28cf7b53ce8c8b43c0ff80",
+          "relay_resources": {
+            "requests": {
+              "cpu": "25m",
+              "memory": "32Mi"
+            },
+            "limits": {
+              "cpu": "250m",
+              "memory": "128Mi"
+            }
+          }
+        }
+      }
+    ],
+    "scheduled_total": 3829,
+    "exact_200_total": 3829,
+    "omitted_total": 0,
+    "parent_actual_exit": 0,
+    "parent_chain_complete": true,
+    "raw": {
+      "sha256": "96e76ea81728c48192f38d9fb64119caa3e60299821c1f4e2183a133dde0bb3e",
+      "bytes": 1661848
+    },
+    "witness": {
+      "sha256": "fa8a4b6bb661c3b9144761095e4325e60d45a5a947d496f007f2c8b1c9dc4d7d",
+      "bytes": 7903
+    },
+    "log": {
+      "sha256": "6a54fa4a3072b6dd5b526c9ea1991e95c351751790fa2e5d41ae9c689ccdd9d2",
+      "bytes": 191
+    },
+    "identity": {
+      "sha256": "f97d037473eefc1c56e0b972920a04b513e50d6e645cb18c3077d3c87c910410",
+      "bytes": 3383
+    },
+    "parent": {
+      "sha256": "8a783b606c6910160ff1fa1889d96052436e4105958a03e91f84f672b317e118",
+      "bytes": 8745
+    },
+    "predicates_unchanged": {
+      "interval_ms": 100,
+      "max_inflight": 24,
+      "omission_limit": 0,
+      "fresh_connection_timeout_seconds": 2,
+      "no_catchup": true
+    },
+    "resource_boundary": "Host sampler is outside relay Pod limits; relay retains requests25m/32Mi and limits250m/128Mi; all three node cgroup weights remain100.",
+    "transport_boundary": "Host Python -> loopback Kubernetes API port-forward -> owned relay -> actual Gateway Service -> Envoy -> Java FluxGate -> backend. Privileged observation path; separate ordinary network-policy proof is retained.",
+    "causal_claim": false,
+    "overall_acceptance": false,
+    "score_95_approved": false,
+    "interpretation": "The declared host-relay topology passed all original local credential criteria in one full run. Prior omitted arrivals remain failed evidence; a precise GIL/VM cause and production qualification are not established."
   }
 }

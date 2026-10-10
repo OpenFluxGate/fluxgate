@@ -1,8 +1,8 @@
 # LTS 기준 Envoy / Studio 통합 리뷰
 
-코드 통합과 필수 빌드·테스트 검증은 완료했지만 **전체 승인과 enterprise 95/100은 HOLD**다. 이 보고서는 검토한 계약과 보존된 증거를 기록한다. 남은 런타임 게이트는 완료하지 않았으며 프로덕션 인증이 아니다.
+코드 통합과 필수 빌드·테스트 검증은 완료했지만 **전체 승인과 enterprise 95/100은 HOLD**다. 이 보고서는 검토한 계약과 보존된 증거를 기록한다. 최신 로컬 자격증명 교체 검증은 통과했으며 별도 프로덕션 자격 검증은 남아 있다.
 
-격리 브랜치는 코어 `feature/lts-envoy-integration`, Studio `feature/lts-policy-lifecycle`이다. 이 보고서의 판정은 **충돌 해결·빌드/테스트 PASS, 현재 상태 PASS, 자격증명 교체 가용성 HOLD**다. 대상 LTS에 실제 병합하거나 원격으로 push하지 않았다.
+격리 브랜치는 코어 `feature/lts-envoy-integration`, Studio `feature/lts-policy-lifecycle`이다. 이 보고서의 판정은 **충돌 해결·빌드/테스트 PASS, 현재 상태 PASS, 선언한 host-relay 구성의 자격증명 교체 가용성 PASS**다. 대상 LTS에 실제 병합하거나 원격으로 push하지 않았다.
 
 ```mermaid
 flowchart LR
@@ -16,6 +16,18 @@ flowchart LR
 
 Envoy가 허용 판정을 받은 뒤 실제 요청을 서비스 Pod로 전달한다. MongoDB·Redis를 직접 조회하는 주체는 Java FluxGate다. 로컬 런타임의 실제 backend는 echo이며 Java·Go·Rust 3개 앱을 실행한 증거는 아니다.
 
+
+## 최신 로컬 자격증명 검증
+
+고정된 verifier `3d1363e`의 instrumentation 없는 전체 실행은 **예정 요청 3,829건 모두 정확한 body의 HTTP 200, 누락 0건**으로 통과했다. mTLS 2,022건, API key 1,141건, MongoDB/Redis store 666건이며 모든 단계의 pending·worker/writer 실패는 0, drain·UID 소유권 기반 Pod/NetworkPolicy 정리는 완료했다. protocol·전체 실행·rotation availability는 모두 true, credential child와 독립 최종 상태 19개 검사는 실제 exit 0·유효 witness·wrapper error 0이다. [worker-sampler.json](evidence/2026-10-10-lts-integration/worker-sampler.json)에 단계별 결과와 원본 digest를 통합했다.
+
+같은 sampler의 100 ms 절대 예정 시각·최대 24개·fresh connection 2초·누락 0·정확한 body 기준은 그대로다. 요청 생성기만 호스트 Python에서 실행하고 `127.0.0.1` API port-forward → 소유 TCP relay Pod → 실제 Gateway Service를 통한다. relay는 교체되는 Envoy Pod를 직접 고정하지 않고 매 연결마다 Service로 연결한다. relay Pod의 25m/32Mi requests·250m/128Mi limits와 노드 weight 100은 유지했으나 호스트 sampler는 그 Pod 자원 한계 밖이다. 이 특권 관찰 경로를 일반 외부 ingress와 동일시하지 않으며 기존 독립 network-policy 증거를 유지한다. 제품 모듈·의존성은 추가하지 않았다.
+
+앞선 paired-wait 진단은 같은 parent의 sleep/select timer가 교체 후 모두 약 262 ms 지연되는 상황을 기록했다. main condition-lock 최대 대기는 0.149 ms였고 wait 방식만 교체하는 수정은 근거가 부족했다. 이 진단은 mTLS 예정 2,010건 중 1건을 놓쳤다. 진단 parent가 `--credential-rollout`을 빠뜨려 예상 authz Pod 교체가 witness를 무효화한 사실도 원본 그대로 보존한다. 따라서 이는 수치 진단이며 승인 증거가 아니다. 정확한 GIL/VM 원인은 확정하지 않는다.
+
+현재 브랜치의 fresh Python 테스트 **70개와 TLS self-test**가 통과했고 소스·실행기·identity는 독립 리뷰를 받았다. Java 3,365개와 UI 13개의 이전 빌드/JAR 정체성은 유지한다. **요청 누락 게이트는 이 로컬 구성에서 해결됐으며, 프로덕션 자격 검증과 전체 95점 승인은 별도 HOLD다.**
+
+fresh 원격 LTS는 여전히 `7ee6a86101afe5ed5a9d6efb992e470430af046a`이며 고정된 host verifier와의 merge-tree는 충돌 0이다. 실제 merge나 push는 하지 않았다.
 
 ## 소스와 artifact 경계
 
@@ -53,9 +65,9 @@ immutable retained ledger는 다음 증거를 통합 authz artifact에 연결한
 | 정상 부하 | 100 scheduled RPS × 60초, 정확한 body의 200 6,000개, omission/error 0, 실제 99.977 RPS, p95 6.5953 ms, p99 12.3227 ms. |
 | Combined Mongo | 선택 fault phase 승인, 마지막 6,000개 모두 200, p99 7.7462 ms, RTO 23.641초. `complete:false`는 선택 phase이며 전체 suite 완료 주장이 아니다. |
 | Combined Redis | 선택 fault phase 승인, 마지막 6,000개 모두 200, p99 9.0988 ms, RTO 18.735초. 같은 선택 phase 경계. |
-| Fresh credentials | 기본 f90: 예정 3,833개, 정확한 body의 200 3,827개, 누락 6개. CPU 배분 실험: 예정 3,832개, 정확한 body의 200 3,826개, 누락 6개. 두 실행 모두 protocol은 완료·통과했지만 교체 가용성에 실패했다. **HOLD**. |
+| Historical credentials | 기본 f90: 예정 3,833개, 정확한 body의 200 3,827개, 누락 6개. CPU 배분 실험: 예정 3,832개, 정확한 body의 200 3,826개, 누락 6개. 두 실행 모두 protocol은 완료·통과했지만 교체 가용성에 실패했다. **HOLD**. |
 | Fresh network | verifier 4cbb의 독립 실제 exit 0·유효 witness: negative control 48개, positive control 232개, identity/policy 안정 및 cleanup 검증. |
-| Final state | CPU 배분 실험 뒤 노드 3개의 weight를 100으로 복구했고 Docker CpuShares metadata는 계속 0이었다. fresh f90 읽기 전용 checker는 actual exit 0·유효 witness로 19개 check를 모두 통과했다. 현재 상태 통과는 교체 가용성 승인이 아니다. |
+| Historical final state | CPU 배분 실험 뒤 노드 3개의 weight를 100으로 복구했고 Docker CpuShares metadata는 계속 0이었다. fresh f90 읽기 전용 checker는 actual exit 0·유효 witness로 19개 check를 모두 통과했다. 현재 상태 통과는 교체 가용성 승인이 아니다. |
 
 추가 HA 복구창 검사는 창 시작 913 ms 전에 시작해 1,433 ms 뒤에 끝난 장애 중 503 요청을 `completed >= start` 조건으로 포함하여 거절됐다. 이는 새로 시작한 복구 후 요청의 실패를 입증하지 않는다. [ha-window-diagnostic.json](evidence/2026-10-10-lts-integration/ha-window-diagnostic.json)에 원래 27-check terminal PASS와 추가 검사 거절을 구분해 보존했으며, 조건을 완화하지 않았다.
 
@@ -84,14 +96,14 @@ GitHub 배포 단위는 core와 Studio 두 저장소다. 두 저장소의 영문
 
 해당 실험의 최초 상태 검사는 Redis topology 조건에서 exit 1로 종료됐고 14개 check까지만 완료했다. 별도의 guarded baseline은 역할 변경 명령 없이 정상 배치를 확인하고 정책·HA counter 보존을 검사했다(`complete:false`). 이후 독립 읽기 전용 상태 검사 19개는 exit 0·유효 witness로 통과했다. 최초 실패와 이후 상태 통과를 [final-state.json](evidence/2026-10-10-lts-integration/final-state.json)에 함께 남겼으며 최초 실패의 정확한 원인을 확정하지 않는다.
 
-입증되지 않은 sampler 복잡성은 되돌렸다. 현재 검증 source `7c43f23`의 sampler·기존 테스트와 실행 mode는 `c3f7fd`와 동일하며 실험용 test helper 2개도 제거했다. 후보 source와 80개 통과 테스트는 실험 이력으로 남긴다. 현재 코드의 fresh verifier 테스트 60개와 self-test는 다시 통과했다. Java 3,365개·Studio UI 13개의 기존 빌드 증거를 새 빌드로 바꾸지 않는다. **저장소 정리는 완료했지만 credential 가용성과 전체 95점 승인은 여전히 HOLD다.**
+입증되지 않은 sampler 복잡성은 되돌렸다. 당시 복원 검증 source `7c43f23`의 sampler·기존 테스트와 실행 mode는 `c3f7fd`와 동일하며 실험용 test helper 2개도 제거했다. 후보 source와 80개 통과 테스트는 실험 이력으로 남긴다. 당시 복원 코드의 fresh verifier 테스트 60개와 self-test는 다시 통과했다. Java 3,365개·Studio UI 13개의 기존 빌드 증거를 새 빌드로 바꾸지 않는다. **당시 저장소 정리는 완료했지만 credential 가용성과 전체 95점 승인은 HOLD였다. 최신 host-relay 결과는 위에 구분한다.**
 
 ### 보존한 증거
 
-각 증거의 실제 실행 commit, JAR, terminal exit와 SHA-256을 [acceptance.json](evidence/2026-10-10-lts-integration/acceptance.json)에 기록했다. 오래된 성공 실행을 새 verifier의 실행으로 바꾸지 않았다. 실패한 credential 다섯 건, 과거 정상 경로의 누락, 실제 `NOREPLICAS` 503 및 private harness 오류도 보존했다. 95점 이상은 승인하지 않았으며 필수 게이트 실패를 다른 항목의 점수로 상쇄하지 않는다.
+각 증거의 실제 실행 commit, JAR, terminal exit와 SHA-256을 [acceptance.json](evidence/2026-10-10-lts-integration/acceptance.json)에 기록했다. 오래된 성공 실행을 새 verifier의 실행으로 바꾸지 않았다. 앞선 실패 credential 다섯 건과 이후 거절된 진단·비교 실행, 과거 정상 경로의 누락, 실제 `NOREPLICAS` 503 및 private harness 오류도 보존했다. 95점 이상은 승인하지 않았으며 필수 게이트 실패를 다른 항목의 점수로 상쇄하지 않는다.
 
 [Mongo 이전 절차](../architecture/lts-mongo-identity-migration.ko.md)는 쓰기 주체를 중지한 명시적 유지보수에 사용한다. 데이터 삭제, counter reset, 다른 worktree 변경으로 상태를 맞추지 않았다.
 
 ## 범위와 남은 한계
 
-검증 범위는 하나의 Docker Desktop VM에 있는 kind node 3개와 echo backend를 사용하는 소유 fixture다. 독립 host/AZ 장애·off-host 복구·프로덕션 storage/network·장기 soak·전체 dependency/CVE·지원 runtime 운영은 증명하지 않는다. store TLS/ACL hardening과 프로덕션 backup/restore는 별도 게이트다. 과거 점수는 전이하지 않는다. 기본·CPU 배분 healthy control은 통과했지만 이후 전체 credential 실행은 omission 0 가용성 조건에 실패했다. 앞선 제한된 healthy 진단은 누락을 재현하지 못했다. 이후 instrumentation 전체 진단과 instrumentation 없는 프로세스 분리 실험은 각각 누락 1건을 기록했으며 스케줄링의 정확한 원인을 확정하지 못했다. 입증되지 않은 프로세스 분리는 되돌렸다. 다음 작업은 제한된 원인 분리 진단이 필요하며 추측성 수정이나 성공할 때까지의 전체 재시도는 정당화되지 않는다. 최종 local 승인과 별도 점수는 HOLD다.
+검증 범위는 하나의 Docker Desktop VM에 있는 kind node 3개와 echo backend를 사용하는 소유 fixture다. 독립 host/AZ 장애·off-host 복구·프로덕션 storage/network·장기 soak·전체 dependency/CVE·지원 runtime 운영은 증명하지 않는다. store TLS/ACL hardening과 프로덕션 backup/restore는 별도 게이트다. 과거 점수는 전이하지 않는다. 기본·CPU 배분 healthy control은 통과했지만 이후 전체 credential 실행은 omission 0 가용성 조건에 실패했다. 앞선 제한된 healthy 진단은 누락을 재현하지 못했다. 이후 instrumentation 전체 진단과 instrumentation 없는 프로세스 분리 실험은 각각 누락 1건을 기록했으며 스케줄링의 정확한 원인을 확정하지 못했다. 입증되지 않은 프로세스 분리는 되돌렸다. 이후 검토한 host-relay 구성은 단 한 번의 instrumentation 없는 전체 검증에서 기존 누락 0 기준을 통과했다. 로컬 credential 게이트는 PASS이며 전체 release·프로덕션 자격 검증과 별도 점수는 HOLD다.

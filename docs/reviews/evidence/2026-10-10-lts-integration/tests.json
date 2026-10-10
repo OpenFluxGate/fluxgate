@@ -198,7 +198,7 @@
       "sha256": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0",
       "bytes": 165
     },
-    "boundary": "Fresh current restored sampler suite; experimental 80-test result is separate."
+    "boundary": "Historical restored 60-test source before the host-relay correction."
   },
   "experimental_process_sampler": {
     "tests": 80,
@@ -218,5 +218,27 @@
     },
     "accepted_implementation": false,
     "boundary": "Historical experimental source; removed from the current implementation after strict live rejection."
+  },
+  "current_host_verifier": {
+    "tests": 70,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "source_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "source_sha256": "ad1a177f6a4af77fc39ae164efe0ed6bcac7647e1b0745a2ea08ceaba382afb4",
+    "log": {
+      "sha256": "a8c499a513f5063a5ef2adef88898a1444db087c6e55fe04ce12fe7b6d825ff4",
+      "bytes": 170
+    },
+    "self_test_passed": true,
+    "self_test_log": {
+      "sha256": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0",
+      "bytes": 165
+    },
+    "observed_terminals": {
+      "sha256": "984783214d0c8438e236ae6a331950bfe679eab80b76447d2e25520bb82f6cc3",
+      "bytes": 2561
+    },
+    "boundary": "Fresh root actual0 tests on integrated uncommitted bytes, verified byte-identical to the frozen committed tool map; observed terminal metadata recorded afterward. Java artifacts and previous60/80 runs keep historical identities."
   }
 }

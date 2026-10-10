@@ -110,5 +110,33 @@
       "bytes": 8170
     },
     "boundary": "Guarded baseline observed normal roles without FAILOVER or REPLICATE. It does not establish the cause of the earlier topology assertion or a new full HA run."
+  },
+  "latest_host_confirmation_state": {
+    "passed": true,
+    "actual_exit": 0,
+    "witness_valid": true,
+    "wrapper_error_count": 0,
+    "check_count": 19,
+    "source_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "source_tree": "fa7b3c2bf247d110889a057ebc71a3b2bb79c3f4",
+    "log": {
+      "sha256": "764716619d6a8719e8be5a6d92ef213bbefbe1a46bec40d8232ff658ebffc897",
+      "bytes": 13589
+    },
+    "witness": {
+      "sha256": "57b97b6acfa3f4366825143ed473f789da968aa4b16af6c43599de1f1e267201",
+      "bytes": 7812
+    },
+    "raw": {
+      "sha256": "764716619d6a8719e8be5a6d92ef213bbefbe1a46bec40d8232ff658ebffc897",
+      "bytes": 13589
+    },
+    "node_cgroup_weights": [
+      100,
+      100,
+      100
+    ],
+    "default_context_preserved": true,
+    "boundary": "Independent read-only terminal state after the full host credential proof; does not reclassify historical failed state checks."
   }
 }
