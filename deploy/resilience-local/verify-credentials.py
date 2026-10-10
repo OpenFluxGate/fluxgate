@@ -13,6 +13,7 @@ import http.client
 import http.server
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import socket
@@ -711,16 +712,47 @@ class Proof:
 
     def redis_cold_restart(self, password, retired_password):
         chosen = None
+        rule_set = self.f["rule_set_id"]
+        profiles = ((self.f["quota_rule_id"], "daily", b"TOKEN_BUCKET", b"86400000000"),
+                    (self.f["load_rule_id"], "hourly", b"FIXED_WINDOW", b"3600000000"))
+        require(all(re.fullmatch(r"[A-Za-z0-9_-]+", identifier)
+                    for identifier in (rule_set, *(profile[0] for profile in profiles))),
+                "fixture policy identifiers cannot safely select Redis metadata")
         for pod in self.f["redis_pods"]:
             if not self.redis(pod, ["ROLE"], password).startswith(b"slave\n"):
                 continue
-            keys = self.redis(pod, ["KEYS", "fluxgate:bucket:policy:*"], password, readonly=True)
-            for key in keys.decode().splitlines():
-                if self.redis(pod, ["TYPE", key], password, readonly=True) == b"hash":
-                    value = self.redis(pod, ["HGETALL", key], password, readonly=True)
-                    if value and not value.startswith(b"ERROR"):
-                        chosen = (pod, key, value)
+            for rule_id, band, algorithm, window in profiles:
+                # RedisTokenBucketStore.metadataKey prefixes the complete bucket key.
+                prefix = "fluxgate:policy:fluxgate:bucket:{" + rule_set + ":" + rule_id + ":"
+                shape = re.compile(re.escape(prefix) + r"[^{}]+}:" + band + r"(?::epoch:[A-Za-z0-9_-]+)?")
+                cursor = "0"
+                for _ in range(1000):
+                    scan = self.redis(pod, ["SCAN", cursor, "MATCH", prefix + "*}:" + band + "*",
+                                           "COUNT", "100"], password, readonly=True).decode().splitlines()
+                    require(bool(scan) and scan[0].isdigit(), "invalid Redis metadata SCAN response")
+                    cursor = scan[0]
+                    for key in scan[1:]:
+                        if not shape.fullmatch(key) or self.redis(pod, ["TYPE", key], password, readonly=True) != b"hash":
+                            continue
+                        value = self.redis(pod, ["HGETALL", key], password, readonly=True)
+                        fields = redis_hash_contents(value)
+                        if (set(fields) != {b"revision", b"capacity", b"window_micros", b"algorithm"}
+                                or not fields[b"revision"].isdigit() or not fields[b"capacity"].isdigit()
+                                or int(fields[b"capacity"]) <= 0 or fields[b"algorithm"] != algorithm
+                                or fields[b"window_micros"] != window):
+                            continue
+                        ttl = self.redis(pod, ["TTL", key], password, readonly=True)
+                        require(ttl.lstrip(b"-").isdigit(), "invalid Redis metadata TTL")
+                        # Recovery can take 300s plus 180s topology reconciliation.
+                        if int(ttl) > 600:
+                            chosen = (pod, key, value)
+                            break
+                    if chosen or cursor == "0":
                         break
+                else:
+                    raise ProofError("Redis metadata SCAN exceeded bounded fixture selection")
+                if chosen:
+                    break
             if chosen:
                 break
         require(chosen is not None, "no replica with real persisted policy metadata for cold restart")
@@ -1417,6 +1449,60 @@ def strict_tls_self_test():
             server.server_close()
 
 
+def redis_policy_selection_self_test():
+    """Select actual Lua metadata, never bucket counters or revision fences."""
+    proof = Proof.__new__(Proof)
+    proof.f = {"redis_pods": ["replica"], "rule_set_id": "resilience-limits",
+               "quota_rule_id": "quota-rule", "load_rule_id": "load-rule"}
+    prefix = "fluxgate:policy:fluxgate:bucket:{resilience-limits:quota-rule:"
+    key = prefix + "api-key:rotation-test}:daily:epoch:c3RhYmxl"
+    metadata = b"revision\n7\ncapacity\n5\nwindow_micros\n86400000000\nalgorithm\nTOKEN_BUCKET"
+    calls = []
+    scenario = "valid"
+    def redis(pod, command, password=None, readonly=False):
+        calls.append(command)
+        if command == ["ROLE"]:
+            return b"slave\nmaster\n6379\n0"
+        if command[0] == "KEYS":
+            return b""  # Invented namespace contains no actual store metadata.
+        if command[0] == "SCAN":
+            if command[3] == "fluxgate:policy:fluxgate:bucket:{resilience-limits:load-rule:*}:hourly*":
+                return b"0"
+            require(command == ["SCAN", "0", "MATCH", prefix + "*}:daily*", "COUNT", "100"],
+                    "metadata selection did not bound the fixture namespace")
+            return b"0\n" + (prefix + "api-key:ordinary}:daily").encode() + b"\n" + key.encode()
+        if command[0] == "TYPE":
+            return b"hash"
+        if command[0] == "HGETALL":
+            if scenario == "ordinary" or command[1] != key:
+                return b"tokens\n5\nlast_refill_micros\n1"
+            return metadata
+        if command[0] == "TTL":
+            return b"600" if scenario == "short-ttl" else b"86400"
+        raise ProofError("unexpected metadata selection command")
+    proof.redis = redis
+    class Selected(RuntimeError):
+        pass
+    proof.get = lambda *args: (_ for _ in ()).throw(Selected())
+    try:
+        proof.redis_cold_restart("offline-password", "offline-retired")
+    except Selected:
+        pass
+    else:
+        raise ProofError("actual policy metadata was not selected before cold restart")
+    require(not any(c[0] == "KEYS" for c in calls), "metadata selection used blocking KEYS")
+    for scenario in ("ordinary", "short-ttl"):
+        try:
+            proof.redis_cold_restart("offline-password", "offline-retired")
+        except ProofError as error:
+            require(str(error) == "no replica with real persisted policy metadata for cold restart",
+                    "invalid metadata regression failed for another reason")
+        else:
+            raise ProofError("ordinary hash or expiring metadata selected as persisted policy")
+    require(redis_hash_contents(metadata) != redis_hash_contents(metadata.replace(b"revision\n7", b"revision\n8")),
+            "policy retention comparison hid changed revision")
+
+
 def tls_alert_read_self_test():
     """A negative TLS control consumes its alert without sending HTTP bytes."""
     from unittest.mock import patch
@@ -1481,6 +1567,7 @@ def tls_runtime_self_test():
 
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
+    redis_policy_selection_self_test()
     tls_alert_read_self_test()
     strict_tls_self_test()
     tls_runtime_self_test()
