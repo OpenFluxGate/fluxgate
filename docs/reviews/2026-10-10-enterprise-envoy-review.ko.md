@@ -1,5 +1,7 @@
 # FluxGate 정책 발행·Envoy 통합 최종 리뷰
 
+> 아래 96점은 초기 통합 범위의 평가다. 이후 요청된 인증 저장소의 HA·장애 중 부하·자격증명 회전 검증까지 포함한 현재 평가는 [확대 검증 리뷰](2026-10-10-enterprise-resilience-review.ko.md)를 따른다. 초기 점수를 확대 검증의 완료 또는 통과 증거로 사용하지 않는다.
+
 2026-10-10. 사용자 요청에 따라 Rust 비교 구현을 제외하고, 기존 Java FluxGate를 재사용하는 Envoy 통합과 정책 변경 안전성을 구현했다. 전용 core 브랜치는 `feature/envoy-gateway-authz`, Studio 브랜치는 `feature/envoy-policy-lifecycle`이다. 기존 main·Claude 작업 worktree와 Studio의 별도 CI/IDE 변경은 수정하지 않았다.
 
 **독립 리뷰를 포함한 내부 평가: 96/100.** 검토한 구현 범위에서 재현 근거가 있는 미해결 출시 차단 결함을 찾지 못했다. 이 점수는 아래 로컬 통합의 정확성·신뢰 경계·회귀 증거를 평가한다. 운영 인증이나 운영 배포 완료를 뜻하지 않는다. 모든 성공 판정은 전체 실행의 exit 0과 실제 응답을 확인한 결과다.

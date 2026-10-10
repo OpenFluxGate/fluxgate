@@ -1,0 +1,8 @@
+{
+  "result": "REJECTED",
+  "complete": false,
+  "process_exit": 1,
+  "reason": "Automatic recovery and exact quota checks passed, but owned-probe cleanup exceeded its fixed deadline. Pending result is not PASS.",
+  "private_ha_sha256": "9b7314103648433de4905030a0069cfae136570284c5e01dcd7240acb390f659",
+  "fixed_by": "2a40313 explicit probe grace period and checked absence"
+}

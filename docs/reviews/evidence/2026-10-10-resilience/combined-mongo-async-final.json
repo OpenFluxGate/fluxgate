@@ -1,0 +1,426 @@
+{
+  "kind": "combined",
+  "candidate_passed": true,
+  "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+  "source_commit_at_invocation": "bd6003e5cdca2dcdd1e51c7f17167b3b18626ced",
+  "terminal_exit_code": 0,
+  "terminal_exit_witness": "Supplied by root in private manifest; exporter does not infer process exit from file existence.",
+  "summary": {
+    "passed": true,
+    "complete": false,
+    "fault": "mongo",
+    "phase_complete": true,
+    "fault_timestamps": {
+      "rto_budget_started": {
+        "unix_ms": 1791596814800,
+        "utc": "2026-10-10T01:46:54.800Z"
+      },
+      "fault_start": {
+        "unix_ms": 1791596815084,
+        "utc": "2026-10-10T01:46:55.084Z"
+      },
+      "paused_verified": {
+        "unix_ms": 1791596815296,
+        "utc": "2026-10-10T01:46:55.296Z"
+      },
+      "publication_verified": {
+        "unix_ms": 1791596833760,
+        "utc": "2026-10-10T01:47:13.760Z"
+      }
+    },
+    "operator_restorations_during_observation": [],
+    "verified_rto_monotonic_seconds": 22.202,
+    "verified_rto_utc_seconds": 22.211,
+    "clock": {
+      "host_before_unix_ms": 1791596795808.323,
+      "host_after_unix_ms": 1791596795888.244,
+      "pod_unix_ms": 1791596795882.894,
+      "pod_minus_host_interval_ms": [
+        -5.349853515625,
+        74.571044921875
+      ],
+      "pod_minus_host_estimate_ms": 34.610595703125,
+      "measurement_bound_ms": 39.96044921875,
+      "within_100ms": true
+    },
+    "observation_requests": 12000,
+    "all_statuses": {
+      "200": 11346,
+      "503": 654
+    },
+    "fault_window_failures": 654,
+    "last_minute": {
+      "target_requests": 6000,
+      "completed_requests": 6000,
+      "achieved_rps": 100.0,
+      "all_statuses": {
+        "200": 6000
+      },
+      "latency_ms": {
+        "p50": 3.7354519590735435,
+        "p95": 9.373333072289824,
+        "p99": 25.821041082963347,
+        "max": 135.05154103040695
+      },
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0
+    },
+    "raw_proofs": {
+      "load": {
+        "sha256": "7d459d4d8e39a440ea6dd74b5a7c5ebf2fa15e6d821eb86e3fbbbb14c240f50e"
+      },
+      "ha": {
+        "sha256": "53d550f150b3a8abc94573c65065d1b5b437869067cc51053fbd2d78ff3d62e3"
+      },
+      "readiness": {
+        "sha256": "9e892a2c7802d817bfe9fc78ceaf72bc18fb70f260968be5ff8e06d5a9ff7f65"
+      }
+    },
+    "publisher_cleanup": {
+      "started_unix_ms": 1791596919202,
+      "pid": 91272,
+      "completed_unix_ms": 1791596919533,
+      "exit_code": 0,
+      "owned_resources_absent_verified_by_helper": true,
+      "state": {
+        "sha256": "6e7db4a4d50e566094aa93bb3b4107750b10254b6c5627948f22b07d7ed1f11d"
+      }
+    },
+    "preparations": {
+      "baseline_preflight": {
+        "source": {
+          "sha256": "582b637a107e496f66f249a9288bb88da37d81ce5fb4e26577444c248b59cdd3"
+        },
+        "started_unix_ms": 1791596751628,
+        "pid": 82738,
+        "proof": {
+          "sha256": "8ebeec343fc6b55b2badb79674f6899159045eed68f89f201a415ed6ecdb5cdc"
+        },
+        "passed": true,
+        "completed_unix_ms": 1791596779824,
+        "exit_code": 0
+      },
+      "publisher_preparation": {
+        "source": {
+          "sha256": "5c42fbfea761d66fd9e389d880b4f1e07f5eaf305fbf3fdc47f923690e06b7d3"
+        },
+        "started_unix_ms": 1791596779825,
+        "pid": 84789,
+        "completed_unix_ms": 1791596783809,
+        "exit_code": 0
+      }
+    },
+    "processes": [
+      {
+        "name": "baseline_preflight",
+        "pid": 82738,
+        "exit_code": 0
+      },
+      {
+        "name": "publisher_preparation",
+        "pid": 84789,
+        "exit_code": 0
+      },
+      {
+        "name": "load",
+        "pid": 85257,
+        "exit_code": 0
+      },
+      {
+        "name": "ha",
+        "pid": 86093,
+        "exit_code": 0
+      },
+      {
+        "pid": 91272,
+        "exit_code": 0
+      }
+    ]
+  },
+  "dropped_unknown_or_disallowed_paths": [
+    ".assessment",
+    ".fault_timestamps.policy_and_traffic_verified",
+    ".fault_timestamps.sustained_gateway_recovered",
+    ".preparations.baseline_preflight.proof.path",
+    ".preparations.baseline_preflight.source.path",
+    ".preparations.baseline_preflight.stdout",
+    ".preparations.publisher_preparation.source.path",
+    ".preparations.publisher_preparation.state",
+    ".processes[].name",
+    ".publisher_cleanup.proof",
+    ".publisher_cleanup.source",
+    ".publisher_cleanup.state.path",
+    ".raw_proofs.ha.path",
+    ".raw_proofs.load.path",
+    ".raw_proofs.readiness.path"
+  ],
+  "provenance": {
+    "raw": {
+      "path": "summary.json",
+      "sha256": "4c7ef6adb2b687bf4ee28de6d90bb70b532671ff7d74c924395d054521fa9470",
+      "size_bytes": 5297
+    },
+    "log": {
+      "path": "fluxgate-resilience-combined-mongo-async-final.log",
+      "sha256": "4c7ef6adb2b687bf4ee28de6d90bb70b532671ff7d74c924395d054521fa9470",
+      "size_bytes": 5297
+    },
+    "jar": {
+      "path": "fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.3.7.jar",
+      "sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+      "size_bytes": 32917143
+    },
+    "tools": [
+      {
+        "path": "deploy/resilience-local/verify-resilience-load.py",
+        "loaded_sha256": "5d62c0e24e1cced785302995f1f5d6b57028931289ebde01c97a487e1b1005d9",
+        "current_at_export": {
+          "path": "deploy/resilience-local/verify-resilience-load.py",
+          "sha256": "5d62c0e24e1cced785302995f1f5d6b57028931289ebde01c97a487e1b1005d9",
+          "size_bytes": 54623
+        },
+        "current_equals_loaded": true
+      },
+      {
+        "path": "deploy/resilience-local/verify-load.py",
+        "loaded_sha256": "fee294007cd5dc36e16a54e50a9fcf2a2e167cf4af8d3545997934242a5ebd5e",
+        "current_at_export": {
+          "path": "deploy/resilience-local/verify-load.py",
+          "sha256": "fee294007cd5dc36e16a54e50a9fcf2a2e167cf4af8d3545997934242a5ebd5e",
+          "size_bytes": 40343
+        },
+        "current_equals_loaded": true
+      },
+      {
+        "path": "deploy/resilience-local/verify-ha.py",
+        "loaded_sha256": "582b637a107e496f66f249a9288bb88da37d81ce5fb4e26577444c248b59cdd3",
+        "current_at_export": {
+          "path": "deploy/resilience-local/verify-ha.py",
+          "sha256": "582b637a107e496f66f249a9288bb88da37d81ce5fb4e26577444c248b59cdd3",
+          "size_bytes": 80274
+        },
+        "current_equals_loaded": true
+      },
+      {
+        "path": "deploy/resilience-local/publish-hook.py",
+        "loaded_sha256": "5c42fbfea761d66fd9e389d880b4f1e07f5eaf305fbf3fdc47f923690e06b7d3",
+        "current_at_export": {
+          "path": "deploy/resilience-local/publish-hook.py",
+          "sha256": "5c42fbfea761d66fd9e389d880b4f1e07f5eaf305fbf3fdc47f923690e06b7d3",
+          "size_bytes": 31550
+        },
+        "current_equals_loaded": true
+      },
+      {
+        "path": "deploy/resilience-local/prepare-ha-identity.py",
+        "loaded_sha256": "cd37647595abd107e221b78c1da9af0f485b012565ad61f265f659d71b15558f",
+        "current_at_export": {
+          "path": "deploy/resilience-local/prepare-ha-identity.py",
+          "sha256": "cd37647595abd107e221b78c1da9af0f485b012565ad61f265f659d71b15558f",
+          "size_bytes": 8366
+        },
+        "current_equals_loaded": true
+      }
+    ],
+    "attachments": [
+      {
+        "path": "raw-load.json",
+        "sha256": "7d459d4d8e39a440ea6dd74b5a7c5ebf2fa15e6d821eb86e3fbbbb14c240f50e",
+        "size_bytes": 8545825
+      },
+      {
+        "path": "ha.json",
+        "sha256": "53d550f150b3a8abc94573c65065d1b5b437869067cc51053fbd2d78ff3d62e3",
+        "size_bytes": 67645
+      },
+      {
+        "path": "readiness.json",
+        "sha256": "9e892a2c7802d817bfe9fc78ceaf72bc18fb70f260968be5ff8e06d5a9ff7f65",
+        "size_bytes": 800
+      }
+    ],
+    "run_witness": {
+      "path": "fluxgate-resilience-combined-mongo-async-final-witness.json",
+      "sha256": "b3f813bbc8c43550cd9c255235d39e1b828c7dd6389e3a541e547cb750c44ed5",
+      "size_bytes": 6243
+    }
+  },
+  "limits": [
+    "Dropped fields require schema review if material to acceptance; the exporter does not repair or infer absent proof.",
+    "No raw samples, payloads, credentials, arbitrary messages or score are exported.",
+    "Historical successes and failures must remain separate artifacts; this tool never overwrites files."
+  ],
+  "run_artifact_identity": {
+    "name": "combined-mongo-async-final",
+    "before_authz": [
+      {
+        "pod": "fluxgate-authz-796fd5dc48-8dndn",
+        "uid": "4e3e6897-fc4b-489b-aa64-14f25d3a6fff",
+        "node": "fluxgate-resilience-worker",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      },
+      {
+        "pod": "fluxgate-authz-796fd5dc48-nx5vb",
+        "uid": "5be65999-a955-4401-8fdf-284278b3376f",
+        "node": "fluxgate-resilience-worker2",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      }
+    ],
+    "after_authz": [
+      {
+        "pod": "fluxgate-authz-796fd5dc48-8dndn",
+        "uid": "4e3e6897-fc4b-489b-aa64-14f25d3a6fff",
+        "node": "fluxgate-resilience-worker",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      },
+      {
+        "pod": "fluxgate-authz-796fd5dc48-nx5vb",
+        "uid": "5be65999-a955-4401-8fdf-284278b3376f",
+        "node": "fluxgate-resilience-worker2",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      }
+    ],
+    "source_commit_at_invocation": "bd6003e5cdca2dcdd1e51c7f17167b3b18626ced",
+    "replacement_scope": "no_authz_replacement",
+    "started": {
+      "utc": "2026-10-10T01:45:51.543289+00:00",
+      "unix_ms": 1791596751543,
+      "monotonic_ns": 1934601578955916
+    },
+    "terminal": {
+      "utc": "2026-10-10T01:48:39.546631+00:00",
+      "unix_ms": 1791596919546,
+      "monotonic_ns": 1934769578073208
+    },
+    "witness_valid": true
+  },
+  "anonymous_combined_verification_supplement": {
+    "timeline": {
+      "milestones": {
+        "rto_budget_started": {
+          "unix_ms": 1791596814800,
+          "utc": "2026-10-10T01:46:54.800Z"
+        },
+        "fault_start": {
+          "unix_ms": 1791596815084,
+          "utc": "2026-10-10T01:46:55.084Z"
+        },
+        "paused_verified": {
+          "unix_ms": 1791596815296,
+          "utc": "2026-10-10T01:46:55.296Z"
+        },
+        "sustained_gateway_recovered": {
+          "unix_ms": 1791596837002,
+          "utc": "2026-10-10T01:47:17.002Z"
+        },
+        "publication_verified": {
+          "unix_ms": 1791596833760,
+          "utc": "2026-10-10T01:47:13.760Z"
+        },
+        "policy_and_traffic_verified": {
+          "unix_ms": 1791596837011,
+          "utc": "2026-10-10T01:47:17.011Z"
+        }
+      },
+      "original_budget_start_to_final_utc_seconds": 22.211,
+      "verified_original_monotonic_budget_seconds": 22.202,
+      "wall_clock_vs_monotonic_difference_seconds": 0.009
+    },
+    "accounting": {
+      "observation": {
+        "scheduled": 12000,
+        "completed": 12000,
+        "status_counts": {
+          "200": 11346,
+          "503": 654
+        },
+        "omissions": 0,
+        "unaccounted": 0,
+        "worker_failures": 0,
+        "transport_errors": 0,
+        "exact_sequence_uniqueness": true,
+        "all_successful_backend_bodies_valid": true,
+        "latency_ms": {
+          "p50": 4.112929105758667,
+          "p95": 19.120601005852222,
+          "p99": 2014.9584289174527,
+          "max": 4511.052678106353
+        },
+        "schedule_start_unix_ms": 1791596795664.8928,
+        "schedule_end_unix_ms": 1791596915664.8928
+      },
+      "last_60_seconds": {
+        "scheduled": 6000,
+        "completed": 6000,
+        "status_counts": {
+          "200": 6000
+        },
+        "omissions": 0,
+        "unaccounted": 0,
+        "worker_failures": 0,
+        "transport_errors": 0,
+        "exact_sequence_uniqueness": true,
+        "all_successful_backend_bodies_valid": true,
+        "latency_ms": {
+          "p50": 3.7354519590735435,
+          "p95": 9.373333072289824,
+          "p99": 25.821041082963347,
+          "max": 135.05154103040695
+        },
+        "schedule_start_unix_ms": 1791596855664.8928,
+        "schedule_end_unix_ms": 1791596915664.8928
+      }
+    },
+    "terminal_witness_valid": true,
+    "original_30_second_budget_preserved": true,
+    "complete": false,
+    "phase_complete": true,
+    "provenance": {
+      "summary": {
+        "sha256": "4c7ef6adb2b687bf4ee28de6d90bb70b532671ff7d74c924395d054521fa9470",
+        "bytes": 5297
+      },
+      "raw_load": {
+        "sha256": "7d459d4d8e39a440ea6dd74b5a7c5ebf2fa15e6d821eb86e3fbbbb14c240f50e",
+        "bytes": 8545825
+      },
+      "witness": {
+        "sha256": "b3f813bbc8c43550cd9c255235d39e1b828c7dd6389e3a541e547cb750c44ed5",
+        "bytes": 6243
+      }
+    },
+    "offline_forged_timestamp_rejections": 2,
+    "limits": [
+      "Passing combined proof covers only its selected fault and explicitly remains complete=false.",
+      "Milestone wall-clock arithmetic supplements the original monotonic deadline assertions."
+    ]
+  },
+  "imported_identity_preparation_helper": {
+    "path": "deploy/resilience-local/verify-credentials.py",
+    "loaded_sha256": "a07faed8e2199f4aba9662c3f65a1bf2c079b16cd58330e82dd8b6c9cec0d5e4",
+    "current_at_export_sha256": "d8048c7b2c72558cc1c8fddf3f60c3891db5f2f495303895d0520b8293770611",
+    "provenance": "Loaded helper hash captured before the run; later credential-only changes are distinct."
+  },
+  "independent_export_review": {
+    "passed": true,
+    "roles": [
+      "rule-change-review",
+      "enterprise-review"
+    ],
+    "scope": "Faithful local gate evidence or explicitly rejected historical control; not production approval."
+  },
+  "staging_source_sha256": "c5a4d6781bf3a90da80e15998b924b94a7dd0fd6aa14664d084a81579abc54f7"
+}

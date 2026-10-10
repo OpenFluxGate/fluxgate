@@ -1,0 +1,78 @@
+{
+  "result": "REJECTED",
+  "process_exit": 1,
+  "complete": false,
+  "reason": "Dense recovery probe exceeded unchanged30s; concurrent100RPS real traffic also showed continuing failures and queue latency. This is an actual load recovery limitation, not merely probe overhead.",
+  "phase": "mongo-election-publication",
+  "fault_timestamps": {
+    "rto_budget_started": {
+      "unix_ms": 1791585666457,
+      "utc": "2026-10-09T22:41:06.457Z"
+    },
+    "fault_start": {
+      "unix_ms": 1791585666706,
+      "utc": "2026-10-09T22:41:06.706Z"
+    },
+    "paused_verified": {
+      "unix_ms": 1791585666907,
+      "utc": "2026-10-09T22:41:06.907Z"
+    },
+    "publication_verified": {
+      "unix_ms": 1791585691454,
+      "utc": "2026-10-09T22:41:31.454Z"
+    }
+  },
+  "observation_statuses": {
+    "200": 8722,
+    "503": 2772
+  },
+  "observation_latency_ms": {
+    "p50": 28.77263375557959,
+    "p95": 5587.603685911745,
+    "p99": 9885.136490920559,
+    "max": 10918.07128302753
+  },
+  "publication": [
+    {
+      "passed": true,
+      "published": true,
+      "operationId": "resilience-ae0ac50b0d5542808c42305ac4832d4a",
+      "beforeRevision": 4,
+      "revision": 5,
+      "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+      "snapshotId": "60c2457d-c3ca-4483-84c7-f67681862fc9",
+      "checksum": "df23068a84b7478adb7ae2bd0e4e42873487be2b80cfb7d4ccbcaac85c7dd0b1",
+      "epochPreserved": true,
+      "majorityReadVerified": true,
+      "idempotentReplay": true,
+      "elapsedSeconds": 21.322159384,
+      "transientFailureClasses": [
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException"
+      ]
+    }
+  ],
+  "private_artifact_hashes": {
+    "summary.json": "01bfa6661654973a77ced7c8ebaf2d276fe5bcdc5f2915b4739d179f23e0120a",
+    "publication-helper-cleanup-state.json": "d94400db31452fbd27de6ec3bde49f6ae20c4ce36bf4dfe824e2830619f93138",
+    "raw-load.json": "ed0285d0f0dabcc5b3e4cddd58d732d954b81f71590ef384efb3bacbb16d1efa",
+    "ha.log": "043f1de0257ec75171937a8263e7b747d0604e2b95783fb7e92c61c41eea4378",
+    "publisher-cleanup.json": "f5f03db335589249eb3ac98875a326ad9e36abf3c9022eaa82d33d3fadb16128",
+    "publication-helper-state.json": "1a869e9d4a2961bcaf930d252ec187969f5ff95a34e53ae2da8c8e93add4d9f6",
+    "publisher-cleanup.log": "814102984688f02f2138c326cc59b55401cdb869945d6e1097da295b4cdb4632",
+    "readiness.json": "a2efc2e400722da16fd86df9e2abb21bbf7b8cd570cd0c72a2aa4a60298b0ef2",
+    "prepare.log": "478a04c8f251ba205615693ce0f55787fa71e1d6558026d6e71ff46259e41d38",
+    "load.log": "ed0285d0f0dabcc5b3e4cddd58d732d954b81f71590ef384efb3bacbb16d1efa",
+    "ha/publication-a4772b093edb4aacb919d9c79c04c5c6.json": "a88483e68d088d3ebc5989ba7d2f0e3cb00c1c05ed85e71fbd0573d90e1b8cb4",
+    "ha/publisher-cleanup.json": "f5f03db335589249eb3ac98875a326ad9e36abf3c9022eaa82d33d3fadb16128",
+    "ha/progress.json": "2744188d6055d204fc19d0e26d6a7a00c01ef823dc64f51eadc42bb177f25b08",
+    "ha/failure.json": "2ed0ed8c8283a0a7d55dd319508653a0b678a8cc2f0177a4444a6174d86e1fcc"
+  }
+}
