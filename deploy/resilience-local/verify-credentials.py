@@ -384,6 +384,9 @@ class Proof:
     def operation(self, label):
         allowed = {
             'api.old-mapping',
+            'api.barrier-old-only',
+            'api.barrier-overlap',
+            'api.barrier-retirement',
             'api.overlap-mapping',
             'api.retire-mapping',
             'mtls.barrier-overlap-old-client',
@@ -758,6 +761,89 @@ class Proof:
         self.backups.clear()
         self.tls_rollback = None
 
+    def api_key_pod_probe(self, pod, ca, cert, key, path, credential, expected, deadline):
+        def remaining():
+            budget = deadline - time.monotonic()
+            require(budget > 0, "API replica barrier exceeded 90-second deadline")
+            return budget
+        try:
+            ctx = ssl.create_default_context(cafile=str(ca))
+            ctx.load_cert_chain(str(cert), str(key))
+            with self.forward("pod/" + pod, 8443, deadline=deadline) as port:
+                with socket.create_connection(("127.0.0.1", port), timeout=min(8, remaining())) as raw:
+                    with ctx.wrap_socket(raw, server_hostname=self.f["server_name"],
+                                         do_handshake_on_connect=False) as conn:
+                        # Also bound slow-drip TLS/HTTP reads, which restart per-read timeouts.
+                        def expire():
+                            try:
+                                conn.shutdown(socket.SHUT_RDWR)
+                            except OSError:
+                                pass
+                        timer = threading.Timer(remaining(), expire)
+                        timer.daemon = True
+                        timer.start()
+                        try:
+                            conn.settimeout(min(8, remaining()))
+                            conn.do_handshake()
+                            request = "GET " + path + " HTTP/1.1\r\nHost: " + self.f["gateway_host"] + "\r\n"
+                            if credential is not None:
+                                request += "x-api-key: " + credential + "\r\n"
+                            conn.sendall((request + "Connection: close\r\n\r\n").encode())
+                            response = http.client.HTTPResponse(conn)
+                            response.begin()
+                            response.read()
+                            remaining()
+                            require(response.status == expected, "API replica control unexpected HTTP status")
+                            return {"http": response.status, "protocol": conn.version(), "new_connection": True}
+                        finally:
+                            timer.cancel()
+            remaining()
+        except Exception:
+            # Transport/header parsing errors must not expose credential bytes or request data.
+            raise ProofError("API replica control failed") from None
+
+    def api_key_pod_barrier(self, stage, old, new):
+        expected = {"old-only": (200, 403), "overlap": (200, 200), "retirement": (403, 200)}
+        require(stage in expected, "unknown API replica barrier stage")
+        deadline = time.monotonic() + 90
+        def remaining():
+            budget = deadline - time.monotonic()
+            require(budget > 0, "API replica barrier exceeded 90-second deadline")
+            return budget
+        deployment = self.get("deployment/" + self.f.get("authz_deployment", "fluxgate-authz"),
+                              timeout=min(5, remaining()))
+        selector = ",".join(k + "=" + v for k, v in sorted(deployment["spec"]["selector"]["matchLabels"].items()))
+        require(bool(selector), "API replica selector empty")
+        def current():
+            pods = json.loads(self.kube("get", "pods", "-l", selector, "-o", "json",
+                "--request-timeout=5s", timeout=min(5, remaining())).stdout)["items"]
+            remaining()
+            require(len(pods) == 2 and all(not p["metadata"].get("deletionTimestamp") and
+                any(c.get("type") == "Ready" and c.get("status") == "True"
+                    for c in p.get("status", {}).get("conditions", [])) for p in pods),
+                "API replica barrier requires exactly two Ready nonterminating Pods")
+            pinned = {p["metadata"]["name"]: p["metadata"]["uid"] for p in pods}
+            require(len(pinned) == 2 and len(set(pinned.values())) == 2, "API replica identities ambiguous")
+            return pinned
+        pinned = current()
+        tls = Path(self.f["tls_dir"])
+        wrong = secrets.token_urlsafe(40)
+        controls = (("old", old, expected[stage][0]), ("new", new, expected[stage][1]),
+                    ("missing", None, 403), ("wrong", wrong, 403))
+        records = []
+        for name, uid in sorted(pinned.items()):
+            statuses, protocols = {}, {}
+            for label, credential, status in controls:
+                result = self.api_key_pod_probe(name, tls / "server-ca.crt", tls / "client.crt",
+                    tls / "client.key", "/authz" + self.f["load_path"], credential, status, deadline)
+                statuses[label], protocols[label] = result["http"], result["protocol"]
+            records.append({"pod_uid": uid, "statuses": statuses, "protocols": protocols,
+                            "new_connections": True})
+        require(current() == pinned, "API replica identities changed during controls")
+        result = {"stage": stage, "pods": records, "pinned_uids_unchanged": True}
+        self.results.setdefault("api_key_replica_controls", []).append(result)
+        return result
+
     def api_mapping(self, mappings):
         content = json.dumps({"fluxgate": {"envoy": {"api-keys": mappings}}})
         self.patch_data("secret", self.f.get("api_keys_secret", "fluxgate-api-key-config"),
@@ -788,16 +874,19 @@ class Proof:
         old_map = dict(template, sha256=hashlib.sha256(old.encode()).hexdigest())
         new_map = dict(template, sha256=hashlib.sha256(new.encode()).hexdigest())
         self.perform("api.old-mapping", self.api_mapping, original + [old_map])
+        self.perform("api.barrier-old-only", self.api_key_pod_barrier, "old-only", old, new)
         require(self.gateway(self.f["quota_path"], old) == 200, "old API key initial quota")
         before = self.counter_snapshot(identity)
         require(before, "quota Redis counter absent; API-key identity not proven")
         self.perform("api.overlap-mapping", self.api_mapping, original + [old_map, new_map])
+        self.perform("api.barrier-overlap", self.api_key_pod_barrier, "overlap", old, new)
         require(self.gateway(self.f["quota_path"], new) == 200, "new API key overlap quota")
         require(self.gateway(self.f["quota_path"], old) == 200, "old API key overlap quota")
         overlap = self.counter_snapshot(identity)
         require(set(before) == set(overlap), "rotation changed bucket key/epoch")
         require(before != overlap, "quota counter did not change across rotation")
         content = self.perform("api.retire-mapping", self.api_mapping, original + [new_map])
+        self.perform("api.barrier-retirement", self.api_key_pod_barrier, "retirement", old, new)
         require(self.gateway(self.f["quota_path"], old) == 403, "retired API key accepted")
         for _ in range(2):
             require(self.gateway(self.f["quota_path"], new) == 200, "new key lost remaining quota")
@@ -1358,7 +1447,11 @@ class Proof:
                     events["retired_cold_decoder"] = 401
                     events["new_cold_decoder"] = 200
                 events.update({"jwks_fetches": len(fetches), "old_token_unexpired": True,
-                               "documented_cache_refresh_seconds": 300, "documented_cache_lifespan_seconds": 900,
+                               "documented_cache_ttl_seconds": 300,
+                               "documented_cache_refresh_lock_timeout_seconds": 15,
+                               "documented_refresh_ahead_enabled": False,
+                               "cache_source": "Spring Security 6.5.11 JWKSourceBuilder / Nimbus 9.37.4",
+                               "cache_scope": "default Nimbus cache; lock timeout is not a periodic refresh or revocation bound",
                                "jar_sha256": hashlib.sha256(jar.read_bytes()).hexdigest(),
                                "new_connections": True, "publication_unchanged": True})
                 self.results["jwt_jwks"] = events
@@ -1557,6 +1650,7 @@ def failed_rotation_cleanup_self_test():
             proof.results, proof.backups = {}, {("local", "secret", "mapping"): {}}
             proof.store_rollback, proof.tls_rollback, proof.cold_sentinels = None, None, []
             proof.policy_stamp = lambda: {"revision": 1}
+            proof.api_key_pod_barrier = lambda *args: None
             proof.api_mapping = lambda entries: json.dumps({"fluxgate": {"envoy": {"api-keys": entries}}})
             statuses = iter((200, 200, 200, 403, 200, 200, 429, 403, 403))
             proof.gateway = lambda *args: next(statuses)
