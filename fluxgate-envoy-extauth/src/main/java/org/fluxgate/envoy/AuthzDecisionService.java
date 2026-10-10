@@ -151,9 +151,9 @@ public final class AuthzDecisionService {
       admissionRejected.incrementAndGet();
       return AuthzDecision.of(503);
     }
-    admitted.incrementAndGet();
-    peak.accumulateAndGet(inflight.incrementAndGet(), Math::max);
     try {
+      admitted.incrementAndGet();
+      peak.accumulateAndGet(inflight.incrementAndGet(), Math::max);
       if (permits <= 0) {
         invalidPermits.incrementAndGet();
         return AuthzDecision.of(503);
