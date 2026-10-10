@@ -10,6 +10,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.fluxgate.core.exception.RedisConnectionException;
 import org.fluxgate.core.resilience.DefaultRetryExecutor;
 import org.fluxgate.core.resilience.RetryConfig;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -22,7 +23,21 @@ import org.junit.jupiter.api.Test;
 class ConnectTimeoutTest {
 
   private static final Duration TIMEOUT = Duration.ofMillis(300);
-  private static final long MAX_WALL_MILLIS = TIMEOUT.toMillis() * 3;
+
+  /**
+   * Upper bound for one failed connect. The first Lettuce client in a JVM also pays for class
+   * loading and event loop start-up (over a second on CI runners), so the bound is kept well below
+   * the 5 s {@link RedisUriUtils#DEFAULT_TIMEOUT} rather than a small multiple of {@link #TIMEOUT}:
+   * it still fails if the configured timeout were ignored.
+   */
+  private static final long MAX_WALL_MILLIS = 2_500;
+
+  @BeforeAll
+  static void warmUpLettuce() {
+    // A refused connect fails at once and loads the client classes before anything is timed.
+    assertThatThrownBy(() -> new StandaloneRedisConnection("redis://127.0.0.1:1", TIMEOUT))
+        .isInstanceOf(RedisConnectionException.class);
+  }
 
   @Test
   @DisplayName("StandaloneRedisConnection fails within the configured timeout")
