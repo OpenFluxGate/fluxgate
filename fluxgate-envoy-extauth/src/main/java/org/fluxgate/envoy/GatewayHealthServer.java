@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -11,7 +12,11 @@ import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.stereotype.Component;
 
-/** Optional plaintext health listener exposing no authorization or identity endpoints. */
+/**
+ * Optional plaintext management listener for health and anonymous aggregates only, not Prometheus.
+ * Restrict access with the management NetworkPolicy; authorization and identity routes are
+ * excluded.
+ */
 @Component
 public final class GatewayHealthServer implements InitializingBean, DisposableBean {
   private final EnvoyProperties properties;
@@ -58,8 +63,13 @@ public final class GatewayHealthServer implements InitializingBean, DisposableBe
   private void handle(HttpExchange exchange) throws IOException {
     try (exchange) {
       int status;
+      byte[] body = null;
       if (!"GET".equals(exchange.getRequestMethod())) {
         status = 405;
+      } else if ("/diagnostics".equals(exchange.getRequestURI().getPath())) {
+        status = 200;
+        body = service.diagnostics().json().getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
       } else if ("/healthz".equals(exchange.getRequestURI().getPath())) {
         status = 200;
       } else if ("/readyz".equals(exchange.getRequestURI().getPath())) {
@@ -75,7 +85,10 @@ public final class GatewayHealthServer implements InitializingBean, DisposableBe
         status = 404;
       }
       exchange.getResponseHeaders().add("Cache-Control", "no-store");
-      exchange.sendResponseHeaders(status, -1);
+      exchange.sendResponseHeaders(status, body == null ? -1 : body.length);
+      if (body != null) {
+        exchange.getResponseBody().write(body);
+      }
     }
   }
 
