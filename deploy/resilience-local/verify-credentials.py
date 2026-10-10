@@ -260,10 +260,10 @@ def sampler_worker(config, stop_path):
     def worker():
         nonlocal worker_failures, positive_claimed
         while not shutdown.is_set():
-            try:
-                index = jobs.get(timeout=.1)
-            except queue.Empty:
-                continue
+            index = jobs.get()
+            if index is None or shutdown.is_set():
+                jobs.task_done()
+                return  # An unexecuted numeric arrival remains explicit pending evidence.
             origin = start + index * .1
             began = time.monotonic()
             sample = {"sequence": index, "scheduled_elapsed_seconds": index * .1,
@@ -358,6 +358,13 @@ def sampler_worker(config, stop_path):
             while pending and time.monotonic() < drain_deadline:
                 condition.wait(timeout=max(0, drain_deadline - time.monotonic()))
         shutdown.set()
+        # Wake every idle worker without blocking on a saturated queue. Queued arrivals
+        # already wake workers; they remain pending if the bounded drain expired.
+        for _ in workers:
+            try:
+                jobs.put_nowait(None)
+            except queue.Full:
+                break
         join_deadline = time.monotonic() + 1
         for thread in workers:
             thread.join(timeout=max(0, join_deadline - time.monotonic()))
