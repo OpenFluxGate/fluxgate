@@ -104,6 +104,65 @@ def signed_jwt(openssl, private_key, kid, issuer, audience, expiry, algorithm="R
     return message.decode() + "." + b64url(signature)
 
 
+def certificate_fingerprints(pem):
+    certificates = re.findall(rb"-----BEGIN CERTIFICATE-----\s+[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----", pem)
+    require(bool(certificates), "TLS barrier certificate bundle is empty")
+    require(not re.sub(rb"-----BEGIN CERTIFICATE-----\s+[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----", b"", pem).strip(),
+            "TLS barrier certificate bundle contains unexpected material")
+    try:
+        return sorted({hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.decode())).hexdigest() for cert in certificates})
+    except Exception:
+        raise ProofError("TLS barrier certificate encoding invalid") from None
+
+
+def loaded_envoy_tls(dump, cluster_name, server_name, client_secret, ca_secret, ca_pem, client_pem):
+    configs = dump.get("configs", [])
+    clusters = [entry["cluster"] for config in configs for entry in config.get("dynamic_active_clusters", [])
+                if entry.get("cluster", {}).get("name") == cluster_name]
+    require(len(clusters) == 1, "TLS barrier application cluster missing or ambiguous")
+    require(not any(entry.get("cluster", {}).get("name") == cluster_name
+                    for config in configs for entry in config.get("dynamic_warming_clusters", [])),
+            "TLS barrier application cluster is warming")
+    sockets = [item.get("transport_socket", {}).get("typed_config", {})
+               for item in clusters[0].get("transport_socket_matches", [])]
+    direct = clusters[0].get("transport_socket", {}).get("typed_config")
+    if sockets and direct is not None:
+        # EG emits an empty default TLS context beside its bound TLS socket match.
+        require(direct == {"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+                           "common_tls_context": {}}, "TLS barrier alternative application transport is ambiguous")
+    elif direct is not None:
+        sockets.append(direct)
+    require(len(sockets) == 1, "TLS barrier application transport missing or ambiguous")
+    transport = sockets[0]
+    require(transport.get("@type") == "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+            "TLS barrier application transport is not upstream TLS")
+    common = transport.get("common_tls_context", {})
+    require(transport.get("sni") == server_name, "TLS barrier application SNI mismatch")
+    require([item.get("name") for item in common.get("tls_certificate_sds_secret_configs", [])] == [client_secret]
+            and common.get("combined_validation_context", {}).get("validation_context_sds_secret_config", {}).get("name") == ca_secret,
+            "TLS barrier application SDS binding mismatch")
+    active = [entry for config in configs for entry in config.get("dynamic_active_secrets", [])]
+    warming = [entry for config in configs for entry in config.get("dynamic_warming_secrets", [])]
+    actual = {}
+    for name, kind, field in ((client_secret, "tls_certificate", "certificate_chain"),
+                              (ca_secret, "validation_context", "trusted_ca")):
+        require(not any(entry.get("name") == name or entry.get("secret", {}).get("name") == name for entry in warming),
+                "TLS barrier bound secret is warming")
+        entries = [entry for entry in active if entry.get("name") == name or entry.get("secret", {}).get("name") == name]
+        require(len(entries) == 1 and entries[0].get("name") == name and entries[0].get("secret", {}).get("name") == name,
+                "TLS barrier bound active secret missing or ambiguous")
+        source = entries[0]["secret"].get(kind, {}).get(field, {})
+        require(set(source) == {"inline_bytes"}, "TLS barrier bound certificate is not inline bytes")
+        try:
+            pem = base64.b64decode(source["inline_bytes"], validate=True)
+        except Exception:
+            raise ProofError("TLS barrier inline certificate encoding invalid") from None
+        actual[name] = certificate_fingerprints(pem)
+    require(actual[ca_secret] == certificate_fingerprints(ca_pem), "TLS barrier trust fingerprint set mismatch")
+    require(actual[client_secret] == certificate_fingerprints(client_pem), "TLS barrier client fingerprint set mismatch")
+    return {"ca_fingerprints": actual[ca_secret], "client_fingerprints": actual[client_secret]}
+
+
 def redis_hash_contents(value):
     fields = value.split(b"\n")
     require(bool(value) and len(fields) % 2 == 0, "Redis metadata is not a complete hash")
@@ -218,6 +277,9 @@ class Proof:
             'api.old-mapping',
             'api.overlap-mapping',
             'api.retire-mapping',
+            'mtls.barrier-overlap-old-client',
+            'mtls.barrier-overlap-new-client',
+            'mtls.barrier-new-only',
             'mtls.ca-overlap',
             'mtls.client-envoy-roll',
             'mtls.client-leaf-switch',
@@ -265,12 +327,12 @@ class Proof:
         require(p.stat().st_mode & 0o077 == 0, key + " must be private")
         return p.read_text().strip()
 
-    def kube(self, *args, data=None, check=True, namespace=None):
+    def kube(self, *args, data=None, check=True, namespace=None, timeout=360):
         return run(["kubectl", "--kubeconfig", self.f["kubeconfig"], "--context", self.f["context"],
-                    "-n", namespace or self.ns, *args], data=data, check=check, timeout=360)
+                    "-n", namespace or self.ns, *args], data=data, check=check, timeout=timeout)
 
-    def get(self, resource, namespace=None):
-        return json.loads(self.kube("get", resource, "-o", "json", namespace=namespace).stdout)
+    def get(self, resource, namespace=None, timeout=360):
+        return json.loads(self.kube("get", resource, "-o", "json", namespace=namespace, timeout=timeout).stdout)
 
     def validate(self):
         ns = self.get("namespace/" + self.ns)
@@ -281,7 +343,7 @@ class Proof:
             self.read(field)
 
     @contextlib.contextmanager
-    def forward(self, resource, remote_port, namespace=None):
+    def forward(self, resource, remote_port, namespace=None, deadline=None):
         port = unused_port()
         log = open(self.work / ("forward-" + str(port) + ".log"), "wb")
         proc = subprocess.Popen(["kubectl", "--kubeconfig", self.f["kubeconfig"], "--context",
@@ -290,8 +352,10 @@ class Proof:
         try:
             for _ in range(100):
                 require(proc.poll() is None, "port-forward exited")
+                remaining = deadline - time.monotonic() if deadline is not None else .2
+                require(remaining > 0, "port-forward exceeded operation deadline")
                 try:
-                    with socket.create_connection(("127.0.0.1", port), timeout=.2):
+                    with socket.create_connection(("127.0.0.1", port), timeout=min(.2, remaining)):
                         break
                 except OSError:
                     time.sleep(.1)
@@ -447,6 +511,78 @@ class Proof:
                  "-out", str(p) + ".crt"])
         return Path(str(p) + ".crt"), Path(str(p) + ".key")
 
+    def envoy_tls_barrier(self, ca_pem, client_pem):
+        deadline = time.monotonic() + 90
+        def remaining():
+            budget = deadline - time.monotonic()
+            require(budget > 0, "TLS barrier exceeded 90-second deadline")
+            return budget
+        namespace = self.f["gateway_namespace"]
+        service = self.get("service/" + self.f["gateway_service"], namespace, timeout=remaining())
+        selector = ",".join(key + "=" + value for key, value in sorted(service["spec"]["selector"].items()))
+        require(bool(selector), "TLS barrier Gateway selector empty")
+        ports = [port for port in service["spec"]["ports"] if port["port"] == 80]
+        require(len(ports) == 1 and isinstance(ports[0]["targetPort"], int), "TLS barrier Gateway target port invalid")
+        def current():
+            require(time.monotonic() < deadline, "TLS barrier exceeded 90-second deadline")
+            pods = json.loads(self.kube("get", "pods", "-l", selector, "-o", "json",
+                                       "--request-timeout=5s", namespace=namespace, timeout=min(5, remaining())).stdout)["items"]
+            require(time.monotonic() < deadline, "TLS barrier exceeded 90-second deadline")
+            require(len(pods) == 2 and all(not pod["metadata"].get("deletionTimestamp") and
+                    any(condition["type"] == "Ready" and condition["status"] == "True"
+                        for condition in pod.get("status", {}).get("conditions", [])) for pod in pods),
+                    "TLS barrier requires two Ready nonterminating Envoy Pods")
+            return {pod["metadata"]["name"]: pod["metadata"]["uid"] for pod in pods}
+        pinned = current()
+        client_secret = self.ns + "/" + self.f["envoy_client_tls_secret"]
+        # Envoy Gateway's BackendTLSPolicy SDS name is policy-name/namespace-ca.
+        ca_secret = self.f.get("backend_tls_policy_name", "authz-backend-tls") + "/" + self.ns + "-ca"
+        cluster_name = "securitypolicy/" + self.ns + "/" + self.f.get("security_policy_name", "resilience-ext-auth") + "/extauth/0"
+        loaded = {}
+        while time.monotonic() < deadline:
+            require(current() == pinned, "TLS barrier Envoy Pod identity changed")
+            loaded = {}
+            for name, uid in pinned.items():
+                try:
+                    with self.forward("pod/" + name, 19000, namespace, deadline=deadline) as port:
+                        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=min(5, remaining()))
+                        try:
+                            connection.request("GET", "/config_dump", headers={"Connection": "close"})
+                            response = connection.getresponse()
+                            require(response.status == 200, "TLS barrier admin response invalid")
+                            raw = response.read(8 * 1024 * 1024 + 1)
+                            require(len(raw) <= 8 * 1024 * 1024, "TLS barrier admin response too large")
+                            dump = json.loads(raw)
+                        finally:
+                            connection.close()
+                    evidence = loaded_envoy_tls(dump, cluster_name, self.f["server_name"], client_secret,
+                                                ca_secret, ca_pem, client_pem)
+                    loaded[name] = dict(evidence, pod_uid=uid)
+                except (ProofError, OSError, ValueError, http.client.HTTPException):
+                    break
+            if len(loaded) == 2:
+                break
+            time.sleep(min(.5, remaining()))
+        else:
+            raise ProofError("TLS barrier bound active configuration did not converge within 90 seconds")
+        require(current() == pinned, "TLS barrier Envoy Pod identity changed")
+        for name in pinned:
+            with self.forward("pod/" + name, ports[0]["targetPort"], namespace, deadline=deadline) as port:
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=min(5, remaining()))
+                try:
+                    connection.request("GET", self.f["load_path"], headers={"Host": self.f["gateway_host"],
+                                       "x-api-key": self.api_key, "Connection": "close"})
+                    response = connection.getresponse()
+                    body = response.read()
+                    expected = self.f.get("backend_body", "fluxgate-resilience-ok").encode()
+                    require(response.status == 200 and body in (expected, expected + b"\n"),
+                            "TLS barrier per-Pod authenticated backend control failed")
+                finally:
+                    connection.close()
+            require(current() == pinned, "TLS barrier Envoy Pod identity changed")
+            loaded[name]["fresh_authenticated_backend_200"] = True
+        return {"pods": list(loaded.values()), "limit": "Bound active TLS configuration and fresh per-Pod Gateway controls; not a wire ACK or independent backend handshake."}
+
     def tls(self):
         tls = Path(self.f["tls_dir"])
         self.tls_rollback = {tls / name: (tls / name).read_bytes() for name in (
@@ -482,6 +618,8 @@ class Proof:
         controls["overlap_old_client"] = self.tls_probe(old_server_ca, old_client, old_client_key)
         controls["overlap_new_client"] = self.tls_probe(old_server_ca, *new_client)
         self.available()
+        controls["loaded_overlap_old_client"] = self.perform("mtls.barrier-overlap-old-client",
+            self.envoy_tls_barrier, overlap_server, old_client.read_bytes())
         self.perform("mtls.server-leaf-switch", self.patch_data, "secret", server_secret,
                         {"tls.crt": new_server[0].read_bytes(), "tls.key": new_server[1].read_bytes()})
         self.perform("mtls.server-authz-roll", self.rollout)
@@ -489,12 +627,16 @@ class Proof:
                         {"tls.crt": new_client[0].read_bytes(), "tls.key": new_client[1].read_bytes()})
         self.perform("mtls.client-envoy-roll", self.envoy_rollout)
         self.available()
+        controls["loaded_overlap_new_client"] = self.perform("mtls.barrier-overlap-new-client",
+            self.envoy_tls_barrier, overlap_server, new_client[0].read_bytes())
         controls["new_pair_overlap"] = self.tls_probe(new_sca, *new_client)
         self.perform("mtls.retire-client-ca", self.patch_data, "secret", server_secret, {"client-ca.crt": new_cca.read_bytes()})
         self.perform("mtls.retirement-authz-roll", self.rollout)
         self.perform("mtls.retire-server-ca", self.patch_data, "configmap", server_cm, {"ca.crt": new_sca.read_text()})
         self.perform("mtls.retirement-envoy-roll", self.envoy_rollout)
         self.available()
+        controls["loaded_new_only"] = self.perform("mtls.barrier-new-only",
+            self.envoy_tls_barrier, new_sca.read_bytes(), new_client[0].read_bytes())
         controls["retired_client"] = self.tls_probe(new_sca, old_client, old_client_key, expected="tls-reject")
         controls["retired_server_ca"] = self.tls_probe(old_server_ca, *new_client, expected="tls-reject")
         controls["new_pair_final"] = self.tls_probe(new_sca, *new_client)
@@ -1499,6 +1641,132 @@ def strict_tls_self_test():
             server.server_close()
 
 
+def envoy_tls_barrier_self_test():
+    from unittest.mock import patch
+    def pem(value):
+        return b"-----BEGIN CERTIFICATE-----\n" + base64.b64encode(value) + b"\n-----END CERTIFICATE-----\n"
+    old, new, client = pem(b"old-ca-der"), pem(b"new-ca-der"), pem(b"client-leaf-der")
+    cluster = "securitypolicy/fluxgate-resilience/resilience-ext-auth/extauth/0"
+    client_name = "fluxgate-resilience/fluxgate-envoy-client-tls"
+    ca_name = "authz-backend-tls/fluxgate-resilience-ca"
+    tls = {"@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+           "sni": "authz.local", "common_tls_context": {
+        "tls_certificate_sds_secret_configs": [{"name": client_name}],
+        "combined_validation_context": {"validation_context_sds_secret_config": {"name": ca_name}}}}
+    transport = {"transport_socket": {"typed_config": tls}}
+    def secret(name, kind, field, data):
+        return {"name": name, "secret": {"name": name, kind: {field: {"inline_bytes": base64.b64encode(data).decode()}}}}
+    dump = {"configs": [{"dynamic_active_clusters": [{"cluster": {"name": cluster,
+                            "transport_socket_matches": [transport], "transport_socket": {"typed_config": {
+                                "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+                                "common_tls_context": {}}}}}]},
+                         {"dynamic_active_secrets": [secret(client_name, "tls_certificate", "certificate_chain", client),
+                            secret(ca_name, "validation_context", "trusted_ca", new + old),
+                            secret("xds_certificate", "tls_certificate", "certificate_chain", pem(b"unrelated"))]}]}
+    def validate(value, trust=old+new):
+        return loaded_envoy_tls(value, cluster, "authz.local", client_name, ca_name, trust, client)
+    evidence = validate(dump)
+    require(evidence["ca_fingerprints"] == certificate_fingerprints(old + new), "DER trust sets depended on PEM order")
+    def clone():
+        return json.loads(json.dumps(dump))
+    mutations = []
+    wrong_type = clone(); wrong_type["configs"][0]["dynamic_active_clusters"][0]["cluster"]["transport_socket_matches"][0]["transport_socket"]["typed_config"]["@type"] = "unrelated-context"; mutations.append(wrong_type)
+    alternate = clone(); alternate["configs"][0]["dynamic_active_clusters"][0]["cluster"]["transport_socket"]["typed_config"] = tls; mutations.append(alternate)
+    no_cluster = clone(); no_cluster["configs"][0]["dynamic_active_clusters"] = []; mutations.append(no_cluster)
+    missing = clone(); missing["configs"][1]["dynamic_active_secrets"].pop(0); mutations.append(missing)
+    binding = clone(); binding["configs"][0]["dynamic_active_clusters"][0]["cluster"]["transport_socket_matches"][0]["transport_socket"]["typed_config"]["common_tls_context"]["tls_certificate_sds_secret_configs"] = [{"name": "xds_certificate"}]; mutations.append(binding)
+    sni = clone(); sni["configs"][0]["dynamic_active_clusters"][0]["cluster"]["transport_socket_matches"][0]["transport_socket"]["typed_config"]["sni"] = "wrong.local"; mutations.append(sni)
+    warming = clone(); warming["configs"][1]["dynamic_warming_secrets"] = [{"name": ca_name}]; mutations.append(warming)
+    warm_cluster = clone(); warm_cluster["configs"][0]["dynamic_warming_clusters"] = [{"cluster": {"name": cluster}}]; mutations.append(warm_cluster)
+    ambiguous = clone(); ambiguous["configs"][0]["dynamic_active_clusters"] *= 2; mutations.append(ambiguous)
+    for material in (old, old + new + pem(b"excess-ca")):
+        value = clone(); value["configs"][1]["dynamic_active_secrets"][1] = secret(ca_name, "validation_context", "trusted_ca", material); mutations.append(value)
+    wrong_leaf = clone(); wrong_leaf["configs"][1]["dynamic_active_secrets"][0] = secret(client_name, "tls_certificate", "certificate_chain", old); mutations.append(wrong_leaf)
+    for value in mutations:
+        try:
+            validate(value)
+        except ProofError:
+            pass
+        else:
+            raise ProofError("TLS barrier accepted missing/wrong/warming/ambiguous bound configuration")
+    proof = Proof.__new__(Proof)
+    proof.ns, proof.api_key = "fluxgate-resilience", "private-offline-api-key"
+    proof.f = {"gateway_namespace": "envoy-gateway-system", "gateway_service": "gateway", "server_name": "authz.local",
+               "envoy_client_tls_secret": "fluxgate-envoy-client-tls", "load_path": "/api/load", "gateway_host": "gateway.local", "backend_body": "backend-ok"}
+    proof.get = lambda *args, **kwargs: {"spec": {"selector": {"gateway": "test", "component": "envoy"},
+                                        "ports": [{"port": 80, "targetPort": 10080}]}}
+    reads = []
+    changed = False
+    queried = []
+    def kube(*args, **kwargs):
+        from types import SimpleNamespace
+        require(args[3] == "component=envoy,gateway=test", "TLS barrier ignored part of service selector")
+        queried.append(args)
+        pods = [{"metadata": {"name": "envoy-" + str(i), "uid": "uid-" + str(i)},
+                 "status": {"conditions": [{"type": "Ready", "status": "True"}]}} for i in range(2)]
+        if changed and len(queried) > 1:
+            pods[0]["metadata"]["uid"] = "replaced"
+        return SimpleNamespace(stdout=json.dumps({"items": pods}).encode())
+    proof.kube = kube
+    active_pod = [None]
+    @contextlib.contextmanager
+    def forward(resource, port, namespace, deadline=None):
+        active_pod[0] = resource
+        yield port
+    proof.forward = forward
+    bad_body = [None]
+    clock = [0]
+    late_stage = [None]
+    class Connection:
+        def __init__(self, host, port, timeout):
+            self.port = port
+        def request(self, method, path, headers):
+            if self.port == 10080:
+                require(headers["x-api-key"] == proof.api_key and headers["Connection"] == "close", "TLS barrier positive was unauthenticated or reused")
+                reads.append(active_pod[0])
+        def getresponse(self):
+            return self
+        status = 200
+        def read(self, *args):
+            if active_pod[0] == "pod/envoy-1" and self.port == late_stage[0]:
+                clock[0] = 91
+            if self.port == 19000:
+                return json.dumps(dump).encode()
+            return b"junk-backend-ok" if active_pod[0] == bad_body[0] else b"backend-ok\n"
+        def close(self):
+            pass
+    with patch.object(http.client, "HTTPConnection", Connection):
+        outcome = proof.envoy_tls_barrier(old + new, client)
+        require(reads == ["pod/envoy-0", "pod/envoy-1"] and len(outcome["pods"]) == 2,
+                "TLS barrier did not verify each Envoy Pod")
+        for bad_body[0] in ("pod/envoy-0", "pod/envoy-1"):
+            try:
+                proof.envoy_tls_barrier(old + new, client)
+            except ProofError:
+                pass
+            else:
+                raise ProofError("TLS barrier accepted a wrong per-Pod backend body")
+        bad_body[0] = None
+        changed = True
+        queried.clear()
+        try:
+            proof.envoy_tls_barrier(old + new, client)
+        except ProofError as error:
+            require(str(error) == "TLS barrier Envoy Pod identity changed", "stale-UID test failed for unrelated reason")
+        else:
+            raise ProofError("TLS barrier accepted replaced Envoy Pod identity")
+        changed = False
+        for late_stage[0] in (19000, 10080):
+            clock[0] = 0
+            with patch.object(time, "monotonic", side_effect=lambda: clock[0]):
+                try:
+                    proof.envoy_tls_barrier(old + new, client)
+                except ProofError as error:
+                    require(str(error) == "TLS barrier exceeded 90-second deadline", "deadline control failed for unrelated reason")
+                else:
+                    raise ProofError("TLS barrier accepted late second-Pod configuration or backend control")
+
+
 def rotation_timeline_self_test():
     with tempfile.TemporaryDirectory(prefix="credential-timeline-test-") as directory:
         proof = Proof.__new__(Proof)
@@ -1680,6 +1948,7 @@ def tls_runtime_self_test():
 
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
+    envoy_tls_barrier_self_test()
     rotation_timeline_self_test()
     redis_policy_selection_self_test()
     tls_alert_read_self_test()
