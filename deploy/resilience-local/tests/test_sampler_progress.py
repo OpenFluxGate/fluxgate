@@ -1,4 +1,5 @@
 """Progress publication cannot own the arrival lock or become terminal acceptance."""
+import contextlib
 import io
 import json
 import os
@@ -136,6 +137,7 @@ class SamplerProgress(unittest.TestCase):
             proof.f={'gateway_service':'offline','gateway_namespace':'offline',
                      'kubeconfig':'offline','context':'offline','gateway_host':'offline','load_path':'/load'}
             proof.results={}
+            proof.forward=lambda *a,**kw:contextlib.nullcontext(12345)
             proof.get=lambda *a,**kw:{'spec':{'ports':[{'port':80,'targetPort':8080}],
                                               'selector':{'app':'offline'}}}
             proof.kube=lambda *a,**kw:SimpleNamespace(returncode=0,stdout=b'{"metadata":{"uid":"offline"}}')
@@ -147,7 +149,12 @@ class SamplerProgress(unittest.TestCase):
                 'drain_complete':True,'worker_failures':0,
                 'samples':[{'sequence':0,'status':200,'body_valid':True}]}
             class Process:
-                def __init__(self,*a,**kw):self.stdin,self.returncode=io.BytesIO(),None
+                def __init__(self,*a,**kw):
+                    class Input(io.BytesIO):
+                        def write(inner,data):
+                            Path(json.loads(data)['positive_path']).write_text('yes')
+                            return super().write(data)
+                    self.stdin,self.returncode=Input(),None
                 def poll(self):return self.returncode
                 def communicate(self,**kw):
                     self.returncode=0
@@ -157,7 +164,9 @@ class SamplerProgress(unittest.TestCase):
                     with proof.traffic_sampler('unit'):pass
             saved=(proof.work/'unit-traffic.json')
             self.assertTrue(saved.exists(),'complete failed stdout report was lost')
-            self.assertEqual(json.loads(saved.read_text()),failed)
+            retained=json.loads(saved.read_text())
+            self.assertEqual({key:retained[key] for key in failed},failed)
+            self.assertIn('owned relay',retained['transport'])
             self.assertEqual(saved.stat().st_mode & 0o777,0o600)
             self.assertNotIn(proof.api_key,saved.read_text())
             self.assertEqual(cleanup,['attempted'])
@@ -188,6 +197,8 @@ class SamplerProgress(unittest.TestCase):
             proof=MODULE['Proof'].__new__(MODULE['Proof'])
             proof.work,proof.api_key=Path(directory),'offline-private-key'
             proof.kube=lambda *a,**kw:SimpleNamespace(returncode=0,stdout=json.dumps(partial).encode())
+            (proof.work/'offline').mkdir()
+            MODULE['private_write'](proof.work/'offline'/'progress.json',json.dumps(partial))
             proof.preserve_sampler_progress('offline','unit')
             saved=json.loads((proof.work/'unit-traffic-partial.json').read_text())
             self.assertTrue(saved['partial_failed_phase'])

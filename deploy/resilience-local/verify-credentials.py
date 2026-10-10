@@ -6,6 +6,7 @@ proof output. Every HTTP/TLS/store probe creates a new connection. Run serially 
 HA/load proofs; successful rotations intentionally update the private fixture files.
 """
 import argparse
+import asyncio
 import base64
 import contextlib
 import hashlib
@@ -396,6 +397,72 @@ def sampler_program(stop_path="/tmp/sampler-stop", started_path="/tmp/sampler-st
             + "print(json.dumps(sampler_worker(config, " + repr(str(stop_path)) + ")), flush=True)\n")
 
 
+async def relay_connection(reader, writer, config, state):
+    async def close(stream):
+        stream.close()
+        try:
+            await asyncio.wait_for(stream.wait_closed(), timeout=2)
+        except (ConnectionError, OSError, asyncio.TimeoutError):
+            transport = getattr(stream, "transport", None)
+            if transport is not None:
+                transport.abort()
+    """Opaque fresh TCP streams only; bounded active sessions and backpressure."""
+    if state["active"] >= 24:
+        await close(writer)
+        return
+    state["active"] += 1
+    upstream = None
+    tasks = []
+    try:
+        first = await asyncio.wait_for(reader.read(65536), timeout=2)
+        if not first:
+            return  # TCP readiness connections must never reach Gateway HTTP/quota.
+        remote, upstream = await asyncio.wait_for(
+            asyncio.open_connection(config["host"], config["port"], limit=65536), timeout=2)
+        upstream.write(first)
+        await upstream.drain()
+        async def pump(source, destination):
+            while True:
+                data = await source.read(65536)
+                if not data:
+                    if destination.can_write_eof():
+                        try:
+                            destination.write_eof()
+                            await destination.drain()
+                        except (ConnectionError, OSError):
+                            pass
+                    return
+                destination.write(data)
+                await destination.drain()
+        tasks = [asyncio.create_task(pump(reader, upstream)), asyncio.create_task(pump(remote, writer))]
+        await asyncio.gather(*tasks)
+    except (ConnectionError, OSError, asyncio.TimeoutError):
+        pass  # No traffic or error text is logged; host HTTP owns response validation/timeouts.
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        for stream in (upstream, writer):
+            if stream is not None:
+                await close(stream)
+        state["active"] -= 1
+
+
+def relay_program(host, port=80, listen=18080):
+    require(isinstance(host, str) and bool(re.fullmatch(r"[A-Za-z0-9.-]+", host))
+            and port == 80 and listen == 18080, "invalid owned relay endpoint")
+    return ("import asyncio\n" + inspect.getsource(relay_connection)
+            + "\nconfig = " + repr({"host": host, "port": port}) + "\n"
+            + "async def serve():\n"
+            + "    state={'active':0}\n"
+            + "    server=await asyncio.start_server(lambda r,w:relay_connection(r,w,config,state),"
+              "'0.0.0.0',18080,limit=65536)\n"
+            + "    async with server:await server.serve_forever()\n"
+            + "asyncio.run(serve())\n")
+
+
 def validate_sampler_partial(report):
     """Validate bounded diagnostics; partial progress is never acceptance evidence."""
     require(isinstance(report, dict) and report.get("progress_schema") == 1
@@ -573,7 +640,7 @@ class Proof:
         log = open(self.work / ("forward-" + str(port) + ".log"), "wb")
         proc = subprocess.Popen(["kubectl", "--kubeconfig", self.f["kubeconfig"], "--context",
                                  self.f["context"], "-n", namespace or self.ns, "port-forward",
-                                 resource, str(port) + ":" + str(remote_port)], stdout=log, stderr=log)
+                                 resource, "--address", "127.0.0.1", str(port) + ":" + str(remote_port)], stdout=log, stderr=log)
         try:
             for _ in range(100):
                 require(proc.poll() is None, "port-forward exited")
@@ -588,13 +655,15 @@ class Proof:
                 raise ProofError("port-forward not ready")
             yield port
         finally:
-            proc.terminate()
             try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-            log.close()
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+            finally:
+                log.close()
 
     def pods(self, deployment, namespace=None):
         dep = self.get("deployment/" + deployment, namespace)
@@ -1091,10 +1160,9 @@ class Proof:
 
     def preserve_sampler_progress(self, name, phase):
         try:
-            result = self.kube("exec", name, "--request-timeout=10s", "--", "cat", "/tmp/sampler-progress.json", check=False)
-            require(result.returncode == 0, "sampler progress unavailable")
-            require(self.api_key.encode() not in result.stdout, "sampler progress contains a secret")
-            report = validate_sampler_partial(json.loads(result.stdout))
+            contents = (self.work / name / "progress.json").read_bytes()
+            require(self.api_key.encode() not in contents, "sampler progress contains a secret")
+            report = validate_sampler_partial(json.loads(contents))
             report["partial_failed_phase"] = True
             private_write(self.work / (phase + "-traffic-partial.json"), json.dumps(report, indent=2) + "\n")
         except Exception:
@@ -1138,21 +1206,37 @@ class Proof:
         service = self.get("service/" + self.f["gateway_service"], self.f["gateway_namespace"])
         ports = [p for p in service["spec"]["ports"] if p["port"] == 80]
         require(len(ports) == 1 and isinstance(ports[0]["targetPort"], int), "numeric Gateway sampler port required")
+        selector = service["spec"].get("selector")
+        require(isinstance(selector, dict) and bool(selector)
+                and all(isinstance(key, str) and bool(key.strip())
+                        and isinstance(value, str) and bool(value.strip())
+                        for key, value in selector.items()), "nonempty Gateway sampler selector required")
         labels = {"fluxgate.io/credential-sampler": name}
         policy = {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy",
                   "metadata": {"name": name, "namespace": self.ns, "labels": labels},
-                  "spec": {"podSelector": {"matchLabels": labels}, "policyTypes": ["Egress"], "egress": [
+                  "spec": {"podSelector": {"matchLabels": labels}, "policyTypes": ["Ingress", "Egress"], "ingress": [], "egress": [
                       {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
                                "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}}}],
                        "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]},
                       {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": self.f["gateway_namespace"]}},
-                               "podSelector": {"matchLabels": service["spec"]["selector"]}}],
+                               "podSelector": {"matchLabels": selector}}],
                        "ports": [{"protocol": "TCP", "port": ports[0]["targetPort"]}]}]}}
+        upstream = self.f["gateway_service"] + "." + self.f["gateway_namespace"] + ".svc.cluster.local"
+        relay = relay_program(upstream)
+        host_work = self.work / name
+        host_work.mkdir(mode=0o700)
+        stop, positive, started, progress = (host_work / leaf for leaf in ("stop", "positive", "started", "progress.json"))
+        forwards = contextlib.ExitStack()
         pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": name, "namespace": self.ns, "labels": labels},
                "spec": {"restartPolicy": "Never", "automountServiceAccountToken": False,
                         "terminationGracePeriodSeconds": 1,
+                        "securityContext": {"runAsNonRoot": True, "runAsUser": 1000,
+                                            "seccompProfile": {"type": "RuntimeDefault"}},
                         "containers": [{"name": "sampler", "image": self.f.get("generator_image", "python:3.12-alpine"),
-                                        "command": ["python3", "-c", "import time;time.sleep(7200)"],
+                                        "command": ["python3", "-c", relay],
+                                        "securityContext": {"allowPrivilegeEscalation": False,
+                                            "readOnlyRootFilesystem": True, "capabilities": {"drop": ["ALL"]}},
+                                        "readinessProbe": {"tcpSocket": {"port": 18080}, "periodSeconds": 2, "timeoutSeconds": 2},
                                         "resources": {"requests": {"cpu": "25m", "memory": "32Mi"},
                                                       "limits": {"cpu": "250m", "memory": "128Mi"}}}]}}
         process = None
@@ -1163,20 +1247,21 @@ class Proof:
                 created = self.kube("create", "-f", "-", "-o", "json", data=json.dumps(resource).encode())
                 expected_uids[kind] = json.loads(created.stdout)["metadata"]["uid"]
             self.kube("wait", "--for=condition=Ready", "pod/" + name, "--timeout=180s")
-            code = sampler_program()
-            # Code/command contains no secret. The API key enters only the exec stdin stream.
-            process = subprocess.Popen(["kubectl", "--kubeconfig", self.f["kubeconfig"], "--context", self.f["context"],
-                                        "-n", self.ns, "exec", "-i", name, "--", "python3", "-c", code],
-                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            config = {"service": self.f["gateway_service"] + "." + self.f["gateway_namespace"] + ".svc.cluster.local",
-                      "port": 80, "host": self.f["gateway_host"], "path": self.f["load_path"],
-                      "api_key": self.api_key, "body": self.f.get("backend_body", "fluxgate-resilience-ok")}
+            port = forwards.enter_context(self.forward("pod/" + name, 18080))
+            code = sampler_program(stop, started)
+            # Host sampler credentials enter stdin only; relay command has no authentication data.
+            process = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.PIPE,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+            config = {"service": "127.0.0.1", "port": port, "host": self.f["gateway_host"],
+                      "path": self.f["load_path"], "api_key": self.api_key,
+                      "body": self.f.get("backend_body", "fluxgate-resilience-ok"),
+                      "positive_path": str(positive), "progress_path": str(progress)}
             process.stdin.write((json.dumps(config) + "\n").encode())
             process.stdin.close()
             process.stdin = None
             for _ in range(60):
                 require(process.poll() is None, "credential sampler exited before mutation")
-                if self.kube("exec", name, "--", "test", "-f", "/tmp/sampler-positive", check=False).returncode == 0:
+                if positive.exists() and positive.read_bytes() == b"yes":
                     break
                 time.sleep(.1)
             else:
@@ -1185,11 +1270,16 @@ class Proof:
         finally:
             try:
                 if process:
-                    self.kube("exec", name, "--", "touch", "/tmp/sampler-stop")
+                    private_write(stop, "stop")
                     output, _ = process.communicate(timeout=15)
                     require(process.returncode == 0, "credential sampler failed")
                     require(self.api_key.encode() not in output, "credential sampler leaked secret; evidence suppressed")
                     report = json.loads(output)
+                    report["transport"] = "host Python + loopback API port-forward + owned relay to Gateway Service"
+                    report["sampler_runtime"] = {"python": sys.version.split()[0],
+                        "program_sha256": hashlib.sha256(code.encode()).hexdigest(),
+                        "relay_sha256": hashlib.sha256(relay.encode()).hexdigest(),
+                        "relay_resources": pod["spec"]["containers"][0]["resources"]}
                     # Preserve screened raw evidence even when reporter/drain validation fails.
                     private_write(self.work / (phase + "-traffic.json"), json.dumps(report, indent=2) + "\n")
                     report = sampler_summary(report)
@@ -1207,11 +1297,15 @@ class Proof:
                             process.kill()
                             process.wait(timeout=5)
                 finally:
-                    cleanup = self.cleanup_sampler_resources(name, expected_uids)
-                    if phase in self.results.get("rotation_traffic", {}):
-                        self.results["rotation_traffic"][phase]["cleanup"] = cleanup
-                        private_write(self.work / (phase + "-traffic.json"),
-                                      json.dumps(self.results["rotation_traffic"][phase], indent=2) + "\n")
+                    try:
+                        forwards.close()  # Remains open through host drain/reap, even on protocol failure.
+                    finally:
+                        cleanup = self.cleanup_sampler_resources(name, expected_uids)
+                        if phase in self.results.get("rotation_traffic", {}):
+                            self.results["rotation_traffic"][phase]["cleanup"] = cleanup
+                            private_write(self.work / (phase + "-traffic.json"),
+                                          json.dumps(self.results["rotation_traffic"][phase], indent=2) + "\n")
+
 
     def redis_cold_restart(self, password, retired_password):
         chosen = None
@@ -1673,6 +1767,7 @@ def sampler_cleanup_self_test():
             proof = Proof.__new__(Proof)
             proof.ns, proof.work, proof.api_key = "fluxgate-resilience", Path(directory), "offline-only-key"
             proof.results = {}
+            proof.forward = lambda *args, **kwargs: contextlib.nullcontext(12345)
             proof.f = {"gateway_service": "gateway", "gateway_namespace": "envoy-gateway-system",
                        "kubeconfig": "offline", "context": "kind-fluxgate-resilience",
                        "gateway_host": "local", "load_path": "/load", "backend_body": "marker"}
@@ -1713,7 +1808,19 @@ def sampler_cleanup_self_test():
             proof.kube = kube
             class Process:
                 def __init__(self, *args, **kwargs):
-                    self.stdin, self.returncode = io.BytesIO(), None
+                    class Input(io.BytesIO):
+                        def write(inner, data):
+                            config = json.loads(data)
+                            original_write(config["positive_path"], "yes")
+                            original_write(config["progress_path"], json.dumps({"progress_schema": 1,
+                                "partial": True, "complete": False, "interval_ms": 100,
+                                "scheduled": 1, "completed": 1, "pending": 0,
+                                "pending_sequences": [], "omitted_schedules": 0,
+                                "status_counts": {"200": 1}, "worker_failures": 0,
+                                "progress_writer_failures": 0, "captured_utc_ns": 1,
+                                "captured_monotonic_ns": 1}))
+                            return super().write(data)
+                    self.stdin, self.returncode = Input(), None
                 def poll(self):
                     return self.returncode
                 def communicate(self, **kwargs):
@@ -1725,8 +1832,13 @@ def sampler_cleanup_self_test():
                     return self.returncode
                 def kill(self):
                     self.returncode = -9
-            original_popen = subprocess.Popen
+            original_popen, original_write = subprocess.Popen, private_write
+            def offline_write(path, content):
+                if stop_fails and Path(path).name == "stop":
+                    raise ProofError("offline sampler stop failure")
+                return original_write(path, content)
             subprocess.Popen = Process
+            globals()["private_write"] = offline_write
             passed = False
             try:
                 try:
@@ -1737,6 +1849,7 @@ def sampler_cleanup_self_test():
                     pass
             finally:
                 subprocess.Popen = original_popen
+                globals()["private_write"] = original_write
             require(not passed, "sampler stop/cleanup failure permitted PASS")
             require(deletions == ["pod", "networkpolicy"], "cleanup did not attempt both resources independently")
             require("networkpolicy" not in resources, "policy cleanup was skipped after failure")
