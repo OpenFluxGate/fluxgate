@@ -46,6 +46,7 @@ class TokenBucketConsumeLuaIntegrationTest {
   private static final int RESET_TIME_MILLIS = 4;
   private static final int LIMIT = 5;
   private static final int BINDING_BAND = 6;
+  private static final int REDIS_TIME = 7;
 
   private static RedisRateLimiterConfig config;
   private static RedisConnectionProvider redis;
@@ -144,6 +145,48 @@ class TokenBucketConsumeLuaIntegrationTest {
   }
 
   @Test
+  @DisplayName("When several bands reject, the longest wait is reported (Retry-After)")
+  void shouldReportTheLongestWaitWhenSeveralBandsReject() {
+    // Band A: 2 per second (next token in 0.5 s). Band B: 2 per minute (next token in 30 s).
+    String fast = key("maxwait-fast");
+    String slow = key("maxwait-slow");
+    String[] bands = bands(band(2, SECOND_MICROS), band(2, MINUTE_MICROS));
+    consume(1, bands, fast, slow);
+    consume(1, bands, fast, slow);
+    long fastTokens = tokensOf(fast);
+    long slowTokens = tokensOf(slow);
+
+    List<Long> rejected = consume(1, bands, fast, slow);
+
+    assertThat(rejected.get(ALLOWED)).isZero();
+    // waiting for band A alone would be refused again by band B
+    assertThat(rejected.get(REJECTING_BAND)).isEqualTo(2L);
+    assertThat(rejected.get(BINDING_BAND)).isEqualTo(2L);
+    assertThat(rejected.get(LIMIT)).isEqualTo(2L);
+    assertThat(rejected.get(MICROS_TO_WAIT)).isGreaterThan(25 * SECOND_MICROS);
+    // and the reject path still writes nothing
+    assertThat(tokensOf(fast)).isEqualTo(fastTokens);
+    assertThat(tokensOf(slow)).isEqualTo(slowTokens);
+  }
+
+  @Test
+  @DisplayName("Check-only mode answers like a consumption but writes nothing")
+  void checkOnlyModeWritesNothing() {
+    String fresh = key("check-fresh");
+    String[] oneBand = band(1, MINUTE_MICROS);
+
+    List<Long> wouldAllow = check(1, oneBand, fresh);
+    assertThat(wouldAllow.get(ALLOWED)).isEqualTo(1L);
+    assertThat(redis.exists(fresh)).as("a check must not create the bucket").isFalse();
+
+    consume(1, oneBand, fresh);
+    List<Long> wouldReject = check(1, oneBand, fresh);
+    assertThat(wouldReject.get(ALLOWED)).isZero();
+    assertThat(wouldReject.get(MICROS_TO_WAIT)).isPositive();
+    assertThat(tokensOf(fresh)).isZero();
+  }
+
+  @Test
   @DisplayName("The binding band on allow is the one with the fewest tokens left")
   void shouldReportTheMostRestrictiveBandOnAllow() {
     String fast = key("binding-fast");
@@ -216,16 +259,15 @@ class TokenBucketConsumeLuaIntegrationTest {
     long capacity = 10;
     long windowMicros = MINUTE_MICROS;
 
-    long before = System.currentTimeMillis();
     List<Long> result = consume(4, band(capacity, windowMicros), key);
-    long after = System.currentTimeMillis();
 
-    // Six tokens left of ten, so four tokens (4/10 of the window = 24s) are still missing.
-    long deficitMillis = 4L * windowMicros / capacity / 1000L;
+    // Six tokens left of ten, so four tokens (4/10 of the window = 24s) are still missing. The
+    // expectation is derived from the Redis TIME the script itself used, not the JVM clock.
+    long deficitMicros = 4L * windowMicros / capacity;
     assertThat(result.get(MIN_REMAINING)).isEqualTo(6L);
     assertThat(result.get(RESET_TIME_MILLIS))
         .as("reset time must cover the permits this request took")
-        .isBetween(before + deficitMillis - 1_000L, after + deficitMillis + 1_000L);
+        .isEqualTo((result.get(REDIS_TIME) + deficitMicros) / 1000L);
   }
 
   @Test
@@ -237,7 +279,8 @@ class TokenBucketConsumeLuaIntegrationTest {
     List<Long> result = consume(1, band(1, 1_000L), key);
 
     assertThat(result.get(ALLOWED)).isEqualTo(1L);
-    assertThat(result.get(RESET_TIME_MILLIS)).isLessThanOrEqualTo(System.currentTimeMillis() + 50);
+    // one missing token of a 1 ms window: full again 1 ms after the decision (Redis TIME)
+    assertThat(result.get(RESET_TIME_MILLIS)).isEqualTo((result.get(REDIS_TIME) + 1_000L) / 1000L);
   }
 
   @Test
@@ -246,13 +289,11 @@ class TokenBucketConsumeLuaIntegrationTest {
     String key = key("reset-reject");
 
     consume(1, band(1, MINUTE_MICROS), key);
-    long before = System.currentTimeMillis();
     List<Long> rejected = consume(1, band(1, MINUTE_MICROS), key);
 
-    long waitMillis = rejected.get(MICROS_TO_WAIT) / 1000L;
     assertThat(rejected.get(ALLOWED)).isZero();
     assertThat(rejected.get(RESET_TIME_MILLIS))
-        .isBetween(before + waitMillis - 1_000L, System.currentTimeMillis() + waitMillis + 1_000L);
+        .isEqualTo((rejected.get(REDIS_TIME) + rejected.get(MICROS_TO_WAIT)) / 1000L);
   }
 
   // ===== TTL =====
@@ -374,13 +415,13 @@ class TokenBucketConsumeLuaIntegrationTest {
   void shouldStoreTimestampsThatSurviveARoundTrip() {
     String key = key("roundtrip");
 
-    consume(1, band(10, MINUTE_MICROS), key);
+    List<Long> result = consume(1, band(10, MINUTE_MICROS), key);
     long stored = Long.parseLong(redis.hgetall(key).get("last_refill_micros"));
 
     // Microseconds since the epoch are about 1.76e15, inside Lua's exact double range of 2^53
     assertThat(stored).isLessThan(1L << 53);
-    assertThat(stored / 1000L)
-        .isCloseTo(System.currentTimeMillis(), org.assertj.core.data.Offset.offset(60_000L));
+    // a new bucket starts full, so its refill timestamp is exactly the decision's Redis TIME
+    assertThat(stored).isEqualTo(result.get(REDIS_TIME));
   }
 
   // ===== NOSCRIPT recovery =====
@@ -426,6 +467,16 @@ class TokenBucketConsumeLuaIntegrationTest {
 
   private static List<Long> consume(long permits, String[] bandArgs, String... keys) {
     return consume(permits, DEFAULT_MAX_TTL_SECONDS, bandArgs, keys);
+  }
+
+  /** Runs the script in check-only mode: the trailing ARGV flag "1". */
+  private static List<Long> check(long permits, String[] bandArgs, String... keys) {
+    String[] args = new String[3 + bandArgs.length];
+    args[0] = String.valueOf(permits);
+    args[1] = String.valueOf(DEFAULT_MAX_TTL_SECONDS);
+    System.arraycopy(bandArgs, 0, args, 2, bandArgs.length);
+    args[args.length - 1] = "1";
+    return eval(keys, args);
   }
 
   private static List<Long> consume(

@@ -3,6 +3,7 @@ package org.fluxgate.redis.connection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Abstraction layer for Redis operations that supports both Standalone and Cluster modes.
@@ -175,6 +176,27 @@ public interface RedisConnectionProvider extends AutoCloseable {
    */
   default java.util.List<String> scanKeys(String pattern, long count) {
     return keys(pattern);
+  }
+
+  /**
+   * Incrementally scans keys matching the given pattern and hands each non-empty SCAN page to
+   * {@code pageConsumer} as soon as it arrives.
+   *
+   * <p>Unlike {@link #scanKeys(String, long)}, the matching keys are never collected into one list,
+   * so a caller that deletes them page by page keeps its memory bounded by the page size however
+   * large the keyspace is. The default implementation delegates to {@link #scanKeys(String, long)}
+   * and delivers its result as a single page, so providers written against earlier versions keep
+   * working.
+   *
+   * @param pattern the pattern to match (e.g., "fluxgate:*")
+   * @param count scan batch size hint
+   * @param pageConsumer receives every non-empty page of matching keys
+   */
+  default void scanKeys(String pattern, long count, Consumer<List<String>> pageConsumer) {
+    List<String> keys = scanKeys(pattern, count);
+    if (keys != null && !keys.isEmpty()) {
+      pageConsumer.accept(keys);
+    }
   }
 
   /**

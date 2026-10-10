@@ -87,6 +87,26 @@ public final class RedisUriUtils {
     return masked.toString();
   }
 
+  /**
+   * Parses one node URI with Lettuce, without letting a parse failure leak the credentials.
+   *
+   * <p>Lettuce echoes the raw URI in some of its parse errors ({@code Illegal character in
+   * authority at index 18: redis://:secret@ho st}), so such a failure is rethrown with the masked
+   * URI and without the original exception as its cause.
+   *
+   * @param uri a single node URI
+   * @return the parsed URI
+   * @throws IllegalArgumentException if the URI cannot be parsed
+   */
+  public static RedisURI parse(String uri) {
+    try {
+      return RedisURI.create(uri);
+    } catch (RuntimeException e) {
+      throw new IllegalArgumentException(
+          "Invalid Redis URI " + mask(uri) + " (" + e.getClass().getSimpleName() + ")");
+    }
+  }
+
   private static String maskNode(String node) {
     try {
       RedisURI parsed = RedisURI.create(node);

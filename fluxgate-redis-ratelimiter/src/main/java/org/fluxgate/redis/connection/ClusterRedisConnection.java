@@ -6,7 +6,9 @@ import io.lettuce.core.ScanArgs;
 import io.lettuce.core.ScanCursor;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.SocketOptions;
+import io.lettuce.core.TimeoutOptions;
 import io.lettuce.core.cluster.ClusterClientOptions;
+import io.lettuce.core.cluster.ClusterTopologyRefreshOptions;
 import io.lettuce.core.cluster.RedisClusterClient;
 import io.lettuce.core.cluster.api.StatefulRedisClusterConnection;
 import io.lettuce.core.cluster.api.sync.RedisAdvancedClusterCommands;
@@ -17,7 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,11 +34,23 @@ import org.slf4j.LoggerFactory;
  *   <li>MOVED/ASK redirect handling
  *   <li>Script loading across all master nodes
  *   <li>Connection pooling to cluster nodes
+ *   <li>Topology refresh: periodically (every {@link #DEFAULT_TOPOLOGY_REFRESH_PERIOD} unless
+ *       configured otherwise) and on every adaptive trigger (MOVED/ASK redirects, persistent
+ *       reconnects, unknown nodes, uncovered slots), so a failover does not leave commands routed
+ *       to a dead master
  * </ul>
+ *
+ * <p>The configured timeout is the command timeout as well as the connect timeout. Lettuce's
+ * cluster client takes its command timeout from the node URIs and ignores {@code
+ * setDefaultTimeout}, so the timeout is set on every node URI and enforced through {@link
+ * TimeoutOptions}; without that, a stalled node blocks a caller for Lettuce's 60 second default.
  */
 public class ClusterRedisConnection implements RedisConnectionProvider {
 
   private static final Logger log = LoggerFactory.getLogger(ClusterRedisConnection.class);
+
+  /** How often the cluster topology is refreshed when no other period is given. */
+  public static final Duration DEFAULT_TOPOLOGY_REFRESH_PERIOD = Duration.ofSeconds(30);
 
   private final RedisClusterClient clusterClient;
   private final StatefulRedisClusterConnection<String, String> connection;
@@ -55,11 +69,24 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
    * Creates a new cluster Redis connection with custom timeout.
    *
    * @param nodeUris list of cluster node URIs
-   * @param timeout the connection timeout
+   * @param timeout the connect and command timeout
    */
   public ClusterRedisConnection(List<String> nodeUris, Duration timeout) {
+    this(nodeUris, timeout, DEFAULT_TOPOLOGY_REFRESH_PERIOD);
+  }
+
+  /**
+   * Creates a new cluster Redis connection with custom timeout and topology refresh period.
+   *
+   * @param nodeUris list of cluster node URIs
+   * @param timeout the connect and command timeout
+   * @param topologyRefreshPeriod how often the cluster topology is refreshed in the background
+   */
+  public ClusterRedisConnection(
+      List<String> nodeUris, Duration timeout, Duration topologyRefreshPeriod) {
     Objects.requireNonNull(nodeUris, "nodeUris must not be null");
     Objects.requireNonNull(timeout, "timeout must not be null");
+    Objects.requireNonNull(topologyRefreshPeriod, "topologyRefreshPeriod must not be null");
 
     if (nodeUris.isEmpty()) {
       throw new IllegalArgumentException("At least one cluster node URI is required");
@@ -67,13 +94,10 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
 
     log.info("Creating Redis Cluster connection to {} nodes", nodeUris.size());
 
-    List<RedisURI> redisUris = nodeUris.stream().map(RedisURI::create).collect(Collectors.toList());
+    List<RedisURI> redisUris = toRedisUris(nodeUris, timeout);
 
     this.clusterClient = RedisClusterClient.create(redisUris);
-    this.clusterClient.setOptions(
-        ClusterClientOptions.builder()
-            .socketOptions(SocketOptions.builder().connectTimeout(timeout).build())
-            .build());
+    this.clusterClient.setOptions(clientOptions(timeout, topologyRefreshPeriod));
     this.clusterClient.setDefaultTimeout(timeout);
 
     try {
@@ -88,8 +112,44 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
     } catch (Exception e) {
       clusterClient.close();
       throw new org.fluxgate.core.exception.RedisConnectionException(
-          "Failed to connect to Redis Cluster", RedisUriUtils.mask(String.join(",", nodeUris)), e);
+          "Failed to connect to Redis Cluster",
+          RedisUriUtils.mask(String.join(",", nodeUris)),
+          e,
+          org.fluxgate.core.exception.RedisConnectionException.Phase.CONNECT);
     }
+  }
+
+  /**
+   * Parses the node URIs and gives each of them the configured timeout, which the Lettuce cluster
+   * client uses as its command timeout.
+   *
+   * @throws IllegalArgumentException if a URI cannot be parsed; the message carries the masked URI
+   *     only, never the credentials
+   */
+  static List<RedisURI> toRedisUris(List<String> nodeUris, Duration timeout) {
+    List<RedisURI> redisUris = new ArrayList<>(nodeUris.size());
+    for (String nodeUri : nodeUris) {
+      RedisURI redisUri = RedisUriUtils.parse(nodeUri);
+      redisUri.setTimeout(timeout);
+      redisUris.add(redisUri);
+    }
+    return redisUris;
+  }
+
+  /**
+   * Client options of a cluster connection: the connect and command timeout, plus periodic and
+   * adaptive topology refresh.
+   */
+  static ClusterClientOptions clientOptions(Duration timeout, Duration topologyRefreshPeriod) {
+    return ClusterClientOptions.builder()
+        .socketOptions(SocketOptions.builder().connectTimeout(timeout).build())
+        .timeoutOptions(TimeoutOptions.enabled(timeout))
+        .topologyRefreshOptions(
+            ClusterTopologyRefreshOptions.builder()
+                .enablePeriodicRefresh(topologyRefreshPeriod)
+                .enableAllAdaptiveRefreshTriggers()
+                .build())
+        .build();
   }
 
   /**
@@ -229,20 +289,28 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
 
   @Override
   public List<String> scanKeys(String pattern, long count) {
+    List<String> keys = new ArrayList<>();
+    scanKeys(pattern, count, keys::addAll);
+    return keys;
+  }
+
+  @Override
+  public void scanKeys(String pattern, long count, Consumer<List<String>> pageConsumer) {
     Objects.requireNonNull(pattern, "pattern must not be null");
+    Objects.requireNonNull(pageConsumer, "pageConsumer must not be null");
     if (count <= 0) {
       throw new IllegalArgumentException("count must be > 0");
     }
 
-    List<String> keys = new ArrayList<>();
     ScanArgs scanArgs = ScanArgs.Builder.matches(pattern).limit(count);
     ScanCursor cursor = ScanCursor.INITIAL;
     do {
       KeyScanCursor<String> result = commands.scan(cursor, scanArgs);
-      keys.addAll(result.getKeys());
+      if (!result.getKeys().isEmpty()) {
+        pageConsumer.accept(result.getKeys());
+      }
       cursor = result;
     } while (!cursor.isFinished());
-    return keys;
   }
 
   @Override

@@ -86,13 +86,15 @@ class RedisRateLimiterIntegrationTest {
     }
 
     // then: 4th request should be rejected and carry the real remaining tokens
+    long redisMillisBefore = redisNowMillis();
     RateLimitResult rejectedResult = rateLimiter.tryConsume(context, ruleSet, 1);
     assertThat(rejectedResult.isAllowed()).isFalse();
     assertThat(rejectedResult.getNanosToWaitForRefill()).isGreaterThan(0);
     assertThat(rejectedResult.getRemainingTokens()).isZero();
     assertThat(rejectedResult.getLimit()).isEqualTo(3);
     assertThat(rejectedResult.getBandLabel()).isEqualTo("test-band");
-    assertThat(rejectedResult.getResetTimeMillis()).isGreaterThan(System.currentTimeMillis());
+    // reset times come from Redis TIME, so compare against Redis, not against this JVM's clock
+    assertThat(rejectedResult.getResetTimeMillis()).isGreaterThan(redisMillisBefore);
   }
 
   @Test
@@ -249,5 +251,15 @@ class RedisRateLimiterIntegrationTest {
 
   private RequestContext createContext(String ip) {
     return RequestContext.builder().clientIp(ip).endpoint("/api/test").method("GET").build();
+  }
+
+  /** Redis TIME in epoch milliseconds: the clock the Lua script stamps its decisions with. */
+  private static long redisNowMillis() {
+    List<Long> time =
+        connectionProvider.eval(
+            "local t = redis.call('TIME') return {tonumber(t[1]), tonumber(t[2])}",
+            new String[0],
+            new String[0]);
+    return time.get(0) * 1000L + time.get(1) / 1000L;
   }
 }

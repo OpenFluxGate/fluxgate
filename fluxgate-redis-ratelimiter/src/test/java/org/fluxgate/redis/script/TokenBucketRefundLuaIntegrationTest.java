@@ -197,12 +197,55 @@ class TokenBucketRefundLuaIntegrationTest {
   }
 
   @Test
+  @DisplayName("An invalid later band refunds nothing, not even the valid bands before it")
+  void invalidBandRefundsNothing() {
+    String keyTb = key("partial-tb");
+    String keyBad = key("partial-bad");
+    String[] tbBand = band(5, HOUR_MICROS, ALG_TOKEN_BUCKET, 0, 0);
+    List<Long> consumed = consume(1, tbBand, keyTb);
+    assertThat(tokens(keyTb)).isEqualTo(4L);
+
+    String[] withBadBand = bands(tbBand, band(5, HOUR_MICROS, 9, 0, 0));
+    assertThatThrownBy(() -> refund(1, consumed.get(REDIS_TIME), withBadBand, keyTb, keyBad))
+        .isInstanceOf(RedisCommandExecutionException.class)
+        .hasMessageContaining("unknown algorithm code");
+    String[] withBadSlidingBand = bands(tbBand, band(5, HOUR_MICROS, ALG_SLIDING_WINDOW, 1, 0));
+    assertThatThrownBy(() -> refund(1, consumed.get(REDIS_TIME), withBadSlidingBand, keyTb, keyBad))
+        .isInstanceOf(RedisCommandExecutionException.class)
+        .hasMessageContaining("buckets must be >= 2");
+
+    assertThat(tokens(keyTb)).as("the valid first band was not refunded").isEqualTo(4L);
+    assertThat(redis.exists(keyBad)).isFalse();
+  }
+
+  @Test
   @DisplayName("An unknown consume time is rejected")
   void unknownConsumeTimeIsAnError() {
     String key = key("err");
     assertThatThrownBy(() -> refund(1, 0L, band(5, HOUR_MICROS, ALG_TOKEN_BUCKET, 0, 0), key))
         .isInstanceOf(RedisCommandExecutionException.class)
         .hasMessageContaining("consumed_at_micros");
+  }
+
+  @Test
+  @DisplayName("A window below 1 ms is refused with the consume script's message")
+  void tinyWindowIsAnError() {
+    String key = key("err-tiny-window");
+    assertThatThrownBy(
+            () -> refund(1, redisNowMicros(), band(5, 999L, ALG_TOKEN_BUCKET, 0, 0), key))
+        .isInstanceOf(RedisCommandExecutionException.class)
+        .hasMessageContaining("window must be at least 1 ms");
+  }
+
+  @Test
+  @DisplayName("A sliding sub-bucket below 1 ms is refused with the consume script's message")
+  void tinySubBucketIsAnError() {
+    String key = key("err-tiny-sub");
+    // 10 ms over 20 sub-buckets: 500 us each
+    assertThatThrownBy(
+            () -> refund(1, redisNowMicros(), band(5, 10_000L, ALG_SLIDING_WINDOW, 20, 0), key))
+        .isInstanceOf(RedisCommandExecutionException.class)
+        .hasMessageContaining("sliding window sub-bucket must be at least 1 ms");
   }
 
   // ===== Helpers =====

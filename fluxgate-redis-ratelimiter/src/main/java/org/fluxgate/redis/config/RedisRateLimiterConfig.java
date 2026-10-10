@@ -3,6 +3,7 @@ package org.fluxgate.redis.config;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 import org.fluxgate.redis.connection.RedisConnectionFactory;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.fluxgate.redis.connection.RedisConnectionProvider.RedisMode;
@@ -76,21 +77,19 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
    *
    * @param redisUri Redis connection URI (standalone or comma-separated cluster nodes)
    * @param timeout connection timeout
-   * @param maxBucketTtl upper bound on every bucket TTL, or null for {@link
-   *     RedisTokenBucketStore#DEFAULT_MAX_BUCKET_TTL}
+   * @param maxBucketTtl upper bound on every TOKEN_BUCKET / SLIDING_WINDOW bucket TTL (FIXED_WINDOW
+   *     counters are exempt), or null for {@link RedisTokenBucketStore#DEFAULT_MAX_BUCKET_TTL}
    * @throws org.fluxgate.core.exception.ScriptExecutionException if the Lua scripts cannot be read
    *     or uploaded
    */
   public RedisRateLimiterConfig(String redisUri, Duration timeout, Duration maxBucketTtl) {
-    Objects.requireNonNull(redisUri, "redisUri must not be null");
-    Objects.requireNonNull(timeout, "timeout must not be null");
-
-    this.connectionProvider = RedisConnectionFactory.create(redisUri, timeout);
-    this.ownsConnectionProvider = true;
-    this.tokenBucketStore = new RedisTokenBucketStore(connectionProvider, maxBucketTtl);
-    this.ruleSetStore = new RedisRuleSetStore(connectionProvider);
-
-    logInitialized(RedisUriUtils.mask(redisUri));
+    this(
+        () ->
+            RedisConnectionFactory.create(
+                Objects.requireNonNull(redisUri, "redisUri must not be null"),
+                Objects.requireNonNull(timeout, "timeout must not be null")),
+        maxBucketTtl,
+        redisUri == null ? null : RedisUriUtils.mask(redisUri));
   }
 
   /**
@@ -112,13 +111,49 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
    * @param mode Redis mode (STANDALONE or CLUSTER)
    * @param uris list of Redis URIs
    * @param timeout connection timeout
-   * @param maxBucketTtl upper bound on every bucket TTL, or null for {@link
-   *     RedisTokenBucketStore#DEFAULT_MAX_BUCKET_TTL}
+   * @param maxBucketTtl upper bound on every TOKEN_BUCKET / SLIDING_WINDOW bucket TTL (FIXED_WINDOW
+   *     counters are exempt), or null for {@link RedisTokenBucketStore#DEFAULT_MAX_BUCKET_TTL}
    * @throws org.fluxgate.core.exception.ScriptExecutionException if the Lua scripts cannot be read
    *     or uploaded
    */
   public RedisRateLimiterConfig(
       RedisMode mode, List<String> uris, Duration timeout, Duration maxBucketTtl) {
+    this(
+        () -> RedisConnectionFactory.create(mode, uris, timeout),
+        maxBucketTtl,
+        validEndpoint(mode, uris, timeout));
+  }
+
+  /**
+   * Creates a config that owns the connection the given connector opens.
+   *
+   * <p>{@code maxBucketTtl} is validated before the connector runs, and the connection is closed
+   * again when the stores cannot be built, so a failed construction never leaves a Lettuce client
+   * (and its event loop threads) behind.
+   */
+  RedisRateLimiterConfig(
+      Supplier<RedisConnectionProvider> connector, Duration maxBucketTtl, String endpoint) {
+    validateMaxBucketTtl(maxBucketTtl);
+
+    RedisConnectionProvider provider = connector.get();
+    try {
+      this.tokenBucketStore = new RedisTokenBucketStore(provider, maxBucketTtl);
+      this.ruleSetStore = new RedisRuleSetStore(provider);
+    } catch (RuntimeException | Error e) {
+      try {
+        provider.close();
+      } catch (RuntimeException closeFailure) {
+        e.addSuppressed(closeFailure);
+      }
+      throw e;
+    }
+    this.connectionProvider = provider;
+    this.ownsConnectionProvider = true;
+
+    logInitialized(endpoint);
+  }
+
+  private static String validEndpoint(RedisMode mode, List<String> uris, Duration timeout) {
     Objects.requireNonNull(mode, "mode must not be null");
     Objects.requireNonNull(uris, "uris must not be null");
     Objects.requireNonNull(timeout, "timeout must not be null");
@@ -126,13 +161,14 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
     if (uris.isEmpty()) {
       throw new IllegalArgumentException("At least one Redis URI is required");
     }
+    return RedisUriUtils.mask(String.join(",", uris));
+  }
 
-    this.connectionProvider = RedisConnectionFactory.create(mode, uris, timeout);
-    this.ownsConnectionProvider = true;
-    this.tokenBucketStore = new RedisTokenBucketStore(connectionProvider, maxBucketTtl);
-    this.ruleSetStore = new RedisRuleSetStore(connectionProvider);
-
-    logInitialized(RedisUriUtils.mask(String.join(",", uris)));
+  /** Same rule as {@link RedisTokenBucketStore}, checked before a connection is opened. */
+  private static void validateMaxBucketTtl(Duration maxBucketTtl) {
+    if (maxBucketTtl != null && maxBucketTtl.getSeconds() < 1) {
+      throw new IllegalArgumentException("maxBucketTtl must be at least 1 second");
+    }
   }
 
   /**
@@ -155,8 +191,8 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
    * <p>The provider is <em>not</em> closed by {@link #close()}.
    *
    * @param connectionProvider the Redis connection provider
-   * @param maxBucketTtl upper bound on every bucket TTL, or null for {@link
-   *     RedisTokenBucketStore#DEFAULT_MAX_BUCKET_TTL}
+   * @param maxBucketTtl upper bound on every TOKEN_BUCKET / SLIDING_WINDOW bucket TTL (FIXED_WINDOW
+   *     counters are exempt), or null for {@link RedisTokenBucketStore#DEFAULT_MAX_BUCKET_TTL}
    * @throws org.fluxgate.core.exception.ScriptExecutionException if the Lua scripts cannot be read
    *     or uploaded
    */

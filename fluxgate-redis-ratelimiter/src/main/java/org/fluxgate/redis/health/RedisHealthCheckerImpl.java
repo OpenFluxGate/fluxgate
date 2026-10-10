@@ -22,6 +22,11 @@ import org.slf4j.LoggerFactory;
  *   <li>Cluster State (cluster mode only): Reports cluster_state, node count, slots status
  * </ul>
  *
+ * <p>In cluster mode a successful PING is not enough to report UP: the cluster is DOWN when it
+ * reports {@code cluster_state} other than {@code ok}, when {@code cluster_slots_fail} is above
+ * zero (part of the keyspace cannot be served), or when its topology or state cannot be read at all
+ * - an unknown cluster state is never reported as healthy.
+ *
  * <p>Example health output for cluster mode:
  *
  * <pre>{@code
@@ -76,7 +81,11 @@ public class RedisHealthCheckerImpl {
 
       // Add cluster-specific details if in cluster mode
       if (connectionProvider.getMode() == RedisMode.CLUSTER) {
-        addClusterDetails(details);
+        String clusterProblem = addClusterDetails(details);
+        if (clusterProblem != null) {
+          log.warn("Redis cluster is unhealthy: {}", clusterProblem);
+          return HealthCheckResult.down("Redis cluster is unhealthy: " + clusterProblem, details);
+        }
       }
 
       // A successful PONG above is the liveness proof; calling isConnected() here would issue a
@@ -100,8 +109,9 @@ public class RedisHealthCheckerImpl {
    * Adds cluster-specific details to the health check.
    *
    * @param details the details map to populate
+   * @return why the cluster must be reported DOWN, or null when it is healthy
    */
-  private void addClusterDetails(Map<String, Object> details) {
+  private String addClusterDetails(Map<String, Object> details) {
     try {
       // Get cluster nodes count
       List<String> nodes = connectionProvider.clusterNodes();
@@ -123,16 +133,40 @@ public class RedisHealthCheckerImpl {
       details.put("cluster_masters", masters);
       details.put("cluster_replicas", replicas);
 
+      // ClusterRedisConnection answers an empty list when CLUSTER NODES fails.
+      if (nodes.isEmpty()) {
+        return "no cluster nodes reported (CLUSTER NODES failed or returned nothing)";
+      }
+
       // Parse cluster info for more details
       if (connectionProvider instanceof ClusterRedisConnection) {
         ClusterRedisConnection clusterConnection = (ClusterRedisConnection) connectionProvider;
         parseClusterInfo(clusterConnection.getClusterInfo(), details);
+        return clusterStateProblem(details);
       }
+      return null;
 
     } catch (Exception e) {
       log.warn("Failed to get cluster details: {}", e.getMessage());
       details.put("cluster_error", e.getMessage());
+      return "cluster details unavailable: " + e.getMessage();
     }
+  }
+
+  /** Reads the parsed CLUSTER INFO fields and tells why they make the cluster DOWN, if they do. */
+  private static String clusterStateProblem(Map<String, Object> details) {
+    Object state = details.get("cluster_state");
+    if (state == null) {
+      return "cluster_state unknown (CLUSTER INFO failed or returned nothing)";
+    }
+    if (!"ok".equals(state)) {
+      return "cluster_state=" + state;
+    }
+    Object slotsFail = details.get("cluster_slots_fail");
+    if (slotsFail instanceof Integer && (Integer) slotsFail > 0) {
+      return "cluster_slots_fail=" + slotsFail;
+    }
+    return null;
   }
 
   /**

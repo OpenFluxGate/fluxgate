@@ -23,6 +23,30 @@ DESIGN NOTES:
      stored end >  requested end  -> the caller lags behind (clock skew); the newer stored
                                      window and its count win, so a lagging node cannot
                                      reset a period that has already started
+7. A SLIDING_WINDOW field is named "<sub-bucket index>@<sub-bucket duration in micros>". An index
+   only means something together with the duration it was computed with: after the window or
+   the sub-bucket count changes, the old indices are scaled differently and would look like
+   sub-buckets far in the future (or past) of the new geometry. Only fields of the current
+   duration whose index lies in [current - buckets + 1, current] are counted; every other field
+   (another geometry, a sub-bucket after the current one after a clock step back, the
+   bare-index format of earlier 0.4 builds) is ignored, and removed on the next admitted
+   request. A changed geometry therefore starts a fresh window instead of rejecting forever.
+8. Windows below 1 ms, and sliding sub-buckets below 1 ms, are refused: they would divide by
+   zero or produce indices beyond the exact integer range, and no Redis round trip resolves
+   them anyway. Every index is written with string.format('%.0f'), never tostring, which would
+   switch to exponent notation (and collide) for large values.
+9. Check-only mode runs pass 1 and returns: nothing is consumed. It lets the Java caller ask a
+   rule it did not charge how long it would make a request wait (see note 10), without the
+   charge-and-refund that a real consumption would need. Like a rejection, it only refreshes
+   TTLs when it rejects.
+10. Pass 1 checks every band even after one rejected (still without writing), and reports the
+    rejecting band whose wait is longest. Reporting the first one would hand out a Retry-After
+    after which another band still rejects.
+11. A rejecting SLIDING_WINDOW band waits until enough counted requests have left the window for
+    the request to fit: its sub-buckets are walked oldest to newest, adding up their counts, and
+    the first sub-bucket k after whose departure total - freed + permits <= capacity sets the
+    wait to (k + buckets) * sub_duration - now. A burst inside one sub-bucket therefore waits
+    almost a whole window, not just until the next sub-bucket starts.
 
 PRECISION: Redis runs Lua 5.1, which has no integer type — every number is an
 IEEE-754 double with an exact integer range of 2^53 (about 9.0e15). Microseconds
@@ -45,7 +69,8 @@ ARGV layout:
     ARGV[base + 2]  = window_micros  (window duration in microseconds)
     ARGV[base + 3]  = algorithm_code
                         1 = TOKEN_BUCKET   (continuous refill; hash {tokens, last_refill_micros})
-                        2 = SLIDING_WINDOW (N sub-buckets; hash {sub_bucket_index: count})
+                        2 = SLIDING_WINDOW (N sub-buckets; hash {"<index>@<sub_dur>": count},
+                                            see note 7)
                         3 = FIXED_WINDOW   (tumbling counter; hash {count, window_end_micros}
                                             with PEXPIREAT)
     ARGV[base + 4]  = buckets_or_zero
@@ -57,17 +82,26 @@ ARGV layout:
                         FIXED_WINDOW without calendar alignment: 0 — Lua derives from now
                         TOKEN_BUCKET / SLIDING_WINDOW: 0
 
-  Total ARGV length: 2 + 5 * band_count
+  Optional, after the last band:
+    ARGV[3 + 5 * band_count] = "1" for check-only mode: the decision is taken exactly as for a
+                               consumption, but no token, counter or sub-bucket is written on
+                               allow either (see note 9). Any other value, or no value, consumes.
+
+  Total ARGV length: 2 + 5 * band_count, or 3 + 5 * band_count with the check-only flag
 
 Returns array of 8 integers:
   [1] allowed                 1 if all bands allowed, 0 otherwise
-  [2] rejecting_band_index    1-based index of the first band that rejected, 0 when allowed
-  [3] min_remaining           binding band's tokens/capacity left after consumption (allow)
-                              or rejecting band's tokens/capacity left (reject)
-  [4] micros_to_wait          microseconds until the rejecting band can retry, 0 when allowed
+  [2] rejecting_band_index    1-based index of the rejecting band with the LONGEST wait (the
+                              first of them on a tie), 0 when allowed - see note 10
+  [3] min_remaining           binding band's tokens/capacity left after consumption (allow;
+                              before it in check-only mode) or the rejecting band's (reject)
+  [4] micros_to_wait          microseconds until the rejecting band can retry, 0 when allowed;
+                              the longest wait of all rejecting bands, so a retry after it is
+                              not refused again by another band that also rejected
   [5] reset_time_millis       epoch millis when the binding band resets:
                                 TOKEN_BUCKET:   when the bucket is FULL again (after consumption)
-                                SLIDING_WINDOW: end of the current sub-bucket cycle
+                                SLIDING_WINDOW: end of the current sub-bucket cycle, rounded up
+                                                to the millisecond
                                 FIXED_WINDOW:   end of the current window
   [6] limit                   capacity of the binding band
   [7] binding_band_index      1-based index of the binding band (= rejecting_band_index on reject)
@@ -81,6 +115,8 @@ Errors (redis.error_reply):
   'max bucket ttl must be >= 1 second'
   'capacity must be positive'
   'window must be positive'
+  'window must be at least 1 ms'
+  'sliding window sub-bucket must be at least 1 ms'
   'permits exceed capacity'              — band can never serve; Java pre-validates for TOKEN_BUCKET
   'buckets must be >= 2 for SLIDING_WINDOW'
   'unknown algorithm code: N'
@@ -100,10 +136,11 @@ local band_count = #KEYS
 if band_count < 1 then
     return redis.error_reply("at least one bucket key is required")
 end
-if #ARGV ~= 2 + 5 * band_count then
+if #ARGV ~= 2 + 5 * band_count and #ARGV ~= 3 + 5 * band_count then
     return redis.error_reply(
         "expected " .. (2 + 5 * band_count) .. " arguments for " .. band_count .. " band(s)")
 end
+local check_only = #ARGV == 3 + 5 * band_count and ARGV[#ARGV] == '1'
 
 local permits = tonumber(ARGV[1])
 if permits == nil or permits <= 0 then
@@ -135,11 +172,17 @@ for i = 1, band_count do
     if win_micros == nil or win_micros <= 0 then
         return redis.error_reply("window must be positive")
     end
+    if win_micros < 1000 then
+        return redis.error_reply("window must be at least 1 ms")
+    end
     if permits > capacity then
         return redis.error_reply("permits exceed capacity")
     end
     if alg == ALG_SLIDING_WINDOW and buckets < 2 then
         return redis.error_reply("buckets must be >= 2 for SLIDING_WINDOW")
+    end
+    if alg == ALG_SLIDING_WINDOW and math.floor(win_micros / buckets) < 1000 then
+        return redis.error_reply("sliding window sub-bucket must be at least 1 ms")
     end
 
     capacities[i]    = capacity
@@ -169,6 +212,15 @@ local function fixed_window_expire_millis(win_end_micros)
     return math.max(math.ceil(win_end_micros / 1000), math.floor(now_micros / 1000) + 1)
 end
 
+-- Parses a SLIDING_WINDOW field "<index>@<sub_dur>" (note 7); nil for any other format.
+local function sw_field(field)
+    local idx, dur = string.match(field, '^(%d+)@(%d+)$')
+    if idx == nil then
+        return nil, nil
+    end
+    return tonumber(idx), tonumber(dur)
+end
+
 -- Refresh TTLs for TOKEN_BUCKET and SLIDING_WINDOW keys on the reject path.
 -- EXPIRE is a no-op on keys that do not exist yet; FIXED_WINDOW keys are not touched
 -- because PEXPIREAT (an absolute timestamp) must not be overridden with a relative one.
@@ -191,12 +243,19 @@ local tb_refills = {}   -- next refill timestamp (micros)
 local sw_sub_dur = {}   -- sub-bucket duration (micros)
 local sw_cur_sub = {}   -- current sub-bucket index
 local sw_sums    = {}   -- sum of active request counts
-local sw_oldest  = {}   -- oldest sub-bucket index that has a positive count
 local sw_raw     = {}   -- raw HGETALL output, reused in pass 2 to avoid a second round-trip
 
 -- FIXED_WINDOW
 local fw_counts  = {}   -- current counter value
 local fw_ends    = {}   -- resolved window end (micros)
+
+-- The rejecting band with the longest wait so far (note 10): its result array, or nil.
+local rejection = nil
+local function reject(i, remaining, wait, reset_millis)
+    if rejection == nil or wait > rejection[4] then
+        rejection = {0, i, remaining, wait, reset_millis, capacities[i], i, now_micros}
+    end
+end
 
 -- ========================================================================
 -- Pass 1: read every band and check whether all of them can serve the request
@@ -240,13 +299,12 @@ for i = 1, band_count do
         tb_refills[i] = next_refill
 
         if refilled < permits then
-            refresh_ttls()
             local tokens_needed = permits - refilled
             local wait          = math.ceil(tokens_needed * win_micros / capacity)
             local deficit       = capacity - refilled
             local full_micros   = deficit > 0 and math.ceil(deficit * win_micros / capacity) or 0
             local reset_millis  = math.floor((now_micros + full_micros) / 1000)
-            return {0, i, refilled, wait, reset_millis, capacity, i, now_micros}
+            reject(i, refilled, wait, reset_millis)
         end
 
     -- ---- SLIDING_WINDOW ----
@@ -263,37 +321,44 @@ for i = 1, band_count do
         local raw = redis.call('HGETALL', KEYS[i])
         sw_raw[i] = raw
 
-        local total          = 0
-        local oldest_counted = cur_sub  -- tracks oldest sub with a positive count
+        local total   = 0
+        local counted = {}   -- {index, count} of every sub-bucket that counts
 
         for fi = 1, #raw, 2 do
-            local idx = tonumber(raw[fi])
+            local idx, dur = sw_field(raw[fi])
             local cnt = tonumber(raw[fi + 1]) or 0
-            if idx ~= nil and cnt > 0 and idx >= oldest_val then
+            -- note 7: only this geometry, only sub-buckets inside [oldest_val, cur_sub]
+            if idx ~= nil and dur == sub_dur and cnt > 0
+                    and idx >= oldest_val and idx <= cur_sub then
                 total = total + cnt
-                if idx < oldest_counted then
-                    oldest_counted = idx
-                end
+                counted[#counted + 1] = {idx, cnt}
             end
         end
 
-        sw_sums[i]   = total
-        sw_oldest[i] = oldest_counted
+        sw_sums[i] = total
 
         if total + permits > capacity then
-            refresh_ttls()
             local remaining = capacity - total
-            -- micros_to_wait = time until the oldest counted sub-bucket expires (freeing tokens).
-            local wait
-            if oldest_counted < cur_sub then
-                wait = math.max(0, (oldest_counted + buckets) * sub_dur - now_micros)
-            else
-                -- All counts are in the current sub-bucket; wait until the next sub-bucket starts.
-                wait = math.max(0, (cur_sub + 1) * sub_dur - now_micros)
+            -- micros_to_wait (note 11): sub-bucket k stops counting at (k + buckets) * sub_dur, and
+            -- the sub-buckets leave oldest first. Wait for the first one whose departure frees
+            -- enough: total - freed + permits <= capacity. permits <= capacity, so the newest
+            -- one (at the latest cur_sub, i.e. a full window) always frees enough.
+            table.sort(counted, function(a, b) return a[1] < b[1] end)
+            local free_at = cur_sub
+            local freed   = 0
+            for _, entry in ipairs(counted) do
+                freed = freed + entry[2]
+                if total - freed + permits <= capacity then
+                    free_at = entry[1]
+                    break
+                end
             end
-            -- reset_time_millis = end of the current window cycle.
-            local reset_millis = math.floor((cur_sub + buckets) * sub_dur / 1000)
-            return {0, i, remaining, wait, reset_millis, capacity, i, now_micros}
+            local wait = math.max(0, (free_at + buckets) * sub_dur - now_micros)
+            -- reset_time_millis = when everything counted now has left the window, rounded UP to
+            -- the millisecond (sub_dur need not be a whole millisecond): never before the retry
+            -- above is allowed.
+            local reset_millis = math.ceil((cur_sub + buckets) * sub_dur / 1000)
+            reject(i, remaining, wait, reset_millis)
         end
 
     -- ---- FIXED_WINDOW ----
@@ -319,7 +384,6 @@ for i = 1, band_count do
         fw_counts[i] = count
 
         if count + permits > capacity then
-            refresh_ttls()
             -- A counter must never be left without a TTL, or it would stay resident for good.
             if redis.call('PTTL', KEYS[i]) == -1 then
                 redis.call('PEXPIREAT', KEYS[i], string.format('%.0f', fixed_window_expire_millis(win_end)))
@@ -327,12 +391,36 @@ for i = 1, band_count do
             local remaining    = capacity - count
             local wait         = math.max(0, win_end - now_micros)
             local reset_millis = math.floor(win_end / 1000)
-            return {0, i, remaining, wait, reset_millis, capacity, i, now_micros}
+            reject(i, remaining, wait, reset_millis)
         end
 
     else
         return redis.error_reply("unknown algorithm code: " .. tostring(alg))
     end
+end
+
+if rejection ~= nil then
+    refresh_ttls()
+    return rejection
+end
+
+if check_only then
+    -- Note 9: every band would serve the request; report the most restrictive one, unconsumed.
+    local binding, binding_remaining = 1, nil
+    for i = 1, band_count do
+        local remaining
+        if algorithms[i] == ALG_TOKEN_BUCKET then
+            remaining = tb_tokens[i]
+        elseif algorithms[i] == ALG_SLIDING_WINDOW then
+            remaining = capacities[i] - sw_sums[i]
+        else
+            remaining = capacities[i] - fw_counts[i]
+        end
+        if binding_remaining == nil or remaining < binding_remaining then
+            binding, binding_remaining = i, remaining
+        end
+    end
+    return {1, 0, binding_remaining, 0, 0, capacities[binding], binding, now_micros}
 end
 
 -- ========================================================================
@@ -366,14 +454,16 @@ for i = 1, band_count do
     -- ---- SLIDING_WINDOW ----
     elseif alg == ALG_SLIDING_WINDOW then
         local cur_sub    = sw_cur_sub[i]
+        local sub_dur    = sw_sub_dur[i]
         local oldest_val = cur_sub - bucket_counts[i] + 1
         local raw        = sw_raw[i]
 
-        -- Delete expired sub-buckets in one HDEL call.
+        -- Delete, in one HDEL call, every field pass 1 did not count (note 7): expired
+        -- sub-buckets, sub-buckets after the current one, and fields of another geometry.
         local to_del = {}
         for fi = 1, #raw, 2 do
-            local idx = tonumber(raw[fi])
-            if idx ~= nil and idx < oldest_val then
+            local idx, dur = sw_field(raw[fi])
+            if idx == nil or dur ~= sub_dur or idx < oldest_val or idx > cur_sub then
                 to_del[#to_del + 1] = raw[fi]
             end
         end
@@ -381,7 +471,8 @@ for i = 1, band_count do
             redis.call('HDEL', KEYS[i], unpack_f(to_del))
         end
 
-        redis.call('HINCRBY', KEYS[i], tostring(cur_sub), permits)
+        redis.call('HINCRBY', KEYS[i],
+            string.format('%.0f', cur_sub) .. '@' .. string.format('%.0f', sub_dur), permits)
         redis.call('EXPIRE', KEYS[i], ttl_for_window(win_micros))
 
         local remaining = capacity - sw_sums[i] - permits
@@ -423,11 +514,12 @@ if binding_alg == ALG_TOKEN_BUCKET then
     reset_millis = math.floor((now_micros + full_micros) / 1000)
 
 elseif binding_alg == ALG_SLIDING_WINDOW then
-    -- End of the current sub-bucket cycle (when all requests in current sub expire).
+    -- End of the current sub-bucket cycle (when all requests in current sub expire), rounded UP
+    -- to the millisecond like the reject path.
     local cur_sub  = sw_cur_sub[binding]
     local buckets  = bucket_counts[binding]
     local sub_dur  = sw_sub_dur[binding]
-    reset_millis = math.floor((cur_sub + buckets) * sub_dur / 1000)
+    reset_millis = math.ceil((cur_sub + buckets) * sub_dur / 1000)
 
 elseif binding_alg == ALG_FIXED_WINDOW then
     reset_millis = math.floor(fw_ends[binding] / 1000)

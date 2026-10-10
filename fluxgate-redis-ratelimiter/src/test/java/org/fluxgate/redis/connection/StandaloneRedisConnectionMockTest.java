@@ -5,8 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import io.lettuce.core.KeyScanCursor;
+import io.lettuce.core.ScanArgs;
+import io.lettuce.core.ScanCursor;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.sync.RedisCommands;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -260,5 +264,39 @@ class StandaloneRedisConnectionMockTest {
 
     assertThat(connection.unlink("a", "b")).isEqualTo(2L);
     verify(commands).unlink("a", "b");
+  }
+
+  @Test
+  @DisplayName("scanKeys hands every SCAN page to the consumer as it arrives")
+  void scanKeysStreamsPageByPage() {
+    when(commands.scan(any(ScanCursor.class), any(ScanArgs.class)))
+        .thenReturn(page("1", false, "k1", "k2"))
+        .thenReturn(page("0", true, "k3"));
+
+    List<List<String>> pages = new ArrayList<>();
+    connection.scanKeys("fluxgate:bucket:*", 100L, pages::add);
+
+    assertThat(pages).containsExactly(List.of("k1", "k2"), List.of("k3"));
+  }
+
+  @Test
+  @DisplayName("scanKeys does not call the consumer for empty SCAN pages")
+  void scanKeysSkipsEmptyPages() {
+    when(commands.scan(any(ScanCursor.class), any(ScanArgs.class)))
+        .thenReturn(page("7", false))
+        .thenReturn(page("0", true, "k1"));
+
+    List<List<String>> pages = new ArrayList<>();
+    connection.scanKeys("fluxgate:bucket:*", 100L, pages::add);
+
+    assertThat(pages).containsExactly(List.of("k1"));
+  }
+
+  private static KeyScanCursor<String> page(String cursor, boolean finished, String... keys) {
+    KeyScanCursor<String> page = new KeyScanCursor<>();
+    page.getKeys().addAll(Arrays.asList(keys));
+    page.setCursor(cursor);
+    page.setFinished(finished);
+    return page;
   }
 }

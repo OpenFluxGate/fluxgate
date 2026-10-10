@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.fluxgate.core.exception.ScriptExecutionException;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.fluxgate.redis.connection.RedisConnectionProvider.RedisMode;
 import org.junit.jupiter.api.DisplayName;
@@ -90,5 +93,61 @@ class RedisRateLimiterConfigMockTest {
 
     // then: the caller's Lettuce client keeps running
     verify(connectionProvider, never()).close();
+  }
+
+  @Test
+  @DisplayName("An invalid max-bucket-ttl is rejected before any connection is opened")
+  void shouldValidateTheBucketTtlBeforeConnecting() {
+    // TEST-NET-1 drops packets: connecting first would surface as a connection failure instead
+    assertThatThrownBy(
+            () ->
+                new RedisRateLimiterConfig(
+                    "redis://192.0.2.1:6379", Duration.ofMillis(200), Duration.ofMillis(500)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("maxBucketTtl");
+  }
+
+  @Test
+  @DisplayName("The connector is not even called when max-bucket-ttl is invalid")
+  void shouldNotConnectWithAnInvalidBucketTtl() {
+    AtomicBoolean connected = new AtomicBoolean();
+
+    assertThatThrownBy(
+            () ->
+                new RedisRateLimiterConfig(
+                    () -> {
+                      connected.set(true);
+                      return connectionProvider;
+                    },
+                    Duration.ZERO,
+                    "test"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(connected).isFalse();
+  }
+
+  @Test
+  @DisplayName("A connection this config opened is closed when the stores cannot be built")
+  void shouldCloseItsOwnConnectionWhenStoreConstructionFails() {
+    when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
+    when(connectionProvider.scriptLoad(anyString()))
+        .thenThrow(new ScriptExecutionException("SCRIPT LOAD failed"));
+
+    assertThatThrownBy(() -> new RedisRateLimiterConfig(() -> connectionProvider, null, "test"))
+        .isInstanceOf(ScriptExecutionException.class);
+
+    verify(connectionProvider).close();
+  }
+
+  @Test
+  @DisplayName("A failing close does not hide the construction failure")
+  void shouldKeepTheConstructionFailureWhenCloseFails() {
+    when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
+    when(connectionProvider.scriptLoad(anyString()))
+        .thenThrow(new ScriptExecutionException("SCRIPT LOAD failed"));
+    doThrow(new IllegalStateException("close failed")).when(connectionProvider).close();
+
+    assertThatThrownBy(() -> new RedisRateLimiterConfig(() -> connectionProvider, null, "test"))
+        .isInstanceOf(ScriptExecutionException.class)
+        .satisfies(e -> assertThat(e.getSuppressed()).hasSize(1));
   }
 }

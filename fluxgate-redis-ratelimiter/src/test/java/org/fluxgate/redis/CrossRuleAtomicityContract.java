@@ -108,6 +108,33 @@ abstract class CrossRuleAtomicityContract {
     assertRejectionsCostNothing(limiter(strategy), ruleSetId, first, second);
   }
 
+  @ParameterizedTest(name = "{0}")
+  @org.junit.jupiter.params.provider.EnumSource(Strategy.class)
+  @DisplayName("When several rules reject, Retry-After is the longest wait of them")
+  void severalRejectingRulesReportTheLongestWait(Strategy strategy) {
+    String ruleSetId = "maxwait-" + strategy.name().toLowerCase() + "-" + RUN_ID;
+    // a-first: 1 per second (wait <= 1 s); b-second: 1 per hour (wait about an hour)
+    RateLimitRule first =
+        rule(
+            "a-first",
+            ruleSetId,
+            LimitScope.PER_IP,
+            List.of(RateLimitBand.builder(Duration.ofSeconds(1), 1).label("tb").build()));
+    RateLimitRule second = rule("b-second", ruleSetId, LimitScope.GLOBAL, bands("TOKEN_BUCKET", 1));
+    RedisRateLimiter limiter = limiter(strategy);
+    RequestContext context = context("10.9.8.7");
+    RateLimitRuleSet both = ruleSet(ruleSetId, first, second);
+
+    assertThat(limiter.tryConsume(context, both, 1).isAllowed()).isTrue();
+    RateLimitResult rejected = limiter.tryConsume(context, both, 1);
+
+    assertThat(rejected.isAllowed()).isFalse();
+    assertThat(rejected.getMatchedRule().getId()).isEqualTo("b-second");
+    assertThat(rejected.getNanosToWaitForRefill())
+        .as("waiting for a-first alone would be rejected again by b-second")
+        .isGreaterThan(Duration.ofMinutes(59).toNanos());
+  }
+
   /**
    * Exhausts {@code second}, sends rejected requests, then probes {@code first} on its own: it must
    * still hold capacity - 1 permits.

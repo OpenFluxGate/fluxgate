@@ -9,7 +9,7 @@ This module provides a production-ready, distributed rate limiting engine using 
 - **Distributed rate limiting** across multiple application instances
 - **Multi-band rate limits** (e.g., 10/sec AND 100/min AND 1000/hour)
 - **Atomic operations** using Lua scripts
-- **Token bucket algorithm** with automatic refill
+- **Three algorithms**: `TOKEN_BUCKET` (continuous refill), `SLIDING_WINDOW` (sub-bucket counters) and `FIXED_WINDOW` (tumbling or calendar-aligned counter)
 - **TTL-based bucket expiration** for memory efficiency
 - **Zero dependencies on Spring** - works with any Java application
 
@@ -24,10 +24,10 @@ This implementation includes critical fixes for production environments:
 | **Redis TIME** | Uses Redis server time instead of `System.nanoTime()` - eliminates clock drift across distributed nodes |
 | **Microsecond time base** | Redis runs Lua 5.1, where every number is an IEEE-754 double with an exact integer range of 2^53 (≈ 9.0e15). Epoch microseconds (≈ 1.76e15) fit exactly; nanoseconds (≈ 1.76e18) do not, which is why the old `last_refill_nanos` field was serialised as `1.76e+18`. Every value written to a hash goes through `string.format('%.0f', v)` |
 | **All-or-nothing per rule** | Every band of one rule is checked before any is written, so a rejected request never drains a band that would have allowed it |
-| **Read-only on rejection** | A rejected request writes no bucket state; only the TTLs of existing keys are refreshed |
+| **Read-only on rejection** | A rejected request writes no token, counter or sub-bucket. Only expiries are touched: the TTLs of existing TOKEN_BUCKET / SLIDING_WINDOW keys are refreshed, and a FIXED_WINDOW counter found without an expiry gets its `PEXPIREAT` |
 | **Carried remainder** | Refill credits whole tokens and advances the timestamp only by the time those tokens cost, so the sub-token remainder carries instead of being dropped (dropping it systematically under-allowed high-frequency bands) |
 | **TTL safety margin** | 10% buffer, `max(1, ceil(window_seconds * 1.1))`, which prevents premature expiry under clock skew |
-| **No TTL cap** | There is deliberately no upper cap. A 7-day window keeps a 7-day bucket. The previous 24-hour cap silently reset any longer window, so a 7-day quota effectively allowed 7× its capacity |
+| **Configurable TTL cap** | TOKEN_BUCKET and SLIDING_WINDOW TTLs are capped at `max_bucket_ttl` (`fluxgate.redis.max-bucket-ttl`, `RedisTokenBucketStore.DEFAULT_MAX_BUCKET_TTL` = 7 days), so forgeable identity keys cannot occupy Redis for weeks. A band whose window needs a longer TTL expires early and is effectively shortened; `RedisRateLimiter` logs a warning once per rule when that happens. FIXED_WINDOW counters are exempt: they expire at their window end (`PEXPIREAT`) |
 | **Cluster hash tag** | All bands of one rule and key share a `{...}` hash tag, so they live in one slot and the multi-key script is atomic on Redis Cluster |
 
 > **Across rules**: on a standalone Redis, or when all keys of the matching rules hash to one cluster
@@ -39,10 +39,11 @@ This implementation includes critical fixes for production environments:
 
 ### Core Capabilities
 
-- Atomic refill + consume - one Lua script execution per rule
+- Atomic refill + consume - one Lua script execution per request (per rule only on a cluster
+  whose matching rules hash to different slots)
 - Multi-band support - every band of a rule in that one call, all-or-nothing
 - Efficient memory usage - Automatic TTL expiration of idle buckets
-- High performance - Lettuce async Redis client
+- High performance - Lettuce Redis client, scripts run by SHA (`EVALSHA`)
 - Production ready - Comprehensive error handling and logging
 
 ## Installation
@@ -108,8 +109,12 @@ import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.key.KeyResolver;
 import org.fluxgate.core.key.RateLimitKey;
 
-// Key resolver extracts the rate limit key from request context
-KeyResolver ipKeyResolver = context -> new RateLimitKey(context.getClientIp());
+// Key resolver extracts the rate limit key from request context. RateLimitKey.of(prefix, value)
+// keeps the scope prefix outside the sanitised value - the key shape the built-in resolvers use.
+KeyResolver ipKeyResolver = (context, matchedRule) -> {
+    String ip = context.getClientIp();
+    return RateLimitKey.of("ip:", ip != null && !ip.isEmpty() ? ip : "unknown");
+};
 
 // Build rule set
 RateLimitRuleSet ruleSet = RateLimitRuleSet.builder("my-api-limits")
@@ -165,7 +170,7 @@ same reason.
 docker run -d \
   --name fluxgate-redis \
   -p 6379:6379 \
-  redis:7
+  redis:7.2.5-alpine
 ```
 
 ### Docker Compose (with RedisInsight)
@@ -177,7 +182,7 @@ version: '3.8'
 
 services:
   redis:
-    image: redis:7
+    image: redis:7.2.5-alpine
     container_name: fluxgate-redis
     ports:
       - "6379:6379"
@@ -191,7 +196,7 @@ services:
       retries: 5
 
   redisinsight:
-    image: redis/redisinsight:latest
+    image: redis/redisinsight:2.58
     container_name: fluxgate-redisinsight
     ports:
       - "5540:5540"
@@ -210,6 +215,23 @@ docker-compose up -d
 
 Access RedisInsight at http://localhost:5540 to visualize your rate limit buckets.
 
+### Health check and Redis permissions
+
+`RedisHealthCheckerImpl` sends `PING` in every mode. In cluster mode it also runs **`CLUSTER NODES`**
+(node, master and replica counts) and **`CLUSTER INFO`** (`cluster_state`, `cluster_slots_fail`),
+and reports the cluster DOWN when either fails or returns nothing. With Redis ACLs, the health
+check's user therefore needs `ping`, `cluster|nodes` and `cluster|info` on top of what the limiter
+itself uses (the scripting commands, and the read/write commands and `TIME` its Lua scripts call -
+ACLs are checked inside scripts too), for example:
+
+```
+ACL SETUSER fluxgate on >secret ~fluxgate:* +@read +@write +@scripting +time +ping \
+    +cluster|nodes +cluster|info
+```
+
+Without the two cluster subcommands a healthy cluster is reported DOWN with `cluster_state unknown
+(CLUSTER INFO failed or returned nothing)` or `no cluster nodes reported`.
+
 ## Rule Configuration
 
 ### Integration with MongoDB
@@ -225,7 +247,10 @@ MongoCollection<Document> collection = mongoDatabase.getCollection("rate_limit_r
 MongoRateLimitRuleRepository ruleRepo = new MongoRateLimitRuleRepository(collection);
 
 // Create provider with key resolver
-KeyResolver ipKeyResolver = ctx -> new RateLimitKey(ctx.getClientIp());
+KeyResolver ipKeyResolver = (ctx, rule) -> {
+    String ip = ctx.getClientIp();
+    return RateLimitKey.of("ip:", ip != null && !ip.isEmpty() ? ip : "unknown");
+};
 MongoRuleSetProvider provider = new MongoRuleSetProvider(ruleRepo, ipKeyResolver);
 
 // Load rule set by ID
@@ -236,7 +261,7 @@ Optional<RateLimitRuleSet> ruleSet = provider.findById("my-api-limits");
 
 ```json
 {
-  "_id": "per-ip-100-per-minute",
+  "id": "per-ip-100-per-minute",
   "name": "Per-IP Rate Limit: 100/minute",
   "enabled": true,
   "scope": "PER_IP",
@@ -246,7 +271,8 @@ Optional<RateLimitRuleSet> ruleSet = provider.findById("my-api-limits");
     {
       "windowSeconds": 60,
       "capacity": 100,
-      "label": "100-per-minute"
+      "label": "100-per-minute",
+      "algorithm": "TOKEN_BUCKET"
     }
   ],
   "ruleSetId": "my-api-limits"
@@ -304,15 +330,18 @@ Three things to note:
   cluster. It also means one rule + one key is one slot, which is worth knowing when sizing a
   cluster: a very hot key is not spread across nodes.
 - **The key value carries a scope prefix** — `ip:`, `user:`, `key:`, `custom:`, or the constant
-  `global` — and is sanitised (characters outside `[A-Za-z0-9._:@-]` become `_`, values longer than
-  256 characters become their SHA-256 hex digest). See
-  [Key Resolver](../docs/en/customization/key-resolver.md).
+  `global` — and the value after it is encoded injectively: a clean value of at most 256 characters
+  from `[A-Za-z0-9._:@-]` is kept as is; any other value becomes `h:<value with _ for disallowed
+  characters>:<16 hex of its SHA-256>` (`user:h:a_1:<16 hex>` for `a+1`), or `h:<64 hex>` when it is
+  too long (`user:h:<64 hex>`). The prefix stays outside the hash. See
+  [Key Resolver](../docs/en/customization/key-resolver.md#key-value-sanitisation).
 - **The band segment is `RateLimitBand.getKeyLabel()`**: the explicit label if the band has one,
   otherwise `<capacity>-per-<windowSeconds>s` (for example `100-per-60s`). Two unlabelled bands of one
   rule therefore no longer collide on a single key — they used to, which meant the second band was
   never enforced. Renaming a label moves that band's bucket, resetting it once.
 
-Each key is a Redis Hash with fields:
+A TOKEN_BUCKET key is a Redis hash with the fields below (SLIDING_WINDOW and FIXED_WINDOW keys are
+listed under [Hash fields](#hash-fields)):
 
 | Field | Meaning |
 |-------|---------|
@@ -346,53 +375,91 @@ not `KEYS` + `DEL`, so a reset does not block a single-threaded Redis for O(N).
 ## Lua Script Contract
 
 ```
-📁 src/main/resources/lua/token_bucket_consume.lua
+📁 src/main/resources/lua/token_bucket_consume.lua   consume (or check) every band, all-or-nothing
+📁 src/main/resources/lua/token_bucket_refund.lua    give a charged rule its permits back
 ```
 
-The script is loaded by a per-store `LuaScriptRegistry` (not from process-global static state) and
-executed with `EVALSHA`, falling back to `EVAL` plus a reload on `NOSCRIPT`.
+The scripts are loaded by a per-store `LuaScriptRegistry` (not from process-global static state) and
+executed with `EVALSHA`, falling back to `EVAL` plus a reload on `NOSCRIPT`. The header comment of
+`token_bucket_consume.lua` is the authoritative copy of this contract.
 
 ### Inputs
 
 ```
-KEYS[1..n]    one bucket key per band of ONE rule, all inside the same {...} hash tag
-ARGV[1]       permits
-ARGV[2 + 3i]  capacity of band i+1
-ARGV[3 + 3i]  window_micros of band i+1
-ARGV[4 + 3i]  reserved for future use, pass "0"
+KEYS[1..n]          one bucket key per band, all in the same hash slot (one {...} hash tag per rule)
+
+ARGV[1]             permits
+ARGV[2]             max_bucket_ttl_seconds: cap on every TOKEN_BUCKET / SLIDING_WINDOW bucket TTL
+                    (fluxgate.redis.max-bucket-ttl); FIXED_WINDOW counters use PEXPIREAT instead
+
+per band i (1-based), base = 2 + 5 * (i - 1):
+ARGV[base + 1]      capacity
+ARGV[base + 2]      window_micros (at least 1000: windows below 1 ms are refused)
+ARGV[base + 3]      algorithm code: 1 TOKEN_BUCKET, 2 SLIDING_WINDOW, 3 FIXED_WINDOW
+ARGV[base + 4]      SLIDING_WINDOW sub-bucket count [2..60] (each sub-bucket at least 1 ms), else 0
+ARGV[base + 5]      calendar FIXED_WINDOW window end in epoch micros, else 0 (derived from now)
+
+optional, after the last band:
+ARGV[3 + 5 * n]     "1" = check-only: the decision is taken as for a consumption, but nothing is
+                    consumed (RedisTokenBucketStore.check)
 ```
 
-`n` is `#KEYS`, and `#ARGV` must equal `1 + 3 * n`.
+`n` is `#KEYS`, and `#ARGV` must equal `2 + 5 * n`, or `3 + 5 * n` with the check-only flag.
+
+Bucket state per algorithm:
+
+| Algorithm | Redis value |
+|-----------|-------------|
+| `TOKEN_BUCKET` | hash `{tokens, last_refill_micros}`, TTL `min(max_bucket_ttl, max(1, ceil(window_s × 1.1)))` |
+| `SLIDING_WINDOW` | hash `{"<sub-bucket index>@<sub-bucket duration micros>": count}`, same TTL; fields of another geometry or outside the window are ignored and deleted on the next admitted request |
+| `FIXED_WINDOW` | hash `{count, window_end_micros}` under the `:fw` key suffix, `PEXPIREAT` at the window end (not capped) |
 
 ### Output
 
-Always an array of **7 integers**:
+Always an array of **8 integers**:
 
 | Index | Name | Meaning |
 |-------|------|---------|
 | 1 | `allowed` | `1` when every band allowed, `0` otherwise |
-| 2 | `rejecting_band_index` | 1-based index of the first band that rejected, `0` when allowed |
-| 3 | `min_remaining` | Allow: the binding band's tokens **after** consumption. Reject: the rejecting band's tokens |
-| 4 | `micros_to_wait` | Microseconds until the rejecting band can serve the request, `0` when allowed |
-| 5 | `reset_time_millis` | Epoch millis at which the binding band's bucket is full again, computed **after** consumption on the allow path |
+| 2 | `rejecting_band_index` | 1-based index of the rejecting band with the **longest** wait (the first of them on a tie), `0` when allowed |
+| 3 | `min_remaining` | Allow: the binding band's remaining **after** consumption (before it in check-only mode). Reject: the rejecting band's remaining |
+| 4 | `micros_to_wait` | Microseconds until the request can be served: the longest wait of all rejecting bands, so a retry after it is not refused by another band. `0` when allowed |
+| 5 | `reset_time_millis` | Epoch millis when the binding band resets - TOKEN_BUCKET: full again (after consumption); SLIDING_WINDOW: everything counted now has left the window; FIXED_WINDOW: window end |
 | 6 | `limit` | Capacity of the binding band |
 | 7 | `binding_band_index` | 1-based index of the binding band; equals `rejecting_band_index` on a reject |
+| 8 | `now_micros` | The Redis `TIME` the decision was taken at; the refund script uses it to find the sliding sub-bucket / fixed window it charged |
+
+A rejecting SLIDING_WINDOW band waits until enough counted requests have left the window: its
+sub-buckets are walked oldest to newest, and the first sub-bucket `k` after whose departure
+`total - freed + permits <= capacity` sets `micros_to_wait = (k + buckets) × sub_duration - now`. A
+burst inside one sub-bucket therefore waits almost a whole window, not one sub-bucket.
 
 Java mapping in `RedisTokenBucketStore`: `micros_to_wait × 1000` → `BucketState.nanosToWaitForRefill()`,
-and `binding_band_index − 1` → `BucketState.bandIndex()` (0-based, `-1` unknown).
+`binding_band_index − 1` → `BucketState.bandIndex()` (0-based, `-1` unknown), and `now_micros` →
+`BucketState.redisTimeMicros()`.
+
+The refund script takes the same `KEYS` and the same five values per band, with `ARGV[2]` set to the
+`now_micros` of the consumption instead of the TTL cap, and returns one integer per band: the permits
+actually given back. It never gives back more than was taken and never creates a key.
 
 ### Errors
 
 Returned as `redis.error_reply` and surfaced as `ScriptExecutionException` — never as a raw
-`RedisCommandExecutionException`:
+`RedisCommandExecutionException`. Both scripts use the same messages for the same arguments:
 
 ```
 'at least one bucket key is required'
 'expected N arguments for M band(s)'
 'permits must be positive'
+'max bucket ttl must be >= 1 second'          (consume)
+'consumed_at_micros must be positive'         (refund)
 'capacity must be positive'
 'window must be positive'
-'permits exceed capacity'
+'window must be at least 1 ms'
+'sliding window sub-bucket must be at least 1 ms'
+'permits exceed capacity'                     (consume)
+'buckets must be >= 2 for SLIDING_WINDOW'
+'unknown algorithm code: N'
 ```
 
 `permits exceed capacity` is also pre-validated in Java, which throws `InvalidRuleConfigException`
@@ -402,22 +469,29 @@ request, so returning a wait time would send the caller into a retry loop.
 ### Execution
 
 ```
-Pass 1  for every band: HMGET tokens/last_refill_micros, refill, check
-        ├─ any band short of permits → write NOTHING, EXPIRE every key, return a reject
-        └─ all bands OK              → continue
+Pass 1  for every band: read its state (TOKEN_BUCKET refills), check - without writing
+        ├─ any band rejects → keep checking the rest, write NO token / counter / sub-bucket,
+        │                     EXPIRE the TOKEN_BUCKET / SLIDING_WINDOW keys (a FIXED_WINDOW counter
+        │                     without an expiry gets its PEXPIREAT), return the rejecting band with
+        │                     the longest wait
+        ├─ check-only mode  → return the decision, write nothing
+        └─ all bands OK     → continue
 
-Pass 2  for every band: HMSET tokens + last_refill_micros, EXPIRE
+Pass 2  for every band: write its state (HMSET / HINCRBY / HSET) and its expiry
         → return an allow, with reset_time computed after consumption
 ```
 
-TTL per band is `max(1, ceil(window_seconds * 1.1))`, with **no upper cap**.
+TTL per TOKEN_BUCKET / SLIDING_WINDOW band is `min(max_bucket_ttl, max(1, ceil(window_seconds * 1.1)))`
+(`fluxgate.redis.max-bucket-ttl`, 7 days by default); a FIXED_WINDOW counter gets `PEXPIREAT` at its
+window end instead and is not capped.
 
 ### Hash fields
 
-| Field | Written as |
-|-------|-----------|
-| `tokens` | `string.format('%.0f', v)` |
-| `last_refill_micros` | `string.format('%.0f', v)` |
+| Algorithm | Field | Written as |
+|-----------|-------|-----------|
+| TOKEN_BUCKET | `tokens`, `last_refill_micros` | `string.format('%.0f', v)` |
+| SLIDING_WINDOW | `"<sub-bucket index>@<sub-bucket duration micros>"` → count | `HINCRBY`, index via `string.format('%.0f', v)` |
+| FIXED_WINDOW | `count`, `window_end_micros` | `string.format('%.0f', v)` |
 
 A 0.3.x bucket carries `last_refill_nanos`; that field is ignored, so the bucket is re-initialised
 full once on upgrade.
@@ -444,17 +518,23 @@ When a request is rejected:
 
 1. **No bucket state is written** — not for the rejecting band, and not for the bands that would have
    allowed the request
-2. **Only the TTLs are refreshed**, with `EXPIRE` on every key. `EXPIRE` is a no-op for a key that
+2. **Only the TTLs are refreshed**, with `EXPIRE` on every TOKEN_BUCKET and SLIDING_WINDOW key (a
+   FIXED_WINDOW counter keeps its absolute `PEXPIREAT`). `EXPIRE` is a no-op for a key that
    does not exist, so a band that was never charged is not created, and a bucket that sees nothing but
    rejections still expires on schedule instead of inheriting the shrinking TTL of its last allowed
    request
-3. **Wait time calculated** from the rejecting band:
+3. **Wait time calculated** for every rejecting band, and the longest one is reported:
    ```
-   micros_to_wait = ceil(tokens_needed * window_micros / capacity)
+   TOKEN_BUCKET    micros_to_wait = ceil(tokens_needed * window_micros / capacity)
+   SLIDING_WINDOW  micros_to_wait = (k + buckets) * sub_duration - now, where k is the oldest
+                   sub-bucket whose departure lets the request fit
+   FIXED_WINDOW    micros_to_wait = window_end - now
    ```
-4. **Reset time provided**: epoch milliseconds when the bucket will be full again. On the *allow* path
-   this is computed **after** consumption, so the caller is told when the bucket is really full again
-   rather than when it would have been without this request
+4. **Reset time provided** (`reset_time_millis`): TOKEN_BUCKET - when the bucket is full again;
+   SLIDING_WINDOW - when everything counted now has left the window, rounded **up** to the
+   millisecond; FIXED_WINDOW - the window end. On the *allow* path it is computed **after**
+   consumption, so the caller is told when the bucket is really full again rather than when it would
+   have been without this request
 
 ### RateLimitResult Fields
 
@@ -464,7 +544,7 @@ When a request is rejected:
 | `getRemainingTokens()` | Tokens left in the binding band after this request. On rejection this is the rejecting band's **real** remaining count, not a hardcoded `0`. `-1` means unknown (no bucket was consulted) |
 | `getNanosToWaitForRefill()` | Nanoseconds until enough tokens are available (0 when allowed) |
 | `getLimit()` | Capacity of the binding band. `-1` means unknown |
-| `getResetTimeMillis()` | Epoch millis when the binding band's bucket is full again. `-1` means unknown |
+| `getResetTimeMillis()` | Epoch millis when the binding band resets, per algorithm as in the [Output](#output) table: TOKEN_BUCKET - full again; SLIDING_WINDOW - everything counted now has left the window; FIXED_WINDOW - the window end. `-1` means unknown |
 | `getPolicy()` | The matched rule's `OnLimitExceedPolicy` |
 | `getBandLabel()` | `RateLimitBand.getKeyLabel()` of the binding band, e.g. `100-per-60s` |
 | `getMatchedRule()` | The rule that produced this decision |
@@ -577,12 +657,23 @@ FluxGate splits tests so that a clean checkout tests fully with no infrastructur
 ./mvnw verify -pl fluxgate-redis-ratelimiter -Dit.test=TokenBucketConsumeLuaIntegrationTest
 
 # Redis Cluster tests (opt-in profile; expects docker/redis-cluster.yml or localhost:7100-7105)
-./mvnw verify -pl fluxgate-redis-ratelimiter -Predis-cluster-it
+./mvnw verify -pl fluxgate-redis-ratelimiter -am -Predis-cluster-it
+
+# ... in CI: fail instead of skipping when the cluster is unreachable
+./mvnw verify -pl fluxgate-redis-ratelimiter -am -Predis-cluster-it -Dfluxgate.redis.cluster.require=true
 ```
 
+The cluster tests skip themselves when no cluster answers. `-Dfluxgate.redis.cluster.require=true`
+(or `FLUXGATE_REDIS_CLUSTER_REQUIRE=true`) turns that skip into a failure, so a CI job whose cluster
+did not come up cannot pass with every test skipped. `-Dfluxgate.redis.cluster.uri` (or
+`FLUXGATE_REDIS_CLUSTER_URI`) points the tests at a cluster on other ports.
+
 `./mvnw test` no longer runs the integration tests. The integration classes in this module are
-`TokenBucketConsumeLuaIntegrationTest`, `RedisRateLimiterIntegrationTest`,
-`RedisTokenBucketStoreIntegrationTest` and `ClusterConnectionIntegrationTest` (cluster profile only).
+`TokenBucketConsumeLuaIntegrationTest`, `TokenBucketRefundLuaIntegrationTest`,
+`MultiAlgorithmLuaIntegrationTest`, `RedisTokenBucketStoreIntegrationTest`,
+`RedisRateLimiterIntegrationTest` and `RedisRateLimiterCrossRuleIntegrationTest`, plus
+`ClusterConnectionIntegrationTest` and `ClusterCrossRuleIntegrationTest`, which run only in the
+`redis-cluster-it` profile.
 
 ### How the integration tier finds Redis
 
@@ -620,39 +711,48 @@ data.
 
 ### CI/CD
 
-See `.github/workflows/maven-ci.yml`, which runs `./mvnw -B verify` with Redis and MongoDB services
-plus a `-Predis-cluster-it` job.
+See `.github/workflows/maven-ci.yml`. Each of its jobs (Java 21 all modules, Java 11 with the Spring
+Boot 2 starter, Java 17 with the Spring Boot 3 starter) starts Redis, a Redis Cluster and MongoDB as
+services and runs `./mvnw -B verify -Predis-cluster-it -Dfluxgate.redis.cluster.require=true`, so the
+cluster integration tests run on every build and fail - rather than skip - when the cluster is
+unreachable.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        API Gateway                               │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   RequestContext ──▶ RedisRateLimiter ──▶ RateLimitResult       │
-│                            │                                     │
-│                            ▼                                     │
-│                   RedisTokenBucketStore                          │
-│                            │                                     │
-│                            ▼                                     │
-│                    Lua Script (atomic)                           │
-│                      - Redis TIME                                │
-│                      - Integer arithmetic                        │
-│                      - Read-only on reject                       │
-│                            │                                     │
-└────────────────────────────┼─────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                        Your application                              │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   RequestContext ──▶ RedisRateLimiter ──▶ RateLimitResult            │
+│                            │                                         │
+│                            ▼                                         │
+│                   RedisTokenBucketStore                              │
+│                   (tryConsume / check / refund)                      │
+│                            │                                         │
+│                            ▼                                         │
+│          token_bucket_consume.lua (atomic, all-or-nothing)           │
+│            - Redis TIME, microseconds                                │
+│            - pass 1 checks every band, pass 2 writes all or none     │
+│            - read-only on reject (expiries only)                     │
+│          token_bucket_refund.lua (cross-slot compensation)           │
+│                            │                                         │
+└────────────────────────────┼─────────────────────────────────────────┘
                              │
                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                         Redis                                    │
-│                                                                  │
-│   fluxgate:api-limits:rule-1:203.0.113.10:100-per-minute        │
-│   ├── tokens: 42                                                 │
-│   └── last_refill_nanos: 1701388799123456789                    │
-│                                                                  │
-│   TTL: 66 seconds (window + 10% safety margin)                  │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                              Redis                                   │
+│                                                                      │
+│  fluxgate:bucket:{api-limits:rule-1:ip:203.0.113.10}:100-per-60s     │
+│  ├── tokens: 42                                                      │
+│  └── last_refill_micros: 1701388799123456                            │
+│  TTL: 66 s = min(max-bucket-ttl, ceil(60 s × 1.1))                   │
+│                                                                      │
+│  fluxgate:bucket:{api-limits:rule-1:ip:203.0.113.10}:10-per-60s:fw   │
+│  ├── count: 3                                                        │
+│  └── window_end_micros: 1701388800000000                             │
+│  PEXPIREAT at the window end                                         │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Thread Safety
@@ -664,23 +764,28 @@ plus a `-Predis-cluster-it` job.
 ## Configuration Options
 
 ```java
-// Option 1: Simple URI
-RedisRateLimiterConfig config = new RedisRateLimiterConfig("redis://localhost:6379");
+// Option 1: URI (standalone, or comma-separated nodes for a cluster). Credentials and the
+// database go into the URI; the connect timeout defaults to RedisUriUtils.DEFAULT_TIMEOUT (5 s).
+RedisRateLimiterConfig config = new RedisRateLimiterConfig("redis://:secret@redis.example.com:6379/0");
 
-// Option 2: RedisURI with authentication
-RedisURI uri = RedisURI.builder()
-    .withHost("redis.example.com")
-    .withPort(6379)
-    .withPassword("secret")
-    .withDatabase(0)
-    .withTimeout(Duration.ofSeconds(5))
-    .build();
-RedisRateLimiterConfig config = new RedisRateLimiterConfig(uri);
+// Option 2: URI, connect timeout and bucket TTL cap (null = DEFAULT_MAX_BUCKET_TTL, 7 days)
+RedisRateLimiterConfig config =
+    new RedisRateLimiterConfig("redis://localhost:6379", Duration.ofSeconds(5), Duration.ofDays(1));
 
-// Option 3: Use existing RedisClient
+// Option 3: explicit mode and node list
+RedisRateLimiterConfig config = new RedisRateLimiterConfig(
+    RedisConnectionProvider.RedisMode.CLUSTER,
+    List.of("redis://node1:6379", "redis://node2:6379", "redis://node3:6379"),
+    Duration.ofSeconds(5));
+
+// Option 4: a connection you manage yourself, e.g. from an existing Lettuce RedisClient.
+// config.close() leaves it open (ownsConnectionProvider() is false).
 RedisClient client = RedisClient.create("redis://localhost:6379");
-RedisRateLimiterConfig config = new RedisRateLimiterConfig(client);
+RedisConnectionProvider provider = new StandaloneRedisConnection(client.connect().sync());
+RedisRateLimiterConfig config = new RedisRateLimiterConfig(provider);
 ```
+
+`RedisConnectionProvider` and `StandaloneRedisConnection` are in `org.fluxgate.redis.connection`.
 
 ## Best Practices
 
@@ -691,7 +796,7 @@ Reuse `RedisRateLimiterConfig` across requests:
 ```java
 // DO: Singleton pattern
 @Bean
-public RedisRateLimiterConfig redisRateLimiterConfig() throws IOException {
+public RedisRateLimiterConfig redisRateLimiterConfig() {
     return new RedisRateLimiterConfig("redis://localhost:6379");
 }
 
@@ -750,7 +855,7 @@ so this means the script is missing from the classpath or could not be read — 
 
 ```java
 RedisRateLimiterConfig config = new RedisRateLimiterConfig("redis://localhost:6379");
-RedisTokenBucketStore store = config.tokenBucketStore();   // loads the script here
+RedisTokenBucketStore store = config.getTokenBucketStore();   // loaded by the constructor above
 ```
 
 A `NOSCRIPT` from Redis (for example after `SCRIPT FLUSH`) is **not** an error: the store falls back
@@ -760,10 +865,10 @@ to `EVAL` and reloads the script.
 
 **Error**: `ScriptExecutionException: Lua script returned invalid result`
 
-**Solution**: The script must return exactly **7** integers:
+**Solution**: The script must return exactly **8** integers:
 ```
 [allowed, rejecting_band_index, min_remaining, micros_to_wait,
- reset_time_millis, limit, binding_band_index]
+ reset_time_millis, limit, binding_band_index, now_micros]
 ```
 This normally only happens if you replaced `token_bucket_consume.lua` on the classpath. See
 [Lua Script Contract](#lua-script-contract).
@@ -777,17 +882,20 @@ This normally only happens if you replaced `token_bucket_consume.lua` on the cla
 redis-cli TTL "fluxgate:bucket:{api-limits:rule-1:ip:203.0.113.10}:100-per-60s"
 ```
 
-Expected TTL is `ceil(window_seconds * 1.1)` — for a 60s window, 66. If it is `-1` (no expiration),
-the key was not written by this version of the script.
+Expected TTL for a TOKEN_BUCKET or SLIDING_WINDOW key is `min(max-bucket-ttl, max(1, ceil(window_seconds *
+1.1)))` — for a 60s window, 66. A FIXED_WINDOW key (`:fw` suffix) expires at its window end. If it is
+`-1` (no expiration), the key was not written by this version of the script.
 
 **Count buckets**:
 ```bash
 redis-cli --scan --pattern 'fluxgate:bucket:*' | wc -l
 ```
 
-There is no TTL cap any more, so a rule with a very long window keeps its buckets for that long. Use
-long windows only with scopes whose cardinality is bounded — a 30-day quota on `PER_IP` keeps one key
-per distinct IP for 30 days.
+Idle buckets live at most `fluxgate.redis.max-bucket-ttl` (7 days by default), whatever the window. A
+FIXED_WINDOW counter is exempt from that cap and lives until its window ends, so a 30-day calendar
+quota on `PER_IP` keeps one key per distinct IP for up to 30 days. Use long windows only with scopes
+whose cardinality is bounded. Lowering the cap below a TOKEN_BUCKET / SLIDING_WINDOW window shortens
+that window and logs the warning described under [Key Features](#key-features).
 
 ## Utilities
 
@@ -818,7 +926,7 @@ a later release.
 | `org.fluxgate.redis.store.RedisRuleSetStore` | 0.4.0 | Store rules in MongoDB behind a `RateLimitRuleSetProvider` |
 | `org.fluxgate.redis.store.RuleSetData` | 0.4.0 | As above |
 | `RedisRateLimiterConfig.getRuleSetStore()` | 0.4.0 | As above |
-| `org.fluxgate.redis.connection.RedisConnectionException` | 0.4.0 | `org.fluxgate.core.exception.RedisConnectionException`, which it now extends — existing `catch` blocks still compile and still catch |
+| `org.fluxgate.redis.connection.RedisConnectionException` | 0.2.0, `forRemoval` | `org.fluxgate.core.exception.RedisConnectionException`, which it now extends — existing `catch` blocks still compile and still catch |
 | Pre-`TrustedProxies` `ClientIpExtractor` overloads (starter) | 0.4.0 | The four-argument overload taking `TrustedProxies` |
 
 Removed in 0.4.0: `BucketState.getRetryAfterSeconds()` and `RedisTokenBucketStore.close()`.

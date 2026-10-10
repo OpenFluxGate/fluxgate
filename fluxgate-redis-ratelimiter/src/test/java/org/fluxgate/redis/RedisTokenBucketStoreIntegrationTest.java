@@ -61,7 +61,9 @@ class RedisTokenBucketStoreIntegrationTest {
     assertThat(state.nanosToWaitForRefill()).isEqualTo(0);
     assertThat(state.limit()).isEqualTo(10);
     assertThat(state.bandIndex()).isZero();
-    assertThat(state.resetTimeMillis()).isGreaterThan(System.currentTimeMillis());
+    // three of ten tokens are missing: full again 3/10 of the window after the decision
+    assertThat(state.resetTimeMillis())
+        .isEqualTo((state.redisTimeMicros() + Duration.ofSeconds(18).toNanos() / 1000L) / 1000L);
   }
 
   @Test
@@ -98,7 +100,7 @@ class RedisTokenBucketStoreIntegrationTest {
     assertThat(state1.remainingTokens()).isEqualTo(0);
 
     // wait for refill
-    Thread.sleep(150); // Wait longer than window
+    Thread.sleep(250); // Wait well beyond the window
 
     // then: tokens should be refilled
     BucketState state2 = store.tryConsume(bucketKey, band, 5);
