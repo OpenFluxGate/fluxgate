@@ -1,5 +1,6 @@
 package org.fluxgate.core.match;
 
+import java.util.Arrays;
 import java.util.Objects;
 
 /**
@@ -10,8 +11,13 @@ import java.util.Objects;
  * <ul>
  *   <li>{@code ?} — matches exactly one character (never {@code /})
  *   <li>{@code *} — matches zero or more characters within a single path segment (never {@code /})
- *   <li>{@code **} — matches zero or more path segments, i.e. any sequence including {@code /}
+ *   <li>{@code **} — matches any sequence of characters including {@code /}; when written as a
+ *       whole segment ({@code /**}{@code /}) it matches zero or more complete path segments, so
+ *       {@code /**}{@code /health} matches {@code /health} and {@code /a/b/health} but not {@code
+ *       /api/unhealth}
  * </ul>
+ *
+ * <p>Matching runs in {@code O(pattern * path)} time without backtracking.
  *
  * <p>A leading or trailing slash in the pattern is significant: {@code /api/users} does not match
  * the pattern {@code api/users}.
@@ -49,78 +55,125 @@ public final class SimpleAntPathMatcher implements PathPatternMatcher {
   public boolean matches(String pattern, String path) {
     Objects.requireNonNull(pattern, "pattern must not be null");
     Objects.requireNonNull(path, "path must not be null");
-    return doMatch(pattern, 0, path, 0);
+    if (pattern.indexOf('*') < 0 && pattern.indexOf('?') < 0) {
+      return literalMatch(pattern, path);
+    }
+    return dpMatch(tokenize(pattern), path);
   }
 
   // ===== internal =====
 
-  private boolean doMatch(String pattern, int pi, String path, int si) {
-    final int pLen = pattern.length();
-    final int sLen = path.length();
+  // Token values: literal characters are their (non-negative) char value; wildcards are negative.
+  private static final int STAR = -1;
+  private static final int DOUBLE_STAR = -2;
+  private static final int QUESTION = -3;
 
-    while (pi < pLen) {
-      char pc = pattern.charAt(pi);
-
-      if (pc == '*') {
-        boolean isDouble = (pi + 1 < pLen && pattern.charAt(pi + 1) == '*');
-        if (isDouble) {
-          // ** — skip the two stars
-          int nextPi = pi + 2;
-          if (nextPi >= pLen) {
-            // ** at end matches everything remaining
-            return true;
-          }
-          // optional separator after **
-          int altPi = nextPi;
-          if (altPi < pLen && pattern.charAt(altPi) == '/') {
-            altPi++;
-          }
-          // try matching the rest of the pattern at every position from si to sLen
-          for (int i = si; i <= sLen; i++) {
-            if (doMatch(pattern, nextPi, path, i)) {
-              return true;
-            }
-            if (nextPi != altPi && doMatch(pattern, altPi, path, i)) {
-              return true;
-            }
-          }
-          return false;
-        } else {
-          // single * — matches zero or more non-/ chars
-          int nextPi = pi + 1;
-          for (int i = si; i <= sLen; i++) {
-            if (doMatch(pattern, nextPi, path, i)) {
-              return true;
-            }
-            if (i < sLen && path.charAt(i) == '/') {
-              break; // * must not cross a path separator
-            }
-          }
-          return false;
-        }
-      }
-
-      if (pc == '?') {
-        if (si >= sLen || path.charAt(si) == '/') {
-          return false; // ? must match exactly one non-/ char
-        }
-        pi++;
-        si++;
-        continue;
-      }
-
-      // literal character
-      if (si >= sLen) {
-        return false;
-      }
-      if (!charMatch(pc, path.charAt(si))) {
-        return false;
-      }
-      pi++;
-      si++;
+  private boolean literalMatch(String pattern, String path) {
+    if (pattern.length() != path.length()) {
+      return false;
     }
+    for (int i = 0; i < pattern.length(); i++) {
+      if (!charMatch(pattern.charAt(i), path.charAt(i))) {
+        return false;
+      }
+    }
+    return true;
+  }
 
-    return si == sLen;
+  /**
+   * Splits the pattern into tokens. Runs of two or more stars collapse into one {@code **}, and a
+   * {@code **}{@code /}{@code **} whose first {@code **} starts a segment collapses into a single
+   * {@code **}, since both are equivalent there.
+   */
+  private static int[] tokenize(String pattern) {
+    int[] tokens = new int[pattern.length()];
+    int n = 0;
+    int i = 0;
+    while (i < pattern.length()) {
+      char c = pattern.charAt(i);
+      if (c == '*') {
+        int j = i;
+        while (j < pattern.length() && pattern.charAt(j) == '*') {
+          j++;
+        }
+        if (j - i == 1) {
+          tokens[n++] = STAR;
+        } else if (n >= 2
+            && tokens[n - 2] == DOUBLE_STAR
+            && tokens[n - 1] == '/'
+            && (n == 2 || tokens[n - 3] == '/')) {
+          // "/**/**" is equivalent to "/**": drop the separator, keep the previous **. Only when
+          // that ** starts a segment: "a**/**" still needs the '/' ("abc" must not match).
+          n--;
+        } else {
+          tokens[n++] = DOUBLE_STAR;
+        }
+        i = j;
+      } else {
+        tokens[n++] = (c == '?') ? QUESTION : c;
+        i++;
+      }
+    }
+    return Arrays.copyOf(tokens, n);
+  }
+
+  /**
+   * Bottom-up dynamic programming over (token, path position): {@code O(tokens * path)} time and
+   * {@code O(path)} memory, without backtracking. Row {@code t} holds, for every path offset {@code
+   * i}, whether {@code tokens[t..]} matches {@code path[i..]}.
+   */
+  private boolean dpMatch(int[] tokens, String path) {
+    final int n = tokens.length;
+    final int sLen = path.length();
+    boolean[] next2 = new boolean[sLen + 1]; // row t + 2
+    boolean[] next = new boolean[sLen + 1]; // row t + 1
+    boolean[] cur = new boolean[sLen + 1]; // row t
+    next[sLen] = true; // the empty pattern matches only the empty remainder
+
+    for (int t = n - 1; t >= 0; t--) {
+      int tok = tokens[t];
+      Arrays.fill(cur, false);
+
+      if (tok == DOUBLE_STAR) {
+        if (t == n - 1) {
+          Arrays.fill(cur, true); // trailing ** matches everything remaining
+        } else {
+          // ** consumes any characters (including '/') before the rest of the pattern
+          for (int i = sLen; i >= 0; i--) {
+            cur[i] = next[i] || (i < sLen && cur[i + 1]);
+          }
+          // "**/" may also match zero segments by skipping its separator, but only when **
+          // starts a segment and only at a segment boundary of the path, never mid-segment.
+          boolean followedBySlash = tokens[t + 1] == '/';
+          boolean startsSegment = t == 0 || tokens[t - 1] == '/';
+          if (followedBySlash && startsSegment) {
+            for (int i = 0; i <= sLen; i++) {
+              if (next2[i] && (i == 0 || path.charAt(i - 1) == '/')) {
+                cur[i] = true;
+              }
+            }
+          }
+        }
+      } else if (tok == STAR) {
+        for (int i = sLen; i >= 0; i--) {
+          cur[i] = next[i] || (i < sLen && path.charAt(i) != '/' && cur[i + 1]);
+        }
+      } else if (tok == QUESTION) {
+        for (int i = 0; i < sLen; i++) {
+          cur[i] = path.charAt(i) != '/' && next[i + 1];
+        }
+      } else {
+        for (int i = 0; i < sLen; i++) {
+          cur[i] = charMatch((char) tok, path.charAt(i)) && next[i + 1];
+        }
+      }
+
+      boolean[] recycled = next2;
+      next2 = next;
+      next = cur;
+      cur = recycled;
+    }
+    return next[0];
   }
 
   private boolean charMatch(char pc, char sc) {

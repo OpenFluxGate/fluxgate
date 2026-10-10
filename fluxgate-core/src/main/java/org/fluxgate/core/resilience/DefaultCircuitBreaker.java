@@ -1,6 +1,5 @@
 package org.fluxgate.core.resilience;
 
-import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -22,6 +21,17 @@ import org.slf4j.LoggerFactory;
  * cannot obtain a trial permit are treated exactly like calls arriving at an open circuit. A single
  * failing trial reopens the circuit and discards the remaining permits, so a dependency that is
  * still down is never flooded by the requests that queued up during the wait duration.
+ *
+ * <p>Only calls that hold a trial permit decide the HALF_OPEN outcome. A call admitted while the
+ * circuit was still CLOSED that finishes after it opened has no say in the HALF_OPEN transition:
+ * its late success cannot close the circuit and its late failure cannot reopen it.
+ *
+ * <p>A call whose action throws {@link IgnoredCallException} is neither a success nor a failure:
+ * nothing is recorded, its HALF_OPEN trial permit (if any) is given back, and the exception is
+ * rethrown from both entry points without consulting the fallback.
+ *
+ * <p>The open-state wait is measured with {@link System#nanoTime()}, so wall-clock adjustments do
+ * not shorten or extend it.
  */
 public class DefaultCircuitBreaker implements CircuitBreaker {
 
@@ -35,7 +45,9 @@ public class DefaultCircuitBreaker implements CircuitBreaker {
   private final AtomicReference<Semaphore> halfOpenPermits = new AtomicReference<>();
   private final SlidingWindow callWindow;
   private final Object transitionLock = new Object();
-  private volatile Instant openedAt;
+
+  /** {@link System#nanoTime()} when the circuit last opened; null when not timing an open state. */
+  private volatile Long openedAtNanos;
 
   /**
    * Creates a new DefaultCircuitBreaker with the given name and configuration.
@@ -78,10 +90,12 @@ public class DefaultCircuitBreaker implements CircuitBreaker {
 
     try {
       T result = action.get();
-      onSuccess();
+      onSuccess(admission);
       return result;
+    } catch (IgnoredCallException e) {
+      throw e; // neither a success nor a failure: nothing is recorded
     } catch (Exception e) {
-      onFailure(e);
+      onFailure(admission, e);
       throw e;
     } finally {
       admission.release();
@@ -95,6 +109,8 @@ public class DefaultCircuitBreaker implements CircuitBreaker {
     if (!config.isEnabled()) {
       try {
         return action.get();
+      } catch (IgnoredCallException e) {
+        throw e;
       } catch (RuntimeException e) {
         return fallback.get();
       }
@@ -108,10 +124,12 @@ public class DefaultCircuitBreaker implements CircuitBreaker {
 
     try {
       T result = action.get();
-      onSuccess();
+      onSuccess(admission);
       return result;
+    } catch (IgnoredCallException e) {
+      throw e; // neither a success nor a failure: nothing is recorded, no fallback
     } catch (RuntimeException e) {
-      onFailure(e);
+      onFailure(admission, e);
       return fallback.get();
     } finally {
       admission.release();
@@ -136,7 +154,7 @@ public class DefaultCircuitBreaker implements CircuitBreaker {
       halfOpenSuccessCount.set(0);
       halfOpenPermits.set(null);
       callWindow.reset();
-      openedAt = null;
+      openedAtNanos = null;
     }
     log.info("Circuit breaker '{}' has been reset", name);
   }
@@ -207,6 +225,8 @@ public class DefaultCircuitBreaker implements CircuitBreaker {
 
       halfOpenSuccessCount.set(0);
       halfOpenPermits.set(new Semaphore(config.getPermittedCallsInHalfOpenState()));
+      // cleared so that a later HALF_OPEN -> OPEN cannot be timed from this old opening
+      openedAtNanos = null;
       if (!state.compareAndSet(State.OPEN, State.HALF_OPEN)) {
         return false;
       }
@@ -216,11 +236,17 @@ public class DefaultCircuitBreaker implements CircuitBreaker {
   }
 
   private boolean hasWaitDurationElapsed() {
-    Instant openedAtSnapshot = openedAt;
+    Long openedAtSnapshot = openedAtNanos;
     if (openedAtSnapshot == null) {
       return false;
     }
-    return Instant.now().isAfter(openedAtSnapshot.plus(config.getWaitDurationInOpenState()));
+    long waitNanos;
+    try {
+      waitNanos = config.getWaitDurationInOpenState().toNanos();
+    } catch (ArithmeticException e) {
+      return false; // a wait too long to express in nanoseconds never elapses
+    }
+    return System.nanoTime() - openedAtSnapshot >= waitNanos;
   }
 
   /**
@@ -251,10 +277,22 @@ public class DefaultCircuitBreaker implements CircuitBreaker {
     return Admission.ADMITTED;
   }
 
-  private void onSuccess() {
+  /**
+   * Whether this call took a trial permit of the HALF_OPEN period that is still current. Results of
+   * any other call (admitted while CLOSED, or a trial of an earlier HALF_OPEN period) must not
+   * drive the HALF_OPEN transition.
+   */
+  private boolean isCurrentTrial(Admission admission) {
+    return admission.trialPermits != null && admission.trialPermits == halfOpenPermits.get();
+  }
+
+  private void onSuccess(Admission admission) {
     State currentState = state.get();
 
     if (currentState == State.HALF_OPEN) {
+      if (!isCurrentTrial(admission)) {
+        return;
+      }
       int successes = halfOpenSuccessCount.incrementAndGet();
       if (successes >= config.getPermittedCallsInHalfOpenState()) {
         if (state.compareAndSet(State.HALF_OPEN, State.CLOSED)) {
@@ -262,7 +300,7 @@ public class DefaultCircuitBreaker implements CircuitBreaker {
           failureCount.set(0);
           callWindow.reset();
           halfOpenPermits.set(null);
-          openedAt = null;
+          openedAtNanos = null;
         }
       }
     } else if (currentState == State.CLOSED) {
@@ -271,11 +309,11 @@ public class DefaultCircuitBreaker implements CircuitBreaker {
     }
   }
 
-  private void onFailure(Exception e) {
+  private void onFailure(Admission admission, Exception e) {
     State currentState = state.get();
 
     if (currentState == State.HALF_OPEN) {
-      if (state.compareAndSet(State.HALF_OPEN, State.OPEN)) {
+      if (isCurrentTrial(admission) && state.compareAndSet(State.HALF_OPEN, State.OPEN)) {
         log.warn(
             "Circuit breaker '{}' transitioning from HALF_OPEN to OPEN after failure: {}",
             name,
@@ -308,7 +346,7 @@ public class DefaultCircuitBreaker implements CircuitBreaker {
 
   /** Starts the open-state timer and drops any state that only applies to a live circuit. */
   private void openTheCircuit() {
-    openedAt = Instant.now();
+    openedAtNanos = System.nanoTime();
     halfOpenPermits.set(null);
     halfOpenSuccessCount.set(0);
     failureCount.set(0);

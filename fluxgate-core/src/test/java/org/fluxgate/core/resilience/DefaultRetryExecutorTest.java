@@ -18,6 +18,10 @@ package org.fluxgate.core.resilience;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.fluxgate.core.exception.FluxgateConfigurationException;
@@ -26,6 +30,7 @@ import org.fluxgate.core.exception.FluxgateTimeoutException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 @DisplayName("DefaultRetryExecutor")
 class DefaultRetryExecutorTest {
@@ -168,6 +173,40 @@ class DefaultRetryExecutorTest {
           .isInstanceOf(FluxgateConnectionException.class);
 
       assertThat(attempts.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName(
+        "should rethrow an ignored call on the last attempt without the exhaustion error log")
+    void shouldRethrowIgnoredCallWithoutExhaustionLog() {
+      Logger logger = (Logger) LoggerFactory.getLogger(DefaultRetryExecutor.class);
+      ListAppender<ILoggingEvent> appender = new ListAppender<>();
+      appender.start();
+      Level previousLevel = logger.getLevel();
+      logger.setLevel(Level.DEBUG);
+      logger.addAppender(appender);
+      try {
+        AtomicInteger attempts = new AtomicInteger(0);
+        IgnoredCallException ignored =
+            new IgnoredCallException(new IllegalArgumentException("bad"));
+        RetryExecutor executor =
+            new DefaultRetryExecutor(RetryConfig.builder().maxAttempts(1).build());
+
+        assertThatThrownBy(
+                () ->
+                    executor.execute(
+                        () -> {
+                          attempts.incrementAndGet();
+                          throw ignored;
+                        }))
+            .isSameAs(ignored);
+
+        assertThat(attempts.get()).isEqualTo(1);
+        assertThat(appender.list).extracting(ILoggingEvent::getLevel).doesNotContain(Level.ERROR);
+      } finally {
+        logger.detachAppender(appender);
+        logger.setLevel(previousLevel);
+      }
     }
   }
 

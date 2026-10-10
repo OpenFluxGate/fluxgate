@@ -7,6 +7,7 @@ import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Pattern;
@@ -34,6 +35,9 @@ import org.slf4j.LoggerFactory;
  * trusted.contains("10.0.0.5");   // true
  * trusted.contains("172.16.0.1"); // false
  * }</pre>
+ *
+ * <p>Two sets are equal when they cover the same networks, regardless of entry order and of host
+ * bits written into a CIDR (so {@code 10.1.2.3/8} equals {@code 10.0.0.0/8}).
  *
  * @since 0.4.0
  */
@@ -133,6 +137,27 @@ public final class CidrSet {
     return entries.isEmpty();
   }
 
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (!(o instanceof CidrSet)) return false;
+    return new HashSet<>(entries).equals(new HashSet<>(((CidrSet) o).entries));
+  }
+
+  @Override
+  public int hashCode() {
+    return new HashSet<>(entries).hashCode();
+  }
+
+  @Override
+  public String toString() {
+    List<String> sources = new ArrayList<>(entries.size());
+    for (Entry entry : entries) {
+      sources.add(entry.source);
+    }
+    return "CidrSet" + sources;
+  }
+
   // ===== normalisation =====
 
   /**
@@ -173,11 +198,28 @@ public final class CidrSet {
     private final BigInteger networkAddress;
     private final BigInteger mask;
     private final int addressLength; // 4 or 16 bytes
+    private final String source; // as configured, for toString only
 
-    private Entry(BigInteger networkAddress, BigInteger mask, int addressLength) {
+    private Entry(BigInteger networkAddress, BigInteger mask, int addressLength, String source) {
       this.networkAddress = networkAddress;
       this.mask = mask;
       this.addressLength = addressLength;
+      this.source = source;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (!(o instanceof Entry)) return false;
+      Entry that = (Entry) o;
+      return addressLength == that.addressLength
+          && networkAddress.equals(that.networkAddress)
+          && mask.equals(that.mask);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(networkAddress, mask, addressLength);
     }
 
     static Entry parse(String cidr) throws UnknownHostException {
@@ -206,7 +248,7 @@ public final class CidrSet {
       }
       BigInteger mask = buildMask(prefixLen, raw.length);
       BigInteger network = new BigInteger(1, raw).and(mask);
-      return new Entry(network, mask, raw.length);
+      return new Entry(network, mask, raw.length, cidr);
     }
 
     private static BigInteger buildMask(int prefixLen, int byteLen) {

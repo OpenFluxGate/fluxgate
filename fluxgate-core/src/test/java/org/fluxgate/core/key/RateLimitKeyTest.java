@@ -258,7 +258,9 @@ class RateLimitKeyTest {
 
       // Composite format - separators survive, the path slashes are sanitised
       RateLimitKey compositeKey = RateLimitKey.of("user:123:endpoint:/api/v1/users");
-      assertEquals("user:123:endpoint:_api_v1_users", compositeKey.value());
+      assertTrue(
+          compositeKey.value().matches("h:user:123:endpoint:_api_v1_users:[0-9a-f]{16}"),
+          compositeKey.value());
     }
   }
 
@@ -323,8 +325,8 @@ class RateLimitKeyTest {
     @DisplayName("disallowed characters should be replaced by underscores")
     void of_shouldReplaceDisallowedCharacters() {
       // given / when / then
-      assertEquals("a_b_c_d_e_f", RateLimitKey.of("a*b?c[d]e\\f").value());
-      assertEquals("ip_10.0.0.1", RateLimitKey.of("ip 10.0.0.1").value());
+      assertTrue(RateLimitKey.of("a*b?c[d]e\\f").value().matches("h:a_b_c_d_e_f:[0-9a-f]{16}"));
+      assertTrue(RateLimitKey.of("ip 10.0.0.1").value().matches("h:ip_10.0.0.1:[0-9a-f]{16}"));
     }
 
     @Test
@@ -339,9 +341,8 @@ class RateLimitKeyTest {
       // when
       RateLimitKey key = RateLimitKey.of(sb.toString());
 
-      // then
-      assertEquals(64, key.value().length());
-      assertTrue(key.value().matches("[0-9a-f]{64}"));
+      // then - marked as a digest so that no clean 64-hex value can collide with it
+      assertTrue(key.value().matches("h:[0-9a-f]{64}"), key.value());
     }
 
     @Test
@@ -359,20 +360,159 @@ class RateLimitKeyTest {
     }
 
     @Test
-    @DisplayName("sanitisation should be stable when applied twice")
-    void of_shouldBeIdempotent() {
+    @DisplayName("sanitisation should be deterministic")
+    void of_shouldBeDeterministic() {
       // given
       StringBuilder sb = new StringBuilder();
       for (int i = 0; i < 300; i++) {
         sb.append("x/");
       }
 
-      // when
-      RateLimitKey once = RateLimitKey.of(sb.toString());
-      RateLimitKey twice = RateLimitKey.of(once.value());
+      // when / then - injective encoding cannot also be idempotent, but it is stable per input
+      assertEquals(RateLimitKey.of(sb.toString()), RateLimitKey.of(sb.toString()));
+      assertEquals(RateLimitKey.of("a+1"), RateLimitKey.of("a+1"));
+      assertNotEquals(RateLimitKey.of("a+1"), RateLimitKey.of("a_1"));
+    }
+  }
 
-      // then
-      assertEquals(once, twice);
+  // ==================== Prefixed Factory Tests ====================
+
+  @Nested
+  @DisplayName("Prefixed Factory Tests")
+  class PrefixedFactoryTests {
+
+    private final LimitScopeKeyResolver resolver = new LimitScopeKeyResolver();
+
+    private String resolveUser(String userId) {
+      return resolver
+          .resolve(
+              org.fluxgate.core.context.RequestContext.builder().userId(userId).build(),
+              org.fluxgate.core.config.RateLimitRule.builder("r")
+                  .scope(org.fluxgate.core.config.LimitScope.PER_USER)
+                  .addBand(
+                      org.fluxgate.core.config.RateLimitBand.builder(
+                              java.time.Duration.ofMinutes(1), 10)
+                          .build())
+                  .build())
+          .value();
+    }
+
+    @Test
+    @DisplayName("of(prefix, value) builds exactly the key the resolver builds")
+    void of_prefixed_matchesResolver() {
+      assertEquals(resolveUser("alice"), RateLimitKey.of("user:", "alice").value());
+      assertEquals(resolveUser("a+1"), RateLimitKey.of("user:", "a+1").value());
+      String longValue = "x".repeat(300);
+      assertEquals(resolveUser(longValue), RateLimitKey.of("user:", longValue).value());
+      assertTrue(RateLimitKey.of("user:", longValue).value().matches("user:h:[0-9a-f]{64}"));
+    }
+
+    @Test
+    @DisplayName("of(prefix, value) keeps the prefix outside the 256-character value limit")
+    void of_prefixed_keepsPrefixOutsideTheLimit() {
+      String value = "a".repeat(256);
+      assertEquals("tenant-1:" + value, RateLimitKey.of("tenant-1:", value).value());
+    }
+
+    @Test
+    @DisplayName("of(full) sanitises the whole string, prefix included")
+    void of_full_sanitisesWholeString() {
+      String key = RateLimitKey.of("user:a+1").value();
+      assertTrue(key.startsWith("h:user:a_1:"), key);
+      assertNotEquals(RateLimitKey.of("user:", "a+1").value(), key);
+    }
+
+    @Test
+    @DisplayName("of(prefix, value) rejects a prefix with disallowed characters or null input")
+    void of_prefixed_rejectsBadInput() {
+      assertThrows(IllegalArgumentException.class, () -> RateLimitKey.of("us er:", "a"));
+      assertThrows(IllegalArgumentException.class, () -> RateLimitKey.of("{tag}:", "a"));
+      assertThrows(IllegalArgumentException.class, () -> RateLimitKey.of("h:", "a"));
+      assertThrows(
+          IllegalArgumentException.class, () -> RateLimitKey.of("p".repeat(65) + ":", "a"));
+      assertThrows(NullPointerException.class, () -> RateLimitKey.of(null, "a"));
+      assertThrows(NullPointerException.class, () -> RateLimitKey.of("user:", null));
+    }
+
+    @Test
+    @DisplayName("of(prefix, value) requires a non-empty prefix ending with ':'")
+    void of_prefixed_requiresColonTerminatedPrefix() {
+      assertThrows(IllegalArgumentException.class, () -> RateLimitKey.of("", "a"));
+      assertThrows(IllegalArgumentException.class, () -> RateLimitKey.of("h", "a"));
+      assertThrows(IllegalArgumentException.class, () -> RateLimitKey.of("user", "a"));
+      assertThrows(IllegalArgumentException.class, () -> RateLimitKey.of(":", "a"));
+      assertEquals("tenant:a:", RateLimitKey.of("tenant:a:", "").value());
+      assertEquals("denied:ip:1.2.3.4", RateLimitKey.of("denied:ip:", "1.2.3.4").value());
+    }
+  }
+
+  @Nested
+  @DisplayName("withPrefix Tests")
+  class WithPrefixTests {
+
+    @Test
+    @DisplayName("withPrefix keeps an h:-marked key verbatim instead of encoding it again")
+    void withPrefix_keepsEncodedKeyVerbatim() {
+      RateLimitKey encoded = RateLimitKey.of("a+1");
+      assertTrue(encoded.value().startsWith("h:a_1:"), encoded.value());
+
+      assertEquals(
+          "denied:" + encoded.value(), RateLimitKey.withPrefix("denied:", encoded).value());
+    }
+
+    @Test
+    @DisplayName("withPrefix keeps the longest prefixed key verbatim")
+    void withPrefix_keepsLongestPrefixedKeyVerbatim() {
+      RateLimitKey longest = RateLimitKey.of("p".repeat(63) + ":", "c".repeat(256));
+      assertEquals(320, longest.value().length());
+
+      assertEquals(
+          "denied:" + longest.value(), RateLimitKey.withPrefix("denied:", longest).value());
+    }
+
+    @Test
+    @DisplayName("withPrefix keeps a nested prefixed key verbatim")
+    void withPrefix_keepsNestedPrefixedKeyVerbatim() {
+      RateLimitKey longest = RateLimitKey.of("p".repeat(63) + ":", "c".repeat(256));
+      RateLimitKey nested = RateLimitKey.withPrefix("x:", longest);
+      assertEquals(322, nested.value().length());
+
+      assertEquals("denied:" + nested.value(), RateLimitKey.withPrefix("denied:", nested).value());
+    }
+
+    @Test
+    @DisplayName("withPrefix keeps a nested key apart from the hash of its value")
+    void withPrefix_nestedKeyDoesNotCollideWithHashedValue() {
+      RateLimitKey longest = RateLimitKey.of("p".repeat(63) + ":", "c".repeat(256));
+      RateLimitKey nested = RateLimitKey.withPrefix("x:", longest);
+      RateLimitKey hashed = RateLimitKey.of(nested.value());
+      assertEquals("h:", hashed.value().substring(0, 2));
+      assertNotEquals(nested, hashed);
+
+      assertNotEquals(
+          RateLimitKey.withPrefix("denied:", nested), RateLimitKey.withPrefix("denied:", hashed));
+    }
+
+    @Test
+    @DisplayName("withPrefix keeps distinct keys distinct")
+    void withPrefix_isInjective() {
+      RateLimitKey raw = RateLimitKey.of("a+1");
+      RateLimitKey encodedLookalike = RateLimitKey.of(raw.value());
+      assertNotEquals(raw, encodedLookalike);
+
+      assertNotEquals(
+          RateLimitKey.withPrefix("denied:", raw),
+          RateLimitKey.withPrefix("denied:", encodedLookalike));
+    }
+
+    @Test
+    @DisplayName("withPrefix validates the prefix like of(prefix, value)")
+    void withPrefix_rejectsBadPrefix() {
+      RateLimitKey key = RateLimitKey.of("user:", "a");
+      assertThrows(IllegalArgumentException.class, () -> RateLimitKey.withPrefix("h:", key));
+      assertThrows(IllegalArgumentException.class, () -> RateLimitKey.withPrefix("denied", key));
+      assertThrows(NullPointerException.class, () -> RateLimitKey.withPrefix(null, key));
+      assertThrows(NullPointerException.class, () -> RateLimitKey.withPrefix("denied:", null));
     }
   }
 }

@@ -23,9 +23,18 @@ public interface RuleCache {
   /**
    * Returns the cached rule set, loading and caching it on a miss.
    *
-   * <p>The default implementation is a plain get/load/put sequence, so concurrent misses for the
-   * same id can each run the loader. Implementations backed by a cache with atomic loading should
-   * override this method to collapse those calls into one and to cache negative results.
+   * <p>The default implementation is a plain get/load/put sequence and is not atomic:
+   *
+   * <ul>
+   *   <li>concurrent misses for the same id can each run the loader;
+   *   <li>an {@link #invalidate(String)} (a rule reload) that lands while the loader is running is
+   *       lost: the value loaded before the reload is put afterwards and served until the next
+   *       invalidation or expiry.
+   * </ul>
+   *
+   * <p>Implementations backed by a cache with atomic loading should override this method to
+   * collapse concurrent loads, to cache negative results, and to drop a load that raced an
+   * invalidation (for example by comparing an invalidation generation before and after loading).
    *
    * @param ruleSetId the ID of the rule set to retrieve
    * @param loader loader invoked on a cache miss

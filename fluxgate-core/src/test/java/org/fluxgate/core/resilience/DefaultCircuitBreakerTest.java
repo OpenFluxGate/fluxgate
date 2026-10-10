@@ -22,6 +22,7 @@ import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
@@ -521,6 +522,150 @@ class DefaultCircuitBreakerTest {
   }
 
   @Nested
+  @DisplayName("ignored calls")
+  class IgnoredCallTests {
+
+    private void fail() {
+      try {
+        circuitBreaker.execute(
+            () -> {
+              throw new RuntimeException("failure");
+            });
+      } catch (Exception ignored) {
+      }
+    }
+
+    private void ignoredCall() {
+      assertThatThrownBy(
+              () ->
+                  circuitBreaker.execute(
+                      () -> {
+                        throw new IgnoredCallException(new IllegalArgumentException("bad"));
+                      }))
+          .isInstanceOf(IgnoredCallException.class)
+          .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("an ignored call in CLOSED does not reset the consecutive failure count")
+    void ignoredCallDoesNotResetFailureCount() {
+      fail();
+      fail();
+      ignoredCall();
+
+      assertThat(circuitBreaker.getFailureCount()).isEqualTo(2);
+      assertThat(circuitBreaker.getRecordedCalls()).isEqualTo(2);
+
+      fail();
+      assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+    }
+
+    @Test
+    @DisplayName("ignored calls in HALF_OPEN neither close nor reopen the circuit")
+    void ignoredCallsInHalfOpenDoNotClose() throws Exception {
+      fail();
+      fail();
+      fail();
+      Thread.sleep(150);
+      assertThat(circuitBreaker.tryTransitionToHalfOpen()).isTrue();
+
+      // more ignored calls than the two trial permits: none counts as a trial success
+      for (int i = 0; i < 3; i++) {
+        ignoredCall();
+      }
+      assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.HALF_OPEN);
+
+      // the permits were given back, so real trials still decide the outcome
+      circuitBreaker.execute(() -> "ok");
+      circuitBreaker.execute(() -> "ok");
+      assertThat(circuitBreaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+    }
+
+    @Test
+    @DisplayName("executeWithFallback rethrows an ignored call instead of falling back")
+    void executeWithFallbackRethrowsIgnoredCall() {
+      fail();
+      assertThatThrownBy(
+              () ->
+                  circuitBreaker.executeWithFallback(
+                      () -> {
+                        throw new IgnoredCallException(new IllegalStateException("bad"));
+                      },
+                      () -> "fallback"))
+          .isInstanceOf(IgnoredCallException.class);
+      assertThat(circuitBreaker.getFailureCount()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("the no-op breaker rethrows an ignored call instead of falling back")
+    void noOpBreakerRethrowsIgnoredCall() {
+      assertThatThrownBy(
+              () ->
+                  NoOpCircuitBreaker.getInstance()
+                      .executeWithFallback(
+                          () -> {
+                            throw new IgnoredCallException(new IllegalStateException("bad"));
+                          },
+                          () -> "fallback"))
+          .isInstanceOf(IgnoredCallException.class);
+    }
+
+    @Test
+    @DisplayName("a disabled breaker rethrows an ignored call instead of falling back")
+    void disabledBreakerRethrowsIgnoredCall() {
+      DefaultCircuitBreaker disabled =
+          new DefaultCircuitBreaker("disabled", CircuitBreakerConfig.disabled());
+      IgnoredCallException ignored = new IgnoredCallException(new IllegalStateException("bad"));
+      AtomicInteger fallbackCalls = new AtomicInteger();
+
+      assertThatThrownBy(
+              () ->
+                  disabled.executeWithFallback(
+                      () -> {
+                        throw ignored;
+                      },
+                      () -> {
+                        fallbackCalls.incrementAndGet();
+                        return "fallback";
+                      }))
+          .isSameAs(ignored);
+      assertThat(fallbackCalls.get()).isZero();
+      assertThat(
+              disabled.executeWithFallback(
+                  () -> {
+                    throw new IllegalStateException("failure");
+                  },
+                  () -> "fallback"))
+          .isEqualTo("fallback");
+    }
+
+    @Test
+    @DisplayName("an ignored call is never retried")
+    void ignoredCallIsNotRetried() {
+      RetryConfig retry =
+          RetryConfig.builder()
+              .maxAttempts(3)
+              .initialBackoff(Duration.ofMillis(1))
+              .retryOn(RuntimeException.class)
+              .build();
+      ResilientExecutor executor =
+          new ResilientExecutor(new DefaultRetryExecutor(retry), circuitBreaker);
+      AtomicInteger attempts = new AtomicInteger();
+      assertThatThrownBy(
+              () ->
+                  executor.executeWithFallback(
+                      () -> {
+                        attempts.incrementAndGet();
+                        throw new IgnoredCallException(new IllegalArgumentException("bad"));
+                      },
+                      () -> "fallback"))
+          .isInstanceOf(IgnoredCallException.class);
+      assertThat(attempts).hasValue(1);
+      assertThat(circuitBreaker.getRecordedCalls()).isZero();
+    }
+  }
+
+  @Nested
   @DisplayName("reset")
   class ResetTests {
 
@@ -668,6 +813,98 @@ class DefaultCircuitBreakerTest {
 
       // Still CLOSED
       assertThat(noOp.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+    }
+  }
+
+  @Nested
+  @DisplayName("Late results from calls admitted while CLOSED")
+  class LateClosedEraResultTests {
+
+    private DefaultCircuitBreaker breaker;
+    private ExecutorService pool;
+
+    private Future<?> startClosedEraCall(
+        CountDownLatch entered, CountDownLatch release, boolean fail) {
+      return pool.submit(
+          () ->
+              breaker.executeWithFallback(
+                  () -> {
+                    entered.countDown();
+                    try {
+                      release.await(5, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                      Thread.currentThread().interrupt();
+                    }
+                    if (fail) {
+                      throw new RuntimeException("late failure");
+                    }
+                    return "late";
+                  },
+                  () -> "fallback"));
+    }
+
+    private void openAndHalfOpen() throws Exception {
+      for (int i = 0; i < 2; i++) {
+        breaker.executeWithFallback(
+            () -> {
+              throw new RuntimeException("failure");
+            },
+            () -> "fallback");
+      }
+      assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+      Thread.sleep(80);
+      assertThat(breaker.tryTransitionToHalfOpen()).isTrue();
+    }
+
+    @BeforeEach
+    void createBreaker() {
+      breaker =
+          new DefaultCircuitBreaker(
+              "late-results",
+              CircuitBreakerConfig.builder()
+                  .enabled(true)
+                  .failureThreshold(2)
+                  .waitDurationInOpenState(Duration.ofMillis(50))
+                  .permittedCallsInHalfOpenState(1)
+                  .build());
+      pool = Executors.newSingleThreadExecutor();
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void shutdown() {
+      pool.shutdownNow();
+    }
+
+    @Test
+    @DisplayName("a late success without a trial permit does not close the circuit")
+    void lateSuccessDoesNotClose() throws Exception {
+      CountDownLatch entered = new CountDownLatch(1);
+      CountDownLatch release = new CountDownLatch(1);
+      Future<?> late = startClosedEraCall(entered, release, false);
+      assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+      openAndHalfOpen();
+      release.countDown();
+      late.get(5, TimeUnit.SECONDS);
+
+      assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.HALF_OPEN);
+      assertThat(breaker.executeWithFallback(() -> "trial", () -> "fallback")).isEqualTo("trial");
+      assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+    }
+
+    @Test
+    @DisplayName("a late failure without a trial permit does not reopen the circuit")
+    void lateFailureDoesNotReopen() throws Exception {
+      CountDownLatch entered = new CountDownLatch(1);
+      CountDownLatch release = new CountDownLatch(1);
+      Future<?> late = startClosedEraCall(entered, release, true);
+      assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+      openAndHalfOpen();
+      release.countDown();
+      late.get(5, TimeUnit.SECONDS);
+
+      assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.HALF_OPEN);
     }
   }
 }

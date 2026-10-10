@@ -2,6 +2,7 @@ package org.fluxgate.core.ratelimiter.impl.bucket4j;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Expiry;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 import io.github.bucket4j.ConsumptionProbe;
@@ -28,6 +29,7 @@ import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.ratelimiter.RateLimiter;
+import org.fluxgate.core.util.LogThrottle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,13 +56,21 @@ import org.slf4j.LoggerFactory;
  * of its buckets (a {@code GLOBAL} rule, for example, serialises its callers for that short
  * section, which Bucket4j's own compare-and-swap on that bucket did already). Should a charge still
  * fail after the check, the rules already charged get their tokens back through {@link
- * Bucket#addTokens(long)}, which caps every bandwidth at its capacity.
+ * Bucket#addTokens(long)}, which caps every bandwidth at its capacity. Once the locks are held the
+ * cache is consulted again, and if a bucket was evicted or reset between the lookup and the lock
+ * the lookup is retried, so a request never charges a bucket that other requests no longer see. The
+ * {@link RateLimitMetricsRecorder} is invoked only after every lock has been released.
  *
- * <p>Buckets live in a bounded Caffeine cache: at most {@code maximumSize} entries, each evicted
- * after {@code expireAfterAccess} of inactivity. A fixed expiry is used rather than one derived
- * from each rule's window because the cache is shared by all rule sets; pick a value comfortably
- * above your longest window if you rate limit over long windows, since evicting a bucket resets its
- * tokens.
+ * <p>Buckets live in a bounded Caffeine cache: at most {@code maximumSize} entries. Each bucket is
+ * evicted after it has been idle for the longer of {@code expireAfterAccess} and the longest window
+ * among its bands. A bucket idle for a whole window has refilled completely anyway, so expiry never
+ * resets a partially consumed daily or monthly quota; {@code expireAfterAccess} is only a floor for
+ * short windows.
+ *
+ * <p><strong>Rule reloads.</strong> The cache key includes the rule's band definitions, so a
+ * request still carrying the previous rule set after a reload (or after {@link #reset(String)})
+ * cannot recreate or reuse a bucket with the old bands for requests that see the new ones. Such a
+ * stale bucket is simply left idle until it expires.
  *
  * <p><strong>Eviction resets a limit.</strong> An evicted bucket is recreated full on its next
  * request, so a caller able to mint identities can push a victim's bucket out of the cache and
@@ -92,13 +102,26 @@ public class Bucket4jRateLimiter implements RateLimiter {
   /** Default upper bound on the number of cached buckets. */
   public static final long DEFAULT_MAXIMUM_SIZE = 100_000L;
 
-  /** Default idle time after which a bucket is evicted. */
+  /**
+   * Default minimum idle time after which a bucket is evicted; buckets whose longest band window is
+   * longer stay for that window instead.
+   */
   public static final Duration DEFAULT_EXPIRE_AFTER_ACCESS = Duration.ofHours(1);
 
   private static final long NANOS_PER_MILLI = 1_000_000L;
 
   /**
-   * Bounded bucket cache keyed by (ruleSetId, ruleId, logical key).
+   * How often the bucket lookup is retried when an entry disappears between lookup and lock. Beyond
+   * this (only possible under extreme eviction churn) the request proceeds with the entries it
+   * locked, which is the pre-check behaviour.
+   */
+  private static final int MAX_LOOKUP_ATTEMPTS = 5;
+
+  /** Floor of the per-bucket idle expiry, in nanoseconds. */
+  private final long minIdleNanos;
+
+  /**
+   * Bounded bucket cache keyed by (ruleSetId, ruleId, band definitions, logical key).
    *
    * <p>Each entry holds the multi-bandwidth {@link Bucket} for all bands of one rule and the band
    * list used to map the probe result back to a {@code bandLabel} and {@code limit}.
@@ -115,6 +138,15 @@ public class Bucket4jRateLimiter implements RateLimiter {
 
   /** Path pattern matcher used to filter applicable rules. */
   private final PathPatternMatcher pathMatcher;
+
+  /** Throttles the warning about a failing metrics recorder. */
+  private final LogThrottle recorderFailureWarnings = new LogThrottle();
+
+  /**
+   * Test seam: when set, runs after the buckets are looked up and before they are locked, so a test
+   * can reset or evict a bucket in exactly that window. Always {@code null} in production.
+   */
+  volatile Runnable beforeLockHook;
 
   /** Creates a rate limiter with the default cache bounds and the default path matcher. */
   public Bucket4jRateLimiter() {
@@ -134,7 +166,8 @@ public class Bucket4jRateLimiter implements RateLimiter {
    * Creates a rate limiter with custom cache bounds and the default path matcher.
    *
    * @param maximumSize the maximum number of cached buckets (must be positive)
-   * @param expireAfterAccess the idle time after which a bucket is evicted (must be positive)
+   * @param expireAfterAccess the minimum idle time after which a bucket is evicted (must be
+   *     positive); buckets whose longest band window is longer stay idle for that window instead
    */
   public Bucket4jRateLimiter(long maximumSize, Duration expireAfterAccess) {
     this(maximumSize, expireAfterAccess, SimpleAntPathMatcher.INSTANCE);
@@ -148,7 +181,8 @@ public class Bucket4jRateLimiter implements RateLimiter {
    * enforced.
    *
    * @param maximumSize the maximum number of cached buckets (must be positive)
-   * @param expireAfterAccess the idle time after which a bucket is evicted (must be positive)
+   * @param expireAfterAccess the minimum idle time after which a bucket is evicted (must be
+   *     positive); buckets whose longest band window is longer stay idle for that window instead
    * @param pathMatcher path pattern matcher for rule filtering
    */
   public Bucket4jRateLimiter(
@@ -162,10 +196,32 @@ public class Bucket4jRateLimiter implements RateLimiter {
     }
     this.pathMatcher = Objects.requireNonNull(pathMatcher, "pathMatcher must not be null");
     this.maximumSize = maximumSize;
+    this.minIdleNanos = saturatedNanos(expireAfterAccess);
     this.buckets =
         Caffeine.newBuilder()
             .maximumSize(maximumSize)
-            .expireAfterAccess(expireAfterAccess)
+            // Idle expiry per bucket: max(expireAfterAccess, longest band window). An idle
+            // bucket is full again after its longest window, so expiring it earlier would reset
+            // a quota.
+            .expireAfter(
+                new Expiry<BucketKey, BucketEntry>() {
+                  @Override
+                  public long expireAfterCreate(BucketKey key, BucketEntry entry, long now) {
+                    return entry.idleNanos;
+                  }
+
+                  @Override
+                  public long expireAfterUpdate(
+                      BucketKey key, BucketEntry entry, long now, long currentDuration) {
+                    return entry.idleNanos;
+                  }
+
+                  @Override
+                  public long expireAfterRead(
+                      BucketKey key, BucketEntry entry, long now, long currentDuration) {
+                    return entry.idleNanos;
+                  }
+                })
             // Every eviction hands the affected key a full bucket again, so the eviction rate is a
             // security signal and not just a cache statistic. An explicit removal (a rule change
             // resetting the buckets) is not an eviction and must not show up in the count.
@@ -225,11 +281,8 @@ public class Bucket4jRateLimiter implements RateLimiter {
 
     List<RuleCall> calls = new ArrayList<>(rules.size());
     for (RateLimitRule rule : rules) {
-      // rules from getMatchingRules are already enabled and path-matched
+      // rules from getMatchingRules are already enabled and path-matched; every rule has a band
       List<RateLimitBand> bands = rule.getBands();
-      if (bands == null || bands.isEmpty()) {
-        continue;
-      }
 
       // Pre-validate permits vs capacity before touching any bucket.
       for (RateLimitBand band : bands) {
@@ -257,33 +310,53 @@ public class Bucket4jRateLimiter implements RateLimiter {
       calls.add(new RuleCall(rule, logicalKey, bands));
     }
 
-    if (calls.isEmpty()) {
-      log.debug("No rule with bands in ruleSet {}, nothing to enforce", ruleSet.getId());
-      return record(context, ruleSet, RateLimitResult.allowedWithoutRule());
-    }
-
-    // One bucket per (ruleSetId, ruleId, key) with all bands as Bucket4j bandwidths, so the
-    // bands of one rule are atomic inside Bucket4j; the locks below extend that across rules.
-    List<BucketEntry> locked = new ArrayList<>(calls.size());
+    // One bucket per (ruleSetId, ruleId, bands, key) with all bands as Bucket4j bandwidths, so
+    // the bands of one rule are atomic inside Bucket4j; the locks below extend that across rules.
     for (RuleCall call : calls) {
-      BucketKey bucketKey = new BucketKey(ruleSet.getId(), call.rule.getId(), call.key);
-      call.entry = buckets.get(bucketKey, k -> createBucketEntry(call.bands));
-      if (!locked.contains(call.entry)) {
-        locked.add(call.entry);
-      }
+      call.bucketKey = new BucketKey(ruleSet.getId(), call.rule.getId(), call.bands, call.key);
     }
-    locked.sort(Comparator.comparingLong(entry -> entry.order));
 
-    for (BucketEntry entry : locked) {
-      entry.lock.lock();
-    }
-    try {
-      return record(context, ruleSet, consumeAll(calls, permits));
-    } finally {
-      for (int i = locked.size() - 1; i >= 0; i--) {
-        locked.get(i).lock.unlock();
+    RateLimitResult result = null;
+    for (int attempt = 1; result == null; attempt++) {
+      List<BucketEntry> locked = new ArrayList<>(calls.size());
+      for (RuleCall call : calls) {
+        call.entry = buckets.get(call.bucketKey, k -> createBucketEntry(call.bands));
+        if (!locked.contains(call.entry)) {
+          locked.add(call.entry);
+        }
+      }
+      locked.sort(Comparator.comparingLong(entry -> entry.order));
+      Runnable hook = beforeLockHook;
+      if (hook != null) {
+        hook.run();
+      }
+
+      for (BucketEntry entry : locked) {
+        entry.lock.lock();
+      }
+      try {
+        // An entry evicted or reset between the lookup and the lock is no longer the bucket other
+        // requests charge; look the buckets up again instead of charging a detached one.
+        if (attempt >= MAX_LOOKUP_ATTEMPTS || allEntriesCurrent(calls)) {
+          result = consumeAll(calls, permits);
+        }
+      } finally {
+        for (int i = locked.size() - 1; i >= 0; i--) {
+          locked.get(i).lock.unlock();
+        }
       }
     }
+    // The user-supplied recorder may be slow; never run it while holding bucket locks.
+    return record(context, ruleSet, result);
+  }
+
+  private boolean allEntriesCurrent(List<RuleCall> calls) {
+    for (RuleCall call : calls) {
+      if (buckets.asMap().get(call.bucketKey) != call.entry) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -291,26 +364,37 @@ public class Bucket4jRateLimiter implements RateLimiter {
    * locked, so no other consumer can drain a bucket between its check and its charge.
    */
   private RateLimitResult consumeAll(List<RuleCall> calls, long permits) {
-    // Pass 1: every rule must be able to serve the request; the first that cannot rejects it.
+    // Pass 1: every rule must be able to serve the request. When several cannot, the one with the
+    // longest wait is reported, so Retry-After never sends the client back before every rejecting
+    // rule could serve it.
+    RuleCall rejecting = null;
+    EstimationProbe rejectingEstimate = null;
     for (RuleCall call : calls) {
       EstimationProbe estimate = call.entry.bucket.estimateAbilityToConsume(permits);
-      if (!estimate.canBeConsumed()) {
-        RateLimitBand bindingBand = findBindingBand(call.entry.bands);
-        if (log.isDebugEnabled()) {
-          log.debug(
-              "Rate limit REJECTED for key {}: rule {}, band {}, wait {} ns",
-              mask(call.key),
-              call.rule.getId(),
-              bindingBand != null ? bindingBand.getKeyLabel() : "unknown",
-              estimate.getNanosToWaitForRefill());
-        }
-        return rejectedResult(
-            call.key,
-            call.rule,
-            bindingBand,
-            estimate.getRemainingTokens(),
-            estimate.getNanosToWaitForRefill());
+      if (!estimate.canBeConsumed()
+          && (rejectingEstimate == null
+              || estimate.getNanosToWaitForRefill()
+                  > rejectingEstimate.getNanosToWaitForRefill())) {
+        rejecting = call;
+        rejectingEstimate = estimate;
       }
+    }
+    if (rejecting != null) {
+      RateLimitBand bindingBand = findBindingBand(rejecting.entry.bands);
+      if (log.isDebugEnabled()) {
+        log.debug(
+            "Rate limit REJECTED for key {}: rule {}, band {}, wait {} ns",
+            mask(rejecting.key),
+            rejecting.rule.getId(),
+            bindingBand != null ? bindingBand.getKeyLabel() : "unknown",
+            rejectingEstimate.getNanosToWaitForRefill());
+      }
+      return rejectedResult(
+          rejecting.key,
+          rejecting.rule,
+          bindingBand,
+          rejectingEstimate.getRemainingTokens(),
+          rejectingEstimate.getNanosToWaitForRefill());
     }
 
     // Pass 2: charge every rule. Under the locks this cannot fail; if it ever did, the rules
@@ -368,16 +452,27 @@ public class Bucket4jRateLimiter implements RateLimiter {
    * RateLimitAlgorithm#FIXED_WINDOW} bands use interval refill (all tokens restored at once at the
    * end of each window), which is an approximation — see the class-level Javadoc for details.
    */
-  private static BucketEntry createBucketEntry(List<RateLimitBand> bands) {
+  private BucketEntry createBucketEntry(List<RateLimitBand> bands) {
     LocalBucketBuilder builder = Bucket.builder();
+    long idleNanos = minIdleNanos;
     for (RateLimitBand band : bands) {
       builder.addLimit(toBandwidth(band));
+      idleNanos = Math.max(idleNanos, saturatedNanos(band.getWindow()));
     }
-    return new BucketEntry(builder.build(), bands, ENTRY_SEQUENCE.incrementAndGet());
+    return new BucketEntry(builder.build(), bands, ENTRY_SEQUENCE.incrementAndGet(), idleNanos);
+  }
+
+  private static long saturatedNanos(Duration duration) {
+    try {
+      return duration.toNanos();
+    } catch (ArithmeticException e) {
+      return Long.MAX_VALUE;
+    }
   }
 
   private static Bandwidth toBandwidth(RateLimitBand band) {
-    Duration window = band.getWindow();
+    // Bucket4j works in nanoseconds; a window beyond Long.MAX_VALUE ns (~292 years) is capped.
+    Duration window = Duration.ofNanos(saturatedNanos(band.getWindow()));
     long capacity = band.getCapacity();
     RateLimitAlgorithm alg = band.getAlgorithm();
 
@@ -448,7 +543,7 @@ public class Bucket4jRateLimiter implements RateLimiter {
       MissingRateLimitKeyException e, RateLimitRule rule) {
     log.debug("Rejecting request because no rate limit key could be resolved: {}", e.getMessage());
     RateLimitResult.Builder builder =
-        RateLimitResult.builder(RateLimitKey.of("missing-key:" + e.getRuleId()))
+        RateLimitResult.builder(RateLimitKey.of("missing-key:", e.getRuleId()))
             .allowed(false)
             .remainingTokens(0L)
             .nanosToWaitForRefill(0L)
@@ -475,16 +570,19 @@ public class Bucket4jRateLimiter implements RateLimiter {
     if (deficit == 0L) {
       return 0L;
     }
-    long windowNanos = band.getWindow().toNanos();
+    long windowNanos = saturatedNanos(band.getWindow());
+    // the double product saturates at Long.MAX_VALUE when cast back
     long nanos = (long) ((double) deficit / (double) capacity * (double) windowNanos);
     return toMillisRoundedUp(nanos);
   }
 
+  /** Nanoseconds to milliseconds, rounded up; cannot overflow, unlike {@code (n + d - 1) / d}. */
   private static long toMillisRoundedUp(long nanos) {
     if (nanos <= 0L) {
       return 0L;
     }
-    return (nanos + NANOS_PER_MILLI - 1) / NANOS_PER_MILLI;
+    long millis = nanos / NANOS_PER_MILLI;
+    return nanos % NANOS_PER_MILLI == 0L ? millis : millis + 1L;
   }
 
   private static String mask(RateLimitKey key) {
@@ -499,7 +597,23 @@ public class Bucket4jRateLimiter implements RateLimiter {
       RequestContext context, RateLimitRuleSet ruleSet, RateLimitResult result) {
     RateLimitMetricsRecorder recorder = ruleSet.getMetricsRecorder();
     if (recorder != null) {
-      recorder.record(context, result);
+      // The tokens are already charged: a recorder failure must not turn the decision into an
+      // exception (a caller retrying or falling back would charge them a second time).
+      try {
+        recorder.record(context, result);
+      } catch (Exception e) {
+        if (recorderFailureWarnings.tryAcquire()) {
+          log.warn(
+              "Metrics recorder {} failed for rule set '{}'; the decision is returned unchanged."
+                  + " Further failures within {} are logged at DEBUG.",
+              recorder.getClass().getName(),
+              ruleSet.getId(),
+              LogThrottle.DEFAULT_INTERVAL,
+              e);
+        } else {
+          log.debug("Metrics recorder {} failed", recorder.getClass().getName(), e);
+        }
+      }
     }
     return result;
   }
@@ -570,13 +684,17 @@ public class Bucket4jRateLimiter implements RateLimiter {
     /** Global lock order across rules: the entry's creation sequence number. */
     final long order;
 
+    /** Idle time after which the cache drops this bucket: max(expireAfterAccess, windows). */
+    final long idleNanos;
+
     /** Held while a request checks and charges this bucket together with its other rules. */
     final ReentrantLock lock = new ReentrantLock();
 
-    BucketEntry(Bucket bucket, List<RateLimitBand> bands, long order) {
+    BucketEntry(Bucket bucket, List<RateLimitBand> bands, long order, long idleNanos) {
       this.bucket = bucket;
       this.bands = bands;
       this.order = order;
+      this.idleNanos = idleNanos;
     }
   }
 
@@ -585,6 +703,7 @@ public class Bucket4jRateLimiter implements RateLimiter {
     final RateLimitRule rule;
     final RateLimitKey key;
     final List<RateLimitBand> bands;
+    BucketKey bucketKey;
     BucketEntry entry;
 
     RuleCall(RateLimitRule rule, RateLimitKey key, List<RateLimitBand> bands) {
@@ -610,20 +729,25 @@ public class Bucket4jRateLimiter implements RateLimiter {
   }
 
   /**
-   * Composite cache key: (ruleSetId, ruleId, logical {@link RateLimitKey}).
+   * Composite cache key: (ruleSetId, ruleId, band definitions, logical {@link RateLimitKey}).
    *
-   * <p>One bucket covers all bands of a rule for one resolved key, so the band label is no longer
-   * part of the key (it was part of the old per-band cache key).
+   * <p>One bucket covers all bands of a rule for one resolved key. The band definitions are part of
+   * the key so that a request carrying an outdated rule set never shares a bucket with requests
+   * that see the reloaded bands.
    */
   private static final class BucketKey {
     final String ruleSetId;
     final String ruleId;
+    final List<RateLimitBand> bands;
     final RateLimitKey key;
+    private final int hash;
 
-    BucketKey(String ruleSetId, String ruleId, RateLimitKey key) {
+    BucketKey(String ruleSetId, String ruleId, List<RateLimitBand> bands, RateLimitKey key) {
       this.ruleSetId = Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
       this.ruleId = Objects.requireNonNull(ruleId, "ruleId must not be null");
+      this.bands = Objects.requireNonNull(bands, "bands must not be null");
       this.key = Objects.requireNonNull(key, "key must not be null");
+      this.hash = Objects.hash(ruleSetId, ruleId, bands, key);
     }
 
     @Override
@@ -631,12 +755,16 @@ public class Bucket4jRateLimiter implements RateLimiter {
       if (this == o) return true;
       if (!(o instanceof BucketKey)) return false;
       BucketKey that = (BucketKey) o;
-      return ruleSetId.equals(that.ruleSetId) && ruleId.equals(that.ruleId) && key.equals(that.key);
+      return hash == that.hash
+          && ruleSetId.equals(that.ruleSetId)
+          && ruleId.equals(that.ruleId)
+          && key.equals(that.key)
+          && bands.equals(that.bands);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(ruleSetId, ruleId, key);
+      return hash;
     }
 
     @Override

@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -27,8 +28,9 @@ import org.fluxgate.core.match.PathPatternMatcher;
  * <p>Exclusion beats inclusion: if a path matches an exclude pattern it is rejected regardless of
  * whether it also matches an include pattern.
  *
- * <p>Header names are normalised to lower-case on construction so comparisons are always
- * case-insensitive regardless of how the caller supplies them.
+ * <p>Header names are normalised to lower-case ({@link Locale#ROOT}) on construction and looked up
+ * through {@link RequestContext#getHeader(String)}, which is case-insensitive, so header conditions
+ * match regardless of how either side spells the name.
  *
  * <p>Example usage:
  *
@@ -145,7 +147,7 @@ public final class RuleMatcher {
     // method check
     if (!methods.isEmpty()) {
       String method = context.getMethod();
-      String upperMethod = (method != null) ? method.toUpperCase() : "";
+      String upperMethod = (method != null) ? method.toUpperCase(Locale.ROOT) : "";
       if (!methods.contains(upperMethod)) {
         return false;
       }
@@ -253,7 +255,7 @@ public final class RuleMatcher {
       if (methods != null) {
         for (String m : methods) {
           if (m != null) {
-            this.methods.add(m.toUpperCase());
+            this.methods.add(m.toUpperCase(Locale.ROOT));
           }
         }
       }
@@ -293,7 +295,7 @@ public final class RuleMatcher {
     public Builder headerEquals(String headerName, String value) {
       Objects.requireNonNull(headerName, "headerName must not be null");
       Objects.requireNonNull(value, "value must not be null");
-      this.headerEquals.put(headerName.toLowerCase(), value);
+      this.headerEquals.put(headerName.toLowerCase(Locale.ROOT), value);
       return this;
     }
 
@@ -305,7 +307,7 @@ public final class RuleMatcher {
      */
     public Builder headerPresent(String headerName) {
       Objects.requireNonNull(headerName, "headerName must not be null");
-      this.headerPresent.add(headerName.toLowerCase());
+      this.headerPresent.add(headerName.toLowerCase(Locale.ROOT));
       return this;
     }
 

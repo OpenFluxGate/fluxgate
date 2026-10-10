@@ -164,7 +164,33 @@ class RetryConfigTest {
       RetryConfig config = RetryConfig.defaults();
 
       assertThat(config.shouldRetry(new FluxgateConnectionException("error"))).isTrue();
-      assertThat(config.shouldRetry(new RedisConnectionException("error"))).isTrue();
+      assertThat(config.shouldRetry(connectPhase())).isTrue();
+    }
+
+    @Test
+    @DisplayName("should not retry Redis failures that may have reached the server")
+    void shouldNotRetryCommandPhaseOrUnknownRedisFailures() {
+      RetryConfig config = RetryConfig.defaults();
+
+      // FluxgateConnectionException is allow-listed, but the instance verdict wins
+      assertThat(config.shouldRetry(new RedisConnectionException("error"))).isFalse();
+      assertThat(
+              config.shouldRetry(
+                  new RedisConnectionException(
+                      "EVALSHA failed",
+                      new RuntimeException(),
+                      RedisConnectionException.Phase.COMMAND)))
+          .isFalse();
+      assertThat(
+              RetryConfig.builder()
+                  .retryOnTimeout(true)
+                  .build()
+                  .shouldRetry(
+                      new RedisConnectionException(
+                          "EVALSHA failed",
+                          new TimeoutException("t"),
+                          RedisConnectionException.Phase.COMMAND)))
+          .isFalse();
     }
 
     @Test
@@ -187,6 +213,34 @@ class RetryConfigTest {
     }
 
     @Test
+    @DisplayName("should not retry an exception caused by a timeout by default")
+    void shouldNotRetryWrappedTimeoutsByDefault() {
+      RetryConfig config = RetryConfig.defaults();
+
+      assertThat(
+              config.shouldRetry(
+                  new RedisConnectionException("error", new TimeoutException("timed out"))))
+          .isFalse();
+      assertThat(
+              config.shouldRetry(
+                  new FluxgateConnectionException(
+                      "error",
+                      new IllegalStateException(new FluxgateTimeoutException("timed out")))))
+          .isFalse();
+    }
+
+    @Test
+    @DisplayName("should retry an exception caused by a timeout when retryOnTimeout is enabled")
+    void shouldRetryWrappedTimeoutsWhenEnabled() {
+      RetryConfig config = RetryConfig.builder().retryOnTimeout(true).build();
+
+      assertThat(
+              config.shouldRetry(
+                  new FluxgateConnectionException("error", new TimeoutException("timed out"))))
+          .isTrue();
+    }
+
+    @Test
     @DisplayName("should not retry configuration exceptions")
     void shouldNotRetryConfigurationExceptions() {
       RetryConfig config = RetryConfig.defaults();
@@ -199,8 +253,8 @@ class RetryConfigTest {
     void shouldCheckIsRetryableOnFluxgateException() {
       RetryConfig config = RetryConfig.defaults();
 
-      // RedisConnectionException.isRetryable() returns true
-      assertThat(config.shouldRetry(new RedisConnectionException("error"))).isTrue();
+      // a connect-phase RedisConnectionException declares itself retryable
+      assertThat(config.shouldRetry(connectPhase())).isTrue();
     }
 
     @Test
@@ -213,6 +267,11 @@ class RetryConfigTest {
       assertThat(config.shouldRetry(new NonRetryableConnectionException("permanent"))).isFalse();
       assertThat(config.shouldRetry(new FluxgateConnectionException("transient"))).isTrue();
     }
+  }
+
+  private static RedisConnectionException connectPhase() {
+    return new RedisConnectionException(
+        "connect refused", new IOException("refused"), RedisConnectionException.Phase.CONNECT);
   }
 
   /** A FluxGate exception whose instance-level verdict contradicts the class allow-list. */

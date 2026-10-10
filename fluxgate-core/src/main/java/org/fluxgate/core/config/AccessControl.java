@@ -5,8 +5,11 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
+import org.fluxgate.core.key.LimitScopeKeyResolver;
 import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.match.CidrSet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Immutable allow/deny list checked before the rate limiting algorithm runs.
@@ -15,7 +18,14 @@ import org.fluxgate.core.match.CidrSet;
  * normal rate limiting ({@link Decision#NO_OPINION}).
  *
  * <p>IP-based rules use the full CIDR syntax; key-based rules compare against the <em>resolved</em>
- * key value (e.g. {@code "user:alice"}, {@code "key:abc"}, {@code "ip:192.168.1.1"}).
+ * key value (e.g. {@code "user:alice"}, {@code "key:abc"}, {@code "ip:192.168.1.1"}). Configured
+ * keys are normalised with {@link LimitScopeKeyResolver#normalizeResolvedKey(String)}, so an entry
+ * containing characters the resolver rewrites (e.g. {@code "user:a+1"}) still matches the resolved
+ * key of that identity; a {@code WARN} is logged for every entry that changes. An entry already in
+ * encoded form (for example {@code user:h:a_1:<16 hex>}, copied from a log or metric) is kept as
+ * is, so normalising is idempotent. Only the built-in prefixes ({@code ip:}, {@code user:}, {@code
+ * key:}, {@code custom:}) are recognised: for a custom prefix such as {@code tenant:}, write an
+ * entry whose value needs rewriting in encoded form ({@code tenant:h:a_1:<16 hex>}).
  *
  * <p>The engine uses {@link #evaluate(String, RateLimitKey, Collection)}, which checks the IP lists
  * against the request's actual client IP regardless of the rule scope, so a denied IP is blocked
@@ -42,6 +52,8 @@ import org.fluxgate.core.match.CidrSet;
  * @since 0.4.0
  */
 public final class AccessControl {
+
+  private static final Logger log = LoggerFactory.getLogger(AccessControl.class);
 
   /** The decision returned by {@link AccessControl#evaluate(String, RateLimitKey, Collection)}. */
   public enum Decision {
@@ -238,14 +250,15 @@ public final class AccessControl {
     if (this == o) return true;
     if (!(o instanceof AccessControl)) return false;
     AccessControl that = (AccessControl) o;
-    return Objects.equals(allowedKeys, that.allowedKeys)
+    return Objects.equals(allowedIps, that.allowedIps)
+        && Objects.equals(deniedIps, that.deniedIps)
+        && Objects.equals(allowedKeys, that.allowedKeys)
         && Objects.equals(deniedKeys, that.deniedKeys);
-    // CidrSet does not override equals; structural equality via key sets is sufficient for reload
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(allowedKeys, deniedKeys);
+    return Objects.hash(allowedIps, deniedIps, allowedKeys, deniedKeys);
   }
 
   @Override
@@ -302,7 +315,7 @@ public final class AccessControl {
      * @return this builder
      */
     public Builder addAllowedKey(String key) {
-      this.allowedKeys.add(Objects.requireNonNull(key, "key must not be null"));
+      this.allowedKeys.add(normalize(Objects.requireNonNull(key, "key must not be null")));
       return this;
     }
 
@@ -315,7 +328,9 @@ public final class AccessControl {
     public Builder allowedKeys(Set<String> keys) {
       this.allowedKeys.clear();
       if (keys != null) {
-        this.allowedKeys.addAll(keys);
+        for (String key : keys) {
+          addAllowedKey(key);
+        }
       }
       return this;
     }
@@ -327,7 +342,7 @@ public final class AccessControl {
      * @return this builder
      */
     public Builder addDeniedKey(String key) {
-      this.deniedKeys.add(Objects.requireNonNull(key, "key must not be null"));
+      this.deniedKeys.add(normalize(Objects.requireNonNull(key, "key must not be null")));
       return this;
     }
 
@@ -340,9 +355,22 @@ public final class AccessControl {
     public Builder deniedKeys(Set<String> keys) {
       this.deniedKeys.clear();
       if (keys != null) {
-        this.deniedKeys.addAll(keys);
+        for (String key : keys) {
+          addDeniedKey(key);
+        }
       }
       return this;
+    }
+
+    private static String normalize(String key) {
+      String normalized = LimitScopeKeyResolver.normalizeResolvedKey(key);
+      if (!normalized.equals(key)) {
+        log.warn(
+            "Access control key contains characters that resolved keys never carry; "
+                + "matching it in normalised form '{}'",
+            normalized);
+      }
+      return normalized;
     }
 
     /**

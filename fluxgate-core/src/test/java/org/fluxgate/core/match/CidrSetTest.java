@@ -215,4 +215,35 @@ class CidrSetTest {
       assertThat(set.contains("127.0.0.1")).isFalse();
     }
   }
+
+  @Nested
+  @DisplayName("Value semantics")
+  class ValueSemanticsTests {
+
+    @Test
+    @DisplayName("sets with the same networks are equal regardless of order and host bits")
+    void equalByNetworks() {
+      CidrSet a = CidrSet.of(Arrays.asList("10.0.0.0/8", "192.168.1.1"));
+      CidrSet b = CidrSet.of(Arrays.asList(" 192.168.1.1 ", "10.1.2.3/8"));
+
+      assertThat(a).isEqualTo(b);
+      assertThat(a.hashCode()).isEqualTo(b.hashCode());
+    }
+
+    @Test
+    @DisplayName("sets with different networks are not equal")
+    void differentNetworksDiffer() {
+      assertThat(CidrSet.of(Collections.singletonList("10.0.0.0/8")))
+          .isNotEqualTo(CidrSet.of(Collections.singletonList("10.0.0.0/16")));
+      assertThat(CidrSet.of(Collections.singletonList("10.0.0.0/8"))).isNotEqualTo(CidrSet.EMPTY);
+    }
+
+    @Test
+    @DisplayName("toString lists the configured entries")
+    void toStringListsEntries() {
+      assertThat(CidrSet.of(Arrays.asList("10.0.0.0/8", "::1")).toString())
+          .contains("10.0.0.0/8")
+          .contains("::1");
+    }
+  }
 }

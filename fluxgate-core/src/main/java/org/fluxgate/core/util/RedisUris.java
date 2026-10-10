@@ -45,8 +45,10 @@ public final class RedisUris {
    * Splits a comma-separated list of node URIs.
    *
    * <p>When every node carries its own scheme the split happens only in front of a scheme, so a
-   * comma inside a password does not tear a node in two. A list whose nodes omit the scheme is
-   * split on plain commas, which is the best that can be done with such input.
+   * comma inside a password does not tear a node in two. With a single scheme only commas after the
+   * first node's credentials separate nodes, so {@code redis://:pa,ss@n1:6379,n2:6380} yields
+   * {@code redis://:pa,ss@n1:6379} and {@code n2:6380}. Without any scheme the list is split on
+   * plain commas.
    *
    * @param uri single URI or comma-separated URIs, may be null
    * @return the individual URIs, trimmed, without empty entries
@@ -59,10 +61,15 @@ public final class RedisUris {
     // Leading and trailing separators are dropped first so that the scheme-aware split below
     // does not leave a stray comma glued to the last node.
     String normalised = uri.trim().replaceAll("^,+|,+$", "");
-    String[] parts =
-        countSchemes(normalised) > 1
-            ? normalised.split(",(?=\\s*[A-Za-z][A-Za-z0-9+.\\-]*" + SCHEME_SEPARATOR + ")")
-            : normalised.split(",");
+    String[] parts;
+    if (countSchemes(normalised) > 1) {
+      parts = normalised.split(",(?=\\s*[A-Za-z][A-Za-z0-9+.\\-]*" + SCHEME_SEPARATOR + ")");
+    } else {
+      // a comma inside the credentials belongs to the password, not to the node list
+      int authority = authorityStart(normalised);
+      parts = normalised.substring(authority).split(",");
+      parts[0] = normalised.substring(0, authority) + parts[0];
+    }
 
     List<String> nodes = new ArrayList<>(parts.length);
     for (String part : parts) {
@@ -86,13 +93,37 @@ public final class RedisUris {
 
   /**
    * Index just after the credentials of the first node, which is where a node separator may appear.
+   *
+   * <p>Only the first node's authority is searched, which ends at the first {@code /} or {@code ?}
+   * after the scheme, so an {@code @} in a path or query ({@code ?clientName=a@b}) is never taken
+   * for the end of the credentials. Inside the authority the credentials end at the first
+   * {@code @}, extended to a later {@code @} only while no comma lies between them: a host never
+   * contains {@code @}, so {@code :p@ss@host} keeps {@code p@ss} as the password, while in {@code
+   * :p@n1,u@n2} the comma separates the node {@code n1} from the node {@code u@n2}. A password that
+   * contains an {@code @} followed by a comma is ambiguous and must be percent-encoded.
    */
   private static int authorityStart(String uri) {
-    int credentialsEnd = uri.lastIndexOf('@');
-    if (credentialsEnd >= 0) {
-      return credentialsEnd + 1;
-    }
     int scheme = uri.indexOf(SCHEME_SEPARATOR);
-    return scheme >= 0 ? scheme + SCHEME_SEPARATOR.length() : 0;
+    int start = scheme >= 0 ? scheme + SCHEME_SEPARATOR.length() : 0;
+    int end = start;
+    while (end < uri.length() && uri.charAt(end) != '/' && uri.charAt(end) != '?') {
+      end++;
+    }
+    int credentialsEnd = uri.indexOf('@', start);
+    if (credentialsEnd < 0 || credentialsEnd >= end) {
+      return start;
+    }
+    while (true) {
+      int next = uri.indexOf('@', credentialsEnd + 1);
+      if (next < 0 || next >= end) {
+        break;
+      }
+      int comma = uri.indexOf(',', credentialsEnd + 1);
+      if (comma >= 0 && comma < next) {
+        break;
+      }
+      credentialsEnd = next;
+    }
+    return credentialsEnd + 1;
   }
 }

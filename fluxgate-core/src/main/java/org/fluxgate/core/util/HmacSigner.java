@@ -30,6 +30,17 @@ public final class HmacSigner {
   /** MAC algorithm used for every signature. */
   public static final String ALGORITHM = "HmacSHA256";
 
+  /**
+   * Minimum secret length, in UTF-8 bytes, that is not reported as weak.
+   *
+   * <p>HMAC-SHA256 has a 256-bit block of useful key material; a shorter shared secret is the
+   * cheapest part of the scheme to brute-force offline from one captured message.
+   */
+  public static final int MIN_RECOMMENDED_SECRET_BYTES = 32;
+
+  /** Domain tag that starts every version 2 canonical form. */
+  static final String RULE_CHANGE_V2_TAG = "fluxgate-rule-change";
+
   private static final char[] HEX_DIGITS = "0123456789abcdef".toCharArray();
 
   private HmacSigner() {
@@ -37,7 +48,10 @@ public final class HmacSigner {
   }
 
   /**
-   * Builds the canonical string a rule change signature is computed over.
+   * Builds the version 1 canonical string a rule change signature is computed over.
+   *
+   * <p>Kept so version 1 messages can still be verified. It does not bind the channel or a nonce
+   * and its separators are not escaped; publishers use {@link #canonicalRuleChangeV2} instead.
    *
    * <p>Format: {@code version|ruleSetId|fullReload|timestamp|source}. A null {@code ruleSetId} or
    * {@code source} contributes an empty field, so the separators always line up and a full reload
@@ -61,6 +75,85 @@ public final class HmacSigner {
         + timestamp
         + "|"
         + (source != null ? source : "");
+  }
+
+  /**
+   * Builds the version 2 canonical string a rule change signature is computed over.
+   *
+   * <p>Unlike the version 1 form, every field is length-prefixed ({@code <utf8 bytes>:<value>}) and
+   * a null field is encoded as {@code -}, so no value - whatever separators it contains - can shift
+   * the boundary of its neighbour, and an empty string stays distinguishable from a missing field.
+   * The form also binds the Redis {@code channel} the message is published on, so a message signed
+   * for one environment cannot be replayed on another channel that shares the secret, and a
+   * per-message {@code nonce} the subscriber deduplicates on.
+   *
+   * @param version the message schema version (2 or later)
+   * @param channel the Pub/Sub channel the message is published on
+   * @param ruleSetId the changed rule set, or null for a full reload
+   * @param fullReload whether every rule set should be reloaded
+   * @param timestamp creation time in epoch millis
+   * @param source identifier of the publishing application
+   * @param nonce unique per message identifier
+   * @return the canonical string to sign or verify
+   * @since 0.4.0
+   */
+  public static String canonicalRuleChangeV2(
+      int version,
+      String channel,
+      String ruleSetId,
+      boolean fullReload,
+      long timestamp,
+      String source,
+      String nonce) {
+    StringBuilder sb = new StringBuilder(128).append(RULE_CHANGE_V2_TAG);
+    appendField(sb, Integer.toString(version));
+    appendField(sb, channel);
+    appendField(sb, ruleSetId);
+    appendField(sb, Boolean.toString(fullReload));
+    appendField(sb, Long.toString(timestamp));
+    appendField(sb, source);
+    appendField(sb, nonce);
+    return sb.toString();
+  }
+
+  private static void appendField(StringBuilder sb, String value) {
+    sb.append('|');
+    if (value == null) {
+      sb.append('-');
+      return;
+    }
+    sb.append(value.getBytes(StandardCharsets.UTF_8).length).append(':').append(value);
+  }
+
+  /**
+   * Normalises a configured shared secret the same way on the publishing and the verifying side.
+   *
+   * <p>Leading and trailing whitespace is removed - a secret read from a file or an environment
+   * variable often carries a trailing newline on one side only, which would otherwise make every
+   * signature fail - and a blank secret means "no secret".
+   *
+   * @param secret the configured secret, may be null
+   * @return the trimmed secret, or null when it is null or blank
+   * @since 0.4.0
+   */
+  public static String normalizeSecret(String secret) {
+    if (secret == null) {
+      return null;
+    }
+    String trimmed = secret.trim();
+    return trimmed.isEmpty() ? null : trimmed;
+  }
+
+  /**
+   * Whether a (normalised) secret is shorter than {@link #MIN_RECOMMENDED_SECRET_BYTES}.
+   *
+   * @param secret the secret, may be null
+   * @return true when the secret is present but shorter than recommended
+   * @since 0.4.0
+   */
+  public static boolean isWeakSecret(String secret) {
+    return secret != null
+        && secret.getBytes(StandardCharsets.UTF_8).length < MIN_RECOMMENDED_SECRET_BYTES;
   }
 
   /**

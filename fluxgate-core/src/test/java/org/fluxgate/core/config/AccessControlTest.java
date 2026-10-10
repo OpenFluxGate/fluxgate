@@ -2,9 +2,12 @@ package org.fluxgate.core.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import org.fluxgate.core.config.AccessControl.Decision;
+import org.fluxgate.core.context.RequestContext;
+import org.fluxgate.core.key.LimitScopeKeyResolver;
 import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.match.CidrSet;
 import org.junit.jupiter.api.DisplayName;
@@ -185,5 +188,167 @@ class AccessControlTest {
       assertThat(deny.evaluate("1.2.3.4", adminKey, Collections.singletonList(adminKey)))
           .isEqualTo(Decision.DENY);
     }
+  }
+
+  // ===== configured keys are normalised like resolved keys =====
+
+  @Nested
+  @DisplayName("Key normalisation")
+  class KeyNormalisationTests {
+
+    private final LimitScopeKeyResolver resolver = new LimitScopeKeyResolver();
+
+    private RateLimitKey resolveUser(String userId) {
+      return resolver.resolve(
+          RequestContext.builder().userId(userId).build(),
+          RateLimitRule.builder("r")
+              .scope(LimitScope.PER_USER)
+              .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).build())
+              .build());
+    }
+
+    @Test
+    @DisplayName("a denied key with characters the resolver encodes still denies that identity")
+    void deniedKeyMatchesTheResolvedForm() {
+      AccessControl ac = AccessControl.builder().addDeniedKey("user:a+1").build();
+      RateLimitKey denied = resolveUser("a+1");
+      RateLimitKey lookAlike = resolveUser("a_1");
+
+      assertThat(ac.evaluate("192.0.2.1", denied, Collections.singletonList(denied)))
+          .isEqualTo(Decision.DENY);
+      assertThat(ac.evaluate("192.0.2.1", lookAlike, Collections.singletonList(lookAlike)))
+          .isEqualTo(Decision.NO_OPINION);
+    }
+
+    @Test
+    @DisplayName("allowed keys are normalised through the bulk setter too")
+    void allowedKeysAreNormalised() {
+      AccessControl ac =
+          AccessControl.builder().allowedKeys(Collections.singleton("user:a b")).build();
+      RateLimitKey allowed = resolveUser("a b");
+
+      assertThat(ac.getAllowedKeys()).containsExactly(allowed.value());
+      assertThat(ac.evaluate("192.0.2.1", allowed, Collections.singletonList(allowed)))
+          .isEqualTo(Decision.ALLOW_BYPASS);
+    }
+
+    @Test
+    @DisplayName("entries already in encoded form pass through unchanged")
+    void encodedEntriesPassThrough() {
+      RateLimitKey rewritten = resolveUser("a+1");
+      RateLimitKey hashed = resolveUser("x".repeat(300));
+      String bareShort = RateLimitKey.of("a b").value();
+      String bareLong = RateLimitKey.of("y".repeat(300)).value();
+
+      AccessControl ac =
+          AccessControl.builder()
+              .addDeniedKey(rewritten.value())
+              .addDeniedKey(hashed.value())
+              .addAllowedKey(bareShort)
+              .addAllowedKey(bareLong)
+              .build();
+
+      assertThat(ac.getDeniedKeys()).containsExactlyInAnyOrder(rewritten.value(), hashed.value());
+      assertThat(ac.getAllowedKeys()).containsExactlyInAnyOrder(bareShort, bareLong);
+      assertThat(ac.evaluate("192.0.2.1", rewritten, Collections.singletonList(rewritten)))
+          .isEqualTo(Decision.DENY);
+      assertThat(ac.evaluate("192.0.2.1", hashed, Collections.singletonList(hashed)))
+          .isEqualTo(Decision.DENY);
+    }
+
+    @Test
+    @DisplayName("normalising a configured key twice gives the same result")
+    void normalisationIsIdempotent() {
+      for (String raw :
+          new String[] {
+            "user:alice",
+            "user:a+1",
+            "user:" + "z".repeat(300),
+            "a b",
+            "w".repeat(300),
+            "custom:h:x",
+            "key:h:" + "0".repeat(64),
+            "ip:",
+            "h:"
+          }) {
+        String once = LimitScopeKeyResolver.normalizeResolvedKey(raw);
+        assertThat(LimitScopeKeyResolver.normalizeResolvedKey(once)).as(raw).isEqualTo(once);
+      }
+    }
+
+    @Test
+    @DisplayName("a raw value that only looks encoded is still told apart from the real encoding")
+    void lookAlikeOfEncodingIsNotForged() {
+      // a user whose raw id is literally h:a_1:<16 hex> resolves to a re-encoded key, so a
+      // pass-through entry never matches it by accident
+      String encodedValue = RateLimitKey.of("user:", "a+1").value().substring("user:".length());
+      RateLimitKey forger = resolveUser(encodedValue);
+
+      AccessControl ac = AccessControl.builder().addDeniedKey("user:" + encodedValue).build();
+
+      assertThat(forger.value()).isNotEqualTo("user:" + encodedValue);
+      assertThat(ac.evaluate("192.0.2.1", forger, Collections.singletonList(forger)))
+          .isEqualTo(Decision.NO_OPINION);
+    }
+
+    @Test
+    @DisplayName("clean keys are kept as configured")
+    void cleanKeysAreUnchanged() {
+      AccessControl ac =
+          AccessControl.builder().addDeniedKey("user:alice").addAllowedKey("global").build();
+
+      assertThat(ac.getDeniedKeys()).containsExactly("user:alice");
+      assertThat(ac.getAllowedKeys()).containsExactly("global");
+    }
+
+    @Test
+    @DisplayName("a custom prefix matches raw when the value is clean, encoded otherwise")
+    void customPrefixEntries() {
+      // custom prefixes are unknown to the normaliser: tenant:a+1 could be of("tenant:", "a+1")
+      // or of("tenant:a+1"), so such an entry is sanitised as a whole
+      RateLimitKey clean = RateLimitKey.of("tenant:", "acme");
+      RateLimitKey rewritten = RateLimitKey.of("tenant:", "a+1");
+      RateLimitKey whole = RateLimitKey.of("tenant:a+1");
+
+      AccessControl raw =
+          AccessControl.builder().addDeniedKey("tenant:acme").addDeniedKey("tenant:a+1").build();
+      AccessControl encoded = AccessControl.builder().addDeniedKey(rewritten.value()).build();
+
+      assertThat(raw.evaluate("192.0.2.1", clean, Collections.singletonList(clean)))
+          .isEqualTo(Decision.DENY);
+      assertThat(raw.evaluate("192.0.2.1", rewritten, Collections.singletonList(rewritten)))
+          .isEqualTo(Decision.NO_OPINION);
+      assertThat(raw.evaluate("192.0.2.1", whole, Collections.singletonList(whole)))
+          .isEqualTo(Decision.DENY);
+      assertThat(encoded.getDeniedKeys()).containsExactly(rewritten.value());
+      assertThat(encoded.evaluate("192.0.2.1", rewritten, Collections.singletonList(rewritten)))
+          .isEqualTo(Decision.DENY);
+    }
+  }
+
+  @Test
+  @DisplayName("equals and hashCode take the IP lists into account")
+  void equalsIncludesIpLists() {
+    AccessControl tenSlash8 =
+        AccessControl.builder()
+            .deniedIps(CidrSet.of(Collections.singletonList("10.0.0.0/8")))
+            .build();
+    AccessControl sameDenied =
+        AccessControl.builder()
+            .deniedIps(CidrSet.of(Collections.singletonList("10.0.0.0/8")))
+            .build();
+    AccessControl otherDenied =
+        AccessControl.builder()
+            .deniedIps(CidrSet.of(Collections.singletonList("192.168.0.0/16")))
+            .build();
+    AccessControl allowedInstead =
+        AccessControl.builder()
+            .allowedIps(CidrSet.of(Collections.singletonList("10.0.0.0/8")))
+            .build();
+
+    assertThat(tenSlash8).isEqualTo(sameDenied).hasSameHashCodeAs(sameDenied);
+    assertThat(tenSlash8).isNotEqualTo(otherDenied);
+    assertThat(tenSlash8).isNotEqualTo(allowedInstead);
+    assertThat(tenSlash8).isNotEqualTo(AccessControl.EMPTY);
   }
 }

@@ -3,8 +3,10 @@ package org.fluxgate.core.bucket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.OnLimitExceedPolicy;
@@ -315,6 +317,30 @@ class Bucket4jRateLimiterTest {
     assertThat(result.getLimit()).isEqualTo(-1L);
   }
 
+  @Test
+  void missingKeySyntheticKeyShouldKeepItsPrefixWhenTheRuleIdIsRewritten() {
+    Bucket4jRateLimiter limiter = new Bucket4jRateLimiter();
+    RateLimitRule rule =
+        RateLimitRule.builder("rule one")
+            .scope(LimitScope.GLOBAL)
+            .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
+            .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 5).build())
+            .build();
+    RateLimitRuleSet ruleSet =
+        RateLimitRuleSet.builder("rs")
+            .rules(List.of(rule))
+            .keyResolver(
+                (ctx, r) -> {
+                  throw new MissingRateLimitKeyException(r.getId(), r.getScope());
+                })
+            .build();
+
+    RateLimitResult result = limiter.tryConsume(createRequestContext(null, null), ruleSet, 1);
+
+    assertThat(result.isAllowed()).isFalse();
+    assertThat(result.getKey().value()).matches("missing-key:h:rule_one:[0-9a-f]{16}");
+  }
+
   // --- 6) Bucket cache is bounded --------------------------------------
 
   @Test
@@ -399,5 +425,80 @@ class Bucket4jRateLimiterTest {
     assertThat(limiter.getEvictionCount())
         .as("a rule change dropping the buckets is not cache pressure")
         .isZero();
+  }
+
+  // --- 8) Retry-After reports the longest wait among the rejecting rules ----
+
+  @Test
+  void rejectionShouldReportTheLongestWaitAcrossRejectingRules() {
+    RateLimitRule perMinute =
+        RateLimitRule.builder("per-minute")
+            .scope(LimitScope.GLOBAL)
+            .priority(10) // evaluated first
+            .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 1).label("1m").build())
+            .build();
+    RateLimitRule perHour =
+        RateLimitRule.builder("per-hour")
+            .scope(LimitScope.GLOBAL)
+            .addBand(RateLimitBand.builder(Duration.ofHours(1), 1).label("1h").build())
+            .build();
+    RateLimitRuleSet ruleSet =
+        RateLimitRuleSet.builder("retry-after")
+            .rules(List.of(perMinute, perHour))
+            .keyResolver((ctx, rule) -> RateLimitKey.of("k"))
+            .build();
+    RequestContext ctx = createRequestContext("10.6.0.1", null);
+
+    assertThat(rateLimiter.tryConsume(ctx, ruleSet, 1).isAllowed()).isTrue();
+    RateLimitResult rejected = rateLimiter.tryConsume(ctx, ruleSet, 1);
+
+    assertThat(rejected.isAllowed()).isFalse();
+    assertThat(rejected.getNanosToWaitForRefill())
+        .as("retrying after the per-minute wait would only be rejected by the hourly rule")
+        .isGreaterThan(Duration.ofMinutes(30).toNanos());
+    assertThat(rejected.getMatchedRule().getId()).isEqualTo("per-hour");
+  }
+
+  @Test
+  void failingMetricsRecorderDoesNotFailTheDecisionOrChargeTwice() {
+    AtomicInteger calls = new AtomicInteger();
+    RateLimitMetricsRecorder failing =
+        (ctx, result) -> {
+          calls.incrementAndGet();
+          throw new IllegalStateException("metrics backend down");
+        };
+    RateLimitRuleSet ruleSet = createSimpleRuleSet((ctx, rule) -> RateLimitKey.of("k"), failing);
+    RequestContext ctx = createRequestContext("10.7.0.1", null);
+
+    for (int i = 1; i <= 5; i++) {
+      RateLimitResult result = rateLimiter.tryConsume(ctx, ruleSet, 1);
+      assertThat(result.isAllowed()).as("request %s should be allowed", i).isTrue();
+      assertThat(result.getRemainingTokens()).as("one token per call").isEqualTo(5L - i);
+    }
+    assertThat(rateLimiter.tryConsume(ctx, ruleSet, 1).isAllowed()).isFalse();
+    assertThat(calls).hasValue(6);
+  }
+
+  @Test
+  void metricsRecorderSneakyThrowingACheckedExceptionDoesNotFailTheDecision() {
+    AtomicInteger calls = new AtomicInteger();
+    RateLimitMetricsRecorder failing =
+        (ctx, result) -> {
+          calls.incrementAndGet();
+          sneakyThrow(new IOException("metrics backend down"));
+        };
+    RateLimitRuleSet ruleSet = createSimpleRuleSet((ctx, rule) -> RateLimitKey.of("k"), failing);
+    RequestContext ctx = createRequestContext("10.7.0.2", null);
+
+    RateLimitResult result = rateLimiter.tryConsume(ctx, ruleSet, 1);
+
+    assertThat(result.isAllowed()).isTrue();
+    assertThat(result.getRemainingTokens()).isEqualTo(4L);
+    assertThat(calls).hasValue(1);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <T extends Throwable> void sneakyThrow(Throwable t) throws T {
+    throw (T) t;
   }
 }

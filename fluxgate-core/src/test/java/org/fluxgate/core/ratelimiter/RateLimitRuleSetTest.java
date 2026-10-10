@@ -404,4 +404,21 @@ class RateLimitRuleSetTest {
       assertEquals("my-api-key-123", resolvedKey.value());
     }
   }
+
+  @org.junit.jupiter.api.Test
+  @org.junit.jupiter.api.DisplayName("build should reject duplicate rule ids")
+  void build_shouldRejectDuplicateRuleIds() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofMinutes(1), 10).build();
+    RateLimitRule first = RateLimitRule.builder("dup").addBand(band).build();
+    RateLimitRule second =
+        RateLimitRule.builder("dup").scope(LimitScope.PER_USER).addBand(band).build();
+
+    RateLimitRuleSet.Builder builder =
+        RateLimitRuleSet.builder("rs")
+            .rules(List.of(first, second))
+            .keyResolver((ctx, rule) -> org.fluxgate.core.key.RateLimitKey.of("k"));
+
+    InvalidRuleConfigException e = assertThrows(InvalidRuleConfigException.class, builder::build);
+    assertTrue(e.getMessage().contains("dup"));
+  }
 }

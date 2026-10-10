@@ -10,6 +10,10 @@ package org.fluxgate.core.exception;
  *   <li>Token bucket operation fails
  *   <li>Rate limit result cannot be determined
  * </ul>
+ *
+ * <p>Not retryable by default: the evaluation may already have consumed tokens, so retrying it
+ * could charge the same request twice. Callers that know nothing was consumed can opt in through
+ * the constructors taking a {@code retryable} flag.
  */
 public class RateLimitExecutionException extends FluxgateOperationException {
 
@@ -37,7 +41,18 @@ public class RateLimitExecutionException extends FluxgateOperationException {
    * @param cause the cause of the exception
    */
   public RateLimitExecutionException(String message, Throwable cause) {
-    super(message, cause, true);
+    this(message, cause, false);
+  }
+
+  /**
+   * Constructs a new RateLimitExecutionException with an explicit retry verdict.
+   *
+   * @param message the detail message
+   * @param cause the cause of the exception
+   * @param retryable whether the operation can safely be retried
+   */
+  public RateLimitExecutionException(String message, Throwable cause, boolean retryable) {
+    super(message, cause, retryable);
     this.ruleSetId = null;
     this.key = null;
   }
@@ -52,7 +67,22 @@ public class RateLimitExecutionException extends FluxgateOperationException {
    */
   public RateLimitExecutionException(
       String message, String ruleSetId, String key, Throwable cause) {
-    super(buildMessage(message, ruleSetId, key), cause, true);
+    this(message, ruleSetId, key, cause, false);
+  }
+
+  /**
+   * Constructs a new RateLimitExecutionException with context information and an explicit retry
+   * verdict.
+   *
+   * @param message the detail message
+   * @param ruleSetId the ID of the rule set being evaluated
+   * @param key the rate limit key being checked
+   * @param cause the cause of the exception
+   * @param retryable whether the operation can safely be retried
+   */
+  public RateLimitExecutionException(
+      String message, String ruleSetId, String key, Throwable cause, boolean retryable) {
+    super(buildMessage(message, ruleSetId, key), cause, retryable);
     this.ruleSetId = ruleSetId;
     this.key = key;
   }

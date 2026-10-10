@@ -1,7 +1,9 @@
 package org.fluxgate.core.resilience;
 
 import java.time.Duration;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
@@ -144,12 +146,17 @@ public class RetryConfig {
    *
    * <ol>
    *   <li>Retry disabled - never retry.
-   *   <li>A timeout ({@link FluxgateTimeoutException} or {@link TimeoutException}) while {@link
-   *       #isRetryOnTimeout()} is false - never retry. A timed-out call may well have been executed
-   *       by the server, so retrying it double-consumes tokens for non-idempotent operations.
+   *   <li>An {@link IgnoredCallException} - never retry; it describes the call, not the resource.
+   *   <li>A timeout ({@link FluxgateTimeoutException} or {@link TimeoutException}, either the
+   *       exception itself or anywhere in its cause chain) while {@link #isRetryOnTimeout()} is
+   *       false - never retry. A timed-out call may well have been executed by the server, so
+   *       retrying it double-consumes tokens for non-idempotent operations.
    *   <li>A {@link FluxgateException} - its {@link FluxgateException#isRetryable()} is the final
    *       answer. The per-instance verdict wins over the class-based allow-list below, which would
-   *       otherwise override an exception that explicitly declared itself non-retryable.
+   *       otherwise override an exception that explicitly declared itself non-retryable. For
+   *       example a {@link org.fluxgate.core.exception.RedisConnectionException} is retried only
+   *       when it failed while connecting; a failure during a command (or of unknown phase) may
+   *       already have consumed tokens on Redis and is not retried.
    *   <li>Otherwise, whether the exception is an instance of one of {@link
    *       #getRetryableExceptions()}.
    * </ol>
@@ -159,6 +166,11 @@ public class RetryConfig {
    */
   public boolean shouldRetry(Exception exception) {
     if (!enabled) {
+      return false;
+    }
+
+    // a call the circuit breaker ignores fails the same way on every attempt
+    if (exception instanceof IgnoredCallException) {
       return false;
     }
 
@@ -208,8 +220,15 @@ public class RetryConfig {
     return Duration.ofMillis(Math.max(0L, Math.min(jitteredMillis, maxBackoffMillis)));
   }
 
+  /** Whether the exception or any of its causes is a timeout; guards against cause cycles. */
   private static boolean isTimeout(Exception exception) {
-    return exception instanceof FluxgateTimeoutException || exception instanceof TimeoutException;
+    Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+    for (Throwable t = exception; t != null && seen.add(t); t = t.getCause()) {
+      if (t instanceof FluxgateTimeoutException || t instanceof TimeoutException) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @Override

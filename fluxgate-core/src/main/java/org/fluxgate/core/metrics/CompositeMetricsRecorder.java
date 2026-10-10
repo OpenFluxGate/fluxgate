@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Objects;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
+import org.fluxgate.core.util.LogThrottle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,7 +23,8 @@ import org.slf4j.LoggerFactory;
  * </ul>
  *
  * <p>Each recorder's {@link #record(RequestContext, RateLimitResult)} method is called in order. If
- * one recorder fails, subsequent recorders are still invoked.
+ * one recorder throws an exception (not an {@link Error}), the failure is logged and subsequent
+ * recorders are still invoked.
  *
  * <p>Example usage:
  *
@@ -42,6 +44,9 @@ public class CompositeMetricsRecorder implements RateLimitMetricsRecorder {
 
   private final List<RateLimitMetricsRecorder> recorders;
 
+  /** One warning throttle per delegate, so a noisy recorder cannot mute another one's failures. */
+  private final List<LogThrottle> failureWarnings;
+
   /**
    * Creates a CompositeMetricsRecorder with the given recorders.
    *
@@ -54,25 +59,41 @@ public class CompositeMetricsRecorder implements RateLimitMetricsRecorder {
       throw new IllegalArgumentException("recorders must not be empty");
     }
     this.recorders = Collections.unmodifiableList(new ArrayList<>(recorders));
+    List<LogThrottle> throttles = new ArrayList<>(this.recorders.size());
+    for (int i = 0; i < this.recorders.size(); i++) {
+      throttles.add(new LogThrottle());
+    }
+    this.failureWarnings = throttles;
   }
 
   /**
    * Records a rate limit event to all underlying recorders.
    *
-   * <p>Each recorder is invoked in order. If a recorder throws an exception, the error is logged
-   * but subsequent recorders are still invoked to ensure all metrics backends receive the event.
+   * <p>Each recorder is invoked in order. If a recorder throws an exception (not an {@link Error}),
+   * the failure is logged - at WARN at most once a minute per recorder, at DEBUG otherwise - and
+   * the subsequent recorders are still invoked, so every metrics backend receives the event. Such
+   * exceptions are not rethrown; an {@code Error} propagates.
    *
    * @param context the request context
    * @param result the rate limit result
    */
   @Override
   public void record(RequestContext context, RateLimitResult result) {
-    for (RateLimitMetricsRecorder recorder : recorders) {
+    for (int i = 0; i < recorders.size(); i++) {
+      RateLimitMetricsRecorder recorder = recorders.get(i);
       try {
         recorder.record(context, result);
       } catch (Exception e) {
-        // Log error but continue to next recorder
-        log.error("Error in recorder {}", recorder.getClass().getSimpleName(), e);
+        if (failureWarnings.get(i).tryAcquire()) {
+          log.warn(
+              "Metrics recorder {} failed; the other recorders still run. Further failures within"
+                  + " {} are logged at DEBUG.",
+              recorder.getClass().getName(),
+              LogThrottle.DEFAULT_INTERVAL,
+              e);
+        } else {
+          log.debug("Metrics recorder {} failed", recorder.getClass().getName(), e);
+        }
       }
     }
   }

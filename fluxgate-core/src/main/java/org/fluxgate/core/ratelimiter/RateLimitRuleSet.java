@@ -5,8 +5,10 @@ package org.fluxgate.core.ratelimiter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import org.fluxgate.core.config.AccessControl;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
@@ -225,12 +227,21 @@ public final class RateLimitRuleSet {
      * Builds the rule set.
      *
      * @return the rule set
-     * @throws InvalidRuleConfigException if no rule is configured or no key resolver is set
+     * @throws InvalidRuleConfigException if no rule is configured, two rules share an id, or no key
+     *     resolver is set
      */
     public RateLimitRuleSet build() {
       if (rules.isEmpty()) {
         throw new InvalidRuleConfigException(
             "rules must contain at least one RateLimitRule (ruleSetId: " + id + ")");
+      }
+      // Buckets and metrics are keyed by rule id, so two rules with one id would share a bucket.
+      Set<String> ruleIds = new HashSet<>();
+      for (RateLimitRule rule : rules) {
+        if (!ruleIds.add(rule.getId())) {
+          throw new InvalidRuleConfigException(
+              "duplicate rule id '" + rule.getId() + "' (ruleSetId: " + id + ")", rule.getId());
+        }
       }
       if (keyResolver == null) {
         throw new InvalidRuleConfigException(
