@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "performed_unix_ms": 1791613759354,
+  "remote_lts_commit": "7ee6a86101afe5ed5a9d6efb992e470430af046a",
+  "integration_source_commit": "b57418fb3612f71203cab6ccd62b5eea94b98091",
+  "merge_tree_exit_code": 0,
+  "merge_tree": "1b0a6b7fb5df143d7b7d05449083935c580c1b91",
+  "conflict_count": 0,
+  "both_ancestries_preserved": {
+    "lts": true,
+    "original_envoy": true
+  },
+  "protected_worktrees": [
+    {
+      "worktree": "fluxgate",
+      "head": "4badd1cf302867ce8f507b5def651dee709be1aa",
+      "dirty_count": 3
+    },
+    {
+      "worktree": "fluxgate-overhaul",
+      "head": "0b5a32a7b3007d672f60dbed683cedc33fb5d211",
+      "dirty_count": 0
+    },
+    {
+      "worktree": "fluxgate-enterprise-oss-hardening",
+      "head": "b78742abae09854e74747fba8969cb2db7d5644b",
+      "dirty_count": 0
+    },
+    {
+      "worktree": "fluxgate.control-plane",
+      "head": "a5fc3a35b79b1edc3ad1bf0f0c958b868dbe6610",
+      "dirty_count": 0
+    },
+    {
+      "worktree": "fluxgate-envoy-gateway",
+      "head": "d67821b89ac49929f06a3e798c5f53a9bcb90c7e",
+      "dirty_count": 0
+    },
+    {
+      "worktree": "fluxgate-studio-envoy-hardening",
+      "head": "5fe85c6d69f414e6823de6226766abe2a173d6d1",
+      "dirty_count": 0
+    }
+  ],
+  "actual_target_lts_merge_performed": false,
+  "push_performed": false,
+  "overall_runtime_approval": false,
+  "boundary": "Read-only merge-tree simulation against the freshly checked remote LTS reference; later remote updates require a new check. Original main retains three unrelated dirty entries."
+}

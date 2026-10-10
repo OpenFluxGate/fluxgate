@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "profile": "network-independent",
+  "profile_passed": true,
+  "global_acceptance": false,
+  "global_complete": false,
+  "credential_acceptance": false,
+  "source_commit_at_invocation": "4cbbd0ca4dcf669a8ee87f0b608846025885ef7b",
+  "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+  "independent_terminal_exit_code": 0,
+  "independent_terminal_witness_valid": true,
+  "provenance": {
+    "raw": {
+      "sha256": "18cbb24a685de208dbd68c9d79c1f580571ee45d5b670492a5737eb4a9052b56",
+      "bytes": 104144
+    },
+    "log": {
+      "sha256": "93b8e23265963f4df6c843b454c941d9bbcad0899e72ac4efe8b3e9340f9f212",
+      "bytes": 20
+    },
+    "witness": {
+      "sha256": "f3cd1a466ec45d0972852108317a3f9722376a0845bf0e11de21c151284037b9",
+      "bytes": 7080
+    },
+    "exporter_stage": {
+      "sha256": "77fce947452acb6aa6755e471aaaf5b63241de40316441d0c0cb88cd60b397e2",
+      "bytes": 6391
+    },
+    "manifest": {
+      "sha256": "4b045e429a7d7cefa3110698ce94028ba62a28e0ae74d6a2f75c96cb116ecd81",
+      "bytes": 991
+    }
+  },
+  "limits": [
+    "Specific terminal-passing profile only; global credential availability remains rejected.",
+    "Private identities, paths and free-form strings were removed from the projected summary. Inspect bound private raw proof for omitted detail."
+  ],
+  "private_selected_stage_sha256": "88c38d3a5a81bd201861fe06c975512c825fc3ae886cdd898b6b442a3b67c612",
+  "summary": {
+    "passed": true,
+    "cleanup_verified": true,
+    "runtime_policies_unchanged": true,
+    "gateway_target_port": 10080,
+    "backend_listener_port": 5678,
+    "phase_count": 2,
+    "controls": {
+      "negative_denials": 48,
+      "positive_controls": 232,
+      "cleanup_verified": true
+    }
+  }
+}

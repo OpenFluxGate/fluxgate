@@ -1,0 +1,159 @@
+{
+  "schema": 1,
+  "scope": "local isolated integration",
+  "tests_passed": true,
+  "overall_runtime_acceptance": false,
+  "score_95_approved": false,
+  "java_build_source_commit": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
+  "java_build_tree": "58288a739e89a7854f316ad4d9c6fca21ac55f53",
+  "verifier_source_commit": "b57418fb3612f71203cab6ccd62b5eea94b98091",
+  "studio_source_commit": "0966efbcbef5c9f2f680146450ae3bc3daef91cf",
+  "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+  "studio_jar_sha256": "de3ed6b1e0a7046a18464b0d3e8102aacf7c463dbb1b39bcc0d820bd7895bb77",
+  "source_continuity_paths": [
+    "deploy/resilience-local/tests/test_cold_restart_sentinel.py",
+    "deploy/resilience-local/tests/test_sampler_positive_marker.py",
+    "deploy/resilience-local/tests/test_sampler_progress.py",
+    "deploy/resilience-local/verify-credentials.py"
+  ],
+  "java_core": {
+    "tests": 3148,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "java_studio": {
+    "tests": 217,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "java_total": 3365,
+  "module_tests": {
+    "fluxgate-control-support": {
+      "tests": 76,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-core": {
+      "tests": 660,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-envoy-extauth": {
+      "tests": 71,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-mongo-adapter": {
+      "tests": 232,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-redis-ratelimiter": {
+      "tests": 456,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-samples/fluxgate-sample-api": {
+      "tests": 15,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-samples/fluxgate-sample-filter": {
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-samples/fluxgate-sample-mongo": {
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-samples/fluxgate-sample-redis": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-samples/fluxgate-sample-standalone-java11": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-samples/fluxgate-sample-standalone-java21": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-spring-boot2-starter": {
+      "tests": 782,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-spring-boot3-starter": {
+      "tests": 781,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-testkit": {
+      "tests": 51,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "studio_ui_tests": 13,
+  "studio_ui_checks": [
+    "lint",
+    "typecheck",
+    "format",
+    "build",
+    "vitest"
+  ],
+  "verifier_unit_tests": {
+    "tests": 56,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "verifier_self_test_passed": true,
+  "verifier_source_sha256": "f4dc99be9997dc68f058a5e0152e75490b477d7037d8d4f52e440fe2cf59d187",
+  "test_logs_sha256": {
+    "core_install": "9ebf8e6cde6160f16d3e786168e550bf7633715699626adf86f782a0379095c4",
+    "studio": {
+      "fluxgate-lts-studio-scoped-final-backend.log": "c247f70948a96d0d3379f8569ed67fbd52e4e169617ba6aed35c766dab10a502",
+      "fluxgate-lts-studio-scoped-ui-build.log": "5cd3422190d8abde154a5cda49328baf20ff0503fed102f089fa1e19c98e8a48",
+      "fluxgate-lts-studio-scoped-ui-format.log": "64c78e860f4542df7775fb7dcef05df5d87b54afa9255b79dea541603e83f1e6",
+      "fluxgate-lts-studio-scoped-ui-lint.log": "fbd9d75bbb700a362a2214bb79887a5c1f2c81af3c31215de9c30ba6db3db96d",
+      "fluxgate-lts-studio-scoped-ui-test.log": "2ffc0587d3e2390d1ae3f07d0352be898ba78ffceb720d02261d7289b79b31d9",
+      "fluxgate-lts-studio-scoped-ui-typecheck.log": "bd24ca5189f67c22871d8006824985a61658153a29dad11ec109fb4d0a299ba1"
+    },
+    "verifier_unit": "aad16240dc26fdd71ee84afd7a10493085d562a84a68e7749de4d01fec5fd8e6",
+    "verifier_self_test": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0"
+  },
+  "xml_report_counts": {
+    "core": 552,
+    "studio": 64
+  },
+  "xml_hash_lists_sha256": {
+    "core": "19bdf8834365ca7b967f0a5db2fe52f0f93fe42349f335a9ff7eb29a249c37bc",
+    "studio": "dbd4f612a1ccd6cac21ff20dec1e963d53b82f561679cc737a63f41a74b3691b"
+  },
+  "private_test_record_sha256": "94b693005fe49718078d7c2e809091d2f6b2483c5574522140833dde88c44c2f",
+  "historical_marker_test_count": 51,
+  "historical_marker_evidence_labelled": true,
+  "boundary": "Retained Java executions at their own build commits; XML and packaged JAR hashes freshly unchanged. Verifier56 and selftest were freshly executed; UI13 separate. Build/test success is not runtime availability acceptance."
+}

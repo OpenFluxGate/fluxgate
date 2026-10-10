@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "decision": "HOLD",
+  "complete": false,
+  "overall_acceptance": false,
+  "score_95_approved": false,
+  "actual_lts_merge_performed": false,
+  "push_performed": false,
+  "code_conflicts": 0,
+  "build_and_tests_passed": true,
+  "current_state_passed": true,
+  "credential_protocol_passed_in_rejected_run": true,
+  "credential_rotation_availability_accepted": false,
+  "fresh_full_credential_progress_run_performed": false,
+  "failed_healthy_control": {
+    "scheduled": 1803,
+    "exact_200_responses": 1802,
+    "omissions": 1,
+    "pending": 0,
+    "cleanup_verified": true,
+    "terminal_exit": 1,
+    "private_harness_error_after_observation": true
+  },
+  "identities": {
+    "core_build_commit": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
+    "core_commit": "b57418fb3612f71203cab6ccd62b5eea94b98091",
+    "core_validation_tree": "1b0a6b7fb5df143d7b7d05449083935c580c1b91",
+    "studio_commit": "0966efbcbef5c9f2f680146450ae3bc3daef91cf",
+    "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+    "studio_jar_sha256": "de3ed6b1e0a7046a18464b0d3e8102aacf7c463dbb1b39bcc0d820bd7895bb77",
+    "source_continuity_paths": [
+      "deploy/resilience-local/tests/test_cold_restart_sentinel.py",
+      "deploy/resilience-local/tests/test_sampler_positive_marker.py",
+      "deploy/resilience-local/tests/test_sampler_progress.py",
+      "deploy/resilience-local/verify-credentials.py"
+    ],
+    "core_build_tree": "58288a739e89a7854f316ad4d9c6fca21ac55f53"
+  },
+  "retained_ledger_sha256": "11d926938c306e9ea57258f4f455bb6e459d3b09679684d4c7f9c1699c871827",
+  "retained_ledger_boundary": "Frozen after original terminal review, not raw digests collected during original execution.",
+  "selected_profile_stage_index_sha256": "b5b35f0f0b43388c5a64aa8c59ecd25f45644f570f5c888cbcd77d149949ecfb",
+  "proofs": [
+    {
+      "file": "ha-window-diagnostic.json",
+      "sha256": "5b0cd2800d8277b4ec97f748dd13ac47fa342b75301e229b3102c2535cd8a99a",
+      "bytes": 1603
+    },
+    {
+      "file": "ha.json",
+      "sha256": "f2c80803eba84e2256784f08511fcfdae3c534a33748aa7e772a6af9ca2d41fd",
+      "bytes": 7279
+    },
+    {
+      "file": "load.json",
+      "sha256": "70e473ab421bdeb6d18a48c6d6be64415e02bd4d832c6002a449b0cd1a70bea5",
+      "bytes": 10090
+    },
+    {
+      "file": "combined-mongo.json",
+      "sha256": "1ee4a52ada9ea7fc11d6d629a98657028e264eeabda116085ecf6ea5e7214a43",
+      "bytes": 4815
+    },
+    {
+      "file": "combined-redis.json",
+      "sha256": "ddf368a121d4beb9f8285db53c3cdee613042d1f9dfa7cf4c0c057050048eafb",
+      "bytes": 4350
+    },
+    {
+      "file": "network.json",
+      "sha256": "b905c4a00a11e5d48ae6d93ad8da06fd0cb57931035bf2c896019bbdcc5627e0",
+      "bytes": 1782
+    },
+    {
+      "file": "final-state.json",
+      "sha256": "20a4fca867a1c3b7000d79f71c965dcc8daf74fe7f838a992182de9a4295cab9",
+      "bytes": 2191
+    },
+    {
+      "file": "tests.json",
+      "sha256": "ad441b29c0f3b789fd7566556e8c71981a2f201c9519765f0b6434fa5c0f3b85",
+      "bytes": 4974
+    },
+    {
+      "file": "merge-check.json",
+      "sha256": "d7786a52c3f592eb60fc5cf7b4fed8b0c6730d069bdf84f946dd8f8220830147",
+      "bytes": 1556
+    },
+    {
+      "file": "healthy-control.json",
+      "sha256": "af4df55adfbaddc7454a0997e6953544c087a00810a2d92bfdc94c2a52d08e4d",
+      "bytes": 2482
+    },
+    {
+      "file": "rejected-credentials.json",
+      "sha256": "3dadcf9bb9161e26081991a6b0ac84e583cbcd00e7ffd4b2b72468eac0bfee89",
+      "bytes": 4475
+    },
+    {
+      "file": "sampler-controls.json",
+      "sha256": "b29431dc014afbfb31cd419ffdee6ba15169eb60d201111d5cae5e0ae2830917",
+      "bytes": 18562
+    },
+    {
+      "file": "sampler-causal.json",
+      "sha256": "7a79f9a01a4f7488d62dcea4b3b508be69636ecc1d48b1da782f49e2ff0e6572",
+      "bytes": 8105
+    },
+    {
+      "file": "maintenance.json",
+      "sha256": "7d1a5ebd9c75d88c703eb868f33c151a3d0c1fa0d6e9420e784a5094d3914292",
+      "bytes": 7041
+    }
+  ],
+  "blocking_gate": "Fresh uninstrumented180s healthy100ms arrivals: zero omissions/errors/pending, exact200, reporter/worker drain and cleanup, valid terminal0. Only then fresh full credential rotation plus network/final-state acceptance.",
+  "limitations": [
+    "One physical Docker Desktop host, not host/AZ failure qualification.",
+    "Echo backend only; Java/Go/Rust application executions not all tested.",
+    "Explicit Mongo index maintenance was not zero downtime.",
+    "Async AOF, telemetry loss bounds, cross-slot compensation, supported runtime/CVE/least-privilege/storeTLS/off-host backup/soak still require production qualification."
+  ]
+}

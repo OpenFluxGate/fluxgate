@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "profile": "ha",
+  "profile_passed": true,
+  "global_acceptance": false,
+  "global_complete": false,
+  "credential_acceptance": false,
+  "source_commit_at_invocation": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
+  "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+  "independent_terminal_exit_code": 0,
+  "independent_terminal_witness_valid": true,
+  "provenance": {
+    "raw": {
+      "sha256": "d8230d75cb77b0fa25fe7672399dac3bf05747b2ec0c96c80ff5f66c15287146",
+      "bytes": 172687
+    },
+    "log": {
+      "sha256": "08f43b901106ce8866985facd0ee95fdf50386c6f74400e76b6239434d3a79ae",
+      "bytes": 783
+    },
+    "witness": {
+      "sha256": "a455e213a131706f8dbafb692f1c7d4e3ca86aeb7df99c8a8a1f94b9ca0de389",
+      "bytes": 6636
+    },
+    "exporter_stage": {
+      "sha256": "552dd8d22055faaae9f83c9d8c57ba1e991c8457c1f8e424f59b391a0e0021a3",
+      "bytes": 28513
+    },
+    "manifest": {
+      "sha256": "0a35e6f14e38c4c118feefd61c65ab8930c09442666375343c84d053887413dc",
+      "bytes": 1155
+    }
+  },
+  "limits": [
+    "Specific terminal-passing profile only; global credential availability remains rejected.",
+    "Private identities, paths and free-form strings were removed from the projected summary. Inspect bound private raw proof for omitted detail."
+  ],
+  "private_selected_stage_sha256": "748d50164a260c93f9da7feaae32aa41e91f7aa748e30824fdbd4f3d4bfd5d7f",
+  "summary": {
+    "result": "pass",
+    "phase": "all",
+    "complete": true,
+    "phase_complete": true,
+    "serialized_check_count": 27,
+    "checks": [
+      {
+        "source_check_index": 0,
+        "check": "redis-primary-placement-restoration",
+        "performed": false,
+        "policy_exact_preserved": true,
+        "ha_counter_exact_preserved": true,
+        "automatic_placement_claim": false
+      },
+      {
+        "source_check_index": 1,
+        "check": "complete-fixture-restoration",
+        "mongo_healthy_voters": 3,
+        "redis_primaries": 3,
+        "redis_linked_replicas": 6,
+        "replica_migration_disabled_on_all_members": true,
+        "redis_primary_nodes_distinct": true
+      },
+      {
+        "source_check_index": 2,
+        "check": "baseline"
+      },
+      {
+        "source_check_index": 3,
+        "check": "redis-promotion",
+        "target_still_paused": true,
+        "final_quota_seconds": 19.768,
+        "recovery_seconds": 17.405,
+        "identity_promotion_seconds": 5.889,
+        "load_key_owned_failed_shard": true,
+        "cache_absent_before_promotion": true,
+        "cache_loaded_after_real_request": true
+      },
+      {
+        "source_check_index": 4,
+        "check": "redis-primary-placement-restoration",
+        "performed": true,
+        "policy_exact_preserved": true,
+        "ha_counter_exact_preserved": true,
+        "automatic_placement_claim": false
+      },
+      {
+        "source_check_index": 5,
+        "check": "complete-fixture-restoration",
+        "mongo_healthy_voters": 3,
+        "redis_primaries": 3,
+        "redis_linked_replicas": 6,
+        "replica_migration_disabled_on_all_members": true,
+        "redis_primary_nodes_distinct": true
+      },
+      {
+        "source_check_index": 6,
+        "check": "mongo-election-publication",
+        "target_still_paused": true,
+        "recovery_seconds": 11.506
+      },
+      {
+        "source_check_index": 7,
+        "check": "pod-replacement",
+        "actual_content_preserved": true,
+        "recovery_seconds": 22.044
+      },
+      {
+        "source_check_index": 8,
+        "check": "pod-replacement",
+        "actual_content_preserved": true,
+        "recovery_seconds": 6.207
+      },
+      {
+        "source_check_index": 9,
+        "check": "pod-replacement",
+        "actual_content_preserved": false,
+        "recovery_seconds": 20.447
+      },
+      {
+        "source_check_index": 10,
+        "check": "pod-replacement",
+        "actual_content_preserved": false,
+        "recovery_seconds": 6.006
+      },
+      {
+        "source_check_index": 11,
+        "check": "pod-replacement",
+        "actual_content_preserved": false,
+        "recovery_seconds": 26.855
+      },
+      {
+        "source_check_index": 12,
+        "check": "redis-primary-placement-restoration",
+        "performed": false,
+        "policy_exact_preserved": true,
+        "ha_counter_exact_preserved": true,
+        "automatic_placement_claim": false
+      },
+      {
+        "source_check_index": 13,
+        "check": "complete-fixture-restoration",
+        "mongo_healthy_voters": 3,
+        "redis_primaries": 3,
+        "redis_linked_replicas": 6,
+        "replica_migration_disabled_on_all_members": true,
+        "redis_primary_nodes_distinct": true
+      },
+      {
+        "source_check_index": 14,
+        "check": "worker-stop",
+        "recovery_seconds": 65.904
+      },
+      {
+        "source_check_index": 15,
+        "check": "redis-primary-placement-restoration",
+        "performed": true,
+        "policy_exact_preserved": true,
+        "ha_counter_exact_preserved": true,
+        "automatic_placement_claim": false
+      },
+      {
+        "source_check_index": 16,
+        "check": "complete-fixture-restoration",
+        "mongo_healthy_voters": 3,
+        "redis_primaries": 3,
+        "redis_linked_replicas": 6,
+        "replica_migration_disabled_on_all_members": true,
+        "redis_primary_nodes_distinct": true
+      },
+      {
+        "source_check_index": 17,
+        "check": "mongo-no-quorum-publication"
+      },
+      {
+        "source_check_index": 18,
+        "check": "mongo-no-quorum-majority-resolution"
+      },
+      {
+        "source_check_index": 19,
+        "check": "redis-min-replicas-write-guard"
+      },
+      {
+        "source_check_index": 20,
+        "check": "redis-shard-unavailable"
+      },
+      {
+        "source_check_index": 21,
+        "check": "redis-primary-placement-restoration",
+        "performed": true,
+        "policy_exact_preserved": true,
+        "ha_counter_exact_preserved": true,
+        "automatic_placement_claim": false
+      },
+      {
+        "source_check_index": 22,
+        "check": "complete-fixture-restoration",
+        "mongo_healthy_voters": 3,
+        "redis_primaries": 3,
+        "redis_linked_replicas": 6,
+        "replica_migration_disabled_on_all_members": true,
+        "redis_primary_nodes_distinct": true
+      },
+      {
+        "source_check_index": 23,
+        "check": "publication-probe-cleanup",
+        "passed": true,
+        "pod_absent": true,
+        "network_policy_absent": true
+      },
+      {
+        "source_check_index": 24,
+        "check": "owned-probe-resource-cleanup"
+      },
+      {
+        "source_check_index": 25,
+        "check": "owned-probe-resource-cleanup"
+      },
+      {
+        "source_check_index": 26,
+        "check": "owned-probe-resource-cleanup"
+      }
+    ]
+  },
+  "optional_recovery_supplement": {
+    "accepted": false,
+    "helper_sha256": "6321e6d1a4082376eba44f80ee02835a7722e1018073443b5aafbee9def49075",
+    "rejected_gate_line": 111,
+    "reason": "One background503 request began before the first Redis dense window and completed after its start; existing supplement includes it by completion time and rejects. No gate was weakened."
+  }
+}
