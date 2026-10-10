@@ -4,6 +4,8 @@ import copy
 from contextlib import redirect_stdout
 import io
 import json
+import os
+import signal
 from pathlib import Path
 import runpy
 import subprocess
@@ -460,7 +462,7 @@ class DenseDeadlineDiagnosticsTests(unittest.TestCase):
         process.communicate.side_effect = communicate
         with patch('subprocess.Popen', return_value=process) as popen, \
                 patch('time.monotonic', clock.monotonic), patch('time.time_ns', clock.time_ns), \
-                patch('select.select', side_effect=ready_readable), patch('os.read', return_value=ready), \
+                patch('time.sleep', clock.sleep), patch('select.select', side_effect=ready_readable), patch('os.read', return_value=ready), \
                 patch('os.killpg') as kill:
             def group_signal(pid, signal):
                 if denied_group:
@@ -484,7 +486,10 @@ class DenseDeadlineDiagnosticsTests(unittest.TestCase):
                     self.assertTrue(evidence['process_cleanup']['issues'])
                     self.assertNotIn('private', json.dumps(evidence))
                     process.terminate.assert_called_once()
-                    process.kill.assert_called_once()
+                    if denied_child:
+                        process.kill.assert_called_once()
+                    else:
+                        process.kill.assert_not_called()
                 else:
                     self.assertGreaterEqual(kill.call_count, 2)
             elif denied_group:
@@ -518,6 +523,41 @@ class DenseDeadlineDiagnosticsTests(unittest.TestCase):
     def test_late_final_recovery_result_cannot_override_original_root_deadline(self):
         self.rpc(overrun=True)
 
+
+    def test_exited_leader_surviving_closed_pipe_descendant_is_cleaned_without_foreign_session(self):
+        foreign = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(20)'],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, start_new_session=True)
+        source = "import subprocess,sys;child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(20)']," \
+                 "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);print(child.pid,flush=True)"
+        parent = subprocess.Popen([sys.executable, '-u', '-c', source], stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            output, _ = parent.communicate(timeout=3)
+            self.assertEqual(parent.poll(), 0)
+            child_pid = int(output.strip())
+            os.kill(child_pid, 0)  # The descendant is real, alive, and has closed the leader's pipes.
+            with patch.object(parent, 'terminate') as direct_term, patch.object(parent, 'kill') as direct_kill:
+                cleanup = MODULE['cleanup_dense_probe'](parent)
+                direct_term.assert_not_called()
+                direct_kill.assert_not_called()
+            self.assertTrue(cleanup['process_absent'])
+            self.assertTrue(cleanup['group_absent'])
+            self.assertTrue(cleanup['passed'])
+            self.assertIsNone(foreign.poll())
+            self.assertNotEqual(os.getpgid(foreign.pid), parent.pid)
+        finally:
+            try:
+                os.killpg(parent.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            parent.communicate(timeout=3)
+            foreign.terminate()
+            foreign.wait(timeout=3)
 
     def test_real_owned_group_timeout_is_cleaned_and_caller_retains_partial_evidence(self):
         source = "import json,time;print(json.dumps({'event':'ready'}),flush=True);" \

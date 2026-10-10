@@ -194,12 +194,14 @@ def dense_stream_evidence(output):
 def cleanup_dense_probe(process):
     """Bounded cleanup of this owned session; never hide a primary probe failure."""
     evidence = {'issues': [], 'process_absent': False, 'group_absent': False, 'passed': False}
+    cleanup_deadline = time.monotonic() + 2
 
     def issue(action, error):
         detail = {'action': action, 'error_type': type(error).__name__}
         if isinstance(error, OSError):
             detail['errno'] = error.errno
-        evidence['issues'].append(detail)
+        if detail not in evidence['issues']:
+            evidence['issues'].append(detail)
 
     def signal_group(signal, fallback, action):
         try:
@@ -208,32 +210,43 @@ def cleanup_dense_probe(process):
             pass
         except OSError as error:
             issue(action, error)
-            try:
-                fallback()
-            except ProcessLookupError:
-                pass
-            except OSError as error:
-                issue(action + '_child_fallback', error)
+            if process.poll() is None:
+                try:
+                    fallback()
+                except ProcessLookupError:
+                    pass
+                except OSError as error:
+                    issue(action + '_child_fallback', error)
 
-    if process.poll() is None:
+    def group_absent(action):
+        try:
+            os.killpg(process.pid, 0)
+            return False
+        except ProcessLookupError:
+            return True
+        except OSError as error:
+            issue(action, error)
+            return None  # Permission denial cannot establish either presence or absence.
+
+    if process.poll() is None or group_absent('initial_group_check') is not True:
         signal_group(process_signal.SIGTERM, process.terminate, 'group_term')
         try:
-            process.communicate(timeout=1)
+            process.communicate(timeout=min(1, max(0, cleanup_deadline - time.monotonic())))
         except (subprocess.TimeoutExpired, OSError) as error:
             issue('term_wait', error)
         # The leader may exit while descendants retain its pipes or continue running.
         signal_group(process_signal.SIGKILL, process.kill, 'group_kill')
         try:
-            process.communicate(timeout=1)
+            process.communicate(timeout=min(1, max(0, cleanup_deadline - time.monotonic())))
         except (subprocess.TimeoutExpired, OSError) as error:
             issue('kill_wait', error)
     evidence['process_absent'] = process.poll() is not None
-    try:
-        os.killpg(process.pid, 0)
-    except ProcessLookupError:
-        evidence['group_absent'] = True
-    except OSError as error:
-        issue('group_absence_check', error)
+    absent = group_absent('group_absence_check')
+    # Closed descendant pipes do not make communicate wait; allow bounded reaping after KILL.
+    while absent is not True and time.monotonic() < cleanup_deadline:
+        time.sleep(min(.01, max(0, cleanup_deadline - time.monotonic())))
+        absent = group_absent('group_absence_check')
+    evidence['group_absent'] = absent is True
     evidence['passed'] = evidence['process_absent'] and evidence['group_absent']
     return evidence
 
