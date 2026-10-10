@@ -7,8 +7,8 @@
  * called from an application or from a user's tests. Nothing in this package participates in
  * semantic versioning and it may change or disappear in any release.
  *
- * <p>The utilities a test should use live in {@link org.fluxgate.testkit.support} and {@link
- * org.fluxgate.testkit.junit}.
+ * <p>The utilities a test should use live in {@code org.fluxgate.testkit.support} and {@code
+ * org.fluxgate.testkit.junit} (module {@code fluxgate-testkit}).
  *
  * <p>Run them with the {@code benchmark} profile, which shades an executable jar around {@code
  * org.openjdk.jmh.Main}:

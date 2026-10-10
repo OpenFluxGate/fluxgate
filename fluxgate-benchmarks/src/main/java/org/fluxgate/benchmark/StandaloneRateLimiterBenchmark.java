@@ -57,7 +57,7 @@ import org.openjdk.jmh.runner.options.OptionsBuilder;
  *   <li>CI/CD environments without Redis
  * </ul>
  *
- * <p>Run with: {@code java -jar target/benchmarks.jar Bucket4jRateLimiterBenchmark}
+ * <p>Run with: {@code java -jar target/benchmarks.jar StandaloneRateLimiterBenchmark}
  *
  * @author rojae
  */

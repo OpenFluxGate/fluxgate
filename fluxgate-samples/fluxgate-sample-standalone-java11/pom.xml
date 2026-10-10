@@ -8,7 +8,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate-samples</artifactId>
-        <version>0.3.7</version>
+        <version>0.4.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>fluxgate-sample-standalone-java11</artifactId>
@@ -63,6 +63,19 @@
                 <groupId>org.mongodb</groupId>
                 <artifactId>bson-record-codec</artifactId>
                 <version>${mongodb.driver.version}</version>
+            </dependency>
+            <!-- Mockito 5.14 (managed by the root pom) requires Byte Buddy 1.15, while the Spring
+                 Boot 2.7 BOM imported above manages 1.12.x. byte-buddy.version lives next to
+                 mockito.version in the root pom. -->
+            <dependency>
+                <groupId>net.bytebuddy</groupId>
+                <artifactId>byte-buddy</artifactId>
+                <version>${byte-buddy.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.bytebuddy</groupId>
+                <artifactId>byte-buddy-agent</artifactId>
+                <version>${byte-buddy.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -140,6 +153,22 @@
             <artifactId>caffeine</artifactId>
         </dependency>
 
+        <!-- Startup smoke test against disposable Redis and MongoDB -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

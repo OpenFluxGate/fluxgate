@@ -20,6 +20,11 @@ it cannot support a claim about cluster-wide limits.
 
 ## Dependencies
 
+> **Not published to Maven Central.** The testkit is excluded from the release deployment
+> (`central-publishing-maven-plugin` `excludeArtifacts`, `maven.deploy.skip`), like the samples and
+> benchmarks. Build it from the repository (`./mvnw -pl fluxgate-testkit -am install`) and use that
+> local build, or copy the classes you need. The coordinates below are what a local build installs.
+
 Add the testkit to your test scope:
 
 ```xml
