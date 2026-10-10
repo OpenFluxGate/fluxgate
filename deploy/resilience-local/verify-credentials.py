@@ -265,8 +265,10 @@ def sampler_worker(config, stop_path):
             time.sleep(max(0, deadline - time.monotonic()))
             if Path(stop_path).exists():
                 break
-            lag = time.monotonic() - deadline
             with condition:
+                if Path(stop_path).exists():
+                    break
+                lag = time.monotonic() - deadline
                 if lag >= .1:
                     missed = int(lag / .1)
                     omissions.append({"first_sequence": sequence, "count": missed, "reason": "lateness"})
@@ -2185,6 +2187,89 @@ def sampler_parallel_self_test():
             server.server_close()
 
 
+
+def sampler_contention_self_test():
+    from types import SimpleNamespace
+    for stop_during_lock in (False, True):
+        namespace = {}
+        exec(sampler_program().rsplit("\nconfig = ", 1)[0], namespace)
+        clock = SimpleNamespace(now=0.0)
+        holding, attempting, release = threading.Event(), threading.Event(), threading.Event()
+        result, connections = {}, []
+        with tempfile.TemporaryDirectory(prefix="sampler-contention-unit-") as directory:
+            stop = Path(directory) / "stop"
+            class ContendedCondition(threading.Condition):
+                def __enter__(self):
+                    if threading.current_thread().name == "sampler-scheduler-test":
+                        self.scheduler_entries = getattr(self, "scheduler_entries", 0) + 1
+                        if self.scheduler_entries == 2:
+                            attempting.set()  # Observe the actual blocked scheduler acquisition.
+                    return super().__enter__()
+            namespace["threading"] = SimpleNamespace(Condition=ContendedCondition,
+                BoundedSemaphore=threading.BoundedSemaphore, Event=threading.Event, Thread=threading.Thread)
+            def sleep(seconds):
+                if seconds > 0:
+                    require(holding.wait(2), "worker did not hold the real scheduler lock")
+                    clock.now += seconds
+                time.sleep(.001)
+            namespace["time"] = SimpleNamespace(monotonic=lambda: clock.now,
+                monotonic_ns=lambda: int(clock.now * 1e9), time_ns=lambda: int(clock.now * 1e9), sleep=sleep)
+            def write(path, value):
+                if str(path).endswith("progress") and json.loads(value)["samples"] and not holding.is_set():
+                    holding.set()  # Worker calls progress while holding the real Condition.
+                    require(release.wait(2), "contention writer was not released")
+                private_write(path, value)
+            namespace["private_write"] = write
+            class Connection:
+                def __init__(self, *args, **kwargs):
+                    connections.append(self)
+                    self.number = len(connections)
+                def request(self, *args, **kwargs):
+                    pass
+                def getresponse(self):
+                    return SimpleNamespace(status=200, read=lambda: b"marker\n")
+                def close(self):
+                    if self.number == 2:
+                        private_write(stop, "stop")
+            namespace["http"] = SimpleNamespace(client=SimpleNamespace(HTTPConnection=Connection))
+            configuration = {"service": "offline", "port": 80, "path": "/load", "host": "offline",
+                "api_key": "offline-private-key", "body": "marker",
+                "positive_path": str(Path(directory) / "positive"),
+                "progress_path": str(Path(directory) / "progress")}
+            def run():
+                try:
+                    result["report"] = namespace["sampler_worker"](configuration, str(stop))
+                except BaseException as error:
+                    result["error"] = error
+            runner = threading.Thread(target=run, name="sampler-scheduler-test")
+            runner.start()
+            try:
+                require(attempting.wait(2), "scheduler did not contend on the worker lock")
+                clock.now = .35  # Deadline .1 is overdue by .25 while lock acquisition blocks.
+                if stop_during_lock:
+                    private_write(stop, "stop")
+                release.set()
+                runner.join(3)
+                require(not runner.is_alive() and "error" not in result, "contended sampler failed to drain")
+                report = result["report"]
+                if stop_during_lock:
+                    require(report["scheduled"] == 1 and len(connections) == 1 and
+                            [s["sequence"] for s in report["samples"]] == [0],
+                            "stop during scheduler lock admitted an extra arrival/socket")
+                else:
+                    require(report["scheduled"] == 4 and report["omitted_schedules"] == 2 and
+                            [s["sequence"] for s in report["samples"]] == [0, 3] and
+                            report["omissions"] == [{"first_sequence": 1, "count": 2, "reason": "lateness"}],
+                            "scheduler used stale pre-lock lag and hid overdue arrivals")
+                require(report["drain_complete"] and report["pending"] == 0 and
+                        report["scheduled"] == len(report["samples"]) + report["omitted_schedules"],
+                        "contention lost final schedule accounting")
+            finally:
+                private_write(stop, "stop")
+                release.set()
+                runner.join(3)
+
+
 def sampler_program_accounting_self_test():
     from types import SimpleNamespace
     for scenario in ("lateness", "capacity", "drain"):
@@ -2303,6 +2388,7 @@ def self_test():
     with patch.object(Path, "read_text", return_value="# unrelated module growth\n" * 6000):
         require(sampler_program() == program, "sampler command grew with unrelated module source")
     sampler_parallel_self_test()
+    sampler_contention_self_test()
     sampler_program_accounting_self_test()
     original = {"metadata": {"uid": "old"}, "spec": {"volumes": [{"persistentVolumeClaim": {"claimName": "data"}}]}}
     replacement = {"metadata": {"uid": "new"}, "spec": original["spec"]}
