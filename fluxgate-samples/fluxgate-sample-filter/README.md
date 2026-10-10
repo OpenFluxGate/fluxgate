@@ -1,44 +1,47 @@
 # FluxGate Sample - Filter (Auto Rate Limiting)
 
-This sample demonstrates **automatic rate limiting** using the `@EnableFluxgateFilter` annotation with HTTP API-based rate limiting.
+This sample demonstrates **automatic rate limiting** with the `@EnableFluxgateFilter` annotation.
+The filter asks an HTTP API for every decision: by default the rate limit check API of
+[`fluxgate-sample-redis`](../fluxgate-sample-redis) (`POST /api/ratelimit/check` on port 8082).
 
 ## Key Features
 
-- **Annotation-based activation** - Simply add `@EnableFluxgateFilter` to enable rate limiting
-- **HTTP API-based rate limiting** - Calls external FluxGate API server for rate limit decisions
-- **Zero boilerplate** - No rate limiting code in your controllers
-- **Fail-open design** - If the API server is unavailable, requests are allowed
+- **Annotation-based activation** - `@EnableFluxgateFilter` registers `FluxgateRateLimitFilter`
+- **HTTP API-based decisions** - `HttpRateLimitHandler` calls `POST /api/ratelimit/check` on
+  `fluxgate.api.url`
+- **Zero boilerplate** - no rate limiting code in the controllers
+- **Standard headers** - the filter writes `X-RateLimit-*` / `RateLimit-*` and `Retry-After`
+- **Fail-open handler** - if the API server is unavailable, `HttpRateLimitHandler` allows the
+  request (a demo choice; the starter's own default for limiter failures is to deny)
 
 ## Handler Modes
 
-This sample supports two handler modes:
-
 | Mode | Handler | Description |
 |------|---------|-------------|
-| **HTTP API** (default) | `HttpRateLimitHandler` | Calls external FluxGate API server |
-| **Redis Direct** | `RedisRateLimitHandler` | Direct Redis access (requires additional setup) |
+| **HTTP API** (this sample) | `HttpRateLimitHandler` | Calls the rate limit check API of `fluxgate-sample-redis` |
+| **Redis Direct** | `EngineBackedRateLimitHandler` (library default) | Direct Redis access; the starter registers the handler automatically when no other `FluxgateRateLimitHandler` bean exists |
 
 ## Prerequisites
 
-### HTTP API Mode (Default)
+The HTTP API mode needs `fluxgate-sample-redis` (and therefore Redis):
+
+> Run `./mvnw -B install -DskipTests` (JDK 21) once from the project root first, or
+> `./mvnw -B install -DskipTests -pl fluxgate-samples/fluxgate-sample-filter -am` (JDK 17+):
+> the samples depend on the `0.4.0-SNAPSHOT` modules (see [Build Once](../README.md#build-once)).
 
 ```bash
-# Start FluxGate API server (e.g., fluxgate-sample-mongo)
-./mvnw spring-boot:run -pl fluxgate-samples/fluxgate-sample-mongo
+docker run -d --name redis -p 127.0.0.1:6379:6379 redis:7.2.5-alpine
+./mvnw spring-boot:run -pl fluxgate-samples/fluxgate-sample-redis   # port 8082
 ```
 
-### Redis Direct Mode (Optional)
-
-See [Switching to Redis Direct Mode](#switching-to-redis-direct-mode) section below.
+For Redis Direct mode see [Switching to Redis Direct Mode](#switching-to-redis-direct-mode).
 
 ## Quick Start
 
-### 1. Start FluxGate API Server
+### 1. Start the Rate Limit API Server
 
-```bash
-# Start the API server first (provides rate limit API)
-./mvnw spring-boot:run -pl fluxgate-samples/fluxgate-sample-mongo
-```
+Start Redis and `fluxgate-sample-redis` as shown above. It registers the rule set `api-limits`
+(10 requests per 60 seconds per client IP) at startup.
 
 ### 2. Run the Application
 
@@ -51,7 +54,6 @@ The application starts on port **8083**.
 ### 3. Test Rate Limiting
 
 ```bash
-# Send 12 requests (limit depends on API server configuration)
 for i in {1..12}; do
   echo -n "Request $i: "
   curl -s -o /dev/null -w "%{http_code}" http://localhost:8083/api/hello
@@ -59,7 +61,7 @@ for i in {1..12}; do
 done
 ```
 
-Expected output (with default 10 req/min limit):
+Expected output (`api-limits`: 10 per 60 s):
 ```
 Request 1: 200
 Request 2: 200
@@ -69,17 +71,35 @@ Request 11: 429  # Rate limited!
 Request 12: 429
 ```
 
+The bucket is keyed by rule set and client IP in `fluxgate-sample-redis`, so it is shared with
+direct calls to that sample's `/api/hello` from the same IP. If `fluxgate-sample-redis` is not
+running, every request is allowed (fail open) and the handler logs an error.
+
 ### 4. Check Rate Limit Headers
 
 ```bash
 curl -i http://localhost:8083/api/hello
 ```
 
-Response headers include:
+An allowed response carries the remaining tokens in both header families:
 ```
 X-RateLimit-Remaining: 9
-X-RateLimit-Reset-Ms: 1234
+RateLimit-Remaining: 9
 ```
+
+A rejected one adds `Retry-After` (whole seconds, at least 1) and the starter's problem document:
+```
+HTTP/1.1 429
+X-RateLimit-Remaining: 0
+RateLimit-Remaining: 0
+Retry-After: 6
+Content-Type: application/problem+json;charset=UTF-8
+
+{"type":"about:blank","title":"Too Many Requests","status":429,"detail":"Rate limit exceeded, retry after 6 seconds","retryAfterMillis":5999}
+```
+
+`HttpRateLimitHandler` only knows `allowed`, `remaining` and `retryAfterMs` (the response of
+`/api/ratelimit/check`), so `*-Limit`, `*-Reset` and `RateLimit-Policy` are not written.
 
 ## Project Structure
 
@@ -88,16 +108,33 @@ fluxgate-sample-filter/
 ├── src/main/java/org/fluxgate/sample/filter/
 │   ├── FilterSampleApplication.java    # Main app with @EnableFluxgateFilter
 │   ├── handler/
-│   │   ├── HttpRateLimitHandler.java   # HTTP API handler (active)
-│   │   └── RedisRateLimitHandler.java  # Redis handler (commented)
+│   │   └── HttpRateLimitHandler.java   # HTTP API handler (active)
 │   ├── config/
-│   │   └── RuleSetConfig.java          # Redis config (commented)
+│   │   ├── OpenApiConfig.java          # Swagger / OpenAPI configuration
+│   │   └── RuleSetConfig.java          # Redis direct mode (commented out)
 │   └── controller/
 │       ├── ApiController.java          # Rate-limited API endpoints
-│       └── RuleSetAdminController.java # Admin API (commented)
-└── src/main/resources/
-    └── application.yml                 # Configuration
+│       ├── HealthController.java       # /health and /ready (not rate limited)
+│       └── RuleSetAdminController.java # Admin API for Redis mode (commented out)
+├── src/main/resources/
+│   └── application.yml                 # Configuration
+└── src/test/java/org/fluxgate/sample/filter/
+    ├── FilterSampleSmokeTest.java      # context starts, /api/users/{id} binds
+    ├── FilterSampleStartupTest.java    # shipped application.yml, filter on, stand-in check API
+    └── config/OpenApiConfigTest.java
 ```
+
+This sample keeps a **custom handler on purpose**, to demonstrate the HTTP API pattern. Most
+applications no longer need one: with `fluxgate.redis.enabled=true` (or
+`fluxgate.ratelimit.mode=IN_MEMORY`) and a `RateLimitRuleSetProvider` bean, the starter registers
+`EngineBackedRateLimitHandler` automatically, and the `handler` attribute of `@EnableFluxgateFilter`
+can be left out. The earlier commented-out `RedisRateLimitHandler` in this sample was deleted for
+that reason.
+
+The two commented-out classes above show the Redis-direct alternative. Note that they store rules
+through `RedisRuleSetStore` / `RuleSetData`, which are **deprecated since 0.4.0** — prefer MongoDB
+behind a `RateLimitRuleSetProvider`, or a provider bean of your own, as
+`fluxgate-sample-standalone-java21` does.
 
 ## How It Works
 
@@ -109,37 +146,62 @@ fluxgate-sample-filter/
     handler = HttpRateLimitHandler.class,
     ruleSetId = "api-limits",
     includePatterns = {"/api/*"},
-    excludePatterns = {"/health", "/actuator/*", "/swagger-ui/*", "/v3/api-docs/*"}
-)
+    excludePatterns = {"/health", "/actuator/*", "/swagger-ui/*", "/v3/api-docs/*"})
 public class FilterSampleApplication {
-    public static void main(String[] args) {
-        SpringApplication.run(FilterSampleApplication.class, args);
-    }
+  public static void main(String[] args) {
+    SpringApplication.run(FilterSampleApplication.class, args);
+  }
 }
 ```
 
-### 2. Configure API URL
+`/api/*` matches **one** path segment: `/api/hello`, `/api/users` and `/api/stats` are rate
+limited, `/api/users/{id}` is not. Use `/api/**` to cover nested paths. No `fluxgate.ratelimit.*`
+pattern keys are set, so the annotation's values apply.
+
+### 2. Configure the API URL
 
 ```yaml
-# application.yml
+server:
+  port: 8083
+
+spring:
+  application:
+    name: fluxgate-sample-filter
+
+# FluxGate Configuration - Automatic Rate Limiting via Filter
 fluxgate:
+  # HTTP API mode (current) - calls external FluxGate API server
   api:
-    url: http://localhost:8080  # FluxGate API server URL
+    url: http://localhost:8082
+
+  # Redis direct mode (optional) - the starter then registers its own handler
+  # redis:
+  #   enabled: true
+  #   uri: redis://localhost:6379
+
+# Rate limiting is configured via @EnableFluxgateFilter annotation:
+#   handler = HttpRateLimitHandler.class (omit it to use the library default)
+#   ruleSetId = "api-limits"
+#   includePatterns = {"/api/*"}
+#   excludePatterns = {"/health", "/actuator/*", "/swagger-ui/*", "/v3/api-docs/*"}
+
+logging:
+  level:
+    org.fluxgate: DEBUG
 ```
 
 ### 3. HTTP Rate Limit Handler
-
-The `HttpRateLimitHandler` calls the FluxGate API server:
 
 ```java
 @Component
 public class HttpRateLimitHandler implements FluxgateRateLimitHandler {
 
-    @Override
-    public RateLimitResponse tryConsume(RequestContext context, String ruleSetId) {
-        // Calls POST /api/ratelimit/check on the API server
-        // Returns allowed/rejected with remaining tokens and retry info
-    }
+  @Override
+  public RateLimitResponse tryConsume(RequestContext context, String ruleSetId) {
+    // POST {fluxgate.api.url}/api/ratelimit/check with ruleSetId, clientIp, userId, apiKey,
+    // endpoint and method; maps {"allowed", "remaining", "retryAfterMs"} to a RateLimitResponse.
+    // Any exception (server down, timeout) allows the request.
+  }
 }
 ```
 
@@ -147,21 +209,26 @@ public class HttpRateLimitHandler implements FluxgateRateLimitHandler {
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `fluxgate.api.url` | `http://localhost:8080` | FluxGate API server URL |
+| `fluxgate.api.url` | `http://localhost:8080` in `HttpRateLimitHandler`; `application.yml` sets `http://localhost:8082` | Base URL of the rate limit check API |
 
 ## API Endpoints
 
 | Method | Path | Description | Rate Limited |
 |--------|------|-------------|:------------:|
-| GET | `/api/hello` | Hello endpoint | Y |
-| GET | `/api/users` | Users endpoint | Y |
-| GET | `/health` | Health check | N |
+| GET | `/api/hello` | Hello endpoint | ✅ |
+| GET | `/api/users` | List of three sample users | ✅ |
+| GET | `/api/users/{id}` | One user (1-3), 404 otherwise | ❌ (two segments, outside `/api/*`) |
+| GET | `/api/stats` | Request counter | ✅ |
+| GET | `/health` | Health check | ❌ |
+| GET | `/ready` | Readiness check | ❌ |
+
+Swagger UI: `http://localhost:8083/swagger-ui.html` (not rate limited).
 
 ## Switching to Redis Direct Mode
 
-To use direct Redis access instead of HTTP API:
+To use direct Redis access instead of the HTTP API:
 
-### 1. Uncomment Redis dependency in `pom.xml`
+### 1. Uncomment the Redis dependency in `pom.xml`
 
 ```xml
 <dependency>
@@ -177,7 +244,7 @@ To use direct Redis access instead of HTTP API:
 fluxgate:
   # Comment out HTTP API config
   # api:
-  #   url: http://localhost:8080
+  #   url: http://localhost:8082
 
   # Enable Redis
   redis:
@@ -185,26 +252,30 @@ fluxgate:
     uri: redis://localhost:6379
 ```
 
-### 3. Change handler in `FilterSampleApplication.java`
+### 3. Remove the HTTP handler
+
+Drop the `handler` attribute in `FilterSampleApplication.java` and delete `HttpRateLimitHandler`
+(or its `@Component`). The starter only registers `EngineBackedRateLimitHandler` when no other
+`FluxgateRateLimitHandler` bean exists, and without the attribute the filter would otherwise still
+pick up `HttpRateLimitHandler`.
 
 ```java
 @EnableFluxgateFilter(
-    handler = RedisRateLimitHandler.class,  // Change from HttpRateLimitHandler
+    // No handler attribute: the starter registers EngineBackedRateLimitHandler
     ruleSetId = "api-limits",
     // ...
 )
 ```
 
-### 4. Uncomment Redis-related classes
+### 4. Uncomment the Redis-related classes
 
-- `RedisRateLimitHandler.java`
-- `RuleSetConfig.java`
-- `RuleSetAdminController.java`
+- `RuleSetConfig.java` (`RateLimitRuleSetProvider` over `RedisRuleSetStore`, seeds `api-limits`)
+- `RuleSetAdminController.java` (`/admin/rulesets`)
 
 ### 5. Start Redis
 
 ```bash
-docker run -d --name redis -p 6379:6379 redis:latest
+docker run -d --name redis -p 127.0.0.1:6379:6379 redis:7.2.5-alpine
 ```
 
 ## Why Use This Sample?
@@ -212,13 +283,14 @@ docker run -d --name redis -p 6379:6379 redis:latest
 | Use Case | Recommendation |
 |----------|----------------|
 | Getting started with FluxGate | Start here |
-| Simple rate limiting needs | Perfect fit |
-| Centralized rate limit management | Use HTTP API mode |
+| Simple rate limiting needs | Good fit |
+| Centralized rate limit decisions | Use HTTP API mode |
 | Low-latency rate limiting | Use Redis direct mode |
 | Complex rule hierarchies | Consider `fluxgate-sample-mongo` |
 
 ## Next Steps
 
 - [FluxGate Samples Overview](../README.md)
+- [fluxgate-sample-redis](../fluxgate-sample-redis) - The rate limit API this sample calls
 - [fluxgate-sample-mongo](../fluxgate-sample-mongo) - For control-plane functionality
 - [fluxgate-sample-api](../fluxgate-sample-api) - For full integration

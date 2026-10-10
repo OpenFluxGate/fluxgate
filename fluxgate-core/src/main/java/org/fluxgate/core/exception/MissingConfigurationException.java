@@ -13,6 +13,7 @@ package org.fluxgate.core.exception;
  */
 public class MissingConfigurationException extends FluxgateConfigurationException {
 
+  /** Name of the configuration property that is missing. */
   private final String propertyName;
 
   /**

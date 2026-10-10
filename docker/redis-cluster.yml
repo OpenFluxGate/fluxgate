@@ -1,5 +1,11 @@
-version: "3.8"
-
+# Local development only - not for production.
+#
+# Backs the tests behind the `redis-cluster-it` Maven profile:
+#   docker compose -f docker/redis-cluster.yml up -d
+#   ./mvnw -pl fluxgate-redis-ratelimiter -am -Predis-cluster-it verify
+#
+# Ports are published on 127.0.0.1 so the unauthenticated cluster is unreachable from the
+# surrounding network.
 services:
   redis-cluster:
     image: grokzen/redis-cluster:7.0.10
@@ -8,4 +14,4 @@ services:
       IP: 0.0.0.0
       INITIAL_PORT: 7100
     ports:
-      - "7100-7105:7100-7105"
+      - "127.0.0.1:7100-7105:7100-7105"

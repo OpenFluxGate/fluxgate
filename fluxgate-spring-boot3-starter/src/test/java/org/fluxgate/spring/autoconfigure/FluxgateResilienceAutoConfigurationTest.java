@@ -1,18 +1,3 @@
-/*
- * Copyright 2024 the original author or authors.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package org.fluxgate.spring.autoconfigure;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -69,13 +54,28 @@ class FluxgateResilienceAutoConfigurationTest {
     }
 
     @Test
-    @DisplayName("should create disabled circuit breaker by default")
-    void shouldCreateDisabledCircuitBreakerByDefault() {
+    @DisplayName("should create an enabled circuit breaker by default")
+    void shouldCreateEnabledCircuitBreakerByDefault() {
+      // Retry is on by default, so without a breaker a failing backend was called
+      // max-attempts times per request and nothing ever stopped the amplification.
       contextRunner.run(
           context -> {
             CircuitBreaker cb = context.getBean(CircuitBreaker.class);
-            assertThat(cb).isInstanceOf(NoOpCircuitBreaker.class);
+            assertThat(cb).isInstanceOf(DefaultCircuitBreaker.class);
+            assertThat(context.getBean(CircuitBreakerConfig.class).isEnabled()).isTrue();
           });
+    }
+
+    @Test
+    @DisplayName("should create a no-op circuit breaker when explicitly disabled")
+    void shouldCreateNoOpCircuitBreakerWhenExplicitlyDisabled() {
+      contextRunner
+          .withPropertyValues("fluxgate.resilience.circuit-breaker.enabled=false")
+          .run(
+              context -> {
+                CircuitBreaker cb = context.getBean(CircuitBreaker.class);
+                assertThat(cb).isInstanceOf(NoOpCircuitBreaker.class);
+              });
     }
   }
 

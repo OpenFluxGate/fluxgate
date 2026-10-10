@@ -1,15 +1,26 @@
 package org.fluxgate.spring.autoconfigure;
 
+import com.mongodb.ConnectionString;
+import com.mongodb.MongoException;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.IndexOptions;
+import com.mongodb.client.model.Indexes;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 import org.bson.Document;
 import org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder;
 import org.fluxgate.adapter.mongo.health.MongoHealthCheckerImpl;
 import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
 import org.fluxgate.adapter.mongo.rule.MongoRuleSetProvider;
+import org.fluxgate.adapter.mongo.spi.RuleSetAccessControlSource;
 import org.fluxgate.core.key.KeyResolver;
+import org.fluxgate.core.key.LimitScopeKeyResolver;
+import org.fluxgate.core.key.MissingKeyBehavior;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.spi.RateLimitRuleRepository;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
@@ -18,6 +29,7 @@ import org.fluxgate.spring.actuator.FluxgateHealthIndicator.MongoHealthChecker;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ListableBeanFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -40,10 +52,13 @@ import org.springframework.context.annotation.Bean;
  * <p>Creates beans for:
  *
  * <ul>
- *   <li>{@link MongoClient} - MongoDB connection
+ *   <li>{@link FluxgateMongoClientHolder} - FluxGate's own MongoDB client, never exposed as a
+ *       {@link MongoClient} bean
  *   <li>{@link MongoDatabase} - FluxGate database
- *   <li>{@link MongoRateLimitRuleRepository} - Rule CRUD operations
- *   <li>{@link MongoRuleSetProvider} - Rule set loading
+ *   <li>{@code rateLimitRuleRepository} - the {@link RateLimitRuleRepository} for rule CRUD
+ *       operations, implemented by {@link MongoRateLimitRuleRepository}
+ *   <li>{@code delegateRuleSetProvider} - the {@link RateLimitRuleSetProvider} loading rule sets,
+ *       backed by {@link MongoRuleSetProvider}
  * </ul>
  *
  * <p>This configuration does NOT create Redis or Filter beans. It can run independently for
@@ -52,7 +67,8 @@ import org.springframework.context.annotation.Bean;
  * @see FluxgateRedisAutoConfiguration
  * @see FluxgateFilterAutoConfiguration
  */
-@AutoConfiguration
+@AutoConfiguration(
+    afterName = "org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration")
 @ConditionalOnProperty(prefix = "fluxgate.mongo", name = "enabled", havingValue = "true")
 @ConditionalOnClass(name = "com.mongodb.client.MongoClient")
 @EnableConfigurationProperties(FluxgateProperties.class)
@@ -66,32 +82,48 @@ public class FluxgateMongoAutoConfiguration {
     this.properties = properties;
   }
 
+  /** Name of a legacy, application-defined {@code MongoClient} bean FluxGate still honours. */
+  static final String LEGACY_CLIENT_BEAN_NAME = "fluxgateMongoClient";
+
   /**
-   * Creates a MongoClient for connecting to MongoDB.
+   * Creates the holder of FluxGate's own MongoDB client.
    *
-   * <p>Only created if no existing MongoClient bean is present.
+   * <p>R3: the client is never registered as a {@link MongoClient} bean, so Boot's {@code
+   * MongoAutoConfiguration}, Spring Data MongoDB and every {@code MongoClient} injection in the
+   * application keep using the application's client. An application that defined a {@code
+   * MongoClient} bean named {@value #LEGACY_CLIENT_BEAN_NAME} for FluxGate still gets it used; that
+   * client is not closed by FluxGate.
+   *
+   * @param beanFactory used to look up a legacy {@value #LEGACY_CLIENT_BEAN_NAME} bean
+   * @return the client holder
    */
-  @Bean(name = "fluxgateMongoClient", destroyMethod = "close")
-  @ConditionalOnMissingBean(name = "fluxgateMongoClient")
-  public MongoClient fluxgateMongoClient() {
+  @Bean(name = "fluxgateMongoClientHolder", destroyMethod = "close")
+  @ConditionalOnMissingBean(FluxgateMongoClientHolder.class)
+  public FluxgateMongoClientHolder fluxgateMongoClientHolder(ListableBeanFactory beanFactory) {
+    if (beanFactory.containsBean(LEGACY_CLIENT_BEAN_NAME)) {
+      log.info("Using the application-defined '{}' bean for FluxGate", LEGACY_CLIENT_BEAN_NAME);
+      return new FluxgateMongoClientHolder(
+          beanFactory.getBean(LEGACY_CLIENT_BEAN_NAME, MongoClient.class), false);
+    }
     String uri = properties.getMongo().getUri();
     log.info("Creating FluxGate MongoClient with URI: {}", maskUri(uri));
-    return MongoClients.create(uri);
+    return new FluxgateMongoClientHolder(MongoClients.create(uri), true);
   }
 
   /** Creates a MongoDatabase for FluxGate collections. */
   @Bean(name = "fluxgateMongoDatabase")
   @ConditionalOnMissingBean(name = "fluxgateMongoDatabase")
-  public MongoDatabase fluxgateMongoDatabase(MongoClient fluxgateMongoClient) {
+  public MongoDatabase fluxgateMongoDatabase(FluxgateMongoClientHolder fluxgateMongoClientHolder) {
     String database = properties.getMongo().getDatabase();
     log.info("Using FluxGate database: {}", database);
-    return fluxgateMongoClient.getDatabase(database);
+    return fluxgateMongoClientHolder.getClient().getDatabase(database);
   }
 
   /** Creates the rate limit rules collection. */
   @Bean(name = "fluxgateRuleCollection")
   @ConditionalOnMissingBean(name = "fluxgateRuleCollection")
-  public MongoCollection<Document> fluxgateRuleCollection(MongoDatabase fluxgateMongoDatabase) {
+  public MongoCollection<Document> fluxgateRuleCollection(
+      @Qualifier("fluxgateMongoDatabase") MongoDatabase fluxgateMongoDatabase) {
     String collectionName = properties.getMongo().getRuleCollection();
     FluxgateProperties.DdlAuto ddlAuto = properties.getMongo().getDdlAuto();
 
@@ -102,7 +134,94 @@ public class FluxgateMongoAutoConfiguration {
     }
 
     log.info("Using FluxGate rule collection: {}", collectionName);
-    return fluxgateMongoDatabase.getCollection(collectionName);
+    MongoCollection<Document> collection = fluxgateMongoDatabase.getCollection(collectionName);
+
+    if (ddlAuto == FluxgateProperties.DdlAuto.CREATE) {
+      // Fails the startup with the duplicated (ruleSetId, id) pairs when the unique index cannot be
+      // built: an ambiguous rule set must be cleaned up, not served.
+      new MongoRateLimitRuleRepository(collection).ensureIndexes();
+      log.info(
+          "Ensured FluxGate rule indexes: {}, {}",
+          MongoRateLimitRuleRepository.UNIQUE_RULE_INDEX,
+          MongoRateLimitRuleRepository.ID_INDEX);
+    } else {
+      validateRuleIndexes(collection, collectionName);
+    }
+
+    return collection;
+  }
+
+  /**
+   * Checks that the rule collection has the unique {@code (ruleSetId, id)} index ({@code ddl-auto:
+   * validate}).
+   *
+   * <p>{@link MongoRateLimitRuleRepository} identifies a rule by {@code (ruleSetId, id)}; without
+   * the unique index concurrent saves can create duplicates and a rule set becomes ambiguous. Any
+   * unique index on exactly these keys is accepted, whatever its name - unless it does not enforce
+   * uniqueness for every rule: a {@code partialFilterExpression} or {@code sparse} index skips
+   * documents, and a collation other than {@code simple} (for example a case-insensitive one)
+   * treats distinct ids as equal. Such an index is reported by name and the startup fails.
+   */
+  private void validateRuleIndexes(MongoCollection<Document> collection, String collectionName) {
+    List<String> restricted = new ArrayList<>();
+    for (Document index : collection.listIndexes()) {
+      if (!Boolean.TRUE.equals(index.get("unique"))
+          || !isRuleKey(index.get("key", Document.class))) {
+        continue;
+      }
+      String restriction = uniquenessRestriction(index);
+      if (restriction == null) {
+        return;
+      }
+      restricted.add("'" + index.get("name") + "' (" + restriction + ")");
+    }
+    String found =
+        restricted.isEmpty()
+            ? "has no unique index on {ruleSetId: 1, id: 1}"
+            : "has a unique index on {ruleSetId: 1, id: 1} only with options that do not enforce"
+                + " uniqueness for every rule: "
+                + String.join(", ", restricted);
+    throw new IllegalStateException(
+        String.format(
+            "MongoDB collection '%s' %s, which FluxGate needs to keep rule ids unique within a"
+                + " rule set. Create it with"
+                + " db.%s.createIndex({ruleSetId: 1, id: 1}, {unique: true, name: \"%s\"})"
+                + " or set fluxgate.mongo.ddl-auto=create to let FluxGate create it",
+            collectionName, found, collectionName, MongoRateLimitRuleRepository.UNIQUE_RULE_INDEX));
+  }
+
+  /**
+   * Why a unique index does not make {@code (ruleSetId, id)} unique for every document, or null
+   * when it does.
+   */
+  private static String uniquenessRestriction(Document index) {
+    List<String> reasons = new ArrayList<>();
+    if (index.get("partialFilterExpression") != null) {
+      reasons.add("partialFilterExpression");
+    }
+    if (Boolean.TRUE.equals(index.get("sparse"))) {
+      reasons.add("sparse");
+    }
+    Document collation = index.get("collation", Document.class);
+    if (collation != null && !"simple".equals(collation.getString("locale"))) {
+      reasons.add("collation " + collation.toJson());
+    }
+    return reasons.isEmpty() ? null : String.join(", ", reasons);
+  }
+
+  /** Whether an index key is exactly {@code {ruleSetId: 1, id: 1}} (in this order). */
+  private static boolean isRuleKey(Document key) {
+    if (key == null || key.size() != 2) {
+      return false;
+    }
+    java.util.Iterator<java.util.Map.Entry<String, Object>> fields = key.entrySet().iterator();
+    return isAscending(fields.next(), "ruleSetId") && isAscending(fields.next(), "id");
+  }
+
+  private static boolean isAscending(java.util.Map.Entry<String, Object> field, String name) {
+    return field.getKey().equals(name)
+        && field.getValue() instanceof Number
+        && ((Number) field.getValue()).doubleValue() == 1d;
   }
 
   /**
@@ -132,13 +251,18 @@ public class FluxgateMongoAutoConfiguration {
    *   <li>CUSTOM - Custom resolution via attributes
    * </ul>
    *
+   * <p>The behavior when the value a scope needs is missing from the request comes from {@code
+   * fluxgate.ratelimit.missing-key-behavior}: {@code FALLBACK_TO_IP} (default) limits by client IP
+   * instead, {@code REJECT} rejects the request rather than limiting a broader key.
+   *
    * <p>Users can override this bean with a custom KeyResolver.
    */
   @Bean(name = "fluxgateKeyResolver")
   @ConditionalOnMissingBean(KeyResolver.class)
   public KeyResolver fluxgateKeyResolver() {
-    log.info("Creating default LimitScopeKeyResolver (resolves key based on rule's LimitScope)");
-    return new org.fluxgate.core.key.LimitScopeKeyResolver();
+    MissingKeyBehavior missingKeyBehavior = properties.getRatelimit().getMissingKeyBehavior();
+    log.info("Creating default LimitScopeKeyResolver (missingKeyBehavior={})", missingKeyBehavior);
+    return new LimitScopeKeyResolver(missingKeyBehavior);
   }
 
   /**
@@ -155,9 +279,17 @@ public class FluxgateMongoAutoConfiguration {
    *   <li>{@code CompositeMetricsRecorder} - Wraps multiple recorders when both are enabled
    * </ul>
    *
+   * <p>When rule sets are also declared under {@code fluxgate.ratelimit.rule-sets}, {@link
+   * FluxgateRateLimiterAutoConfiguration#fluxgateYamlRuleSetComposer} composes them with this bean
+   * (YAML first, MongoDB as fallback), exactly as it does for an application-defined {@code
+   * delegateRuleSetProvider}.
+   *
    * @param repository the rule repository for fetching rate limit rules
    * @param fluxgateKeyResolver the key resolver for generating rate limit keys
    * @param metricsRecorderProvider lazy provider for composite metrics recorder
+   * @param accessControlSourceProvider lazy provider for an explicit rule set access control
+   *     source; needed when the repository bean is a decorator that does not implement {@link
+   *     RuleSetAccessControlSource}
    * @return configured MongoRuleSetProvider instance
    */
   @Bean(name = "delegateRuleSetProvider")
@@ -165,12 +297,13 @@ public class FluxgateMongoAutoConfiguration {
   public RateLimitRuleSetProvider mongoRuleSetProvider(
       RateLimitRuleRepository repository,
       KeyResolver fluxgateKeyResolver,
-      ObjectProvider<RateLimitMetricsRecorder> metricsRecorderProvider) {
+      ObjectProvider<RateLimitMetricsRecorder> metricsRecorderProvider,
+      ObjectProvider<RuleSetAccessControlSource> accessControlSourceProvider) {
     // Use a wrapper that lazily retrieves the recorder at runtime
     // This ensures CompositeMetricsRecorder is available even if created later
     log.info("Creating MongoRuleSetProvider with lazy metrics recorder injection");
     return new LazyMetricsMongoRuleSetProvider(
-        repository, fluxgateKeyResolver, metricsRecorderProvider);
+        repository, fluxgateKeyResolver, metricsRecorderProvider, accessControlSourceProvider);
   }
 
   /**
@@ -181,7 +314,8 @@ public class FluxgateMongoAutoConfiguration {
   @Bean(name = "fluxgateEventCollection")
   @ConditionalOnMissingBean(name = "fluxgateEventCollection")
   @ConditionalOnProperty(prefix = "fluxgate.mongo", name = "event-collection")
-  public MongoCollection<Document> fluxgateEventCollection(MongoDatabase fluxgateMongoDatabase) {
+  public MongoCollection<Document> fluxgateEventCollection(
+      @Qualifier("fluxgateMongoDatabase") MongoDatabase fluxgateMongoDatabase) {
     String collectionName = properties.getMongo().getEventCollection();
     FluxgateProperties.DdlAuto ddlAuto = properties.getMongo().getDdlAuto();
 
@@ -192,7 +326,50 @@ public class FluxgateMongoAutoConfiguration {
     }
 
     log.info("Using FluxGate event collection: {}", collectionName);
-    return fluxgateMongoDatabase.getCollection(collectionName);
+    MongoCollection<Document> collection = fluxgateMongoDatabase.getCollection(collectionName);
+    createEventRetentionIndex(collection);
+
+    return collection;
+  }
+
+  /**
+   * Creates the TTL index that expires recorded rate limit events.
+   *
+   * <p>Created regardless of {@code ddl-auto}: retention is a data protection control, not a schema
+   * convenience. Every event document carries a client IP, a user id and an API key fingerprint, so
+   * an event collection without a retention window turns any old backup into a lasting disclosure -
+   * and it grows until the disk does not.
+   *
+   * <p>The index is on {@code createdAt}, the BSON date {@code MongoRateLimitMetricsRecorder}
+   * writes; MongoDB's TTL monitor ignores an index on a string, so indexing {@code timestampIso}
+   * would have looked configured and expired nothing.
+   */
+  private void createEventRetentionIndex(MongoCollection<Document> collection) {
+    Duration retention = properties.getMongo().getEventRetention();
+    if (retention == null || retention.isZero() || retention.isNegative()) {
+      log.warn(
+          "fluxgate.mongo.event-retention is disabled: the event collection grows without bound and "
+              + "keeps client IPs, user ids and API key fingerprints forever. Expire the documents "
+              + "yourself, or set a retention period.");
+      return;
+    }
+
+    try {
+      String indexName =
+          collection.createIndex(
+              Indexes.ascending("createdAt"),
+              new IndexOptions()
+                  .name("createdAt_ttl")
+                  .expireAfter(retention.getSeconds(), TimeUnit.SECONDS));
+      log.info("Ensured FluxGate event retention index {} (retention={})", indexName, retention);
+    } catch (MongoException e) {
+      // A conflicting index (usually one created with a different retention) must not stop the
+      // application, but it does mean nothing is expiring.
+      log.warn(
+          "Could not create the FluxGate event retention index on 'createdAt'. Events are NOT being "
+              + "expired; drop the conflicting index or expire the documents yourself. Cause: {}",
+          e.getMessage());
+    }
   }
 
   /**
@@ -230,7 +407,8 @@ public class FluxgateMongoAutoConfiguration {
    */
   @Bean
   @ConditionalOnMissingBean(MongoHealthChecker.class)
-  public MongoHealthChecker mongoHealthChecker(MongoDatabase fluxgateMongoDatabase) {
+  public MongoHealthChecker mongoHealthChecker(
+      @Qualifier("fluxgateMongoDatabase") MongoDatabase fluxgateMongoDatabase) {
     log.info("Creating FluxGate MongoHealthChecker");
     MongoHealthCheckerImpl impl = new MongoHealthCheckerImpl(fluxgateMongoDatabase);
 
@@ -245,13 +423,26 @@ public class FluxgateMongoAutoConfiguration {
     };
   }
 
-  /** Masks sensitive parts of the URI for logging. */
+  /**
+   * Renders the hosts (and database) of a MongoDB URI for logging.
+   *
+   * <p>The driver's own parser is used rather than a regex over the URI: a password containing an
+   * {@code @} or a {@code :} defeats the regex and leaves its tail in the log, and a URI the driver
+   * cannot parse is not logged at all, because whatever is unparseable about it may still be a
+   * credential.
+   */
   private String maskUri(String uri) {
     if (uri == null) {
       return "null";
     }
-    // Simple masking: hide password
-    return uri.replaceAll("://([^:]+):([^@]+)@", "://$1:****@");
+    try {
+      ConnectionString connectionString = new ConnectionString(uri);
+      String hosts = String.join(",", connectionString.getHosts());
+      String database = connectionString.getDatabase();
+      return database != null ? hosts + "/" + database : hosts;
+    } catch (IllegalArgumentException e) {
+      return "<unparseable mongodb uri>";
+    }
   }
 
   /** Creates collection if it doesn't exist (ddl-auto: create). */

@@ -49,25 +49,13 @@ public class CachingRuleSetProvider implements RateLimitRuleSetProvider, RuleRel
   public Optional<RateLimitRuleSet> findById(String ruleSetId) {
     Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
 
-    // Try cache first
-    Optional<RateLimitRuleSet> cached = cache.get(ruleSetId);
-    if (cached.isPresent()) {
-      log.trace("Cache hit for ruleSetId: {}", ruleSetId);
-      return cached;
-    }
-
-    // Cache miss - load from delegate
-    log.debug("Cache miss for ruleSetId: {}, loading from delegate", ruleSetId);
-    Optional<RateLimitRuleSet> loaded = delegate.findById(ruleSetId);
-
-    // Cache if found
-    loaded.ifPresent(
-        ruleSet -> {
-          cache.put(ruleSetId, ruleSet);
-          log.debug("Cached ruleSetId: {}", ruleSetId);
+    // Delegate get/load/put to the cache so implementations can load atomically
+    return cache.getOrLoad(
+        ruleSetId,
+        id -> {
+          log.debug("Cache miss for ruleSetId: {}, loading from delegate", id);
+          return delegate.findById(id);
         });
-
-    return loaded;
   }
 
   @Override

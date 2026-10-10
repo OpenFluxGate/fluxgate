@@ -244,4 +244,81 @@ class FluxgateRateLimitHandlerTest {
       assertThrows(RuntimeException.class, () -> failingHandler.tryConsume(context, "test"));
     }
   }
+
+  // ==================== Weighted Permits Tests ====================
+
+  @Nested
+  @DisplayName("Weighted Permits Tests")
+  class WeightedPermitsTests {
+
+    @Test
+    @DisplayName("3-arg tryConsume should delegate to the 2-arg form for a single permit")
+    void tryConsume_shouldDelegateForSinglePermit() {
+      // given
+      final int[] calls = {0};
+      FluxgateRateLimitHandler handler =
+          (context, ruleSetId) -> {
+            calls[0]++;
+            return RateLimitResponse.allowed(9, 0);
+          };
+      RequestContext context = RequestContext.builder().clientIp("10.0.0.1").build();
+
+      // when
+      RateLimitResponse response = handler.tryConsume(context, "test", 1L);
+
+      // then
+      assertTrue(response.isAllowed());
+      assertEquals(9, response.getRemainingTokens());
+      assertEquals(1, calls[0]);
+    }
+
+    @Test
+    @DisplayName("3-arg tryConsume should reject weighted permits by default")
+    void tryConsume_shouldRejectWeightedPermitsByDefault() {
+      // given
+      FluxgateRateLimitHandler handler = (context, ruleSetId) -> RateLimitResponse.allowed(9, 0);
+      RequestContext context = RequestContext.builder().clientIp("10.0.0.1").build();
+
+      // when / then
+      UnsupportedOperationException exception =
+          assertThrows(
+              UnsupportedOperationException.class, () -> handler.tryConsume(context, "test", 5L));
+      assertTrue(exception.getMessage().contains("Weighted permits are not supported by"));
+    }
+
+    @Test
+    @DisplayName("ALLOW_ALL should honour the 3-arg form for a single permit")
+    void allowAll_shouldHonourThreeArgForm() {
+      // given
+      FluxgateRateLimitHandler handler = FluxgateRateLimitHandler.ALLOW_ALL;
+      RequestContext context = RequestContext.builder().build();
+
+      // when / then
+      assertTrue(handler.tryConsume(context, "test", 1L).isAllowed());
+    }
+
+    @Test
+    @DisplayName("handlers may override the 3-arg form to support weighted permits")
+    void tryConsume_mayBeOverriddenForWeightedPermits() {
+      // given
+      FluxgateRateLimitHandler handler =
+          new FluxgateRateLimitHandler() {
+            @Override
+            public RateLimitResponse tryConsume(RequestContext context, String ruleSetId) {
+              return tryConsume(context, ruleSetId, 1L);
+            }
+
+            @Override
+            public RateLimitResponse tryConsume(
+                RequestContext context, String ruleSetId, long permits) {
+              return RateLimitResponse.allowed(10 - permits, 0);
+            }
+          };
+      RequestContext context = RequestContext.builder().build();
+
+      // when / then
+      assertEquals(7, handler.tryConsume(context, "test", 3L).getRemainingTokens());
+      assertEquals(9, handler.tryConsume(context, "test").getRemainingTokens());
+    }
+  }
 }

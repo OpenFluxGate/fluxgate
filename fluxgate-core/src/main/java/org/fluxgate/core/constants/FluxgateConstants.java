@@ -29,14 +29,38 @@ public final class FluxgateConstants {
     /** API key header for authentication. */
     public static final String API_KEY = "X-API-Key";
 
+    /** Capacity of the band that produced the decision (legacy header). */
+    public static final String RATE_LIMIT_LIMIT = "X-RateLimit-Limit";
+
     /** Remaining rate limit tokens. */
     public static final String RATE_LIMIT_REMAINING = "X-RateLimit-Remaining";
+
+    /** Epoch seconds at which the bucket is full again (legacy header). */
+    public static final String RATE_LIMIT_RESET = "X-RateLimit-Reset";
+
+    /** Capacity of the band that produced the decision (RFC 9331 style header). */
+    public static final String STANDARD_RATE_LIMIT_LIMIT = "RateLimit-Limit";
+
+    /** Remaining rate limit tokens (RFC 9331 style header). */
+    public static final String STANDARD_RATE_LIMIT_REMAINING = "RateLimit-Remaining";
+
+    /** Seconds until the bucket is full again (RFC 9331 style header). */
+    public static final String STANDARD_RATE_LIMIT_RESET = "RateLimit-Reset";
+
+    /** Quota policy such as {@code 100;w=60} (RFC 9331 style header). */
+    public static final String STANDARD_RATE_LIMIT_POLICY = "RateLimit-Policy";
 
     /** Seconds until rate limit resets. */
     public static final String RETRY_AFTER = "Retry-After";
 
     /** Client's original IP when behind a proxy. */
     public static final String X_FORWARDED_FOR = "X-Forwarded-For";
+
+    /** Client user agent string. */
+    public static final String USER_AGENT = "User-Agent";
+
+    /** Address of the page that linked to the requested resource. */
+    public static final String REFERER = "Referer";
   }
 
   /**
@@ -120,8 +144,14 @@ public final class FluxgateConstants {
     /** Prefix for all Fluxgate metrics. */
     public static final String PREFIX = "fluxgate";
 
-    /** Total requests processed. */
-    public static final String REQUESTS_TOTAL = PREFIX + ".requests.total";
+    /**
+     * Total requests processed.
+     *
+     * @deprecated replaced by {@link #REQUESTS}, which carries the {@link #TAG_RESULT} tag and so
+     *     reports allowed and rejected counts from a single meter. Summing {@code
+     *     fluxgate.requests} over that tag gives the total this meter used to report.
+     */
+    @Deprecated public static final String REQUESTS_TOTAL = PREFIX + ".requests.total";
 
     /** Requests by result (allowed/rejected). */
     public static final String REQUESTS = PREFIX + ".requests";
@@ -151,5 +181,19 @@ public final class FluxgateConstants {
 
     /** Result value for rejected requests. */
     public static final String RESULT_REJECTED = "rejected";
+  }
+
+  /**
+   * Redis Pub/Sub channel names shared between the data plane and the control plane.
+   *
+   * <p>The starter ({@code fluxgate.reload.pubsub.channel}) and the control-support module ({@code
+   * fluxgate.control.redis.channel}) default to the same value through these constants, so a
+   * mismatch can only ever be a deliberate override.
+   */
+  public static final class Channels {
+    private Channels() {}
+
+    /** Channel carrying rule change / full reload notifications. */
+    public static final String RULE_RELOAD = "fluxgate:rule-reload";
   }
 }

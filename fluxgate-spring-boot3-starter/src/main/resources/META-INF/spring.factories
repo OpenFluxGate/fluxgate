@@ -1,0 +1,4 @@
+# Environment post-processors. Auto-configurations are registered in
+# META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports.
+org.springframework.boot.env.EnvironmentPostProcessor=\
+org.fluxgate.spring.actuator.FluxgateHealthStatusEnvironmentPostProcessor

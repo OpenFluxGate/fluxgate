@@ -6,8 +6,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 /**
  * FluxGate MongoDB Sample Application (Control-plane).
  *
- * <p>This sample demonstrates: - MongoDB integration for rate limit rule management - REST API for
- * CRUD operations on rules - No rate limiting filter (control-plane only)
+ * <p>This sample demonstrates MongoDB storage for rate limit rules and a REST API to list, get and
+ * delete them and to create sample rules. It does not rate limit requests (control-plane only).
  *
  * <p>Prerequisites: - MongoDB running at localhost:27017
  *

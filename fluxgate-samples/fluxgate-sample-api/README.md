@@ -1,26 +1,38 @@
-# FluxGate Sample - API Gateway (Full Integration)
+# FluxGate Sample - API Gateway (Control-plane + Data-plane)
 
-This sample demonstrates the **complete FluxGate integration** combining MongoDB (control-plane) and Redis (data-plane) for a production-like API gateway architecture.
+This sample ties the two other samples together over HTTP. Rules are managed in the
+**Control-plane** ([fluxgate-sample-mongo](../fluxgate-sample-mongo), MongoDB, port 8081) and enforced
+by the **Data-plane** ([fluxgate-sample-redis](../fluxgate-sample-redis), Redis, port 8082). This
+application uses neither database itself: it calls both services with Spring's `RestClient`.
 
 ## Key Features
 
-- **Complete integration** - MongoDB + Redis + HTTP Filter
-- **Control-plane operations** - Rule management via MongoDB
-- **Data-plane operations** - Rate limiting via Redis
-- **Production architecture** - Separated concerns for scalability
-- **Full REST API** - Both admin and rate-limited endpoints
+- **Control-plane calls** - create the sample rules, list and delete rules in MongoDB through
+  `fluxgate-sample-mongo`
+- **Sync** - register a MongoDB rule set in the Redis Data-plane
+- **Data-plane calls** - rate-limited requests proxied to `fluxgate-sample-redis`
+- **Swagger UI** - every endpoint is documented with OpenAPI annotations
 
 ## Prerequisites
 
-```bash
-# Start Redis
-docker run -d --name redis -p 6379:6379 redis:latest
+> This sample has no FluxGate module dependency; it only needs the parent POMs. Run
+> `./mvnw -B install -DskipTests -pl fluxgate-samples/fluxgate-sample-api -am` (JDK 17+) once from
+> the project root first (see [Build Once](../README.md#build-once)). The samples it calls,
+> `fluxgate-sample-mongo` and `fluxgate-sample-redis`, need the `0.4.0-SNAPSHOT` modules.
 
-# Start MongoDB
-docker run -d --name mongodb -p 27017:27017 \
+```bash
+# MongoDB for the Control-plane
+docker run -d --name mongodb -p 127.0.0.1:27017:27017 \
   -e MONGO_INITDB_ROOT_USERNAME=fluxgate \
   -e MONGO_INITDB_ROOT_PASSWORD=fluxgate123 \
-  mongo:latest
+  mongo:7.0.14
+
+# Redis for the Data-plane
+docker run -d --name redis -p 127.0.0.1:6379:6379 redis:7.2.5-alpine
+
+# The two services this sample calls
+./mvnw spring-boot:run -pl fluxgate-samples/fluxgate-sample-mongo   # 8081
+./mvnw spring-boot:run -pl fluxgate-samples/fluxgate-sample-redis   # 8082
 ```
 
 ## Quick Start
@@ -33,54 +45,78 @@ docker run -d --name mongodb -p 27017:27017 \
 
 The application starts on port **8080**.
 
-### 2. Initialize Sample Rules
+### 2. Create Sample Rules in MongoDB
+
+Calls the Control-plane's `POST /admin/rules/sample`, which creates three rules in rule set
+`api-gateway-rules`:
 
 ```bash
 curl -X POST http://localhost:8080/admin/rules/init
 ```
 
-Response:
+### 3. Sync the Rule Set to Redis
+
+Reads the rule set from the Control-plane and registers it in the Data-plane. This is simplified:
+only the capacity and window of the **first band of the first rule** are synced. The Control-plane
+returns `RateLimitRule` JSON, where a band's window is the `Duration` property `window` (ISO-8601,
+e.g. `"PT1M"`; a number of seconds is accepted too, and `windowSeconds` as a fallback). Fractions
+of a second are rounded up (`PT0.5S` -> 1 s). A rule set with no rules is answered with 400; a first
+band without a positive capacity and window is answered with 422 and nothing is registered.
+
+```bash
+curl -X POST "http://localhost:8080/admin/sync?ruleSetId=api-gateway-rules"
+```
+
+Response (the first sample rule is normally `api-rate-limit-100rpm`, 100 per 60 s; MongoDB returns
+the rules in natural order):
+
 ```json
 {
-  "message": "Sample rules initialized",
-  "rules": ["api-rate-limit", "premium-rate-limit"]
+  "message": "Rules synced successfully",
+  "ruleSetId": "api-gateway-rules",
+  "rulesFromMongo": 3,
+  "capacity": 100,
+  "windowSeconds": 60,
+  "redisResponse": {
+    "message": "RuleSet created successfully",
+    "ruleSetId": "api-gateway-rules",
+    "capacity": 100,
+    "windowSeconds": 60
+  }
 }
 ```
 
-### 3. Test Rate Limiting
+### 4. Test Rate Limiting
+
+Send one request more than the synced `capacity` (101 for 100 per 60 s):
 
 ```bash
-# Send 15 requests (limit is 10 per minute)
-for i in {1..15}; do
-  echo -n "Request $i: "
-  curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/api/hello
-  echo ""
-done
+for i in {1..101}; do
+  curl -s -o /dev/null -w "%{http_code}\n" "http://localhost:8080/api/test?ruleSetId=api-gateway-rules"
+done | sort | uniq -c
 ```
 
-Expected output:
+Expected:
 ```
-Request 1: 200
-Request 2: 200
-...
-Request 10: 200
-Request 11: 429  # Rate limited!
-Request 12: 429
-...
+ 100 200
+   1 429
 ```
 
-### 4. Check Rate Limit Headers
+Once the limit is used up the Data-plane answers 429, which this sample passes on with its own JSON
+body (the Data-plane's `Retry-After` header is not forwarded):
 
-```bash
-curl -i http://localhost:8080/api/hello
+```json
+{
+  "status": "REJECTED",
+  "error": "Rate limit exceeded",
+  "ruleSetId": "api-gateway-rules",
+  "message": "Too many requests. Please try again later."
+}
 ```
 
-Response headers:
-```
-X-RateLimit-Limit: 10
-X-RateLimit-Remaining: 9
-X-RateLimit-Reset: 1701234567
-```
+A rule set the Data-plane does not know is reported as 400 with a hint to call `/admin/sync`.
+The Data-plane limits per client IP, and the IP it sees is this gateway's, so every caller of
+this sample shares one bucket.
 
 ## Project Structure
 
@@ -89,58 +125,37 @@ fluxgate-sample-api/
 ├── src/main/java/org/fluxgate/sample/api/
 │   ├── ApiSampleApplication.java        # Main application
 │   ├── config/
-│   │   ├── MongoConfig.java             # MongoDB configuration
-│   │   ├── RedisConfig.java             # Redis configuration
-│   │   └── FilterConfig.java            # HTTP filter configuration
+│   │   ├── OpenApiConfig.java           # Swagger / OpenAPI configuration
+│   │   ├── RestClientConfig.java        # RestClients for the Control- and Data-plane
+│   │   └── ServiceProperties.java       # fluxgate.services.* URLs
 │   └── controller/
-│       ├── ApiController.java           # Rate-limited API endpoints
-│       └── AdminController.java         # Admin API for rules
-└── src/main/resources/
-    └── application.yml                  # Configuration
+│       ├── AdminController.java         # Rule management and sync
+│       └── ApiController.java           # Requests proxied to the Data-plane
+├── src/main/resources/
+│   └── application.yml                  # Configuration
+└── src/test/java/org/fluxgate/sample/api/
+    ├── ApiSampleStartupTest.java        # shipped application.yml
+    ├── config/OpenApiConfigTest.java
+    └── controller/
+        ├── AdminControllerParsingTest.java
+        └── AdminControllerSyncTest.java
 ```
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    FluxGate API Gateway                         │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│                        ┌────────────────┐                       │
-│                        │   Client       │                       │
-│                        │   Request      │                       │
-│                        └───────┬────────┘                       │
-│                                │                                 │
-│                                ▼                                 │
-│                  ┌─────────────────────────┐                    │
-│                  │  FluxgateRateLimitFilter │                    │
-│                  │                         │                    │
-│                  │  1. Extract client key  │                    │
-│                  │  2. Load rules from     │                    │
-│                  │     MongoDB             │                    │
-│                  │  3. Check rate limit    │                    │
-│                  │     via Redis           │                    │
-│                  │  4. Allow or reject     │                    │
-│                  └───────────┬─────────────┘                    │
-│                              │                                   │
-│            ┌─────────────────┼─────────────────┐                │
-│            │                 │                 │                │
-│            ▼                 ▼                 ▼                │
-│     ┌──────────┐      ┌──────────┐      ┌──────────┐           │
-│     │  200 OK  │      │  429     │      │  Admin   │           │
-│     │  API     │      │  Rate    │      │  API     │           │
-│     │  Response│      │  Limited │      │  (CRUD)  │           │
-│     └──────────┘      └──────────┘      └──────────┘           │
-│                                                                  │
-│  ┌──────────────────┐         ┌──────────────────┐              │
-│  │  MongoDB         │         │   Redis          │              │
-│  │  (Control-plane) │◀───────▶│   (Data-plane)   │              │
-│  │                  │  sync   │                  │              │
-│  │  • Rule storage  │         │  • Token bucket  │              │
-│  │  • Audit logs    │         │  • Rate counters │              │
-│  └──────────────────┘         └──────────────────┘              │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+                       ┌──────────────────────────────┐
+     client  ────────▶ │  fluxgate-sample-api (8080)  │
+                       │  AdminController             │
+                       │  ApiController               │
+                       └──────┬────────────────┬──────┘
+               /admin/rules*  │                │  /admin/rules (sync), /api/*
+                              ▼                ▼
+          ┌───────────────────────────┐  ┌───────────────────────────┐
+          │ fluxgate-sample-mongo     │  │ fluxgate-sample-redis     │
+          │ (Control-plane, 8081)     │  │ (Data-plane, 8082)        │
+          │ rules in MongoDB          │  │ rate limiting in Redis    │
+          └───────────────────────────┘  └───────────────────────────┘
 ```
 
 ## Configuration
@@ -155,252 +170,67 @@ spring:
   application:
     name: fluxgate-sample-api
 
+# External service URLs
 fluxgate:
-  # MongoDB for rule storage (control-plane)
-  mongo:
-    enabled: true
-    uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
-    database: fluxgate
-    rule-collection: rate_limit_rules
-    event-collection: rate_limit_events
+  services:
+    control-plane-url: http://localhost:8081   # fluxgate-sample-mongo
+    data-plane-url: http://localhost:8082      # fluxgate-sample-redis
 
-  # Redis for rate limiting (data-plane)
-  redis:
-    enabled: true
-    uri: redis://localhost:6379
-
-  # Rate limiting configuration
-  ratelimit:
-    enabled: true
-    filter-enabled: true
-    default-rule-set-id: api-limits
-    include-patterns:
-      - /api/**
-    exclude-patterns:
-      - /admin/**
-      - /actuator/**
-      - /health
-    client-ip-header: X-Forwarded-For
-    trust-client-ip-header: true
-    include-headers: true
+logging:
+  level:
+    org.fluxgate: DEBUG
+    org.fluxgate.sample: DEBUG
 ```
+
+Both URLs default to the same values in `ServiceProperties` when the keys are absent. The OpenAPI
+version shown in Swagger UI (`/swagger-ui.html`) is the Maven project version, read from the
+`META-INF/build-info.properties` that the `build-info` goal of `spring-boot-maven-plugin` writes.
 
 ## REST API
 
-### Admin Endpoints (Not Rate Limited)
+### Admin Endpoints (`AdminController`)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/admin/rules` | List all rules |
-| GET | `/admin/rules/{id}` | Get rule by ID |
-| POST | `/admin/rules` | Create rule |
-| PUT | `/admin/rules/{id}` | Update rule |
-| DELETE | `/admin/rules/{id}` | Delete rule |
-| POST | `/admin/rules/init` | Initialize sample rules |
-| GET | `/admin/rulesets` | List all RuleSets |
-| GET | `/admin/stats` | Get rate limiting statistics |
+| Method | Path | Calls | Description |
+|--------|------|-------|-------------|
+| POST | `/admin/rules/init` | Control-plane `POST /admin/rules/sample` | Create the sample rules in MongoDB (201) |
+| GET | `/admin/rules?ruleSetId=` | Control-plane `GET /admin/rules?ruleSetId=` | List the rules of a rule set (default `api-gateway-rules`) |
+| DELETE | `/admin/rules/{ruleSetId}/{id}` | Control-plane `DELETE /admin/rules/{ruleSetId}/{id}` | Delete one rule (204) |
+| POST | `/admin/sync?ruleSetId=` | Control-plane `GET /admin/rules?ruleSetId=`, Data-plane `POST /admin/rules` | Register a MongoDB rule set in Redis (default `api-gateway-rules`; 200, 400 without rules, 422 without a positive capacity/window) |
+| GET | `/admin/redis/rules` | Data-plane `GET /admin/rules` | List the rule sets registered in Redis (`{"ruleSets": [...], "count": n}`) |
 
-### API Endpoints (Rate Limited)
+### API Endpoints (`ApiController`)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/hello` | Hello endpoint |
-| GET | `/api/users` | Users endpoint |
-| GET | `/api/products` | Products endpoint |
-| POST | `/api/orders` | Orders endpoint |
+| Method | Path | Calls | Description |
+|--------|------|-------|-------------|
+| GET | `/api/test?ruleSetId=` | Data-plane `GET /api/test?ruleSetId=` | Rate-limited request against a synced rule set (default `api-gateway-rules`); 200, 429 or 400 |
+| GET | `/api/hello` | Data-plane `GET /api/test?ruleSetId=api-limits` | Same, with `api-limits`: the default rule set `fluxgate-sample-redis` registers at startup (10 per 60 s per IP), so no sync is needed |
+| GET | `/api/status` | Data-plane `GET /api/status` | Data-plane status, not rate limited |
 
-### Health Endpoints (Not Rate Limited)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Health check |
-| GET | `/actuator/health` | Actuator health |
-
-## Usage Examples
-
-### Create a Custom Rule
+### Delete a Rule
 
 ```bash
-curl -X POST http://localhost:8080/admin/rules \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": "vip-api-limit",
-    "name": "VIP API Rate Limit",
-    "ruleSetId": "vip-limits",
-    "enabled": true,
-    "capacity": 1000,
-    "windowSeconds": 60,
-    "scope": "PER_USER",
-    "keyStrategyId": "userId"
-  }'
-```
-
-### Update Existing Rule
-
-```bash
-curl -X PUT http://localhost:8080/admin/rules/api-rate-limit \
-  -H "Content-Type: application/json" \
-  -d '{
-    "capacity": 20,
-    "windowSeconds": 60
-  }'
-```
-
-### Get Rate Limit Statistics
-
-```bash
-curl http://localhost:8080/admin/stats
-```
-
-Response:
-```json
-{
-  "totalRequests": 1500,
-  "allowedRequests": 1200,
-  "rejectedRequests": 300,
-  "averageLatencyMs": 5.2,
-  "activeRules": 3
-}
-```
-
-## Rule Synchronization
-
-Rules are synchronized from MongoDB to Redis automatically:
-
-```
-┌──────────────────────────────────────────────────────────┐
-│                   Rule Synchronization                    │
-├──────────────────────────────────────────────────────────┤
-│                                                           │
-│  1. Admin creates/updates rule via REST API               │
-│                        │                                  │
-│                        ▼                                  │
-│  2. Rule persisted to MongoDB                            │
-│                        │                                  │
-│                        ▼                                  │
-│  3. Change event triggers sync                           │
-│                        │                                  │
-│                        ▼                                  │
-│  4. Rule config pushed to Redis                          │
-│                        │                                  │
-│                        ▼                                  │
-│  5. Filter uses updated rules immediately                │
-│                                                           │
-└──────────────────────────────────────────────────────────┘
-```
-
-## Multi-tier Rate Limiting
-
-```bash
-# Example: Different limits for different user tiers
-{
-  "rules": [
-    {
-      "id": "free-tier",
-      "ruleSetId": "free-limits",
-      "capacity": 10,
-      "windowSeconds": 60,
-      "scope": "PER_USER"
-    },
-    {
-      "id": "pro-tier",
-      "ruleSetId": "pro-limits",
-      "capacity": 100,
-      "windowSeconds": 60,
-      "scope": "PER_USER"
-    },
-    {
-      "id": "enterprise-tier",
-      "ruleSetId": "enterprise-limits",
-      "capacity": 10000,
-      "windowSeconds": 60,
-      "scope": "PER_USER"
-    }
-  ]
-}
-```
-
-## Production Deployment
-
-### Docker Compose
-
-```yaml
-version: '3.8'
-services:
-  api:
-    build: .
-    ports:
-      - "8080:8080"
-    environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - FLUXGATE_MONGO_URI=mongodb://mongodb:27017/fluxgate
-      - FLUXGATE_REDIS_URI=redis://redis:6379
-    depends_on:
-      - mongodb
-      - redis
-
-  mongodb:
-    image: mongo:latest
-    volumes:
-      - mongo-data:/data/db
-
-  redis:
-    image: redis:latest
-    volumes:
-      - redis-data:/data
-
-volumes:
-  mongo-data:
-  redis-data:
-```
-
-### Kubernetes
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: fluxgate-api
-spec:
-  replicas: 3
-  template:
-    spec:
-      containers:
-        - name: api
-          image: fluxgate-sample-api:latest
-          env:
-            - name: FLUXGATE_MONGO_URI
-              valueFrom:
-                secretKeyRef:
-                  name: fluxgate-secrets
-                  key: mongo-uri
-            - name: FLUXGATE_REDIS_URI
-              valueFrom:
-                secretKeyRef:
-                  name: fluxgate-secrets
-                  key: redis-uri
+curl -X DELETE http://localhost:8080/admin/rules/api-gateway-rules/api-rate-limit-100rpm
 ```
 
 ## Comparison with Other Samples
 
+This sample has no FluxGate dependency at all: it only calls the other two samples over HTTP.
+
 | Feature | API (this) | Filter | Redis | Mongo |
 |---------|:----------:|:------:|:-----:|:-----:|
-| MongoDB integration | ✅ | ❌ | ❌ | ✅ |
-| Redis integration | ✅ | ✅ | ✅ | ❌ |
-| HTTP Filter | ✅ | ✅ | ✅ | ❌ |
-| Dynamic rules | ✅ | ✅ | ❌ | ✅ |
-| Admin API | ✅ | ✅ | ❌ | ✅ |
-| Rate limit headers | ✅ | ✅ | ✅ | ❌ |
-| Event logging | ✅ | ❌ | ❌ | ✅ |
-| Production-ready | ✅ | ✅ | ⚠️ | ⚠️ |
+| FluxGate dependencies | none | `spring-boot3-starter` | `spring-boot3-starter`, `redis-ratelimiter` | `spring-boot3-starter`, `mongo-adapter` |
+| MongoDB access | ❌ (via HTTP to Mongo) | ❌ | ❌ | ✅ |
+| Redis access | ❌ (via HTTP to Redis) | ❌ (via HTTP to Redis) | ✅ | ❌ |
+| HTTP filter (`@EnableFluxgateFilter`) | ❌ | ✅ | ❌ (limits in the controller) | ❌ |
+| Dynamic rules | via Mongo + `/admin/sync` | ❌ (rules live in the Redis sample) | ✅ (`/admin/rules`, `DynamicRuleSetProvider`) | ✅ (stored, not enforced) |
+| Admin API | ✅ (proxy) | ❌ | ✅ (`RuleAdminController`) | ✅ (`RuleAdminController`) |
+| Rate limit headers | ❌ | ✅ (`X-RateLimit-*`, `RateLimit-*`) | `Retry-After` only | ❌ |
 
 ## When to Use This Sample
 
-- **Full-featured API gateway** with rate limiting
-- **Production deployments** requiring both control and data planes
-- **Multi-tier rate limiting** based on user subscription
-- **Audit requirements** for rate limit events
-- **Scalable architecture** with separated concerns
+- **Separated control and data planes**: see how rules managed in MongoDB reach a Redis-backed
+  rate limiter
+- **Service-to-service calls** between a gateway and the FluxGate samples
 
 ## Next Steps
 

@@ -14,6 +14,7 @@ import org.fluxgate.adapter.mongo.model.RateLimitBandDocument;
 import org.fluxgate.adapter.mongo.model.RateLimitRuleDocument;
 import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
 import org.fluxgate.adapter.mongo.rule.MongoRuleSetProvider;
+import org.fluxgate.adapter.mongo.support.MongoContainerSupport;
 import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.fluxgate.core.config.RateLimitBand;
@@ -24,21 +25,14 @@ import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.junit.jupiter.api.*;
 
+/**
+ * Integration tests for {@link MongoRuleSetProvider} against a real MongoDB.
+ *
+ * <p>The target comes from {@link MongoContainerSupport}: a supplied {@code FLUXGATE_MONGO_URI}, a
+ * Testcontainers {@code mongo:7.0}, or the test is skipped. Each test gets its own collection, so
+ * nothing a shared MongoDB already holds is dropped.
+ */
 class MongoRuleSetProviderIntegrationTest {
-
-  private static final String MONGO_URI =
-      System.getProperty(
-          "fluxgate.mongo.uri",
-          System.getenv()
-              .getOrDefault(
-                  "FLUXGATE_MONGO_URI",
-                  "mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin"));
-
-  private static final String DB_NAME =
-      System.getProperty(
-          "fluxgate.mongo.db", System.getenv().getOrDefault("FLUXGATE_MONGO_DB", "fluxgate"));
-
-  private static final String RULE_COLLECTION = "rate_limit_rules";
 
   private MongoClient client;
   private MongoDatabase database;
@@ -48,13 +42,12 @@ class MongoRuleSetProviderIntegrationTest {
 
   @BeforeEach
   void setUp() {
-    // Connect to local MongoDB (docker or local)
-    client = MongoClients.create(MONGO_URI);
-    database = client.getDatabase(DB_NAME);
-    ruleCollection = database.getCollection(RULE_COLLECTION);
+    client = MongoClients.create(MongoContainerSupport.mongoUri());
+    database = client.getDatabase(MongoContainerSupport.databaseName());
 
-    // Start with a clean state
-    ruleCollection.drop();
+    // A collection of this test's own, so a shared MongoDB keeps its data
+    ruleCollection =
+        database.getCollection(MongoContainerSupport.uniqueCollectionName("rate_limit_rules"));
 
     repository = new MongoRateLimitRuleRepository(ruleCollection);
     provider = new MongoRuleSetProvider(repository, new TestKeyResolver());
@@ -62,6 +55,9 @@ class MongoRuleSetProviderIntegrationTest {
 
   @AfterEach
   void tearDown() {
+    if (ruleCollection != null) {
+      ruleCollection.drop();
+    }
     if (client != null) {
       client.close();
     }

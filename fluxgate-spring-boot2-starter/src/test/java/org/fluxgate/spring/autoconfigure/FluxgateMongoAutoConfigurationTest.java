@@ -3,21 +3,32 @@ package org.fluxgate.spring.autoconfigure;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.mongodb.MongoException;
 import com.mongodb.client.ListCollectionNamesIterable;
+import com.mongodb.client.ListIndexesIterable;
+import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.IndexOptions;
+import com.mongodb.client.model.Indexes;
+import java.time.Duration;
 import java.util.Arrays;
-import java.util.Iterator;
+import java.util.Collection;
+import java.util.concurrent.TimeUnit;
+import org.bson.Document;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.fluxgate.spring.properties.FluxgateProperties.DdlAuto;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -255,13 +266,16 @@ class FluxgateMongoAutoConfigurationTest {
 
       MongoDatabase mockDatabase = mock(MongoDatabase.class);
       ListCollectionNamesIterable mockIterable = mock(ListCollectionNamesIterable.class);
-      MongoCursor<String> mockCursor = mock(MongoCursor.class);
 
       when(mockDatabase.listCollectionNames()).thenReturn(mockIterable);
-      // ListCollectionNamesIterable.iterator() returns MongoCursor
-      when(mockIterable.iterator()).thenReturn(mockCursor);
-      // Empty cursor - collection does not exist
-      when(mockCursor.hasNext()).thenReturn(false);
+      doAnswer(
+              invocation -> {
+                Collection<String> target = invocation.getArgument(0);
+                // Empty list - collection does not exist
+                return target;
+              })
+          .when(mockIterable)
+          .into(any());
 
       FluxgateMongoAutoConfiguration config = new FluxgateMongoAutoConfiguration(properties);
 
@@ -282,17 +296,23 @@ class FluxgateMongoAutoConfigurationTest {
 
       MongoDatabase mockDatabase = mock(MongoDatabase.class);
       ListCollectionNamesIterable mockIterable = mock(ListCollectionNamesIterable.class);
-      MongoCursor<String> mockCursor = mock(MongoCursor.class);
 
       when(mockDatabase.listCollectionNames()).thenReturn(mockIterable);
-      // ListCollectionNamesIterable.iterator() returns MongoCursor
-      when(mockIterable.iterator()).thenReturn(mockCursor);
-      // Mock the cursor iteration
-      Iterator<String> listIterator =
-          Arrays.asList("existing_collection", "other_collection").iterator();
-      when(mockCursor.hasNext()).thenAnswer(inv -> listIterator.hasNext());
-      when(mockCursor.next()).thenAnswer(inv -> listIterator.next());
-      when(mockDatabase.getCollection("existing_collection")).thenReturn(null);
+      doAnswer(
+              invocation -> {
+                Collection<String> target = invocation.getArgument(0);
+                target.addAll(Arrays.asList("existing_collection", "other_collection"));
+                return target;
+              })
+          .when(mockIterable)
+          .into(any());
+      MongoCollection<Document> mockCollection =
+          collectionWithIndexes(
+              new Document("name", "_id_").append("key", new Document("_id", 1)),
+              new Document("name", "ruleSetId_1_id_1_unique")
+                  .append("key", new Document("ruleSetId", 1).append("id", 1))
+                  .append("unique", true));
+      when(mockDatabase.getCollection("existing_collection")).thenReturn(mockCollection);
 
       FluxgateMongoAutoConfiguration config = new FluxgateMongoAutoConfiguration(properties);
 
@@ -311,14 +331,18 @@ class FluxgateMongoAutoConfigurationTest {
 
       MongoDatabase mockDatabase = mock(MongoDatabase.class);
       ListCollectionNamesIterable mockIterable = mock(ListCollectionNamesIterable.class);
-      MongoCursor<String> mockCursor = mock(MongoCursor.class);
 
       when(mockDatabase.listCollectionNames()).thenReturn(mockIterable);
-      // ListCollectionNamesIterable.iterator() returns MongoCursor
-      when(mockIterable.iterator()).thenReturn(mockCursor);
-      // Empty cursor - no collections exist
-      when(mockCursor.hasNext()).thenReturn(false);
-      when(mockDatabase.getCollection("new_collection")).thenReturn(null);
+      doAnswer(
+              invocation -> {
+                Collection<String> target = invocation.getArgument(0);
+                // Empty list - collection does not exist
+                return target;
+              })
+          .when(mockIterable)
+          .into(any());
+      MongoCollection<Document> mockCollection = mockRuleCollection();
+      when(mockDatabase.getCollection("new_collection")).thenReturn(mockCollection);
 
       FluxgateMongoAutoConfiguration config = new FluxgateMongoAutoConfiguration(properties);
 
@@ -327,6 +351,10 @@ class FluxgateMongoAutoConfigurationTest {
 
       // Then
       verify(mockDatabase).createCollection("new_collection");
+      // The adapter's indexes: unique (ruleSetId, id) also serves the ruleSetId lookups.
+      verify(mockCollection)
+          .createIndex(eq(Indexes.ascending("ruleSetId", "id")), any(IndexOptions.class));
+      verify(mockCollection).createIndex(eq(Indexes.ascending("id")), any(IndexOptions.class));
     }
 
     @Test
@@ -339,16 +367,18 @@ class FluxgateMongoAutoConfigurationTest {
 
       MongoDatabase mockDatabase = mock(MongoDatabase.class);
       ListCollectionNamesIterable mockIterable = mock(ListCollectionNamesIterable.class);
-      MongoCursor<String> mockCursor = mock(MongoCursor.class);
 
       when(mockDatabase.listCollectionNames()).thenReturn(mockIterable);
-      // ListCollectionNamesIterable.iterator() returns MongoCursor
-      when(mockIterable.iterator()).thenReturn(mockCursor);
-      // Mock cursor iteration with existing collection
-      Iterator<String> listIterator = Arrays.asList("existing_collection").iterator();
-      when(mockCursor.hasNext()).thenAnswer(inv -> listIterator.hasNext());
-      when(mockCursor.next()).thenAnswer(inv -> listIterator.next());
-      when(mockDatabase.getCollection("existing_collection")).thenReturn(null);
+      doAnswer(
+              invocation -> {
+                Collection<String> target = invocation.getArgument(0);
+                target.add("existing_collection");
+                return target;
+              })
+          .when(mockIterable)
+          .into(any());
+      MongoCollection<Document> mockCollection = mockRuleCollection();
+      when(mockDatabase.getCollection("existing_collection")).thenReturn(mockCollection);
 
       FluxgateMongoAutoConfiguration config = new FluxgateMongoAutoConfiguration(properties);
 
@@ -357,6 +387,33 @@ class FluxgateMongoAutoConfigurationTest {
 
       // Then
       verify(mockDatabase, never()).createCollection(any());
+      verify(mockCollection)
+          .createIndex(eq(Indexes.ascending("ruleSetId", "id")), any(IndexOptions.class));
+    }
+
+    /** A rule collection mock whose listIndexes() returns {@code indexes}. */
+    @SuppressWarnings("unchecked")
+    private MongoCollection<Document> collectionWithIndexes(Document... indexes) {
+      MongoCollection<Document> collection = mock(MongoCollection.class);
+      ListIndexesIterable<Document> iterable = mock(ListIndexesIterable.class);
+      when(collection.listIndexes()).thenReturn(iterable);
+      when(iterable.iterator())
+          .thenAnswer(invocation -> cursorOver(Arrays.asList(indexes).iterator()));
+      return collection;
+    }
+
+    @SuppressWarnings("unchecked")
+    private MongoCursor<Document> cursorOver(java.util.Iterator<Document> documents) {
+      MongoCursor<Document> cursor = mock(MongoCursor.class);
+      when(cursor.hasNext()).thenAnswer(invocation -> documents.hasNext());
+      when(cursor.next()).thenAnswer(invocation -> documents.next());
+      return cursor;
+    }
+
+    /** A rule collection mock whose index creation can be verified. */
+    @SuppressWarnings("unchecked")
+    private MongoCollection<Document> mockRuleCollection() {
+      return mock(MongoCollection.class);
     }
 
     /**
@@ -371,6 +428,122 @@ class FluxgateMongoAutoConfigurationTest {
                 "fluxgateRuleCollection", MongoDatabase.class);
         method.setAccessible(true);
         method.invoke(config, database);
+      } catch (java.lang.reflect.InvocationTargetException e) {
+        if (e.getCause() instanceof RuntimeException) {
+          throw (RuntimeException) e.getCause();
+        }
+        throw new RuntimeException(e.getCause());
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    }
+  }
+
+  @Nested
+  @DisplayName("Event retention (N-12)")
+  class EventRetentionTests {
+
+    @Test
+    @DisplayName("A TTL index is created on createdAt with the configured retention")
+    void shouldCreateTheTtlIndexOnTheEventCollection() {
+      FluxgateProperties properties = eventCollectionProperties();
+      properties.getMongo().setEventRetention(Duration.ofDays(7));
+
+      MongoCollection<Document> collection = mockEventCollection();
+      MongoDatabase database = databaseWith("rate_limit_events", collection);
+
+      invokeFluxgateEventCollection(new FluxgateMongoAutoConfiguration(properties), database);
+
+      ArgumentCaptor<IndexOptions> options = ArgumentCaptor.forClass(IndexOptions.class);
+      verify(collection).createIndex(eq(Indexes.ascending("createdAt")), options.capture());
+      assertThat(options.getValue().getExpireAfter(TimeUnit.SECONDS))
+          .isEqualTo(Duration.ofDays(7).getSeconds());
+      assertThat(options.getValue().getName()).isEqualTo("createdAt_ttl");
+    }
+
+    @Test
+    @DisplayName("Retention defaults to 30 days")
+    void shouldDefaultTheRetentionToThirtyDays() {
+      FluxgateProperties properties = eventCollectionProperties();
+
+      MongoCollection<Document> collection = mockEventCollection();
+      MongoDatabase database = databaseWith("rate_limit_events", collection);
+
+      invokeFluxgateEventCollection(new FluxgateMongoAutoConfiguration(properties), database);
+
+      ArgumentCaptor<IndexOptions> options = ArgumentCaptor.forClass(IndexOptions.class);
+      verify(collection).createIndex(eq(Indexes.ascending("createdAt")), options.capture());
+      assertThat(options.getValue().getExpireAfter(TimeUnit.SECONDS))
+          .isEqualTo(Duration.ofDays(30).getSeconds());
+    }
+
+    @Test
+    @DisplayName("A zero retention leaves retention to the operator and creates no index")
+    void shouldNotCreateTheTtlIndexWhenRetentionIsDisabled() {
+      FluxgateProperties properties = eventCollectionProperties();
+      properties.getMongo().setEventRetention(Duration.ZERO);
+
+      MongoCollection<Document> collection = mockEventCollection();
+      MongoDatabase database = databaseWith("rate_limit_events", collection);
+
+      invokeFluxgateEventCollection(new FluxgateMongoAutoConfiguration(properties), database);
+
+      verify(collection, never()).createIndex(any(), any(IndexOptions.class));
+    }
+
+    @Test
+    @DisplayName("A conflicting index does not fail the context")
+    void shouldSurviveAnIndexCreationFailure() {
+      FluxgateProperties properties = eventCollectionProperties();
+
+      MongoCollection<Document> collection = mockEventCollection();
+      when(collection.createIndex(any(), any(IndexOptions.class)))
+          .thenThrow(new MongoException("index already exists with different options"));
+      MongoDatabase database = databaseWith("rate_limit_events", collection);
+
+      MongoCollection<Document> result =
+          invokeFluxgateEventCollection(new FluxgateMongoAutoConfiguration(properties), database);
+
+      assertThat(result).isSameAs(collection);
+    }
+
+    private FluxgateProperties eventCollectionProperties() {
+      FluxgateProperties properties = new FluxgateProperties();
+      properties.getMongo().setDdlAuto(DdlAuto.VALIDATE);
+      properties.getMongo().setEventCollection("rate_limit_events");
+      return properties;
+    }
+
+    @SuppressWarnings("unchecked")
+    private MongoCollection<Document> mockEventCollection() {
+      return mock(MongoCollection.class);
+    }
+
+    private MongoDatabase databaseWith(String name, MongoCollection<Document> collection) {
+      MongoDatabase database = mock(MongoDatabase.class);
+      ListCollectionNamesIterable names = mock(ListCollectionNamesIterable.class);
+      when(database.listCollectionNames()).thenReturn(names);
+      doAnswer(
+              invocation -> {
+                Collection<String> target = invocation.getArgument(0);
+                target.add(name);
+                return target;
+              })
+          .when(names)
+          .into(any());
+      when(database.getCollection(name)).thenReturn(collection);
+      return database;
+    }
+
+    @SuppressWarnings("unchecked")
+    private MongoCollection<Document> invokeFluxgateEventCollection(
+        FluxgateMongoAutoConfiguration config, MongoDatabase database) {
+      try {
+        java.lang.reflect.Method method =
+            FluxgateMongoAutoConfiguration.class.getDeclaredMethod(
+                "fluxgateEventCollection", MongoDatabase.class);
+        method.setAccessible(true);
+        return (MongoCollection<Document>) method.invoke(config, database);
       } catch (java.lang.reflect.InvocationTargetException e) {
         if (e.getCause() instanceof RuntimeException) {
           throw (RuntimeException) e.getCause();

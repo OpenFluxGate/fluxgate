@@ -8,8 +8,10 @@ import org.slf4j.LoggerFactory;
 /**
  * Default implementation of {@link RetryExecutor}.
  *
- * <p>This implementation provides exponential backoff retry with configurable parameters. It logs
- * retry attempts and respects the configured retry policy.
+ * <p>This implementation provides jittered exponential backoff retry with configurable parameters.
+ * It logs retry attempts and respects the configured retry policy - in particular {@link
+ * RetryConfig#shouldRetry(Exception)}, which by default refuses to retry timeouts because a
+ * timed-out consume may already have been applied by the server.
  */
 public class DefaultRetryExecutor implements RetryExecutor {
 
@@ -55,6 +57,16 @@ public class DefaultRetryExecutor implements RetryExecutor {
       } catch (Exception e) {
         lastException = e;
 
+        // checked first: a non-retryable failure (such as an IgnoredCallException) is rethrown
+        // as is, even on the last attempt, and is not reported as an exhausted retry chain
+        if (!config.shouldRetry(e)) {
+          log.debug(
+              "Operation '{}' failed with non-retryable exception: {}",
+              operationName,
+              e.getClass().getSimpleName());
+          throw e;
+        }
+
         if (attempt >= maxAttempts) {
           log.error(
               "Operation '{}' failed after {} attempts. Last error: {}",
@@ -62,14 +74,6 @@ public class DefaultRetryExecutor implements RetryExecutor {
               maxAttempts,
               e.getMessage());
           break;
-        }
-
-        if (!config.shouldRetry(e)) {
-          log.debug(
-              "Operation '{}' failed with non-retryable exception: {}",
-              operationName,
-              e.getClass().getSimpleName());
-          throw e;
         }
 
         Duration backoff = config.calculateBackoff(attempt);

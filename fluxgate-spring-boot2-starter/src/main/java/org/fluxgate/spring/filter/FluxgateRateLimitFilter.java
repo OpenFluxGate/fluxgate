@@ -4,12 +4,15 @@ import static org.fluxgate.core.constants.FluxgateConstants.Headers;
 import static org.fluxgate.core.constants.FluxgateConstants.MdcKeys;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.servlet.FilterChain;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -17,11 +20,14 @@ import javax.servlet.http.HttpServletResponse;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.handler.FluxgateRateLimitHandler;
 import org.fluxgate.core.handler.RateLimitResponse;
-import org.fluxgate.spring.util.ClientIpExtractor;
+import org.fluxgate.core.util.LogThrottle;
+import org.fluxgate.spring.handler.PermitsExceedCapacityException;
+import org.fluxgate.spring.handler.RateLimiterUnavailableException;
+import org.fluxgate.spring.util.LogSanitizer;
+import org.fluxgate.spring.util.RequestPathResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
-import org.springframework.http.HttpStatus;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -41,33 +47,71 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * <p>Features:
  *
  * <ul>
- *   <li>Extracts client IP from request (supports X-Forwarded-For)
- *   <li>Configurable include/exclude URL patterns
- *   <li>Sets standard rate limit HTTP headers
- *   <li>Returns 429 Too Many Requests when limit exceeded
+ *   <li>Extracts client IP from request, honouring forwarding headers only behind trusted proxies
+ *   <li>Configurable include/exclude URL patterns, matched against the normalized request path
+ *   <li>Sets legacy and IETF rate limit HTTP headers on allowed and rejected responses
+ *   <li>Returns 429 Too Many Requests via a pluggable {@link RateLimitResponseWriter}, and 503
+ *       Service Unavailable when rate limiting itself is unavailable or not configured
+ *   <li>Clamps the {@code cost-header} value to {@code max-cost}, and answers a cost that still
+ *       exceeds the capacity of a matching band with 429 and a problem document naming the cost (no
+ *       {@code Retry-After}: waiting never makes it fit)
  *   <li>Supports WAIT_FOR_REFILL policy with semaphore-based concurrency control
  * </ul>
+ *
+ * <p>The filter chain is invoked <b>exactly once</b> and always outside the rate limiter's
+ * try/catch, so an exception thrown by the application is never mistaken for a rate limiter failure
+ * and never causes the request to be replayed.
  */
 public class FluxgateRateLimitFilter extends OncePerRequestFilter {
 
   private static final Logger log = LoggerFactory.getLogger(FluxgateRateLimitFilter.class);
 
+  /** Permit count of an ordinary, unweighted request. */
+  private static final long SINGLE_PERMIT = 1L;
+
+  /**
+   * Request headers recorded in the MDC. They are not part of {@code FluxgateConstants.Headers}
+   * because FluxGate only reads them for diagnostics, it never acts on them.
+   */
+  private static final String USER_AGENT_HEADER = "User-Agent";
+
+  private static final String REFERER_HEADER = "Referer";
+
   private final FluxgateRateLimitHandler handler;
   private final String ruleSetId;
   private final String[] includePatterns;
   private final String[] excludePatterns;
-  private final AntPathMatcher pathMatcher = new AntPathMatcher();
+  private final boolean failOpenOnError;
+  private final boolean denyWhenRuleMissing;
+  private final AntPathMatcher pathMatcher;
+  private final boolean logQueryString;
+  private final String costHeader;
+  private final long maxCost;
+
+  /** Whether the ALLOW-mode "no rule set id" warning has been logged. */
+  private final AtomicBoolean missingRuleSetIdWarned = new AtomicBoolean();
 
   // WAIT_FOR_REFILL configuration
   private final boolean waitForRefillEnabled;
   private final long maxWaitTimeMs;
   private final Semaphore waitSemaphore;
 
-  // RequestContext customization
-  private final RequestContextCustomizer contextCustomizer;
+  // Collaborators shared with the aspect
+  private final RequestContextFactory contextFactory;
+  private final RateLimitHeaderWriter headerWriter;
+  private final RateLimitResponseWriter responseWriter;
+  private final RateLimitDurationRecorder durationRecorder;
+
+  /** Throttles the warning about a failing duration recorder. */
+  private final LogThrottle durationRecorderWarnings = new LogThrottle();
 
   /**
    * Creates a new FluxgateRateLimitFilter with default settings (WAIT_FOR_REFILL disabled).
+   *
+   * <p>Like every constructor without explicit security settings, the filter ignores forwarding
+   * headers (the client IP is the remote address) and rejects requests when the rate limiter fails,
+   * matching the {@code fluxgate.ratelimit} property defaults. Before 0.4.0 these constructors
+   * trusted {@code X-Forwarded-For} and failed open.
    *
    * @param handler The rate limit handler (required)
    * @param ruleSetId Default rule set ID to use
@@ -79,7 +123,7 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
       String ruleSetId,
       String[] includePatterns,
       String[] excludePatterns) {
-    this(handler, ruleSetId, includePatterns, excludePatterns, false, 5000, 100, null);
+    this(handler, ruleSetId, includePatterns, excludePatterns, false, 5000, 50, null);
   }
 
   /**
@@ -134,15 +178,250 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
       long maxWaitTimeMs,
       int maxConcurrentWaits,
       RequestContextCustomizer contextCustomizer) {
+    this(
+        handler,
+        ruleSetId,
+        includePatterns,
+        excludePatterns,
+        waitForRefillEnabled,
+        maxWaitTimeMs,
+        maxConcurrentWaits,
+        contextCustomizer,
+        Headers.X_FORWARDED_FOR,
+        false,
+        false,
+        false);
+  }
+
+  /**
+   * Creates a new FluxgateRateLimitFilter with full security-sensitive configuration.
+   *
+   * @param handler The rate limit handler (required)
+   * @param ruleSetId Default rule set ID to use
+   * @param includePatterns URL patterns to include
+   * @param excludePatterns URL patterns to exclude
+   * @param waitForRefillEnabled Enable WAIT_FOR_REFILL behavior
+   * @param maxWaitTimeMs Maximum time to wait for token refill
+   * @param maxConcurrentWaits Maximum concurrent waiting requests (semaphore permits)
+   * @param contextCustomizer Customizer for RequestContext (nullable)
+   * @param clientIpHeader Header used for client IP extraction when trusted
+   * @param trustClientIpHeader Trust forwarding headers for client IP extraction
+   * @param failOpenOnError Allow requests when the rate limiter fails
+   */
+  public FluxgateRateLimitFilter(
+      FluxgateRateLimitHandler handler,
+      String ruleSetId,
+      String[] includePatterns,
+      String[] excludePatterns,
+      boolean waitForRefillEnabled,
+      long maxWaitTimeMs,
+      int maxConcurrentWaits,
+      RequestContextCustomizer contextCustomizer,
+      String clientIpHeader,
+      boolean trustClientIpHeader,
+      boolean failOpenOnError) {
+    this(
+        handler,
+        ruleSetId,
+        includePatterns,
+        excludePatterns,
+        waitForRefillEnabled,
+        maxWaitTimeMs,
+        maxConcurrentWaits,
+        contextCustomizer,
+        clientIpHeader,
+        trustClientIpHeader,
+        failOpenOnError,
+        false);
+  }
+
+  /**
+   * Creates a new FluxgateRateLimitFilter with full security-sensitive configuration.
+   *
+   * @param handler The rate limit handler (required)
+   * @param ruleSetId Default rule set ID to use
+   * @param includePatterns URL patterns to include
+   * @param excludePatterns URL patterns to exclude
+   * @param waitForRefillEnabled Enable WAIT_FOR_REFILL behavior
+   * @param maxWaitTimeMs Maximum time to wait for token refill
+   * @param maxConcurrentWaits Maximum concurrent waiting requests (semaphore permits)
+   * @param contextCustomizer Customizer for RequestContext (nullable)
+   * @param clientIpHeader Header used for client IP extraction when trusted
+   * @param trustClientIpHeader Trust forwarding headers for client IP extraction
+   * @param failOpenOnError Allow requests when the rate limiter fails
+   * @param denyWhenRuleMissing Deny requests when no rule set ID is configured
+   */
+  public FluxgateRateLimitFilter(
+      FluxgateRateLimitHandler handler,
+      String ruleSetId,
+      String[] includePatterns,
+      String[] excludePatterns,
+      boolean waitForRefillEnabled,
+      long maxWaitTimeMs,
+      int maxConcurrentWaits,
+      RequestContextCustomizer contextCustomizer,
+      String clientIpHeader,
+      boolean trustClientIpHeader,
+      boolean failOpenOnError,
+      boolean denyWhenRuleMissing) {
+    this(
+        handler,
+        ruleSetId,
+        includePatterns,
+        excludePatterns,
+        waitForRefillEnabled,
+        maxWaitTimeMs,
+        maxConcurrentWaits,
+        failOpenOnError,
+        denyWhenRuleMissing,
+        true,
+        false,
+        null,
+        0L,
+        new RequestContextFactory(
+            clientIpHeader, trustClientIpHeader, null, false, null, contextCustomizer),
+        new RateLimitHeaderWriter(true, true),
+        new ProblemDetailRateLimitResponseWriter(),
+        null);
+  }
+
+  /**
+   * Creates a fully configured filter with its own wait semaphore.
+   *
+   * @param handler The rate limit handler (required)
+   * @param ruleSetId Default rule set ID to use (required, may be empty)
+   * @param includePatterns URL patterns to include (empty means all)
+   * @param excludePatterns URL patterns to exclude
+   * @param waitForRefillEnabled Enable WAIT_FOR_REFILL behavior
+   * @param maxWaitTimeMs Maximum time to wait for token refill
+   * @param maxConcurrentWaits Maximum concurrent waiting requests (semaphore permits)
+   * @param failOpenOnError Allow requests when the rate limiter fails
+   * @param denyWhenRuleMissing Deny requests when no rule set ID is configured
+   * @param caseSensitivePatterns Match include/exclude patterns case sensitively
+   * @param logQueryString Put the raw query string into the MDC
+   * @param costHeader Optional header carrying the request cost in permits (nullable)
+   * @param maxCost Upper bound applied to the cost header value
+   * @param contextFactory Factory building the {@link RequestContext} (required)
+   * @param headerWriter Writer for rate limit headers (required)
+   * @param responseWriter Writer for the 429 body (required)
+   * @param durationRecorder Optional recorder for the request duration timer (nullable)
+   */
+  public FluxgateRateLimitFilter(
+      FluxgateRateLimitHandler handler,
+      String ruleSetId,
+      String[] includePatterns,
+      String[] excludePatterns,
+      boolean waitForRefillEnabled,
+      long maxWaitTimeMs,
+      int maxConcurrentWaits,
+      boolean failOpenOnError,
+      boolean denyWhenRuleMissing,
+      boolean caseSensitivePatterns,
+      boolean logQueryString,
+      String costHeader,
+      long maxCost,
+      RequestContextFactory contextFactory,
+      RateLimitHeaderWriter headerWriter,
+      RateLimitResponseWriter responseWriter,
+      RateLimitDurationRecorder durationRecorder) {
+    this(
+        handler,
+        ruleSetId,
+        includePatterns,
+        excludePatterns,
+        waitForRefillEnabled,
+        maxWaitTimeMs,
+        new Semaphore(Math.max(1, maxConcurrentWaits)),
+        failOpenOnError,
+        denyWhenRuleMissing,
+        caseSensitivePatterns,
+        logQueryString,
+        costHeader,
+        maxCost,
+        contextFactory,
+        headerWriter,
+        responseWriter,
+        durationRecorder);
+  }
+
+  /**
+   * Creates a fully configured filter sharing a wait semaphore. This is the constructor the
+   * auto-configuration uses, with the semaphore it also gives the aspect, so {@code
+   * max-concurrent-waits} bounds the waits of both together.
+   *
+   * @param handler The rate limit handler (required)
+   * @param ruleSetId Default rule set ID to use (required, may be empty)
+   * @param includePatterns URL patterns to include (empty means all)
+   * @param excludePatterns URL patterns to exclude
+   * @param waitForRefillEnabled Enable WAIT_FOR_REFILL behavior
+   * @param maxWaitTimeMs Maximum time to wait for token refill
+   * @param waitSemaphore Bounds concurrent waits (required)
+   * @param failOpenOnError Allow requests when the rate limiter fails
+   * @param denyWhenRuleMissing Deny requests when no rule set ID is configured
+   * @param caseSensitivePatterns Match include/exclude patterns case sensitively
+   * @param logQueryString Put the raw query string into the MDC
+   * @param costHeader Optional header carrying the request cost in permits (nullable)
+   * @param maxCost Upper bound applied to the cost header value
+   * @param contextFactory Factory building the {@link RequestContext} (required)
+   * @param headerWriter Writer for rate limit headers (required)
+   * @param responseWriter Writer for the 429 body (required)
+   * @param durationRecorder Optional recorder for the request duration timer (nullable)
+   * @since 0.4.0
+   */
+  public FluxgateRateLimitFilter(
+      FluxgateRateLimitHandler handler,
+      String ruleSetId,
+      String[] includePatterns,
+      String[] excludePatterns,
+      boolean waitForRefillEnabled,
+      long maxWaitTimeMs,
+      Semaphore waitSemaphore,
+      boolean failOpenOnError,
+      boolean denyWhenRuleMissing,
+      boolean caseSensitivePatterns,
+      boolean logQueryString,
+      String costHeader,
+      long maxCost,
+      RequestContextFactory contextFactory,
+      RateLimitHeaderWriter headerWriter,
+      RateLimitResponseWriter responseWriter,
+      RateLimitDurationRecorder durationRecorder) {
     this.handler = Objects.requireNonNull(handler, "handler must not be null");
     this.ruleSetId = Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
     this.includePatterns = includePatterns != null ? includePatterns : new String[0];
     this.excludePatterns = excludePatterns != null ? excludePatterns : new String[0];
+    this.failOpenOnError = failOpenOnError;
+    this.denyWhenRuleMissing = denyWhenRuleMissing;
     this.waitForRefillEnabled = waitForRefillEnabled;
     this.maxWaitTimeMs = maxWaitTimeMs;
-    this.waitSemaphore = new Semaphore(maxConcurrentWaits);
-    this.contextCustomizer =
-        contextCustomizer != null ? contextCustomizer : RequestContextCustomizer.identity();
+    this.waitSemaphore = Objects.requireNonNull(waitSemaphore, "waitSemaphore must not be null");
+    this.logQueryString = logQueryString;
+    this.costHeader = costHeader;
+    // N-7: a non-positive max-cost used to mean "unlimited", so a "max-cost: 0" typo let a client
+    // empty any bucket with a single request. Refuse to start instead.
+    if (StringUtils.hasText(costHeader) && maxCost <= 0) {
+      throw new IllegalArgumentException(
+          "fluxgate.ratelimit.max-cost must be > 0 when fluxgate.ratelimit.cost-header is set"
+              + " (got "
+              + maxCost
+              + "); 0 or a negative value would let a client spend an unbounded number of"
+              + " permits");
+    }
+    this.maxCost = maxCost;
+    this.contextFactory = Objects.requireNonNull(contextFactory, "contextFactory must not be null");
+    this.headerWriter = Objects.requireNonNull(headerWriter, "headerWriter must not be null");
+    this.responseWriter = Objects.requireNonNull(responseWriter, "responseWriter must not be null");
+    this.durationRecorder = durationRecorder;
+
+    this.pathMatcher = new AntPathMatcher();
+    this.pathMatcher.setCaseSensitive(caseSensitivePatterns);
+
+    if (!StringUtils.hasText(ruleSetId) && denyWhenRuleMissing) {
+      log.error(
+          "No rule set ID configured (set fluxgate.ratelimit.default-rule-set-id or"
+              + " @EnableFluxgateFilter(ruleSetId)) and fluxgate.ratelimit.missing-rule-behavior"
+              + "=DENY: every request matched by the filter is rejected with 503");
+    }
 
     if (log.isDebugEnabled()) {
       log.debug("FluxgateRateLimitFilter initialized");
@@ -150,14 +429,15 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
       log.debug("  Rule set ID: {}", ruleSetId);
       log.debug("  Include patterns: {}", Arrays.toString(this.includePatterns));
       log.debug("  Exclude patterns: {}", Arrays.toString(this.excludePatterns));
+      log.debug("  Case sensitive patterns: {}", caseSensitivePatterns);
+      log.debug("  Fail open on error: {}", failOpenOnError);
+      log.debug("  Deny when rule missing: {}", denyWhenRuleMissing);
+      log.debug("  Cost header: {}", StringUtils.hasText(costHeader) ? costHeader : "(not set)");
       log.debug("  WAIT_FOR_REFILL enabled: {}", waitForRefillEnabled);
       if (waitForRefillEnabled) {
         log.debug("  Max wait time: {} ms", maxWaitTimeMs);
-        log.debug("  Max concurrent waits: {}", maxConcurrentWaits);
+        log.debug("  Wait permits available: {}", waitSemaphore.availablePermits());
       }
-      log.debug(
-          "  RequestContext customizer: {}",
-          contextCustomizer != null ? contextCustomizer.getClass().getSimpleName() : "default");
     }
   }
 
@@ -165,274 +445,346 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
   protected void doFilterInternal(
       HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
       throws ServletException, IOException {
+
+    // M28/H-4: preserve MDC entries put in place by filters that ran before this one.
+    Map<String, String> previousMdc = MDC.getCopyOfContextMap();
     long startTimeMs = System.currentTimeMillis();
 
-    // 1. MDC Setup - Comprehensive Request Information
-    String traceId = request.getHeader(Headers.TRACE_ID);
-    if (traceId == null || traceId.isEmpty()) {
-      traceId = UUID.randomUUID().toString();
-    }
-
-    // Core identifiers
-    MDC.put(MdcKeys.TRACE_ID, traceId);
-    MDC.put(MdcKeys.RULE_SET_ID, ruleSetId);
-
-    // Request details
-    MDC.put(MdcKeys.METHOD, request.getMethod());
-    MDC.put(MdcKeys.ENDPOINT, request.getRequestURI());
-    MDC.put(MdcKeys.CLIENT_IP, ClientIpExtractor.extract(request));
-    MDC.put(MdcKeys.PROTOCOL, request.getProtocol());
-    MDC.put(MdcKeys.SERVER_PORT, String.valueOf(request.getServerPort()));
-
-    // Query and context
-    Optional.ofNullable(request.getQueryString()).ifPresent(v -> MDC.put(MdcKeys.QUERY_STRING, v));
-    Optional.ofNullable(request.getHeader("User-Agent"))
-        .ifPresent(v -> MDC.put(MdcKeys.USER_AGENT, v));
-    Optional.ofNullable(request.getHeader("Referer")).ifPresent(v -> MDC.put(MdcKeys.REFERER, v));
-
-    // User identification (if available)
-    Optional.ofNullable(request.getHeader(Headers.USER_ID))
-        .ifPresent(v -> MDC.put(MdcKeys.USER_ID, v));
-    Optional.ofNullable(request.getHeader(Headers.API_KEY))
-        .ifPresent(v -> MDC.put(MdcKeys.API_KEY, maskSensitive(v)));
-
-    String path = request.getRequestURI();
-
-    // Check if this path should be excluded
-    if (shouldExclude(path)) {
-      log.debug("Path excluded from rate limiting: {}", path);
-      filterChain.doFilter(request, response);
-      return;
-    }
-
-    // Check if this path should be included
-    if (!shouldInclude(path)) {
-      log.debug("Path not included in rate limiting: {}", path);
-      filterChain.doFilter(request, response);
-      return;
-    }
-
-    // Check rule set ID
-    if (!StringUtils.hasText(ruleSetId)) {
-      log.warn("No rule set ID configured, skipping rate limiting");
-      filterChain.doFilter(request, response);
-      return;
-    }
-
-    // Build request context
-    RequestContext context = buildRequestContext(request);
-
-    // Apply rate limiting via handler
     try {
-      RateLimitResponse result = handler.tryConsume(context, ruleSetId);
+      String path = RequestPathResolver.resolve(request);
+      populateRequestMdc(request, path);
 
-      // Add rate limit result to MDC
-      MDC.put(MdcKeys.RATE_LIMIT_ALLOWED, String.valueOf(result.isAllowed()));
-      MDC.put(MdcKeys.REMAINING_TOKENS, String.valueOf(result.getRemainingTokens()));
+      if (shouldExclude(path)) {
+        log.debug("Path excluded from rate limiting: {}", path);
+        filterChain.doFilter(request, response);
+        return;
+      }
 
-      // Add rate limit headers
-      addRateLimitHeaders(response, result);
+      if (!shouldInclude(path)) {
+        log.debug("Path not included in rate limiting: {}", path);
+        filterChain.doFilter(request, response);
+        return;
+      }
 
-      if (result.isAllowed()) {
+      if (!StringUtils.hasText(ruleSetId)) {
+        if (denyWhenRuleMissing) {
+          logMissingRuleSetId("rejecting request");
+          rejectUnavailable(
+              request, response, RateLimiterUnavailableException.UNKNOWN_RETRY_AFTER, startTimeMs);
+        } else {
+          logMissingRuleSetId("skipping rate limiting");
+          filterChain.doFilter(request, response);
+        }
+        return;
+      }
+
+      RequestContext context = contextFactory.create(request, path);
+      putIdentityMdc(context.getUserId(), context.getApiKey());
+      Decision decision = decide(context, resolvePermits(request));
+
+      // C2/C-1: the chain runs exactly once, outside the rate limiter's try/catch, so an exception
+      // thrown by the application propagates instead of triggering a replay.
+      if (decision.unavailable) {
+        rejectUnavailable(request, response, decision.retryAfterMillis, startTimeMs);
+        recordDuration(path, request.getMethod(), startTimeMs);
+      } else if (decision.costExceeded != null) {
+        rejectCostExceeded(request, response, decision.costExceeded, startTimeMs);
+        recordDuration(path, request.getMethod(), startTimeMs);
+      } else if (decision.allowed) {
+        headerWriter.write(response, decision.result);
         filterChain.doFilter(request, response);
         MDC.put(MdcKeys.STATUS_CODE, String.valueOf(response.getStatus()));
         MDC.put(MdcKeys.DURATION_MS, String.valueOf(System.currentTimeMillis() - startTimeMs));
-        log.info("Request completed");
-      } else if (shouldWaitForRefill(result)) {
-        // WAIT_FOR_REFILL policy: wait for tokens and retry
-        handleWaitForRefill(request, response, filterChain, context, result);
+        log.debug("Request completed");
+        recordDuration(path, request.getMethod(), startTimeMs);
       } else {
-        MDC.put(MdcKeys.RETRY_AFTER_MS, String.valueOf(result.getRetryAfterMillis()));
-        MDC.put(MdcKeys.STATUS_CODE, "429");
-        MDC.put(MdcKeys.DURATION_MS, String.valueOf(System.currentTimeMillis() - startTimeMs));
-        log.warn("Request rate limited");
-        handleRateLimitExceeded(response, result);
+        reject(request, response, decision.result, startTimeMs);
+        recordDuration(path, request.getMethod(), startTimeMs);
       }
+    } finally {
+      restoreMdc(previousMdc);
+    }
+  }
+
+  /**
+   * Runs the rate limiter and decides whether the request may proceed.
+   *
+   * <p>Only the handler call and the bookkeeping around it are guarded, so a limiter failure is
+   * distinguishable from an application failure.
+   */
+  private Decision decide(RequestContext context, long permits) {
+    try {
+      RateLimitResponse result = tryConsume(context, permits);
+
+      MDC.put(MdcKeys.RATE_LIMIT_ALLOWED, String.valueOf(result.isAllowed()));
+      MDC.put(MdcKeys.REMAINING_TOKENS, String.valueOf(result.getRemainingTokens()));
+
+      if (!result.isAllowed() && waitForRefillEnabled && result.shouldWaitForRefill()) {
+        result = waitForRefill(context, permits, result);
+      }
+
+      if (result.isAllowed()) {
+        return Decision.allowed(result);
+      }
+
+      MDC.put(MdcKeys.RETRY_AFTER_MS, String.valueOf(result.getRetryAfterMillis()));
+      return Decision.rejected(result);
+    } catch (PermitsExceedCapacityException e) {
+      // The client asked for more than a band can ever hold: its error, not a limiter failure, so
+      // neither failure-behavior nor a 503 applies.
+      MDC.put(MdcKeys.ERROR, e.getClass().getSimpleName());
+      log.debug("Request cost exceeds the rule capacity, rejecting: {}", e.getMessage());
+      return Decision.costExceeded(e);
+    } catch (RateLimiterUnavailableException e) {
+      // failure-behavior / missing-rule-behavior already decided to reject; the cause was logged
+      // where it happened.
+      MDC.put(MdcKeys.ERROR, e.getClass().getSimpleName());
+      MDC.put(MdcKeys.ERROR_MESSAGE, LogSanitizer.sanitize(e.getMessage()));
+      log.debug("Rate limiting unavailable, rejecting request: {}", e.getMessage());
+      return Decision.unavailable(e.getRetryAfterMillis());
     } catch (Exception e) {
       MDC.put(MdcKeys.ERROR, e.getClass().getSimpleName());
-      MDC.put(MdcKeys.ERROR_MESSAGE, e.getMessage());
-      MDC.put(MdcKeys.STATUS_CODE, "500");
-      MDC.put(MdcKeys.DURATION_MS, String.valueOf(System.currentTimeMillis() - startTimeMs));
-      log.error("Error during rate limiting, allowing request", e);
-      // Fail open: allow request if rate limiter fails
-      filterChain.doFilter(request, response);
-    } finally {
-      // Clear MDC
-      MDC.clear();
+      MDC.put(MdcKeys.ERROR_MESSAGE, LogSanitizer.sanitize(e.getMessage()));
+      if (failOpenOnError) {
+        log.error("Error during rate limiting, allowing request", e);
+        return Decision.allowed(null);
+      }
+      log.error("Error during rate limiting, rejecting request", e);
+      return Decision.unavailable(RateLimiterUnavailableException.UNKNOWN_RETRY_AFTER);
     }
   }
 
   /**
-   * Check if we should wait for refill based on response policy and configuration.
+   * Applies the WAIT_FOR_REFILL policy: wait for the advertised delay, then retry once.
    *
-   * @param result The rate limit response
-   * @return true if we should wait for refill
-   */
-  private boolean shouldWaitForRefill(RateLimitResponse result) {
-    return waitForRefillEnabled && result.shouldWaitForRefill();
-  }
-
-  /**
-   * Handle WAIT_FOR_REFILL policy by waiting for tokens and retrying.
+   * <p>A non-blocking semaphore bounds how many worker threads may be parked at the same time; the
+   * rest are rejected immediately, because parking every thread turns the rate limiter into a
+   * denial of service amplifier.
    *
-   * <p>Uses a semaphore to limit the number of concurrent waiting requests. If the semaphore cannot
-   * be acquired, or if the wait time exceeds the maximum, the request is rejected immediately.
+   * <p>The wait deliberately blocks the request thread. Servlet async ({@code startAsync} plus
+   * {@code dispatch}) was considered and rejected: the re-dispatch runs as {@code ASYNC}, which
+   * skips every later filter registered only for {@code REQUEST} and every {@code
+   * OncePerRequestFilter} that does not filter async dispatches, so authentication or tenant
+   * filters ordered after FluxGate would never run for a waited request.
+   *
+   * @return the final decision, either the retry result or the original rejection
    */
-  private void handleWaitForRefill(
-      HttpServletRequest request,
-      HttpServletResponse response,
-      FilterChain filterChain,
-      RequestContext context,
-      RateLimitResponse result)
-      throws ServletException, IOException {
+  private RateLimitResponse waitForRefill(
+      RequestContext context, long permits, RateLimitResponse result) {
 
     long waitTimeMs = result.getRetryAfterMillis();
-    String path = request.getRequestURI();
-    String method = request.getMethod();
-
-    // Check if wait time exceeds maximum allowed
     if (waitTimeMs > maxWaitTimeMs) {
-      log.info(
-          "Wait time {} ms exceeds max {} ms, rejecting: {} {} from {}",
-          waitTimeMs,
-          maxWaitTimeMs,
-          method,
-          path,
-          context.getClientIp());
-      handleRateLimitExceeded(response, result);
-      return;
+      log.debug("Wait time {} ms exceeds max {} ms, rejecting", waitTimeMs, maxWaitTimeMs);
+      return result;
     }
 
-    // Try to acquire semaphore permit (non-blocking)
     if (!waitSemaphore.tryAcquire()) {
-      log.info(
-          "Too many concurrent waits, rejecting: {} {} from {}",
-          method,
-          path,
-          context.getClientIp());
-      handleRateLimitExceeded(response, result);
-      return;
+      log.debug("Too many concurrent waits, rejecting");
+      return result;
     }
 
     try {
-      log.debug(
-          "Waiting {} ms for token refill: {} {} from {}",
-          waitTimeMs,
-          method,
-          path,
-          context.getClientIp());
+      log.debug("Waiting {} ms for token refill", waitTimeMs);
+      TimeUnit.MILLISECONDS.sleep(Math.max(0L, waitTimeMs));
 
-      // Sleep and wait for tokens to become available
-      TimeUnit.MILLISECONDS.sleep(waitTimeMs);
-
-      // Retry rate limit check after waiting
-      RateLimitResponse retryResult = handler.tryConsume(context, ruleSetId);
-      addRateLimitHeaders(response, retryResult);
-
-      if (retryResult.isAllowed()) {
-        log.debug(
-            "Request allowed after wait: {} {} from {} (remaining: {})",
-            method,
-            path,
-            context.getClientIp(),
-            retryResult.getRemainingTokens());
-        filterChain.doFilter(request, response);
-      } else {
-        // Still rejected after waiting - reject the request
-        log.info(
-            "Request still rate limited after wait: {} {} from {} (retry after: {} ms)",
-            method,
-            path,
-            context.getClientIp(),
-            retryResult.getRetryAfterMillis());
-        handleRateLimitExceeded(response, retryResult);
+      RateLimitResponse retryResult = tryConsume(context, permits);
+      if (!retryResult.isAllowed()) {
+        log.debug("Request still rate limited after wait");
       }
+      return retryResult;
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      log.warn("Wait interrupted for: {} {} from {}", method, path, context.getClientIp());
-      handleRateLimitExceeded(response, result);
+      log.debug("Wait for token refill interrupted");
+      return result;
     } finally {
       waitSemaphore.release();
     }
   }
 
-  /**
-   * Builds a RequestContext from the HTTP request with full tracking information.
-   *
-   * <p>This method first populates default values, then applies any registered
-   * RequestContextCustomizer to allow users to override or add custom fields.
-   */
-  private RequestContext buildRequestContext(HttpServletRequest request) {
-    String clientIp = ClientIpExtractor.extract(request);
-    String userId = request.getHeader(Headers.USER_ID);
-    String apiKey = request.getHeader(Headers.API_KEY);
-
-    // Build the default context with core fields
-    RequestContext.Builder builder =
-        RequestContext.builder()
-            .clientIp(clientIp)
-            .userId(userId)
-            .apiKey(apiKey)
-            .endpoint(request.getRequestURI())
-            .method(request.getMethod());
-
-    // Collect HTTP headers for tracking
-    collectHeaders(builder, request);
-
-    // Apply customizer to allow user overrides and custom attributes
-    builder = contextCustomizer.customize(builder, request);
-
-    return builder.build();
+  private RateLimitResponse tryConsume(RequestContext context, long permits) {
+    // The 3-arg form is optional for handlers, so only use it for a weighted request.
+    return permits == SINGLE_PERMIT
+        ? handler.tryConsume(context, ruleSetId)
+        : handler.tryConsume(context, ruleSetId, permits);
   }
 
-  /** Collects all HTTP headers from the request. */
-  private void collectHeaders(RequestContext.Builder builder, HttpServletRequest request) {
-    java.util.Enumeration<String> headerNames = request.getHeaderNames();
-    if (headerNames != null) {
-      while (headerNames.hasMoreElements()) {
-        String headerName = headerNames.nextElement();
-        builder.header(headerName, request.getHeader(headerName));
+  /**
+   * Resolves how many permits this request costs.
+   *
+   * <p>The header value is clamped to {@code max-cost}. A cost that is still above the capacity of
+   * a matching band is not clamped further - silently charging less than the client declared would
+   * undercount - but rejected with 429 by {@link #rejectCostExceeded}.
+   *
+   * @return the permit count, always at least 1 and never above the configured maximum
+   */
+  private long resolvePermits(HttpServletRequest request) {
+    if (!StringUtils.hasText(costHeader)) {
+      return SINGLE_PERMIT;
+    }
+    String raw = request.getHeader(costHeader);
+    if (!StringUtils.hasText(raw)) {
+      return SINGLE_PERMIT;
+    }
+    try {
+      long cost = Long.parseLong(raw.trim());
+      return cost < SINGLE_PERMIT ? SINGLE_PERMIT : Math.min(cost, maxCost);
+    } catch (NumberFormatException e) {
+      log.debug("Ignoring unparseable {} header", costHeader);
+      return SINGLE_PERMIT;
+    }
+  }
+
+  private void reject(
+      HttpServletRequest request,
+      HttpServletResponse response,
+      RateLimitResponse result,
+      long startTimeMs)
+      throws IOException {
+    headerWriter.write(response, result);
+    MDC.put(MdcKeys.STATUS_CODE, "429");
+    MDC.put(MdcKeys.DURATION_MS, String.valueOf(System.currentTimeMillis() - startTimeMs));
+    log.debug("Request rate limited");
+    responseWriter.write(request, response, result);
+  }
+
+  /**
+   * Rejects a request whose cost exceeds the capacity of a matching band: HTTP 429 without {@code
+   * Retry-After}, since the same request can never succeed.
+   */
+  private void rejectCostExceeded(
+      HttpServletRequest request,
+      HttpServletResponse response,
+      PermitsExceedCapacityException e,
+      long startTimeMs)
+      throws IOException {
+    MDC.put(MdcKeys.STATUS_CODE, "429");
+    MDC.put(MdcKeys.DURATION_MS, String.valueOf(System.currentTimeMillis() - startTimeMs));
+    log.debug("Request rejected, cost exceeds the rule capacity");
+    responseWriter.writeCostExceeded(request, response, e.getPermits(), e.getCapacity());
+  }
+
+  /**
+   * Item 9: the missing rule set id is reported once - at ERROR at construction when every request
+   * is rejected, at WARN on the first request when every request passes unlimited - and at DEBUG
+   * per request, instead of a WARN line for every request.
+   */
+  private void logMissingRuleSetId(String action) {
+    if (!denyWhenRuleMissing && missingRuleSetIdWarned.compareAndSet(false, true)) {
+      log.warn(
+          "No rule set ID configured (fluxgate.ratelimit.default-rule-set-id or"
+              + " @EnableFluxgateFilter(ruleSetId)): every request passes unlimited because"
+              + " fluxgate.ratelimit.missing-rule-behavior=ALLOW");
+      return;
+    }
+    log.debug("No rule set ID configured, {}", action);
+  }
+
+  /**
+   * Item 10: rejects a request because rate limiting is unavailable or not configured - HTTP 503,
+   * with {@code Retry-After} only when the wait is known - instead of the 429 that tells a client
+   * it sent too many requests.
+   */
+  private void rejectUnavailable(
+      HttpServletRequest request,
+      HttpServletResponse response,
+      long retryAfterMillis,
+      long startTimeMs)
+      throws IOException {
+    if (retryAfterMillis > 0 && !response.isCommitted()) {
+      response.setHeader(Headers.RETRY_AFTER, Long.toString((retryAfterMillis + 999L) / 1000L));
+    }
+    MDC.put(MdcKeys.STATUS_CODE, "503");
+    MDC.put(MdcKeys.DURATION_MS, String.valueOf(System.currentTimeMillis() - startTimeMs));
+    log.debug("Request rejected, rate limiting unavailable");
+    responseWriter.writeUnavailable(request, response, retryAfterMillis);
+  }
+
+  private void recordDuration(String path, String method, long startTimeMs) {
+    if (durationRecorder == null) {
+      return;
+    }
+    // The response is already decided (and possibly committed): a metrics failure must not fail it.
+    try {
+      durationRecorder.recordDuration(
+          ruleSetId, path, method, Duration.ofMillis(System.currentTimeMillis() - startTimeMs));
+    } catch (Exception e) {
+      if (durationRecorderWarnings.tryAcquire()) {
+        log.warn(
+            "Duration recorder {} failed; the request is unaffected. Further failures within {}"
+                + " are logged at DEBUG.",
+            durationRecorder.getClass().getName(),
+            LogThrottle.DEFAULT_INTERVAL,
+            e);
+      } else {
+        log.debug("Duration recorder {} failed", durationRecorder.getClass().getName(), e);
       }
     }
+  }
 
-    // Add servlet-specific info that's not in headers
-    long contentLength = request.getContentLengthLong();
-    if (contentLength > 0 && builder.getHeader("Content-Length") == null) {
-      builder.header("Content-Length", String.valueOf(contentLength));
+  /**
+   * Populates the MDC with request information.
+   *
+   * <p>Every value that originates from the request is sanitized first: a header containing CRLF
+   * would otherwise forge log lines, and an oversized one would flood the log.
+   */
+  private void populateRequestMdc(HttpServletRequest request, String path) {
+    String traceId = LogSanitizer.sanitize(request.getHeader(Headers.TRACE_ID), 128);
+    if (traceId == null || traceId.isBlank()) {
+      traceId = UUID.randomUUID().toString();
     }
 
-    String sessionId = request.getRequestedSessionId();
-    if (sessionId != null) {
-      builder.header("Session-Id", sessionId);
+    MDC.put(MdcKeys.TRACE_ID, traceId);
+    MDC.put(MdcKeys.RULE_SET_ID, ruleSetId);
+
+    MDC.put(MdcKeys.METHOD, LogSanitizer.sanitize(request.getMethod(), 16));
+    MDC.put(MdcKeys.ENDPOINT, LogSanitizer.sanitize(path));
+    MDC.put(MdcKeys.CLIENT_IP, LogSanitizer.sanitize(contextFactory.extractClientIp(request), 45));
+    MDC.put(MdcKeys.PROTOCOL, LogSanitizer.sanitize(request.getProtocol(), 16));
+    MDC.put(MdcKeys.SERVER_PORT, String.valueOf(request.getServerPort()));
+
+    if (logQueryString) {
+      Optional.ofNullable(request.getQueryString())
+          .ifPresent(v -> MDC.put(MdcKeys.QUERY_STRING, LogSanitizer.sanitize(v)));
+    }
+    Optional.ofNullable(request.getHeader(USER_AGENT_HEADER))
+        .ifPresent(v -> MDC.put(MdcKeys.USER_AGENT, LogSanitizer.sanitize(v)));
+    Optional.ofNullable(request.getHeader(REFERER_HEADER))
+        .ifPresent(v -> MDC.put(MdcKeys.REFERER, LogSanitizer.sanitize(v)));
+
+    // C-4: identity headers are client input. Log them as the caller's identity only when the
+    // identity source actually reads them; otherwise the resolved identity is added once the
+    // context exists (putResolvedIdentityMdc).
+    if (contextFactory.usesIdentityHeaders()) {
+      putIdentityMdc(
+          request.getHeader(contextFactory.getUserIdHeader()),
+          request.getHeader(contextFactory.getApiKeyHeader()));
     }
   }
 
-  /** Adds standard rate limit headers to the response. */
-  private void addRateLimitHeaders(HttpServletResponse response, RateLimitResponse result) {
-    if (result.getRemainingTokens() >= 0) {
-      response.setHeader(Headers.RATE_LIMIT_REMAINING, String.valueOf(result.getRemainingTokens()));
+  /** Records the identity the limiter actually used, such as the authenticated principal. */
+  private static void putIdentityMdc(String userId, String apiKey) {
+    Optional.ofNullable(userId)
+        .ifPresent(v -> MDC.put(MdcKeys.USER_ID, LogSanitizer.sanitize(v, 128)));
+    Optional.ofNullable(apiKey)
+        .ifPresent(v -> MDC.put(MdcKeys.API_KEY, maskSensitive(LogSanitizer.sanitize(v, 128))));
+  }
+
+  /** Restores the MDC to the state the request arrived with. */
+  private static void restoreMdc(Map<String, String> previousMdc) {
+    MDC.clear();
+    if (previousMdc != null && !previousMdc.isEmpty()) {
+      MDC.setContextMap(previousMdc);
     }
   }
 
-  /** Handles a rate limit exceeded response. */
-  private void handleRateLimitExceeded(HttpServletResponse response, RateLimitResponse result)
-      throws IOException {
-
-    long retryAfterSeconds = (result.getRetryAfterMillis() + 999) / 1000;
-    response.setHeader(Headers.RETRY_AFTER, String.valueOf(retryAfterSeconds));
-
-    response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
-    response.setContentType("application/json");
-    response
-        .getWriter()
-        .write(
-            String.format(
-                "{\"error\":\"Rate limit exceeded\",\"retryAfter\":%d}", retryAfterSeconds));
-  }
-
-  /** Checks if a path should be excluded from rate limiting. */
+  /**
+   * Checks if a path should be excluded from rate limiting.
+   *
+   * <p>N-2: a path that could not be normalized is never excluded. Matching it against operator
+   * patterns would decide the question with a string the operator never wrote.
+   */
   private boolean shouldExclude(String path) {
-    if (excludePatterns.length == 0) {
+    if (RequestPathResolver.UNRESOLVABLE_PATH.equals(path)) {
       return false;
     }
     for (String pattern : excludePatterns) {
@@ -443,8 +795,16 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
     return false;
   }
 
-  /** Checks if a path should be included in rate limiting. */
+  /**
+   * Checks if a path should be included in rate limiting.
+   *
+   * <p>N-2: a path that could not be normalized is always included, so an undecodable request
+   * cannot switch the rate limiter off for itself.
+   */
   private boolean shouldInclude(String path) {
+    if (RequestPathResolver.UNRESOLVABLE_PATH.equals(path)) {
+      return true;
+    }
     if (includePatterns.length == 0) {
       return true; // Include all by default
     }
@@ -456,11 +816,50 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
     return false;
   }
 
-  /** Masks sensitive data for logging (shows first 4 and last 4 characters). */
-  private String maskSensitive(String value) {
-    if (value == null || value.length() <= 8) {
+  /** Masks sensitive data for logging (shows the first 4 characters only). */
+  private static String maskSensitive(String value) {
+    if (value == null || value.length() <= 4) {
       return "****";
     }
-    return value.substring(0, 4) + "****" + value.substring(value.length() - 4);
+    return value.substring(0, 4) + "****";
+  }
+
+  /** Outcome of the rate limit evaluation: either proceed, or reject with this response. */
+  private static final class Decision {
+
+    private final boolean allowed;
+    private final RateLimitResponse result;
+    private final boolean unavailable;
+    private final long retryAfterMillis;
+    private final PermitsExceedCapacityException costExceeded;
+
+    private Decision(
+        boolean allowed,
+        RateLimitResponse result,
+        boolean unavailable,
+        long retryAfterMillis,
+        PermitsExceedCapacityException costExceeded) {
+      this.allowed = allowed;
+      this.result = result;
+      this.unavailable = unavailable;
+      this.retryAfterMillis = retryAfterMillis;
+      this.costExceeded = costExceeded;
+    }
+
+    static Decision allowed(RateLimitResponse result) {
+      return new Decision(true, result, false, 0L, null);
+    }
+
+    static Decision rejected(RateLimitResponse result) {
+      return new Decision(false, result, false, 0L, null);
+    }
+
+    static Decision unavailable(long retryAfterMillis) {
+      return new Decision(false, null, true, retryAfterMillis, null);
+    }
+
+    static Decision costExceeded(PermitsExceedCapacityException e) {
+      return new Decision(false, null, false, 0L, e);
+    }
   }
 }

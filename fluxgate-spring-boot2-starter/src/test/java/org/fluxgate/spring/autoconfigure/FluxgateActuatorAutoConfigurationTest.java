@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.fluxgate.spring.actuator.FluxgateHealthIndicator;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.actuate.health.HttpCodeStatusMapper;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -47,5 +48,28 @@ class FluxgateActuatorAutoConfigurationTest {
           FluxgateHealthIndicator indicator = context.getBean(FluxgateHealthIndicator.class);
           assertThat(indicator).isNotNull();
         });
+  }
+
+  // ===== R1: no replacement HttpCodeStatusMapper =====
+
+  @Test
+  void shouldNotRegisterAnHttpCodeStatusMapper() {
+    contextRunner.run(context -> assertThat(context).doesNotHaveBean(HttpCodeStatusMapper.class));
+  }
+
+  @Test
+  void shouldRespectUserDefinedHttpCodeStatusMapper() {
+    contextRunner
+        .withBean("customMapper", HttpCodeStatusMapper.class, () -> status -> 200)
+        .run(
+            context -> {
+              assertThat(context.getBeansOfType(HttpCodeStatusMapper.class)).hasSize(1);
+              assertThat(
+                      context
+                          .getBean(HttpCodeStatusMapper.class)
+                          .getStatusCode(
+                              new org.springframework.boot.actuate.health.Status("DEGRADED")))
+                  .isEqualTo(200);
+            });
   }
 }

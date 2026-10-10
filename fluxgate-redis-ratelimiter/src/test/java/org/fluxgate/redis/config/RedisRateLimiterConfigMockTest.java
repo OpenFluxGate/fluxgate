@@ -5,12 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
-import java.io.IOException;
+import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.fluxgate.core.exception.ScriptExecutionException;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.fluxgate.redis.connection.RedisConnectionProvider.RedisMode;
-import org.fluxgate.redis.script.LuaScripts;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -25,19 +25,6 @@ class RedisRateLimiterConfigMockTest {
 
   @Mock private RedisConnectionProvider connectionProvider;
 
-  @BeforeEach
-  void setUp() {
-    // Reset LuaScripts state before each test
-    LuaScripts.setTokenBucketConsumeSha(null);
-    LuaScripts.setTokenBucketConsumeScript(null);
-  }
-
-  @AfterEach
-  void tearDown() {
-    LuaScripts.setTokenBucketConsumeSha(null);
-    LuaScripts.setTokenBucketConsumeScript(null);
-  }
-
   @Test
   void shouldThrowWhenConnectionProviderIsNull() {
     RedisConnectionProvider nullProvider = null;
@@ -47,7 +34,7 @@ class RedisRateLimiterConfigMockTest {
   }
 
   @Test
-  void shouldInitializeWithConnectionProvider() throws IOException {
+  void shouldInitializeWithConnectionProvider() {
     // given
     when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
     when(connectionProvider.scriptLoad(anyString())).thenReturn("test-sha");
@@ -60,14 +47,13 @@ class RedisRateLimiterConfigMockTest {
     assertThat(config.getConnectionProvider()).isEqualTo(connectionProvider);
     assertThat(config.getMode()).isEqualTo(RedisMode.STANDALONE);
     assertThat(config.getTokenBucketStore()).isNotNull();
-    assertThat(config.getRuleSetStore()).isNotNull();
     assertThat(config.isConnected()).isTrue();
 
     config.close();
   }
 
   @Test
-  void shouldInitializeInClusterMode() throws IOException {
+  void shouldInitializeInClusterMode() {
     // given
     when(connectionProvider.getMode()).thenReturn(RedisMode.CLUSTER);
     when(connectionProvider.scriptLoad(anyString())).thenReturn("cluster-sha");
@@ -82,17 +68,86 @@ class RedisRateLimiterConfigMockTest {
   }
 
   @Test
-  void shouldCloseConnectionProviderOnClose() throws IOException {
+  @DisplayName("Scripts are uploaded to the supplied connection on construction")
+  void shouldLoadLuaScriptsOnConstruction() {
+    when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
+    when(connectionProvider.scriptLoad(anyString())).thenReturn("test-sha");
+
+    new RedisRateLimiterConfig(connectionProvider).close();
+
+    verify(connectionProvider, times(2)).scriptLoad(contains("token"));
+  }
+
+  @Test
+  @DisplayName("An externally supplied connection is never closed by this config")
+  void shouldNotCloseAnExternallySuppliedConnectionProvider() {
     // given
     when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
     when(connectionProvider.scriptLoad(anyString())).thenReturn("test-sha");
 
     RedisRateLimiterConfig config = new RedisRateLimiterConfig(connectionProvider);
+    assertThat(config.ownsConnectionProvider()).isFalse();
 
     // when
     config.close();
 
-    // then
+    // then: the caller's Lettuce client keeps running
+    verify(connectionProvider, never()).close();
+  }
+
+  @Test
+  @DisplayName("An invalid max-bucket-ttl is rejected before any connection is opened")
+  void shouldValidateTheBucketTtlBeforeConnecting() {
+    // TEST-NET-1 drops packets: connecting first would surface as a connection failure instead
+    assertThatThrownBy(
+            () ->
+                new RedisRateLimiterConfig(
+                    "redis://192.0.2.1:6379", Duration.ofMillis(200), Duration.ofMillis(500)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("maxBucketTtl");
+  }
+
+  @Test
+  @DisplayName("The connector is not even called when max-bucket-ttl is invalid")
+  void shouldNotConnectWithAnInvalidBucketTtl() {
+    AtomicBoolean connected = new AtomicBoolean();
+
+    assertThatThrownBy(
+            () ->
+                new RedisRateLimiterConfig(
+                    () -> {
+                      connected.set(true);
+                      return connectionProvider;
+                    },
+                    Duration.ZERO,
+                    "test"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(connected).isFalse();
+  }
+
+  @Test
+  @DisplayName("A connection this config opened is closed when the stores cannot be built")
+  void shouldCloseItsOwnConnectionWhenStoreConstructionFails() {
+    when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
+    when(connectionProvider.scriptLoad(anyString()))
+        .thenThrow(new ScriptExecutionException("SCRIPT LOAD failed"));
+
+    assertThatThrownBy(() -> new RedisRateLimiterConfig(() -> connectionProvider, null, "test"))
+        .isInstanceOf(ScriptExecutionException.class);
+
     verify(connectionProvider).close();
+  }
+
+  @Test
+  @DisplayName("A failing close does not hide the construction failure")
+  void shouldKeepTheConstructionFailureWhenCloseFails() {
+    when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
+    when(connectionProvider.scriptLoad(anyString()))
+        .thenThrow(new ScriptExecutionException("SCRIPT LOAD failed"));
+    doThrow(new IllegalStateException("close failed")).when(connectionProvider).close();
+
+    assertThatThrownBy(() -> new RedisRateLimiterConfig(() -> connectionProvider, null, "test"))
+        .isInstanceOf(ScriptExecutionException.class)
+        .satisfies(e -> assertThat(e.getSuppressed()).hasSize(1));
   }
 }

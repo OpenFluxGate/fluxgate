@@ -2,6 +2,7 @@ package org.fluxgate.core.reload;
 
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 
 /**
@@ -18,6 +19,37 @@ public interface RuleCache {
    * @return an Optional containing the rule set if cached, or empty if not found
    */
   Optional<RateLimitRuleSet> get(String ruleSetId);
+
+  /**
+   * Returns the cached rule set, loading and caching it on a miss.
+   *
+   * <p>The default implementation is a plain get/load/put sequence and is not atomic:
+   *
+   * <ul>
+   *   <li>concurrent misses for the same id can each run the loader;
+   *   <li>an {@link #invalidate(String)} (a rule reload) that lands while the loader is running is
+   *       lost: the value loaded before the reload is put afterwards and served until the next
+   *       invalidation or expiry.
+   * </ul>
+   *
+   * <p>Implementations backed by a cache with atomic loading should override this method to
+   * collapse concurrent loads, to cache negative results, and to drop a load that raced an
+   * invalidation (for example by comparing an invalidation generation before and after loading).
+   *
+   * @param ruleSetId the ID of the rule set to retrieve
+   * @param loader loader invoked on a cache miss
+   * @return an Optional containing the rule set if cached or loaded, or empty if it does not exist
+   */
+  default Optional<RateLimitRuleSet> getOrLoad(
+      String ruleSetId, Function<String, Optional<RateLimitRuleSet>> loader) {
+    Optional<RateLimitRuleSet> cached = get(ruleSetId);
+    if (cached.isPresent()) {
+      return cached;
+    }
+    Optional<RateLimitRuleSet> loaded = loader.apply(ruleSetId);
+    loaded.ifPresent(ruleSet -> put(ruleSetId, ruleSet));
+    return loaded;
+  }
 
   /**
    * Stores a rule set in the cache.
@@ -75,6 +107,15 @@ public interface RuleCache {
     private final double hitRate;
     private final long estimatedSize;
 
+    /**
+     * Constructs cache statistics from already computed values.
+     *
+     * @param hitCount the number of cache hits
+     * @param missCount the number of cache misses
+     * @param evictionCount the number of evicted entries
+     * @param hitRate the ratio of hits to total lookups
+     * @param estimatedSize the estimated number of cached entries
+     */
     public CacheStats(
         long hitCount, long missCount, long evictionCount, double hitRate, long estimatedSize) {
       this.hitCount = hitCount;
@@ -84,28 +125,62 @@ public interface RuleCache {
       this.estimatedSize = estimatedSize;
     }
 
+    /**
+     * Creates cache statistics, deriving the hit rate from the hit and miss counts.
+     *
+     * @param hitCount the number of cache hits
+     * @param missCount the number of cache misses
+     * @param evictionCount the number of evicted entries
+     * @param estimatedSize the estimated number of cached entries
+     * @return the cache statistics
+     */
     public static CacheStats of(
         long hitCount, long missCount, long evictionCount, long estimatedSize) {
       double hitRate = hitCount + missCount > 0 ? (double) hitCount / (hitCount + missCount) : 0.0;
       return new CacheStats(hitCount, missCount, evictionCount, hitRate, estimatedSize);
     }
 
+    /**
+     * Returns the number of cache hits.
+     *
+     * @return the hit count
+     */
     public long hitCount() {
       return hitCount;
     }
 
+    /**
+     * Returns the number of cache misses.
+     *
+     * @return the miss count
+     */
     public long missCount() {
       return missCount;
     }
 
+    /**
+     * Returns the number of entries evicted from the cache.
+     *
+     * @return the eviction count
+     */
     public long evictionCount() {
       return evictionCount;
     }
 
+    /**
+     * Returns the ratio of hits to total lookups.
+     *
+     * @return the hit rate between {@code 0.0} and {@code 1.0}
+     */
     public double hitRate() {
       return hitRate;
     }
 
+    /**
+     * Returns the estimated number of cached entries.
+     *
+     * @return the estimated cache size
+     */
     public long estimatedSize() {
       return estimatedSize;
     }

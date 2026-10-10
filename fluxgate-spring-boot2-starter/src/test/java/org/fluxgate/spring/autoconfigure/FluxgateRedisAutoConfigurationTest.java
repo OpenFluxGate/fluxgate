@@ -2,6 +2,8 @@ package org.fluxgate.spring.autoconfigure;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.reflect.Method;
+import org.fluxgate.redis.connection.RedisUriUtils;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -25,6 +27,24 @@ class FluxgateRedisAutoConfigurationTest {
       new ApplicationContextRunner()
           .withConfiguration(AutoConfigurations.of(FluxgateRedisAutoConfiguration.class))
           .withUserConfiguration(TestConfig.class);
+
+  @Test
+  void shouldDelegateUriMaskingToTheRedisModule() {
+    // N-10: the starter used to mask with its own regex, which let
+    // "redis://h:6379?password=SECRET" through in clear text and mangled the tail of URIs whose
+    // password contained an '@'. RedisUriUtils parses with Lettuce and renders host:port[/db] only,
+    // which is what SECURITY.md promises.
+    assertThat(FluxgateRedisAutoConfiguration.class.getDeclaredMethods())
+        .extracting(Method::getName)
+        .doesNotContain("maskUri");
+
+    assertThat(RedisUriUtils.mask("redis://h:6379?password=SECRET"))
+        .doesNotContain("SECRET")
+        .isEqualTo("h:6379");
+    assertThat(RedisUriUtils.mask("redis://user:p@ssw0rd@h:6379/2"))
+        .doesNotContain("ssw0rd")
+        .doesNotContain("user");
+  }
 
   @Test
   void shouldNotCreateBeansByDefault() {
