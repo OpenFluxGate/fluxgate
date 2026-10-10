@@ -86,7 +86,13 @@ keys change shape, so every quota resets once.
   `HEADERS` or `PRINCIPAL_THEN_HEADERS` — which logs a WARN naming the trusted
   headers. The effective value is logged once at startup.
 - `fluxgate.ratelimit.fail-on-missing-handler` (default `false`) — `true` fails
-  the boot instead of starting with no rule set provider and therefore no limits.
+  the boot with a `MissingConfigurationException` instead of starting with no
+  limits: when a limiter exists without a rule set provider and Redis is enabled
+  or `fluxgate.ratelimit.mode` is set, and whenever the filter
+  (`@EnableFluxgateFilter`) or the aspect (`@EnableFluxgateAspect`) finds no
+  `FluxgateRateLimitHandler` at all — which includes the default configuration
+  with no rule source. `false` keeps the startup ERROR / WARN and applies
+  `failure-behavior`.
 - `fluxgate.redis.max-bucket-ttl` (default `7d`) — an upper bound on a bucket's
   TTL. Removing the old 24-hour cap fixed long windows but left the amount of
   Redis memory a forged-identity caller can pin down growing with the window;
@@ -97,12 +103,16 @@ keys change shape, so every quota resets once.
   fingerprint. `0` creates no index and leaves retention to you.
 - `fluxgate.reload.pubsub.secret` and `fluxgate.control.secret` — HMAC-SHA256
   signed rule change notifications, with `fluxgate.reload.pubsub.max-message-age`
-  (default `5m`) as the replay window. Every message without a valid signature —
+  (default `60s`) as the replay window. Every message without a valid signature —
   the legacy `"*"` full reload included — is logged at WARN and ignored. Pub/Sub
   only runs signed: without a secret `AUTO` polls and `PUBSUB` fails startup;
   `fluxgate.reload.pubsub.allow-unsigned`
   and `fluxgate.control.allow-unsigned` (default `false`) are the development-only
   way to run without one.
+- `fluxgate.reload.pubsub.accept-legacy-signed` (default `true`) — whether a data plane
+  with a secret still accepts signed schema version 1 messages, which bind neither the
+  channel nor a nonce. The first one accepted is logged at WARN; set it to `false` once
+  every control plane publishes version 2.
 - `fluxgate.actuator.health.include-endpoint-details` (default `false`) — the
   health payload no longer exposes `host:port`, cluster node counts and dependency
   failure messages unless you opt in. The status and exception type are still
@@ -111,8 +121,16 @@ keys change shape, so every quota resets once.
   — request headers reach `RequestContext` only when opted in and allow-listed.
 - `fluxgate.ratelimit.log-query-string` (default `false`) and
   `case-sensitive-patterns` (default `true`).
-- `org.fluxgate.core.key.KeyValueSanitizer` — restricts key values to
-  `[A-Za-z0-9._:@-]` and hashes anything longer than 256 characters.
+- `org.fluxgate.core.key.KeyValueSanitizer` — encodes key values injectively into
+  `[A-Za-z0-9._:@-]`, at most 256 characters (see Breaking item 30).
+- `RateLimitKey.of(prefix, rawValue)` — keeps a scope prefix and sanitises only the value,
+  the same shape `LimitScopeKeyResolver` produces; `RateLimitKey.of(key)` sanitises the
+  whole string. The prefix must be a name followed by `:` (`"user:"`, `"tenant:"`); an
+  empty prefix, `":"` or one without a trailing `:` (`"h"`) is rejected.
+- `RateLimitKey.withPrefix(prefix, key)` — puts a prefix in front of an existing,
+  already sanitised key without encoding it again. The result is always
+  `prefix + key.value()`: never hashed, shortened or rejected for length, and each call
+  adds at most 64 characters (the prefix limit) to the key.
 - `RateLimitEngine.OnMissingRuleSetStrategy.DENY`, which
   `fluxgate.ratelimit.missing-rule-behavior=DENY` now wires.
 
@@ -147,6 +165,16 @@ keys change shape, so every quota resets once.
   `.failure-rate-threshold` (`50`), `.minimum-number-of-calls` (`10`),
   `fluxgate.resilience.retry.jitter-factor` (`0.2`), `.retry-on-timeout` (`false`).
   `DefaultCircuitBreaker` gained `getRecordedCalls()` and `getFailureRate()`.
+- `org.fluxgate.core.resilience.IgnoredCallException` — thrown by a guarded action to report
+  an outcome that is neither a success nor a failure of the protected resource (a client or
+  configuration error); the original exception is its cause. `DefaultCircuitBreaker` and
+  `NoOpCircuitBreaker` record nothing for it, give back any half-open trial permit it held,
+  and rethrow it unchanged from both `execute` and `executeWithFallback` without using the
+  fallback; `RetryConfig` never retries it. **Custom `CircuitBreaker` implementations must do
+  the same:** rethrow it without recording a success or a failure and without invoking the
+  fallback. An implementation that does not know the type treats it like any other
+  `RuntimeException`, so a misbehaving client counts against the breaker; `ResilientRateLimiter`
+  still rethrows the original client error instead of degrading in that case.
 - `Bucket4jRateLimiter.reset(String ruleSetId)`, `resetAll()`, `size()`,
   `getMaximumSize()`, and constructors taking `maximumSize` / `expireAfterAccess`.
 
@@ -158,7 +186,10 @@ keys change shape, so every quota resets once.
 - Ordered reload listeners: `AbstractReloadStrategy.addListener(listener, order)`
   with `ORDER_CACHE_INVALIDATION = -100` < `DEFAULT_ORDER = 0` < `ORDER_BUCKET_RESET = 100`.
 - `InMemoryBucketResetHandler`, so the in-memory limiter participates in reloads.
-- `RuleChangeMessage.version` (`SCHEMA_VERSION = 1`); `@NotifyRuleChange`
+- `RuleChangeMessage.version` (`SCHEMA_VERSION = 2`: every message carries version 2 and a
+  `nonce`; signed `LEGACY_SCHEMA_VERSION = 1` messages are accepted while
+  `fluxgate.reload.pubsub.accept-legacy-signed` is `true` (the default), see Breaking item 34; with
+  no secret and `allow-unsigned=true` no signature check applies); `@NotifyRuleChange`
   publishes **after commit** inside a transaction and retries 3× with jittered
   backoff.
 
@@ -172,8 +203,9 @@ keys change shape, so every quota resets once.
   `RedisConnectionProvider.unlink(String...)`,
   `RedisRateLimiter.BUCKET_KEY_PREFIX` / `bucketKeyPattern(String)`,
   `BucketState.limit()` / `bandIndex()`.
-- MongoDB index creation on `fluxgate.mongo.ddl-auto=create`: `{ruleSetId: 1}`
-  and unique `{ruleSetId: 1, id: 1}`.
+- MongoDB index creation on `fluxgate.mongo.ddl-auto=create`: unique
+  `{ruleSetId: 1, id: 1}` (`ruleSetId_1_id_1_unique`) and `{id: 1}` (`id_1`), through
+  `MongoRateLimitRuleRepository#ensureIndexes()`.
 
 **Build, CI and tests**
 
@@ -187,7 +219,7 @@ keys change shape, so every quota resets once.
   `fluxgate-spring-boot2-starter/src/main/resources/META-INF/spring.factories` —
   the latter for tooling and documentation generators that still read
   `spring.factories`, alongside the authoritative `AutoConfiguration.imports`. Both
-  files must list the same eight auto-configurations, and a test fails the build if
+  files must list the same nine auto-configurations, and a test fails the build if
   they diverge. **It does not extend version support:** the Boot 2 starter uses
   `@AutoConfiguration`, a Spring Boot 2.7 API, so **Spring Boot 2.7.x is required**,
   not merely supported. Boot 2.7 is OSS end-of-life, so plan the move to the Boot 3
@@ -197,13 +229,80 @@ keys change shape, so every quota resets once.
   imports, Java 11, the 2.7 requirement).
 - New utility types `org.fluxgate.spring.util.{LogSanitizer, TrustedProxies, RequestPathResolver}`
   and `org.fluxgate.spring.filter.{RateLimitHeaderWriter, RequestContextFactory}`.
-- `FluxgateActuatorAutoConfiguration.DegradedHttpStatusMapperConfiguration` — registers a
-  `HttpCodeStatusMapper` bean mapping the DEGRADED health status to HTTP 503 by default
-  (`fluxgate.actuator.health.degraded-http-status=503`); set to `0` to disable. Backs off when
-  the application defines its own `HttpCodeStatusMapper` bean. Property
-  `fluxgate.actuator.health.degraded-http-status` added to `FluxgateProperties`. (N-16)
+- `org.fluxgate.spring.actuator.FluxgateHealthStatusEnvironmentPostProcessor` — maps the
+  DEGRADED health status to HTTP 503 by default
+  (`fluxgate.actuator.health.degraded-http-status=503`; `0` or negative disables it) by
+  contributing `management.endpoint.health.status.http-mapping.*` defaults as the
+  lowest-precedence property source, together with Spring Boot's own `down=503` and
+  `out-of-service=503`. Only statuses the application has not mapped itself are added, so
+  every user mapping and `HttpCodeStatusMapper` bean still wins. It also contributes
+  `management.endpoint.health.status.order=down,out-of-service,degraded,up,unknown` unless
+  the application sets an order, so `DEGRADED` reaches the aggregated `/actuator/health` and
+  the readiness group; an order of the application's own without `degraded` is reported at
+  WARN. Nothing is added when `fluxgate.actuator.health.enabled=false`. (N-16)
 - All six items above mirrored byte-identically to `fluxgate-spring-boot2-starter`
   (`jakarta.` → `javax.`). (Mirror)
+
+**0.4 hardening**
+
+- `org.fluxgate.core.exception.RedisConnectionException.Phase` (`CONNECT`, `COMMAND`,
+  `UNKNOWN`) and constructors taking a phase. Only `CONNECT` failures are retried; see
+  Breaking item 33.
+- `org.fluxgate.spring.handler.RateLimiterUnavailableException` — thrown by
+  `ResilientRateLimiter`, `MissingRuleSetProviderRateLimitHandler` and
+  `EngineBackedRateLimitHandler` once `failure-behavior=DENY` /
+  `missing-rule-behavior=DENY` decided to reject. The filter and the aspect answer it
+  with HTTP 503 and `Retry-After` when the wait is known.
+  `RateLimitResponseWriter` gains a default `writeUnavailable(...)` (a minimal 503
+  problem document) that `ProblemDetailRateLimitResponseWriter` renders with the
+  configured content type and body template; `RateLimitExceededException#isServiceUnavailable()`
+  tells a non-web caller which of the two happened.
+- `MongoRateLimitRuleRepository#moveRule(id, fromRuleSetId, toRuleSetId)`, the
+  `(ruleSetId, id)` overloads of `findById`, `existsById` and `deleteById`, and
+  `ensureIndexes()`, which creates the unique `ruleSetId_1_id_1_unique` index and the
+  `id_1` index and fails with the duplicated `(ruleSetId, id)` pairs listed.
+- `RuleSetAccessControlSource` SPI — `MongoRuleSetProvider` looks up a rule set's access
+  control through it, so a decorated repository no longer loses it.
+- `org.fluxgate.spring.autoconfigure.FluxgateMongoClientHolder` — FluxGate's own MongoDB
+  client, which is no longer a `MongoClient` bean (Breaking item 40).
+- `fluxgate.limiter.failures` and `fluxgate.limiter.bucket_evictions` are now actually
+  registered by the metrics auto-configuration. The first counts limiter dependency
+  failures by `action` and `exception`; the second is a `FunctionCounter` bound to
+  `Bucket4jRateLimiter#getEvictionCount()` — every eviction resets that key's quota.
+- Rate limit events are written to MongoDB off the request thread, from a bounded queue
+  (10000 events) with batched `insertMany`; a full queue drops the event and counts it.
+- Rule change messages are schema version 2 and carry a random `nonce`; the signature
+  covers a length-prefixed canonical form that binds the Pub/Sub channel. The subscriber
+  remembers accepted nonces for the replay window and ignores replays, messages signed
+  for another channel and version 2 messages without a nonce. Version 1 and unsigned
+  messages keep their previous rules. A secret is trimmed (blank means none) on both
+  sides, and one shorter than 32 bytes is reported at WARN.
+- Pub/Sub reload messages are handled on a single `fluxgate-pubsub-listener` thread in
+  arrival order, off the Lettuce event loop, with at most 10000 waiting messages (WARN
+  and drop beyond that).
+- `org.fluxgate.spring.aop.RateLimitExceededExceptionHandler` — a `@RestControllerAdvice`,
+  registered by the new `FluxgateAopExceptionHandlerAutoConfiguration` when the aspect is active
+  in a servlet application, that answers `RateLimitExceededException` with 429 plus the rate
+  limit headers and `Retry-After`, or 503 when `isServiceUnavailable()` is true, through the
+  configured `RateLimitResponseWriter`. It is ordered at `RateLimitExceededExceptionHandler.ORDER`
+  (`Ordered.HIGHEST_PRECEDENCE + 1000`) so that an application's unordered catch-all
+  `@ExceptionHandler(Exception.class)` cannot turn rejections into 500; an advice ordered before
+  it wins, and a bean of the type replaces it wherever it is declared.
+- `org.fluxgate.spring.handler.PermitsExceedCapacityException` (an
+  `InvalidRuleConfigException`) and `RateLimitResponseWriter#writeCostExceeded(...)` — a
+  request cost above the capacity of a matching band is answered with 429 and a problem
+  document naming the cost and the capacity, without `Retry-After`.
+- `fluxgate.ratelimit.response.unavailable-body-template` — the body of the 503 sent when
+  rate limiting is unavailable, with the `body-template` placeholders. Unset, the 503 keeps
+  using `body-template`.
+- `org.fluxgate.spring.filter.FluxgateWaitPermits` — the wait permits shared by the filter
+  and the aspect (bean `fluxgateWaitPermits`).
+- `FluxgateMetrics(MeterRegistry, MicrometerMetricsRecorder)` and
+  `MicrometerMetricsRecorder#endpointTag(String)` — the failure counter shares the
+  recorder's endpoint tag policy.
+- `fluxgate.control.*` and `fluxgate.ratelimit.rule-sets` are documented:
+  [docs/en/guides/yaml-rule-sets.md](docs/en/guides/yaml-rule-sets.md)
+  ([한국어](docs/ko/guides/yaml-rule-sets.ko.md)).
 
 ### Changed
 
@@ -234,13 +333,17 @@ keys change shape, so every quota resets once.
   `Content-Type: application/problem+json;charset=UTF-8`.
 - Redis bucket keys, and therefore every quota, change shape — see
   [Breaking / Migration](#breaking--migration).
-- Bucket TTL is `max(1, ceil(window_seconds × 1.1))` with **no upper cap**, so a
-  7-day window keeps a 7-day bucket.
+- TOKEN_BUCKET and SLIDING_WINDOW bucket TTL is
+  `min(max-bucket-ttl, max(1, ceil(window_seconds × 1.1)))` (`fluxgate.redis.max-bucket-ttl`,
+  default `7d`); FIXED_WINDOW counters keep their absolute expiry at the window end
+  (`PEXPIREAT`; a rejection sets it only on a counter that has no TTL). See item 12 of
+  [Breaking / Migration](#breaking--migration).
 - Rejections no longer write bucket state; only TTLs are refreshed, via `EXPIRE`,
   which is a no-op for a bucket that does not exist yet.
 - `Bucket4jRateLimiter` holds buckets in a Caffeine cache
-  (`maximumSize` 100 000, `expireAfterAccess` 1 hour) instead of an unbounded map,
-  and keys them per `(ruleSetId, ruleId, key, band)` to match the Redis layout.
+  (`maximumSize` 100 000) instead of an unbounded map, with one multi-bandwidth bucket
+  per `(ruleSetId, ruleId, bands, key)`. A bucket expires after it has been idle for
+  the longer of `expireAfterAccess` (1 hour, a minimum) and its longest band window.
 - Rejected results now carry the **real** remaining tokens of the binding band
   instead of a hardcoded `0`; `RateLimitResult.allowedWithoutRule()` reports
   `remainingTokens = -1` (unknown) instead of `Long.MAX_VALUE`. A value of `-1`
@@ -324,13 +427,103 @@ keys change shape, so every quota resets once.
   RateLimiter nor RuleSetProvider* / *RateLimiter but no RuleSetProvider* / *RuleSetProvider
   but no RateLimiter* — each with an actionable remedy message. (N-4)
 - `ClientIpExtractor` with `trust-client-ip-header=true` and an empty `trusted-proxies` now
-  returns the **right-most** valid XFF hop instead of the left-most. The startup WARN is
+  returns the **right-most** XFF hop instead of the left-most (falling back to the remote
+  address when that hop is not a valid IP literal). The startup WARN is
   updated accordingly. (E/C-5)
 - `fluxgate.metrics.max-endpoint-tags <= 0` means unbounded — the
   `fluxgateEndpointTagLimitMeterFilter` bean is not registered when the value is zero or
   negative. (N-14)
 - Rate-limited request and invocation log messages demoted from WARN to DEBUG in the filter
   and the AOP aspect. (N-15)
+
+**0.4 hardening**
+
+- `fluxgate.reload.pubsub.max-message-age` defaults to `60s`, the same value as
+  `RedisPubSubReloadStrategy.DEFAULT_MAX_MESSAGE_AGE` (it was `5m` in the property and
+  `60s` in the class). Breaking item 35.
+- Invalid `fluxgate.*` configuration fails startup: non-positive Redis timeout and
+  `max-bucket-ttl`, fallback size and expiry, wait permits and negative wait time, reload
+  cache TTL and size, polling interval, Pub/Sub retry interval and replay window.
+  YAML rule sets reject an unknown band `zone-id` (it fell back to UTC silently), a rule id
+  used twice in one rule set and a band window or capacity that is not positive.
+  `FluxgateProperties` validates itself (it implements `Validator`), so this applies
+  whether or not a Bean Validation provider is on the classpath. Values documented as
+  "zero disables" stay allowed. One WARN is logged when enabled `PER_API_KEY` YAML rules
+  exist but the identity source never reads the API key header. Breaking item 38.
+- `fluxgate.mongo.ddl-auto=validate` (the default) requires a unique
+  `{ruleSetId: 1, id: 1}` index, whatever its name; `create` builds the indexes through
+  `MongoRateLimitRuleRepository#ensureIndexes()` and fails startup instead of logging a
+  warning. Breaking item 29.
+- The public `FluxgateRateLimitFilter` (4-, 7- and 8-argument) and `RateLimitAspect`
+  (2-argument) constructors now ignore forwarding headers and fail closed; they trusted
+  `X-Forwarded-For` and failed open before. Breaking item 37.
+- A rejected `@RateLimit` invocation writes the 429 only when the intercepted method is a
+  Spring MVC handler (`@RequestMapping` or a shortcut, also on an implemented interface)
+  that does not return a primitive. Every other method throws `RateLimitExceededException`
+  instead of returning `null`. Breaking item 39.
+- `X-Forwarded-For` (and the configured header) is read across **all** header lines and
+  walked right to left. `ip:port`, `[v6]` and `[v6]:port` are reduced to the address; when
+  the hop that would be used is not an IP literal the remote address is used, so a forged
+  or garbage hop cannot choose the `PER_IP` bucket. Addresses are canonicalised, so
+  different spellings of one address share one bucket.
+- The filter and the aspect share one set of wait permits (a `FluxgateWaitPermits` bean
+  named `fluxgateWaitPermits`, not a bare `Semaphore` bean, so an application injecting a
+  `Semaphore` by type is unaffected), so `max-concurrent-waits` bounds both together, and
+  `fluxgate.ratelimit.wait-for-refill.enabled=false`, set explicitly, now stops every wait
+  including `@RateLimit(waitForRefill = true)`. Left unset, rule `WAIT_FOR_REFILL`
+  policies do not wait while the annotation still does.
+- A missing default rule set id is reported once (ERROR at filter creation under
+  `missing-rule-behavior=DENY`, WARN on the first request under `ALLOW`) instead of
+  per request.
+- Redis: a cluster whose `cluster_state` is not `ok`, with failing slots, or whose node list
+  cannot be read reports DOWN; cluster command timeouts are applied and the topology is
+  refreshed; a reset UNLINKs bucket keys page by page; a configuration that fails to build
+  closes the connection it owns; `NOSCRIPT` script reloads are throttled; Lettuce failures
+  are wrapped in FluxGate exceptions (reset failures included), with `Phase.COMMAND`.
+- Redis health no longer creates the lazy Redis connection as a side effect.
+- Core: `**/` matches only at path segment boundaries; header lookup is case-insensitive
+  with `Locale.ROOT`; `Bucket4jRateLimiter` keeps buckets consistent across reloads, expires
+  idle buckets and reports the longest wait among rejecting rules (the Redis limiter does
+  the same across bands and rules); rounding is overflow-safe; the circuit breaker counts
+  only HALF_OPEN trial calls; script and evaluation failures are not retried; node lists with
+  a comma in the password are split correctly.
+- MongoDB reads BSON numbers leniently (`int`, `long`, `double`) and rejects unknown enum
+  values; a malformed rule document is skipped with a WARN and counted instead of failing
+  the whole rule set; divergent copies of the rule set's access control are merged fail-closed,
+  independent of document order (union of each deny list, intersection of each allow list, a copy
+  without that list counting as empty; allow lists with no entry in common merge to an empty allow
+  list, which grants no bypass, with a WARN naming the rule set); every access-control write also
+  sets an `aclUpdatedAt` marker so a copy whose lists were all cleared still takes part, and an
+  interrupted clear no longer resurrects the revoked allow list (documents with neither marker nor
+  list, such as 0.3.x ones, are ignored); `save()` of an existing rule no longer reads the access
+  control; an unparseable stored CIDR is a non-retryable `FluxgateOperationException`.
+- Header and attribute names in MongoDB rate limit events are escaped reversibly as BSON field
+  names: `.` becomes `%2E`, `$` `%24`, NUL `%00` and `%` itself `%25`, and an empty or null name
+  is stored as a lone `%`. This replaces the earlier replacement of `.` and `$` by `_`, under
+  which `a.b` and `a_b` shared a field; queries over event fields with those characters use the
+  escaped names.
+- Build: both starters and the samples compile with `-parameters` (Spring 6 `@PathVariable`
+  name binding), JaCoCo measures every class, and the unused logstash encoder dependency is
+  gone. The release workflow (`release.yml`) derives the version from the `release/X.Y.Z` branch and
+  verifies that tag `vX.Y.Z` points at the branch head; `maven-ci.yml` builds whatever version the
+  POM declares.
+- The samples no longer trust identity headers or client IP headers sent by the client.
+- Samples (not published): `fluxgate-sample-mongo` addresses a rule as
+  `/admin/rules/{ruleSetId}/{id}`; `fluxgate-sample-api` deletes with
+  `DELETE /admin/rules/{ruleSetId}/{id}`, and its `POST /admin/sync` reads each band's `window`
+  from the Control-plane JSON instead of assuming 60s, rounds fractional ISO-8601 windows
+  (`PT0.5S`) up, and answers 422 when the first band's capacity or window is missing or not
+  positive. The samples' Swagger UI version comes from the Maven project version (build-info)
+  instead of a hardcoded string, and their OpenAPI info names the MIT license; the standalone
+  samples default to a single Redis on `localhost:6379`, `fluxgate.mongo.ddl-auto: create` and
+  `fluxgate.reload.strategy: AUTO` (polling until `FLUXGATE_RELOAD_SECRET` is set; the old `PUBSUB`
+  default with no secret failed at startup) so the documented quick start works, and no longer set
+  the inert `circuit-breaker.fallback`; every sample with a run command has a startup test that
+  boots its shipped `application.yml` (Testcontainers Redis/MongoDB where needed, and a local
+  stand-in for the rate limit check API that `fluxgate-sample-filter` calls);
+  `fluxgate-sample-standalone-java21` declares the `logstash-logback-encoder` its
+  `logback-spring.xml` needs; and the sample READMEs' endpoint tables, configuration blocks,
+  response examples and comparison tables match the code.
 
 #### Breaking / Migration
 
@@ -343,10 +536,10 @@ keys change shape, so every quota resets once.
 2. **Resolved key values are scope-prefixed and sanitised.** `192.168.1.100`
    becomes `ip:192.168.1.100`, a user id becomes `user:<id>`, an API key
    `key:<value>`, a custom attribute `custom:<value>`, and `GLOBAL` stays
-   `global`. Characters outside `[A-Za-z0-9._:@-]` become `_`, and a value longer
-   than 256 characters is replaced by the SHA-256 hex of the value. Combined with
-   (1) this is **one** quota reset on upgrade, not two. External tooling that
-   builds FluxGate keys must be updated.
+   `global`. The value after the prefix is sanitised as described in item 30
+   (this entry used to describe a plain `_` replacement and a bare SHA-256 hex for
+   long values; superseded by 30). Combined with (1) this is **one** quota reset on
+   upgrade, not two. External tooling that builds FluxGate keys must be updated.
 3. **Bucket hash field renamed** `last_refill_nanos` → `last_refill_micros`. A
    0.3.x bucket is treated as missing and re-initialised full, which is a one-off
    burst allowance. Values are now plain digits, not `1.76e+18`. Any tooling
@@ -372,7 +565,7 @@ keys change shape, so every quota resets once.
 7. **Fail-closed defaults stay fail-closed.** `failure-behavior=DENY`,
    `missing-rule-behavior=DENY` and `trust-client-ip-header=false` are the
    defaults (introduced by the hardening line). A limiter failure or a missing
-   rule set answers 429. Opt out per property with `ALLOW`.
+   rule set answers **503** (see item 36), not 429. Opt out per property with `ALLOW`.
 8. **`trust-client-ip-header=true` without `trusted-proxies`** keeps legacy
    behaviour but logs one WARN at startup. Configure `trusted-proxies` in
    production: without it a client can rotate the forwarding header per request.
@@ -386,9 +579,14 @@ keys change shape, so every quota resets once.
     `RequestContext.getHeaders()` is empty unless you opt in and allow-list the
     header names. `Authorization`, `Cookie`, `Set-Cookie`,
     `Proxy-Authorization` and `X-API-Key` are never copied.
-12. **Windows longer than 24 hours are now enforced for their full length.** A
-    7-day quota used to reset every 24 hours because of the TTL cap, so it
-    effectively allowed 7× the configured capacity. It no longer does.
+12. **The hard 24-hour bucket TTL cap is replaced by `fluxgate.redis.max-bucket-ttl`
+    (default `7d`).** A 7-day quota used to reset every 24 hours, so it effectively
+    allowed 7× the configured capacity. FIXED_WINDOW counters now expire at their
+    window end (`PEXPIREAT`) and are exempt from the cap. TOKEN_BUCKET and
+    SLIDING_WINDOW TTLs are capped at `max-bucket-ttl`: a bucket idle for longer
+    than that expires and starts full, so a window longer than the cap is
+    effectively shortened for idle callers. The limiter logs a WARN once per rule
+    when this happens; raise `max-bucket-ttl` if you need longer windows.
 13. **Removed methods**: `BucketState.getRetryAfterSeconds()`,
     `RedisTokenBucketStore.close()`, `DefaultCircuitBreaker.handleOpenState()`.
     `CircuitBreaker.execute(...)` now always throws `CircuitBreakerOpenException`
@@ -411,8 +609,8 @@ keys change shape, so every quota resets once.
     opens changes for every deployment.**
 18. **`fluxgate.ratelimit.wait-for-refill.max-concurrent-waits` default changed
     from `100` to `50`**, and `@RateLimit(maxConcurrentWaits = …)` is no longer
-    read at all — the property is the only source, because the semaphore is
-    aspect-wide.
+    read at all — the property is the only source, because the wait permits are
+    one `FluxgateWaitPermits` bean shared by the filter and the aspect.
 19. **`RateLimitResult.allowedWithoutRule()` reports `remainingTokens = -1`**
     instead of `Long.MAX_VALUE`, and a `-1` means the header is **omitted**. A
     response that matched no rule used to carry
@@ -425,7 +623,7 @@ keys change shape, so every quota resets once.
     unknown headers. `Retry-After` now has a floor of 1 second.
 21. **`fluxgate.redis.enabled=true` with Redis down starts successfully** (lazy
     connect). Combined with `failure-behavior=DENY` — the default — **every request
-    is answered 429 until the connection succeeds.** Re-check your rollout order,
+    is answered 503 until the connection succeeds.** Re-check your rollout order,
     or set `fluxgate.ratelimit.fallback.mode=IN_MEMORY`. `fluxgate.redis.fail-fast=true`
     restores the old fail-at-startup behaviour.
 22. **`AUTO` and `PUBSUB` reload now also poll** (`fluxgate.reload.pubsub.backstop-polling-interval`,
@@ -475,16 +673,124 @@ keys change shape, so every quota resets once.
     WAIT_FOR_REFILL still blocks the request thread in both the filter and the
     aspect — see the migration guide, section 12.
 
+28. **MongoDB rules are identified by `(ruleSetId, id)`; `save` no longer moves a rule.**
+    Saving rule `r1` into rule set B used to move it out of rule set A. It now inserts a
+    second document; `moveRule(id, fromRuleSetId, toRuleSetId)` is the explicit move. The
+    id-only `findById(id)`, `existsById(id)` and `deleteById(id)` are `@Deprecated`;
+    `findById(id)` and `deleteById(id)` throw `IllegalStateException` when the id exists in
+    several rule sets (`existsById(id)` returns `true`), and
+    `saveAccessControl` throws when no document of the rule set matched. *Action:* move to
+    the `(ruleSetId, id)` overloads and call `moveRule` where you relied on `save` to move.
+29. **MongoDB needs a unique `{ruleSetId: 1, id: 1}` index.** `fluxgate.mongo.ddl-auto=validate`
+    (the default) fails startup without one (any name is accepted); `ddl-auto=create` builds
+    `ruleSetId_1_id_1_unique` and `id_1` and now fails startup, listing the duplicated pairs,
+    instead of logging a warning. *Action:* before upgrading run
+    `db.rate_limit_rules.createIndex({ruleSetId: 1, id: 1}, {unique: true, name: "ruleSetId_1_id_1_unique"})`
+    (fix duplicates first), or start once with `ddl-auto=create`.
+30. **Key values are sanitised injectively.** A value with characters outside
+    `[A-Za-z0-9._:@-]` used to have them replaced by `_` (so `a+1` and `a_1` shared a bucket).
+    It is now `h:` + the restricted value + `:` + the first 16 hex digits of its SHA-256
+    (`a+1` becomes `h:a_1:<16 hex>`) when it is at most 237 characters long; a value that
+    needs rewriting and is longer than 237 characters (the 256-character limit minus 19 characters of
+    `h:` and digest overhead) becomes `h:<64 hex>`, as does any value over 256 characters.
+    The scope prefix stays outside the hash (`user:h:<sha256>`). Values that were already
+    clean keep their keys. Sanitising is no longer idempotent: sanitise a raw
+    value once, and use `RateLimitKey.of(prefix, rawValue)` in a custom resolver. Configured
+    `allowed-keys` / `denied-keys` are normalised the same way (WARN when an entry changes);
+    an entry already in encoded form (`user:h:a_1:<16 hex>`) is kept as is. Only the
+    built-in prefixes are recognised: for a custom prefix (`tenant:`), write an entry
+    whose value gets rewritten in encoded form (`tenant:h:a_1:<16 hex>`).
+    *Action:* update external tooling that builds keys; callers whose values were rewritten
+    get a fresh bucket once.
+31. **Redis bucket key segments are escaped, not replaced.** `ruleSetId` and `ruleId`
+    characters `: { } * ? [ ] \`, whitespace and `%` are percent-escaped (`%XX`, UTF-8), and `:`
+    and `%` in a band label likewise, so `a:b`, `a_b` and `a b` no longer share a bucket.
+    Ids and labels without those characters keep their keys. *Action:* only rule sets,
+    rules or labels using such characters reset once; update tooling that scans keys.
+32. **`AccessControl` equality includes the IP lists, and a duplicate rule id in one rule set is
+    rejected** with `InvalidRuleConfigException` by `RateLimitRuleSet.Builder.build()`
+    (two rules with one id shared buckets and metrics). *Action:* give each rule in a rule set
+    a unique id.
+33. **`RedisConnectionException` has a `Phase` (`CONNECT`, `COMMAND`, `UNKNOWN`) and only
+    `CONNECT` is retried.** The constructors without a phase mean `UNKNOWN`, which is treated
+    like `COMMAND` and **not** retried; a Lettuce failure while a script runs
+    (consume, check, refund) or a reset scans and unlinks keys is `COMMAND`. Retrying a
+    command that Redis may already have executed could charge a request twice. *Action:*
+    custom code that throws the exception and wants a retry passes `Phase.CONNECT`.
+34. **Rule change messages are schema version 2** (nonce, channel bound, replay protected).
+    A 0.4 data plane understands versions 1 and 2, but a data plane that only knows version 1
+    drops version 2 messages. *Action:* upgrade the **data plane (subscribers) before the
+    control plane (publishers)**; during the gap the polling backstop covers rule changes.
+35. **`fluxgate.reload.pubsub.max-message-age` defaults to `60s`** (was `5m` in the property).
+    A signed message older than that is ignored, so clocks of publisher and subscribers must
+    agree to well within a minute. *Action:* set `5m` explicitly to keep the old window.
+36. **Rate limiting being unavailable answers HTTP 503, not 429.** A limiter failure under
+    `failure-behavior=DENY`, a missing rule set or provider under `missing-rule-behavior=DENY`,
+    or a rule set that cannot be built throws `RateLimiterUnavailableException`; the filter
+    and the aspect answer 503 (with `Retry-After` only when the wait is known, for example
+    while the circuit breaker is open). An exceeded limit stays 429. A rule set that cannot
+    be built is a configuration error, not a limiter failure, so it is 503 under
+    `failure-behavior=ALLOW` as well; `ALLOW` used to let such requests through. *Action:* clients,
+    gateways and alerts that treat 429 as "rate limited" and 503 as "outage" now see the
+    outage correctly; code calling `ResilientRateLimiter`, `EngineBackedRateLimitHandler` or
+    `MissingRuleSetProviderRateLimitHandler` directly must handle the exception instead of a
+    rejected result.
+37. **The legacy filter and aspect constructors are secure by default.** The 4-, 7- and
+    8-argument `FluxgateRateLimitFilter` constructors and the 2-argument `RateLimitAspect`
+    constructor trusted `X-Forwarded-For` and failed open; they now ignore forwarding headers
+    and fail closed. *Action:* hand-built filters and aspects that need the old behaviour use
+    the constructors taking `clientIpHeader`, `trustClientIpHeader` and `failOpenOnError`.
+38. **Invalid configuration fails startup** — an unknown band `zone-id`, a duplicate rule id in
+    a YAML rule set, a zero or negative window or capacity, and non-positive timeouts, TTLs,
+    intervals or sizes. *Action:* fix the configuration; each message names the property.
+39. **A rejected `@RateLimit` on a method that is not an MVC handler throws
+    `RateLimitExceededException`** instead of writing a 429 and returning `null` (a primitive
+    return type failed with `AopInvocationException`). In a servlet application
+    `RateLimitExceededExceptionHandler` answers it with 429, or 503 when
+    `isServiceUnavailable()` is true, instead of the 500 an unhandled exception produced.
+    The default advice is ordered at `RateLimitExceededExceptionHandler.ORDER`, ahead of
+    unordered application advice, so a catch-all `@ExceptionHandler(Exception.class)` no longer
+    wins. *Action:* handle the exception in the service layer, or in your own
+    `@ControllerAdvice` ordered before the default
+    (`@Order(RateLimitExceededExceptionHandler.ORDER - 1)`) to use your own format; an unordered
+    advice no longer sees the exception.
+40. **FluxGate's MongoDB client is no longer a `MongoClient` bean.** It lives in
+    `FluxgateMongoClientHolder`, and the auto-configuration runs after Boot's
+    `MongoAutoConfiguration`, so Spring Data MongoDB can no longer write application data to
+    the FluxGate cluster. An application bean named `fluxgateMongoClient` is still used (and
+    not closed by FluxGate). *Action:* stop injecting FluxGate's client as `MongoClient`.
+
+**Samples and CI**
+
+- Sample defaults are safer: `missing-rule-behavior: DENY`, `allow-unsigned: false`, the actuator
+  conditions removed, health `show-details: when_authorized`, and the `docker` profile pointing at the compose service hosts. Headers
+  such as `X-User-Id` are documented as demo-only (`identity.source=HEADERS`), sample READMEs pin
+  `mongo:7.0.14` / `redis:7.2.5-alpine`, and logged Redis URIs mask everything up to the last `@` of
+  the authority.
+- CI and release hardening: the release workflow runs with read-only default `permissions` (write only
+  on the release job), requires the Redis Cluster ITs (`-Dfluxgate.redis.cluster.require=true`) and
+  verifies the `maven-wrapper.jar` SHA-256 before running `mvnw`; the benchmark workflow uses per-job
+  permissions and path filters; Dependabot covers the Boot 2 starter and `docker-compose`; CI service
+  images are pinned to explicit tags.
+
 ### Fixed
 
 **Correctness**
 
-- `MongoRateLimitRuleRepository.save` now gives a rule whose `ruleSetId` changes
-  the **new** rule set's access control (or removes the lists if it has none)
-  instead of leaving the old rule set's lists on the document. Known limitation,
-  documented: a new or moved document copies access control in a read followed by
-  a separate write, so a concurrent `saveAccessControl` can leave that one
-  document stale until it is called again.
+- Synthetic result keys keep their prefix when the id or key after it has to be
+  rewritten: `missing-rule-set:<ruleSetId>` and `missing-key:<ruleId>` are built with
+  `RateLimitKey.of(prefix, value)`. A rule set id such as `orders v2` used to produce
+  `h:missing-rule-set:...`, which `EngineBackedRateLimitHandler` did not recognise as a
+  missing rule set. A denied key is `denied:` + the resolved key verbatim (built with
+  `RateLimitKey.withPrefix`, which never hashes or shortens): a long key no longer loses its
+  `denied:` prefix, and a key that is already encoded (`h:...`) is not encoded a second time.
+- `MongoRateLimitRuleRepository.save` addresses a rule by `(ruleSetId, id)`. Saving a
+  rule into a different rule set inserts a new document and leaves the original alone
+  (it used to move it out of its rule set); `moveRule(id, fromRuleSetId, toRuleSetId)`
+  is the explicit move and gives the moved rule the destination rule set's access
+  control. See Breaking item 28. Known limitation, documented: a new or moved document
+  copies access control in a read followed by a separate write, so a concurrent
+  `saveAccessControl` can leave that one document stale until it is called again.
 - With hot reload enabled (the default), an application whose only rule source
   was not named `delegateRuleSetProvider` — YAML rule sets only, or a single
   application provider bean under another name — failed to start with a
@@ -497,8 +803,9 @@ keys change shape, so every quota resets once.
   `try`/`catch`, so the catch block invoked it again. Both now run exactly once,
   outside the guarded block. (C2, C-1)
 - `@RateLimit`'s `maxConcurrentWaits` was completely ineffective, because the
-  semaphore was created per advice invocation; the wait semaphore is now an
-  aspect-wide instance field. Unlimited thread blocking was a DoS vector. (C1)
+  semaphore was created per advice invocation; the wait permits are now one
+  `FluxgateWaitPermits` bean shared by the filter and the aspect. Unlimited thread
+  blocking was a DoS vector. (C1)
 - The polling reload strategy deleted **every bucket on every cycle**:
   `RateLimitRule` and `RateLimitBand` had no value `equals`/`hashCode`, so the
   version hash changed each poll and every poll looked like a rule change.
@@ -543,8 +850,10 @@ keys change shape, so every quota resets once.
 - Refill discarded the sub-token remainder, which systematically under-allowed
   high-frequency bands. The timestamp now advances only by the time the credited
   whole tokens cost, so the remainder carries into the next call.
-- Windows longer than 24 hours were silently reset by the TTL cap; the cap is
-  gone. (H9)
+- Windows longer than 24 hours were silently reset by the hard 24-hour TTL cap.
+  The cap is now `fluxgate.redis.max-bucket-ttl` (default `7d`) for TOKEN_BUCKET
+  and SLIDING_WINDOW, with a WARN once per rule it shortens; FIXED_WINDOW counters
+  expire at their window end and are exempt. (H9)
 - Two bands of one rule with no explicit label collided on one bucket key, so
   the second band was never enforced. `RateLimitBand.getKeyLabel()` derives
   `<capacity>-per-<windowSeconds>s`. (H10)
@@ -655,7 +964,7 @@ keys change shape, so every quota resets once.
   threshold was added alongside the legacy consecutive rule.
 - `WAIT_FOR_REFILL` blocked servlet worker threads without an effective bound and
   was dead in Redis mode; the policy now comes from the rule with the annotation
-  as an explicit override, under an aspect-wide semaphore. (H11, H-3)
+  as an explicit override, under the shared `FluxgateWaitPermits`. (H11, H-3)
 - Bucket reset used `KEYS`, blocking single-threaded Redis for O(N); it uses
   `SCAN` + `UNLINK`. (H12, M-7)
 - Concurrent cache misses for the same rule set all hit MongoDB (stampede) and a
@@ -768,6 +1077,106 @@ keys change shape, so every quota resets once.
 - `FluxgateProperties.AuditLogProperties` Javadoc no longer claims the
   properties are never consumed. (E-15)
 
+**0.4 hardening**
+
+- `/actuator/health` answered 200 for `DOWN` and `OUT_OF_SERVICE` in every application: the
+  `DEGRADED` mapper replaced Boot's with a non-empty mapping, which dropped Boot's defaults.
+  The defaults are kept now (see the `FluxgateHealthStatusEnvironmentPostProcessor` entry).
+- `fluxgate.limiter.failures` was never emitted and `fluxgate.limiter.bucket_evictions` was
+  evaluated before the `MeterRegistry` existed; both are registered. Endpoint tag values
+  `other` and `unknown` are exempt from the endpoint tag cap, so the overflow series the
+  recorder falls back to is not denied. YAML rule sets get allowed/rejected counters.
+- A sliding window no longer rejects forever after a configuration change; `FIXED_WINDOW` is
+  exempt from the `max-bucket-ttl` clamp warning.
+- A rule-set reload keeps Bucket4j buckets consistent instead of resetting or splitting them.
+- A Redis password no longer appears in a URI parse error raised by the Pub/Sub subscriber or
+  `RedisRuleChangeNotifier`, nor in the log line of the auto-configured notifier, and the
+  notifier publishes outside its connection lock.
+- Fixed a `NoProviderFoundException` at startup when `jakarta.validation-api` (for example
+  through springdoc) was on the classpath without a Bean Validation provider.
+- Redis failed reconnects do not leak connections: `LazyRedisRateLimiter` opens and closes a
+  connection per attempt and the server-side client count stays flat.
+- `RateLimitEngine` access control: the synthetic fallback key is `ip:` + the sanitised client
+  IP, the shape the resolver produces, so an `ip:` key entry matches it; a key resolver failure
+  other than `MissingRateLimitKeyException` propagates instead of being swallowed; with only IP
+  lists configured no key is resolved.
+- `Bucket4jRateLimiter` no longer throws for a band window beyond `Long.MAX_VALUE` nanoseconds
+  (it is capped at ~292 years) and computes reset times without overflow.
+- `SimpleAntPathMatcher` merges `**/**` only when the first `**` starts a segment, so `a**/**`
+  no longer matches `abc`.
+- `RedisUris` looks for the end of the credentials only inside the first node's authority: an
+  `@` in the query (`?clientName=a@b`) or in a later node (`redis://:p@n1,u@n2`) no longer hides
+  the node separator.
+- An oversized request cost no longer opens the circuit breaker. A `cost-header` value above
+  the capacity of a matching band raised `InvalidRuleConfigException` inside
+  `ResilientRateLimiter`, which counted it as a limiter failure and degraded, so an
+  unauthenticated client could open the breaker for everyone (a global 503 under
+  `failure-behavior=DENY`, no limits under `ALLOW`). The cost is now rejected before the
+  breaker with 429, and every other configuration error or `IllegalArgumentException` from
+  the primary limiter is rethrown without retry, breaker failure or fallback.
+- Such a client or configuration error also no longer counts as a circuit breaker *success*:
+  it reset the consecutive failure count of a closed circuit and could close a half-open one
+  without the backend ever being reached. `ResilientRateLimiter` now reports it as the new
+  `org.fluxgate.core.resilience.IgnoredCallException`, which `DefaultCircuitBreaker` and
+  `NoOpCircuitBreaker` record as neither success nor failure (the half-open trial permit is
+  given back) and rethrow without using the fallback, and which is never retried.
+  `DefaultRetryExecutor` rethrows it (and any other non-retryable failure) at once, also on
+  the last attempt, instead of logging it as an exhausted retry chain at ERROR.
+- `/actuator/health` and the readiness group aggregated a degraded FluxGate to `UP`: Boot's
+  default status order does not list `DEGRADED`, so its aggregator dropped the status even
+  though it was mapped to 503. FluxGate now contributes a default order containing it.
+- A `@RateLimit` rejection thrown outside an MVC handler method reached Spring MVC as an
+  unhandled `RateLimitExceededException` and became HTTP 500; it is 429 or 503 now.
+- `fluxgate.limiter.failures` tagged the raw endpoint against a budget of its own, ignored
+  `fluxgate.metrics.include-endpoint` and was denied by the endpoint `MeterFilter` once the
+  request meters had spent the budget, so failures vanished under high traffic. It now uses
+  the recorder's normalised (`{id}`), bounded endpoint tag and is exempt from the filter.
+- Concurrent first requests to new endpoints could each pass the endpoint tag budget check
+  before any of them was recorded, registering more than `fluxgate.metrics.max-endpoint-tags`
+  values; admitting a new value is now atomic.
+- `TrustedProxies` and `ClientIpExtractor` parse IP literals themselves. A hostname made of
+  hex digits and dots (`cafe1.de`) passed the old character check and was resolved through
+  DNS from a forwarding header, and shorthand such as `1.2.3` was expanded to `1.2.0.3`; only
+  strict dotted quads and IPv6 (full, compressed, embedded IPv4 as the last two groups only -
+  `1.2.3.4::` is rejected - optional zone id) are accepted, and nothing is ever resolved.
+- The wait semaphore was a plain `Semaphore` bean, so an application injecting a
+  `Semaphore` by type received FluxGate's or failed with an ambiguous injection; it is a
+  `FluxgateWaitPermits` bean now.
+- `fluxgate.mongo.ddl-auto=validate` accepted a unique `(ruleSetId, id)` index that is
+  `sparse`, partial or uses a collation other than `simple`, none of which keeps every rule
+  unique; such an index is now named in the startup failure.
+- The MongoDB rule converter omitted a band's `zoneId` only when it was the literal `"UTC"`, so
+  bands built in Java with the default `ZoneOffset.UTC` were stored as `zoneId: "Z"`. Any UTC
+  spelling (`Z`, `UTC`, `Etc/UTC`, `+00:00`) is now omitted and reads back as `ZoneOffset.UTC`;
+  documents that already store `"Z"` still load.
+- A rejecting Redis `SLIDING_WINDOW` band handed out a `Retry-After` that was too short: it
+  waited only until its oldest counted sub-bucket left the window, or, when every count sat in
+  the current sub-bucket, until the next sub-bucket started, so a burst was rejected again on
+  every retry for almost a whole window (and could lose the longest-wait comparison to a
+  `TOKEN_BUCKET` band of the same rule). The script now walks the counted sub-buckets oldest
+  to newest and waits for the first one whose departure lets the request fit.
+- The Redis `SLIDING_WINDOW` reset time (`X-RateLimit-Reset`, `reset_time_millis`) is rounded
+  **up** to the millisecond; a sub-bucket that is not a whole number of milliseconds made it
+  up to 1 ms earlier than the moment a rejected request may retry.
+- `token_bucket_refund.lua` validates every band before it refunds any. An invalid band after
+  a valid one (an unknown algorithm code, too few sliding sub-buckets) used to leave the bands
+  before it refunded when the script failed, because Redis does not roll a script back.
+- A metrics recorder that threw failed the request after its tokens had been charged:
+  `Bucket4jRateLimiter` and `RedisRateLimiter` let the exception escape `tryConsume`, and
+  `ResilientRateLimiter` then treated the charged call as a limiter failure and charged the
+  in-memory fallback as well (or applied `failure-behavior`). Both limiters now catch a
+  recorder's exception (not an `Error`), log it at WARN at most once a minute (DEBUG otherwise) and
+  return the decision. `CompositeMetricsRecorder` logs a failing delegate the same way instead
+  of an ERROR line per request and still calls the others. The starters' request duration
+  timer (filter and aspect) and the `fluxgate.limiter.failures` recorder are isolated likewise:
+  a failure there no longer fails a request that was already decided, or replaces the result of
+  a `@RateLimit` method from the aspect's `finally` block.
+- The throttled WARN about an undecodable request path (`RequestPathResolver`) was never
+  logged: its last-warning timestamp started at `Long.MIN_VALUE`, so `now - last` overflowed
+  to a negative value and the once-a-minute check never passed. Such requests were still rate
+  limited, but only DEBUG recorded them. The first one now warns, and repeats within a minute
+  stay at DEBUG.
+
 ### Security
 
 - Fail-closed defaults (`failure-behavior=DENY`, `missing-rule-behavior=DENY`,
@@ -820,6 +1229,13 @@ keys change shape, so every quota resets once.
 - The credential exposure, missing authorization and open-proxy findings
   (PART 3 C-1, C-2, C-5, H-1, H-2, H-7, H-8) are in the FluxGate Studio and demo
   repositories, not in this one, and are tracked there.
+- Rule change messages are replay protected (schema version 2: nonce, channel binding,
+  60s window), a Redis password never appears in a URI parse error or a notifier log line,
+  and a forwarded header with a forged or non-IP hop falls back to the remote address
+  instead of choosing the `PER_IP` bucket.
+- Key values and Redis key segments are escaped injectively, so two different identities
+  can no longer share a bucket or an allow/deny entry (Breaking items 30 and 31).
+- The starter's samples no longer trust client-supplied identity or IP headers.
 
 ### Deprecated
 
@@ -828,8 +1244,8 @@ keys change shape, so every quota resets once.
 - `fluxgate.resilience.circuit-breaker.fallback` — inert. Express fail-open or
   fail-closed by which `CircuitBreaker` method you call and which fallback you
   pass.
-- `@RateLimit(maxConcurrentWaits = …)` — ignored; the wait semaphore is
-  aspect-wide. Use `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits`.
+- `@RateLimit(maxConcurrentWaits = …)` — ignored; the wait permits are the
+  shared `FluxgateWaitPermits` bean. Use `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits`.
 - `FluxgateConstants.Metrics.REQUESTS_TOTAL` — use `Metrics.REQUESTS` with the
   `result` tag.
 - `org.fluxgate.redis.script.LuaScripts` and `LuaScriptLoader` (marked
@@ -839,7 +1255,15 @@ keys change shape, so every quota resets once.
   `RateLimitRuleSetProvider`.
 - `org.fluxgate.redis.connection.RedisConnectionException` — use
   `org.fluxgate.core.exception.RedisConnectionException`, which it now extends.
-- The pre-`TrustedProxies` `ClientIpExtractor` overloads.
+- The pre-`TrustedProxies` `ClientIpExtractor` overloads (`extract(request)` and
+  `extract(request, header, trustHeader)`); use the four-argument overload taking
+  `TrustedProxies`.
+- `MongoRateLimitRuleRepository#findById(String)`, `existsById(String)` and
+  `deleteById(String)` — use the `(ruleSetId, id)` overloads.
+- The 6-argument `RuleChangeMessage(Integer, String, boolean, long, String, String)`
+  constructor — use the 7-argument one taking the nonce the signature was computed over, or
+  `signed(secret, channel)`. It throws `IllegalArgumentException` for a signature with
+  version 2 or later, because the nonce it generates could never match that signature.
 
 ### Removed
 
@@ -859,8 +1283,9 @@ keys change shape, so every quota resets once.
 1. **Expect one quota reset.** Bucket keys and the bucket hash layout both
    change, so on first start every caller gets a full bucket. Roll out during a
    low-traffic window if a burst matters to you. Old keys are never read and age
-   out on their own TTL; `redis-cli --scan --pattern 'fluxgate:*'` followed by
-   `UNLINK` cleans them up early if you want the memory back.
+   out on their own TTL. To reclaim the memory sooner, use the dry-run-first
+   cleanup in [migration guide §1](docs/en/operations/migration-0.4.md#1-every-quota-resets-once);
+   a bare `fluxgate:*` sweep would also delete 0.4 buckets and the Redis rule store.
 2. **Re-check `include-patterns`.** If you never set it, FluxGate used to match
    `/*` — a single path segment — and now matches everything. Set the property
    explicitly if you want the narrow surface back.
@@ -878,19 +1303,40 @@ keys change shape, so every quota resets once.
    With `fluxgate.redis.enabled=true` (or `fluxgate.ratelimit.mode=IN_MEMORY`)
    and a `RateLimitRuleSetProvider`, the starter registers
    `EngineBackedRateLimitHandler` for you. Your own bean still wins.
-7. **Review fail-closed behaviour.** `failure-behavior=DENY` and
-   `missing-rule-behavior=DENY` answer 429 when Redis is unreachable or a rule
-   set is missing. If you would rather degrade than reject, either set `ALLOW` or
-   — better — set `fluxgate.ratelimit.fallback.mode=IN_MEMORY` so limits keep
-   applying per instance during an outage.
-8. **Map `DEGRADED` to a non-200 status** if you probe health from a load
-   balancer: `management.endpoint.health.status.http-mapping.DEGRADED=503`.
+7. **Review fail-closed behaviour and treat 503 as "rate limiting unavailable".**
+   With `failure-behavior=DENY` and `missing-rule-behavior=DENY` the filter and the aspect
+   answer 503, not 429, when Redis is unreachable or no rule set exists: update client retry
+   rules (a client that retries on 429 must now retry on 503) and alerts. If you would rather
+   degrade than reject, either set `ALLOW` or — better — set
+   `fluxgate.ratelimit.fallback.mode=IN_MEMORY` so limits keep applying per instance during an
+   outage.
+8. **`DEGRADED` health now answers HTTP 503 by default**
+   (`fluxgate.actuator.health.degraded-http-status`, `0` disables), and it now reaches the
+   aggregated `/actuator/health` and the readiness group through a default
+   `management.endpoint.health.status.order`, so those probes answer 503 too while FluxGate is
+   degraded. Remove a hand-written `http-mapping.DEGRADED` entry only if you want the default;
+   yours wins, and so does a `status.order` of your own (add `degraded` to it).
 9. **Switch integration test commands.** `./mvnw test` no longer runs the
    integration tests; use `./mvnw verify` (or `-DskipITs` to skip them).
 10. **Recompile against the exception changes.** `InvalidRuleConfigException`
     from rule building, `RedisConnectionException` from the core package, no
     `null` from the circuit breaker, and `throws IOException` gone from
     `RedisRateLimiterConfig`.
+11. **Create the MongoDB unique index before the first start** if you use
+    `fluxgate.mongo.ddl-auto=validate` (the default):
+    `db.rate_limit_rules.createIndex({ruleSetId: 1, id: 1}, {unique: true, name: "ruleSetId_1_id_1_unique"})`.
+    Or start once with `ddl-auto=create`. Duplicate `(ruleSetId, id)` pairs must be removed first.
+12. **Roll out Pub/Sub reload data plane first.** Upgrade subscribers before publishers (rule
+    change messages are schema version 2), then set the same secret on both sides. Set
+    `fluxgate.reload.pubsub.max-message-age=5m` if you need the old replay window.
+13. **Check your configuration still starts.** Unknown `zone-id`, duplicate YAML rule ids, a
+    zero window and non-positive timeouts, TTLs, intervals or sizes now fail startup.
+14. **Decide where caller identity comes from.** `fluxgate.ratelimit.identity.source` now
+    defaults to `PRINCIPAL`, so `X-User-Id` / `X-API-Key` are ignored and `PER_USER` /
+    `PER_API_KEY` rules fall back per `missing-key-behavior` (per-IP by default) unless a
+    Spring Security principal is present. If a trusted gateway authenticates callers and sets
+    these headers, set `identity.source=HEADERS` or `PRINCIPAL_THEN_HEADERS`. See Breaking
+    item 25.
 
 See [docs/en/operations/migration-0.4.md](docs/en/operations/migration-0.4.md)
 for the full upgrade walkthrough

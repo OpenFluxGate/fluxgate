@@ -33,7 +33,9 @@ public class MyApplication {
 
 `@EnableFluxgateAspect` imports `FluxgateAopAutoConfiguration`, which registers the
 `RateLimitAspect` bean. The aspect intercepts all methods annotated with `@RateLimit` and
-applies the configured rule before the method body executes.
+applies the configured rule before the method body executes. In a servlet application the
+`FluxgateAopExceptionHandlerAutoConfiguration` auto-configuration also registers
+`RateLimitExceededExceptionHandler`, which answers a thrown rejection with 429 or 503.
 
 You can combine `@EnableFluxgateFilter` and `@EnableFluxgateAspect` on the same class if
 you want both a blanket HTTP filter and per-method overrides.
@@ -120,8 +122,9 @@ See [Non-web usage](#non-web-usage).
 
 ### `maxConcurrentWaits` (int, default `100`) — deprecated
 
-**Ignored since 0.4.0.** The wait semaphore was moved to an aspect-wide scope because a
-per-invocation semaphore limited nothing at all. Configure
+**Ignored since 0.4.0.** A per-invocation semaphore limited nothing at all, so the wait permits
+are now one application-wide `FluxgateWaitPermits` bean shared by the HTTP filter and the aspect.
+Configure
 `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits` instead.
 
 ---
@@ -213,8 +216,10 @@ public Data getData() { ... }
 ```java
 // advice — renders the rejection in the application's own format
 import org.fluxgate.spring.aop.RateLimitExceededException;
+import org.fluxgate.spring.aop.RateLimitExceededExceptionHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -222,6 +227,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.util.Map;
 
 @RestControllerAdvice
+@Order(RateLimitExceededExceptionHandler.ORDER - 1) // before the starter's default advice
 public class RateLimitExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(RateLimitExceptionHandler.class);
@@ -242,6 +248,12 @@ public class RateLimitExceptionHandler {
     }
 }
 ```
+
+In a servlet application the starter already answers the exception with its own advice,
+`RateLimitExceededExceptionHandler`, ordered at `RateLimitExceededExceptionHandler.ORDER`
+(`Ordered.HIGHEST_PRECEDENCE + 1000`) so that a catch-all `@ExceptionHandler(Exception.class)`
+cannot turn rejections into 500. Your own advice must be ordered before it, as above; an
+unordered one never sees the exception.
 
 `RateLimitExceededException` exposes:
 - `getRetryAfterMillis()` — milliseconds to wait before the next request is likely to

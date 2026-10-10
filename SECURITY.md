@@ -30,7 +30,7 @@ Spring Boot auto-configuration ships hardened defaults, so a version upgrade alo
 
 | Property | Default | Why |
 |----------|---------|-----|
-| `fluxgate.ratelimit.failure-behavior` | `DENY` | A limiter failure (Redis down, script error) answers HTTP 429 instead of letting the request through unlimited |
+| `fluxgate.ratelimit.failure-behavior` | `DENY` | A limiter failure (Redis down, script error) answers HTTP 503 instead of letting the request through unlimited |
 | `fluxgate.ratelimit.missing-rule-behavior` | `DENY` | A request whose rule set cannot be found is rejected rather than unlimited |
 | `fluxgate.ratelimit.missing-key-behavior` | `FALLBACK_TO_IP` | A missing identity limits by IP. Set `REJECT` when an anonymous caller must not inherit the authenticated tier's quota |
 | `fluxgate.ratelimit.trust-client-ip-header` | `false` | Forwarded client IP headers are ignored, so a client cannot choose its own rate limit bucket |
@@ -116,10 +116,14 @@ Registering **two** filters is often the right answer: a pre-auth `PER_IP` filte
 Resolved key values are namespaced and normalised before they become part of a bucket key:
 
 - Each value carries a scope prefix: `ip:`, `user:`, `key:`, `custom:`, or the constant `global`. A `userId` that happens to look like `10.0.0.5` can no longer share a bucket with a real client IP.
-- Characters outside `[A-Za-z0-9._:@-]` are replaced by `_`, so a value cannot inject **storage metacharacters** or break out of the cluster hash tag: `{` and `}` cannot escape the `{...}` tag, and `*`, `?`, `[` cannot smuggle a glob into a `SCAN` pattern.
+- The value after the prefix is encoded **injectively**, so a value cannot inject **storage metacharacters** or break out of the cluster hash tag (`{` and `}` cannot escape the `{...}` tag, and `*`, `?`, `[` cannot smuggle a glob into a `SCAN` pattern), and two identities can never share a bucket because sanitising made them look alike:
+  - a value of at most 256 characters from `[A-Za-z0-9._:@-]` that does not start with `h:` is kept unchanged;
+  - any other value of at most 237 characters becomes `h:` + the value with every disallowed character replaced by `_` + `:` + the first 16 hex digits (a 64-bit truncated digest) of its SHA-256, so `a+1` becomes `h:a_1:<16 hex>` and no longer collides with `a_1`;
+  - a longer value becomes `h:<64 hex>`, the full SHA-256, which bounds key length and Redis memory per caller.
+- The scope prefix stays outside the encoding: `user:h:a_1:<16 hex>`, `user:h:<64 hex>`. The 256-character limit applies to the value; the prefix comes on top.
+- Sanitising is **not idempotent** (no injective encoding can be): a value starting with `h:` is encoded again, so sanitise a raw value exactly once. `LimitScopeKeyResolver` sanitises the value and builds the key with `RateLimitKey.ofSanitized`; a custom `KeyResolver` should use `RateLimitKey.of(prefix, rawValue)` for the same shape, while `RateLimitKey.of(full)` sanitises the whole string, prefix included. Either way a custom resolver cannot bypass sanitisation.
+- `allowed-keys` / `denied-keys` entries are normalised the same way; an entry already in encoded form (`user:h:...`, copied from a log) is kept as is. Only the built-in prefixes (`ip:`, `user:`, `key:`, `custom:`) are recognised, so an entry with a custom prefix (`tenant:`) whose value gets rewritten must be written in encoded form (`tenant:h:a_1:<16 hex>`).
 - `:` is deliberately **allowed**, because a composite `CUSTOM` key uses it as a separator (`ip:10.0.0.1:user:u-1`). The consequence is that you should keep `:` out of your own **rule ids** and **rule set ids** — those are identifiers you choose, and keeping them colon-free keeps a bucket key unambiguously parseable.
-- A value longer than 256 characters is replaced by the SHA-256 hex digest of the value, which bounds key length and Redis memory per caller.
-- Sanitisation is applied both in `LimitScopeKeyResolver` and in the `RateLimitKey` constructor, so a custom `KeyResolver` gets the same protection.
 - Key values never reach the logs in clear text: they are masked to the first four characters plus `***`, and only at DEBUG.
 
 When you build a composite `CUSTOM` key yourself, prefix each component (`"ip:" + ip + ":user:" + userId`) so the components stay unambiguous after sanitisation.

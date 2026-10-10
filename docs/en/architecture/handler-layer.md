@@ -53,10 +53,14 @@ needs no user code.
 **Responsibilities:**
 - Call `RateLimitEngine.check(ruleSetId, context, permits)`
 - Convert the result with `RateLimitResponse.from(result)` (nanos → millis, rounding up)
-- Turn configuration errors into rejections rather than propagating them:
-  `MissingRateLimitKeyException` (from `missing-key-behavior=REJECT`) and
-  `InvalidRuleConfigException` both produce a rejected response with no wait time, logged at WARN
-  once per rule set id and at DEBUG afterwards
+- Map errors to whoever owns them, logged at WARN once per rule set id and at DEBUG afterwards:
+  - `MissingRateLimitKeyException` (from `missing-key-behavior=REJECT`): a rejected response with no
+    wait time (HTTP 429)
+  - a request cost that no band can hold: `PermitsExceedCapacityException`, a client error (HTTP
+    429, logged at DEBUG only)
+  - any other `InvalidRuleConfigException`, or a missing rule set under `missing-rule-behavior=DENY`:
+    `RateLimiterUnavailableException`, a configuration problem rather than an exceeded limit (HTTP
+    503, also under `failure-behavior=ALLOW`)
 
 It does **not** record metrics. Metrics belong to `RateLimitRuleSet.getMetricsRecorder()` in the core
 and to `MicrometerMetricsRecorder` in the starter.
@@ -109,7 +113,7 @@ The value object a handler returns.
 | `retryAfterMillis` | delay before retrying | unknown |
 | `onLimitExceedPolicy` | `REJECT_REQUEST` or `WAIT_FOR_REFILL` | — |
 | `limit` | capacity of the band that decided | unknown → header omitted |
-| `resetTimeMillis` | epoch millis when the bucket is full again | unknown → header omitted |
+| `resetTimeMillis` | epoch millis when the deciding band resets: TOKEN_BUCKET when it is full again, SLIDING_WINDOW when every request counted now has left the window, FIXED_WINDOW the window end (the in-memory limiter estimates time until full for every algorithm) | unknown → header omitted |
 | `windowSeconds` | window behind `limit`, for `RateLimit-Policy` | unknown → header omitted |
 | `bandLabel` | key label of the band that decided | — |
 

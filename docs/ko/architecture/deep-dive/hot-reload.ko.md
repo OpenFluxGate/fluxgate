@@ -11,7 +11,7 @@
 
 ## 목차
 
-1. [RuleReloadStrategy 인터페이스](#1-ruleReloadstrategy-인터페이스)
+1. [RuleReloadStrategy 인터페이스](#1-rulereloadstrategy-인터페이스)
 2. [RuleReloadEvent와 ReloadSource](#2-rulereloadevent와-reloadsource)
 3. [PollingReloadStrategy](#3-pollingreloadstrategy)
 4. [RedisPubSubReloadStrategy](#4-redispubsubreloadstrategy)
@@ -385,12 +385,16 @@ Redis Pub/Sub을 통해 실시간으로 규칙 변경을 전파합니다.
 /**
  * Redis Pub/Sub based reload strategy for real-time rule change notifications.
  *
+ * <p>This strategy subscribes to a Redis channel and listens for rule change messages. When a
+ * message is received, it triggers a reload event to invalidate cached rules.
+ *
  * <p>Message format:
  *
  * <ul>
- *   <li>JSON: <code>{"version":1,"ruleSetId":"xxx","fullReload":false}</code> - {@code version} is
- *       optional and defaults to {@link #MESSAGE_SCHEMA_VERSION}; {@code fullReload} must be set
- *       explicitly to request a full reload
+ *   <li>JSON: <code>{"version":2,"ruleSetId":"xxx","fullReload":false,"nonce":"..."}</code> -
+ *       {@code version} is optional and defaults to {@link #LEGACY_MESSAGE_SCHEMA_VERSION};
+ *       versions 1 and 2 are understood; {@code fullReload} must be set explicitly to request a
+ *       full reload
  *   <li>{@code "*"} - full reload, kept for backward compatibility with plain-text publishers
  *   <li>{@code "ruleSetId"} - reload that one rule set
  * </ul>
@@ -404,26 +408,81 @@ Redis Pub/Sub을 통해 실시간으로 규칙 변경을 전파합니다.
  * does nothing against a deliberate one, because {@code PUBLISH fluxgate:rule-reload '*'} is all a
  * full reset takes. Set {@code fluxgate.reload.pubsub.secret} to the same value as the publisher's
  * {@code fluxgate.control.secret} and this strategy accepts only JSON messages carrying a valid
- * HMAC-SHA256 {@code signature} over {@link HmacSigner#canonicalRuleChange} whose {@code timestamp}
- * lies inside {@code fluxgate.reload.pubsub.max-message-age}. Everything else - an unsigned
- * message, a wrong signature, a stale one, and the plain-text {@code "*"} and {@code "ruleSetId"}
- * forms - is logged at WARN and ignored. Without a secret the previous behaviour is kept unchanged,
- * and a single INFO line at startup says so.
+ * HMAC-SHA256 {@code signature} whose {@code timestamp} lies inside {@code
+ * fluxgate.reload.pubsub.max-message-age} (60s by default) and which it has not seen before.
+ * Version 2 messages are verified over {@link HmacSigner#canonicalRuleChangeV2}, which binds the
+ * channel this strategy subscribes to and a per-message {@code nonce}; the nonce is remembered for
+ * the replay window, so a captured message published again is ignored. Version 1 messages (no
+ * nonce, no channel binding) are still verified over {@link HmacSigner#canonicalRuleChange} and are
+ * deduplicated by their signature, as long as {@link #setAcceptLegacySigned(boolean)} (starter
+ * property {@code fluxgate.reload.pubsub.accept-legacy-signed}, {@code true} by default) allows
+ * them; the first one accepted is reported at WARN, and once every publisher signs version 2 the
+ * property should be set to {@code false}. Everything else - an unsigned message, a wrong
+ * signature, a stale one, a replay, a version 2 message without a nonce, and the plain-text {@code
+ * "*"} and {@code "ruleSetId"} forms - is logged at WARN and ignored. Both sides normalise the
+ * secret with {@link HmacSigner#normalizeSecret(String)}, and a secret shorter than {@value
+ * HmacSigner#MIN_RECOMMENDED_SECRET_BYTES} bytes is reported at WARN. Constructed without a secret,
+ * this class accepts unsigned messages and says so in a single INFO line at startup; the starter
+ * only does that when {@code fluxgate.reload.pubsub.allow-unsigned=true}; otherwise {@code AUTO}
+ * polls instead and an explicit {@code PUBSUB} refuses to start (H-3, since 0.4).
  *
  * <p>Redis Pub/Sub is at-most-once, so a dropped message would leave this instance serving stale
  * rules. The starter therefore composes this strategy with a low-frequency polling backstop; see
  * {@code fluxgate.reload.pubsub.backstop-polling-interval}.
+ *
+ * <p>Configuration example:
+ *
+ * <pre>
+ * fluxgate:
+ *   reload:
+ *     strategy: PUBSUB
+ *     pubsub:
+ *       channel: fluxgate:rule-reload
+ *       retry-on-failure: true
+ *       retry-interval: 5s
+ *       backstop-polling-interval: 60s
+ *       secret: ${FLUXGATE_RELOAD_SECRET}
+ *       max-message-age: 60s
+ * </pre>
  */
 public class RedisPubSubReloadStrategy extends AbstractReloadStrategy {
 
   /** Message indicating a full reload should occur. */
   public static final String FULL_RELOAD_MESSAGE = "*";
 
-  /** Schema version understood by this strategy. Messages with any other version are dropped. */
-  public static final int MESSAGE_SCHEMA_VERSION = 1;
+  /**
+   * Newest schema version understood by this strategy. Messages with a version other than this one
+   * or {@link #LEGACY_MESSAGE_SCHEMA_VERSION} are dropped.
+   */
+  public static final int MESSAGE_SCHEMA_VERSION = 2;
+
+  /** Schema version of a message without nonce or channel binding, and of one without a version. */
+  public static final int LEGACY_MESSAGE_SCHEMA_VERSION = 1;
 
   /** Default replay window for signed messages. */
-  public static final Duration DEFAULT_MAX_MESSAGE_AGE = Duration.ofMinutes(5);
+  public static final Duration DEFAULT_MAX_MESSAGE_AGE = Duration.ofSeconds(60);
+
+  /**
+   * Upper bound of remembered message identities. Only authentic messages are remembered, so
+   * reaching it takes a control plane publishing this many changes inside one replay window; a
+   * message that would exceed it is ignored rather than accepted without replay protection.
+   */
+  static final int MAX_REMEMBERED_MESSAGES = 100_000;
+
+  /**
+   * Messages waiting for the listener thread. A full one drops further messages with a WARN instead
+   * of growing without bound when a publisher floods the channel; the backstop polling (when
+   * enabled) still picks up the changes.
+   */
+  static final int MAX_PENDING_MESSAGES = 10_000;
+
+  private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+  /** Characters of an untrusted payload that reach the log. */
+  private static final int MAX_LOGGED_MESSAGE = 256;
+
+  /** Characters of an untrusted rule set id that reach the log. */
+  private static final int MAX_LOGGED_RULE_SET_ID = 128;
 
   private final String redisUri;
   private final String channel;
@@ -438,6 +497,18 @@ public class RedisPubSubReloadStrategy extends AbstractReloadStrategy {
   /** Replay window applied to a signed message's timestamp. */
   private final Duration maxMessageAge;
 
+  /**
+   * Whether signed version 1 messages (no nonce, no channel binding) are still accepted. Defaults
+   * to true for rolling upgrades from pre-0.4 control planes.
+   */
+  private volatile boolean acceptLegacySigned = true;
+
+  /** Whether accepting a signed version 1 message has already been reported. */
+  private final AtomicBoolean legacySignedWarned = new AtomicBoolean();
+
+  /** Identity (nonce, or signature for version 1) of accepted signed messages -> forget-after. */
+  private final ConcurrentHashMap<String, Long> seenMessages = new ConcurrentHashMap<>();
+
   /** Lettuce client; a {@link RedisClient} or a {@link RedisClusterClient}, created lazily. */
   private final AtomicReference<Object> redisClientRef = new AtomicReference<>();
 
@@ -448,6 +519,13 @@ public class RedisPubSubReloadStrategy extends AbstractReloadStrategy {
       new AtomicReference<>();
   private final AtomicReference<ScheduledExecutorService> retrySchedulerRef =
       new AtomicReference<>();
+
+  /**
+   * Runs the reload listeners off the Lettuce event loop, one message at a time in arrival order. A
+   * slow listener (a full bucket reset scanning a large keyspace) would otherwise block the thread
+   * that reads the subscription and every other command multiplexed on that event loop.
+
+  // ... 생성자, 구독, 메시지 처리
 }
 ```
 
@@ -523,6 +601,12 @@ Optional<RuleReloadEvent> parseMessage(String message) {
 
 ```java
 // RedisPubSubReloadStrategy.java - 실제 코드
+/**
+ * Parses a JSON format message.
+ *
+ * @param message the JSON message
+ * @return the parsed reload event, or empty when the message must be ignored
+ */
 private Optional<RuleReloadEvent> parseJsonMessage(String message) {
   JsonNode root;
   try {
@@ -544,8 +628,8 @@ private Optional<RuleReloadEvent> parseJsonMessage(String message) {
     return Optional.empty();
   }
 
-  int version = root.path("version").asInt(MESSAGE_SCHEMA_VERSION);
-  if (version != MESSAGE_SCHEMA_VERSION) {
+  int version = root.path("version").asInt(LEGACY_MESSAGE_SCHEMA_VERSION);
+  if (version != MESSAGE_SCHEMA_VERSION && version != LEGACY_MESSAGE_SCHEMA_VERSION) {
     log.warn(
         "Ignoring rule reload message with unknown schema version {} on channel {}: {}",
         version,
@@ -565,6 +649,7 @@ private Optional<RuleReloadEvent> parseJsonMessage(String message) {
           fullReload,
           root.path("timestamp").asLong(0L),
           root.path("source").asText(null),
+          root.path("nonce").asText(null),
           root.path("signature").asText(null))) {
     return Optional.empty();
   }
@@ -597,7 +682,7 @@ private RuleReloadEvent fullReloadEvent() {
 | 방어 | 막는 것 |
 |-----|--------|
 | `asBoolean(false)` | `fullReload`를 **명시**해야 전체 리로드. 필드 누락이 전체 리셋이 되지 않습니다 |
-| 스키마 버전 검사 | 다른 버전의 발행자가 보낸 메시지를 임의 해석하지 않습니다 |
+| 스키마 버전 검사 | 버전 1·2 외의 메시지를 임의 해석하지 않습니다. `version`이 없으면 버전 1로 봅니다 |
 | `ruleSetId`도 `fullReload`도 없으면 무시 | null id로 전체 리로드를 암시하는 경로를 없앴습니다 |
 
 `fullReloadEvent()`가 플래그를 **명시적으로 세팅**하는 것도 같은 원칙입니다. "id가 null이면 전체"
@@ -615,12 +700,12 @@ Redis에 닿을 수 있는 누구든 한 줄로 배포 전체의 버킷을 날�
 
 ```java
 // RedisPubSubReloadStrategy.java - 실제 코드
-/**
- * Checks the signature and the replay window of a message.
+ * Checks the signature, the replay window and the replay cache of a message.
  *
  * <p>Only called when a secret is configured. A missing signature, a signature computed with
- * another secret, a tampered field and a timestamp outside the replay window all end here,
- * because from the outside they are the same thing: a message this data plane did not authorise.
+ * another secret or for another channel, a tampered field, a timestamp outside the replay window
+ * and a message already seen all end here, because from the outside they are the same thing: a
+ * message this data plane did not authorise (this time).
  *
  * @return true when the message may be acted on
  */
@@ -631,6 +716,7 @@ private boolean isAuthentic(
     boolean fullReload,
     long timestamp,
     String source,
+    String nonce,
     String signature) {
 
   if (signature == null || signature.trim().isEmpty()) {
@@ -641,8 +727,30 @@ private boolean isAuthentic(
     return false;
   }
 
+  boolean legacy = version == LEGACY_MESSAGE_SCHEMA_VERSION;
+  if (legacy && !acceptLegacySigned) {
+    log.warn(
+        "Ignoring signed version 1 rule reload message on channel {}: "
+            + "fluxgate.reload.pubsub.accept-legacy-signed=false (version 1 binds neither the "
+            + "channel nor a nonce): {}",
+        channel,
+        sanitizeMessage(message));
+    return false;
+  }
+  if (!legacy && (nonce == null || nonce.trim().isEmpty())) {
+    log.warn(
+        "Ignoring version {} rule reload message without a nonce on channel {}: {}",
+        version,
+        channel,
+        sanitizeMessage(message));
+    return false;
+  }
+
   String canonical =
-      HmacSigner.canonicalRuleChange(version, ruleSetId, fullReload, timestamp, source);
+      legacy
+          ? HmacSigner.canonicalRuleChange(version, ruleSetId, fullReload, timestamp, source)
+          : HmacSigner.canonicalRuleChangeV2(
+              version, channel, ruleSetId, fullReload, timestamp, source, nonce);
   if (!HmacSigner.verify(secret, canonical, signature)) {
     log.warn(
         "Ignoring rule reload message with an invalid signature on channel {}: {}",
@@ -662,22 +770,73 @@ private boolean isAuthentic(
     return false;
   }
 
+  // Only an authentic, fresh message reaches the cache, so a forger cannot fill it.
+  String identity =
+      legacy ? "sig:" + signature.trim().toLowerCase(Locale.ROOT) : "nonce:" + nonce;
+  if (!rememberFirstDelivery(identity, timestamp)) {
+    log.warn(
+        "Ignoring replayed rule reload message on channel {} (already processed inside the {} "
+            + "replay window): {}",
+        channel,
+        maxMessageAge,
+        sanitizeMessage(message));
+    return false;
+  }
+
+  if (legacy && legacySignedWarned.compareAndSet(false, true)) {
+    log.warn(
+        "Accepted a signed version 1 rule reload message on channel {}. Version 1 binds neither "
+            + "the channel nor a nonce; upgrade the publisher (fluxgate-control-support 0.4+ "
+            + "signs version 2) and then set fluxgate.reload.pubsub.accept-legacy-signed=false. "
+            + "Reported once.",
+        channel);
+  }
   return true;
+}
+
+/**
+ * Records a message identity for the rest of the replay window.
+ *
+ * <p>The identity has to be remembered for as long as the timestamp check would still accept the
+ * message, which is until {@code timestamp + maxMessageAge}; the local clock is used as the floor
+ * so a message from a publisher whose clock runs behind is not forgotten early.
+ *
+ * @return true on the first delivery, false for a replay (or when the cache is full)
+ */
+private boolean rememberFirstDelivery(String identity, long timestamp) {
+  long now = System.currentTimeMillis();
+  seenMessages.values().removeIf(forgetAfter -> forgetAfter < now);
+  if (seenMessages.size() >= MAX_REMEMBERED_MESSAGES) {
+    log.warn(
+        "Replay cache is full ({} messages inside the {} window); ignoring the message",
+        MAX_REMEMBERED_MESSAGES,
+        maxMessageAge);
+    return false;
+  }
+  long forgetAfter = Math.max(now, timestamp) + maxMessageAge.toMillis();
+  return seenMessages.putIfAbsent(identity, forgetAfter) == null;
 }
 ```
 
 | 검사 | 막는 것 |
 |-----|--------|
 | 서명 존재 | 서명 없는 메시지 (평문 `*` 포함) |
-| `HmacSigner.verify` | 다른 비밀로 만든 서명, 필드가 조작된 메시지 |
-| `Math.abs(ageMillis) > maxMessageAge` | **재전송(replay)** — 과거에 캡처한 유효 메시지의 재사용 |
+| 버전 1 허용 여부 (`accept-legacy-signed`) | 채널·nonce를 묶지 않는 버전 1 서명 메시지. 기본값 `true`(롤링 업그레이드용), 모든 발행자가 버전 2로 서명하면 `false`로 |
+| 버전 2의 `nonce` 존재 | nonce 없는 버전 2 메시지 |
+| `HmacSigner.verify` | 다른 비밀로 만든 서명, 필드가 조작된 메시지, (버전 2) **다른 채널용으로 서명된** 메시지 |
+| `Math.abs(ageMillis) > maxMessageAge` | 재전송 창(기본 60초) 밖의 메시지 — 과거에 캡처한 유효 메시지의 재사용 |
+| `rememberFirstDelivery` | 창 **안에서의** 재전송. 버전 2는 nonce, 버전 1은 서명을 식별자로 창이 끝날 때까지 기억합니다 |
 
 `Math.abs`인 것에 주의하세요. 미래 타임스탬프도 거부합니다. 시계가 앞선 발행자의 메시지가
-무기한 유효하게 남는 것을 막습니다.
+무기한 유효하게 남는 것을 막습니다. 재전송 캐시에는 서명과 시간 검사를 통과한 메시지만 들어가므로
+위조자가 캐시를 채울 수 없고, 상한(`MAX_REMEMBERED_MESSAGES`)에 닿으면 재전송 보호 없이 받아들이는
+대신 메시지를 버립니다.
 
-서명이 전체 페이로드가 아니라 **정규 문자열**(`HmacSigner.canonicalRuleChange(version, ruleSetId,
-fullReload, timestamp, source)`)에 대해 계산되는 것도 의도입니다. JSON 직렬화 방식(키 순서, 공백)이
-달라도 같은 의미의 메시지는 같은 서명을 갖습니다.
+서명이 전체 페이로드가 아니라 **정규 문자열**에 대해 계산되는 것도 의도입니다. 버전 2는
+`HmacSigner.canonicalRuleChangeV2(version, channel, ruleSetId, fullReload, timestamp, source, nonce)`,
+버전 1은 `HmacSigner.canonicalRuleChange(version, ruleSetId, fullReload, timestamp, source)`입니다.
+JSON 직렬화 방식(키 순서, 공백)이 달라도 같은 의미의 메시지는 같은 서명을 갖고, 버전 2는 구독 채널을
+서명에 묶으므로 한 채널용 메시지를 다른 채널에 재발행해도 통하지 않습니다.
 
 ### 4.4 비밀이 설정되지 않았을 때
 
@@ -685,7 +844,8 @@ fullReload, timestamp, source)`)에 대해 계산되는 것도 의도입니다. 
 // RedisPubSubReloadStrategy.java - 실제 코드
 @Override
 protected void doStart() {
-  ...
+  // ... 메시지 실행기(fluxgate-pubsub-listener)와 재시도 스케줄러 생성
+
   subscribe();
   if (secret != null) {
     log.info(
@@ -693,6 +853,13 @@ protected void doStart() {
             + "replay window {})",
         channel,
         maxMessageAge);
+    if (HmacSigner.isWeakSecret(secret)) {
+      log.warn(
+          "fluxgate.reload.pubsub.secret is shorter than {} bytes. A short HMAC secret can be "
+              + "brute-forced offline from a single captured message; use at least {} random bytes.",
+          HmacSigner.MIN_RECOMMENDED_SECRET_BYTES,
+          HmacSigner.MIN_RECOMMENDED_SECRET_BYTES);
+    }
   } else {
     log.info("Redis Pub/Sub reload strategy started on channel: {}", channel);
     log.info(
@@ -701,11 +868,12 @@ protected void doStart() {
             + "fluxgate.control.secret on the control plane to the same value.",
         channel);
   }
-}
 ```
 
-비밀이 없으면 0.3.x 동작(서명 검증 없음)이 **그대로 유지됩니다.** 업그레이드가 기존 발행자를
-깨뜨리지 않습니다. 대신 부팅 시 INFO 한 줄로 그 사실과 위험, 그리고 해결 방법을 알립니다.
+전략 클래스를 시크릿 없이 직접 생성하면 0.3.x 동작(서명 검증 없음)이 **그대로 유지되며**, 부팅 시 INFO 한
+줄로 그 사실과 위험, 그리고 해결 방법을 알립니다. 스타터의 자동 구성은 다릅니다. 시크릿이 없으면 `AUTO`는
+WARN과 함께 폴링으로 대체하고, 명시적 `PUBSUB`는 기동을 실패시키며, `allow-unsigned=true`만이 서명 없는
+채널을 엽니다.
 
 ### 4.5 연결 관리: 누수와 중복 방지
 
@@ -788,7 +956,8 @@ fluxgate:
       retry-interval: 5s
       backstop-polling-interval: 60s        # Pub/Sub 유실 대비 (0이면 백스톱 없음)
       secret: ${FLUXGATE_RELOAD_SECRET}     # 발행자의 fluxgate.control.secret과 동일하게
-      max-message-age: 5m                   # 서명 메시지의 재전송 허용 창
+      max-message-age: 60s                  # 서명 메시지의 재전송 허용 창 (기본값)
+      accept-legacy-signed: true            # 0.4 이전 발행자의 v1 서명 메시지 수용. 모두 v2로 서명하면 false
       # allow-unsigned: true                # 개발 전용 - secret 없이 기동 (WARN)
 ```
 
@@ -801,13 +970,15 @@ fluxgate:
 
 | 메시지 | `secret` 없음 | `secret` 설정됨 |
 |-------|--------------|----------------|
-| `{"version":1,"ruleSetId":"xxx","fullReload":false,"timestamp":...,"signature":"..."}` | 특정 룰셋 리로드 | 서명·시각이 유효하면 리로드, 아니면 **무시** |
-| `{"version":1,"fullReload":true,...,"signature":"..."}` | 전체 리로드 | 서명·시각이 유효하면 전체 리로드, 아니면 **무시** |
+| `{"version":2,"ruleSetId":"xxx","fullReload":false,"timestamp":...,"nonce":"...","signature":"..."}` | 특정 룰셋 리로드 | 서명(구독 채널·`nonce` 바인딩)·시각이 유효하고 처음 보는 `nonce`면 리로드, 아니면 **무시** |
+| `{"version":2,"fullReload":true,...,"nonce":"...","signature":"..."}` | 전체 리로드 | 같은 조건이면 전체 리로드, 아니면 **무시** |
+| `{"version":2,...}` 인데 `nonce` 없음 | 리로드 (서명·`nonce` 검사 안 함) | **무시** (WARN) |
+| `{"version":1,...,"signature":"..."}` 또는 `version` 생략 (v1 레거시) | 그대로 리로드 | `accept-legacy-signed=true`(기본값)이고 서명·시각이 유효하며 같은 서명을 처음 볼 때만 리로드, 아니면 **무시** |
 | `*` | 전체 리로드 (하위 호환) | **무시** (서명을 담을 수 없는 형태) |
 | `my-rule-set` | 해당 룰셋 리로드 (하위 호환) | **무시** |
 | 빈 문자열 / 공백 | **무시** (WARN) | **무시** (WARN) |
 | 파싱 실패, JSON 배열, 비객체 | **무시** (WARN) | **무시** (WARN) |
-| `{"version":2,...}` | **무시** (WARN) — 스키마 불일치 | **무시** (WARN) |
+| `{"version":3,...}` 등 1·2 이외의 버전 | **무시** (WARN) — 스키마 불일치 | **무시** (WARN) |
 | `{}` (ruleSetId·fullReload 모두 없음) | **무시** (WARN) | **무시** (WARN) |
 
 0.3.x와의 차이를 한 줄로: **빈 메시지와 파싱 실패가 더 이상 전체 리셋이 아닙니다.**
@@ -1252,8 +1423,9 @@ protected void notifyListeners(RuleReloadEvent event) { ... }
 |                   v                                                    |
 |  Redis Pub/Sub으로 변경 이벤트 발행 (서명 포함)                          |
 |    PUBLISH fluxgate:rule-reload                                        |
-|      '{"version":1,"ruleSetId":"my-rule-set","fullReload":false,       |
-|        "timestamp":1703001234567,"signature":"<HMAC-SHA256>"}'         |
+|      '{"version":2,"ruleSetId":"my-rule-set","fullReload":false,       |
+|        "timestamp":1703001234567,"nonce":"<random>",                   |
+|        "signature":"<HMAC-SHA256>"}'                                   |
 |                   |                                                    |
 |                   v                                                    |
 |  +---------------------------------------------------------------+    |

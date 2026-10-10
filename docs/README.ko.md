@@ -25,6 +25,7 @@ FluxGate 문서에 오신 것을 환영합니다.
 
 ### 가이드
 
+- [**YAML 룰 세트 가이드**](ko/guides/yaml-rule-sets.ko.md) - `fluxgate.ratelimit.rule-sets`: 매처, 알고리즘, 달력 쿼터, 접근 제어, 기동 시 검증
 - [**@RateLimit 애노테이션 가이드**](ko/guides/annotation.ko.md) - `@EnableFluxgateAspect`, 모든 애노테이션 속성, 예외 처리, 비웹 사용법, Filter vs. Aspect 결정 테이블
 
 ### 커스터마이징

@@ -4,7 +4,7 @@ This roadmap is derived from the project's current capabilities, known
 limitations, and community priorities. Items are not dated; they reflect
 intent, not commitments.
 
-## Already Shipped
+## Already shipped (0.4)
 
 * Prometheus / Micrometer metrics integration
 * Redis Cluster support (Lua-based multi-slot key hash tags)
@@ -12,60 +12,23 @@ intent, not commitments.
 * Rate limit quota management UI ([FluxGate Studio](https://github.com/OpenFluxGate/fluxgate-studio))
 * Circuit breaker and retry integration (wired through `ResilientRateLimiter`)
 * In-memory limiter and in-memory fallback during a Redis outage
-* Standard IETF `RateLimit-*` response headers (`RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`) and RFC 9457 problem responses (basic support; see Near-Term for configurable enhancements)
+* Standard IETF `RateLimit-*` response headers (`RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`) and RFC 9457 problem responses
 * Multi-module Maven reactor; separate boot2 / boot3 starters
 * CycloneDX SBOM artifact attached to every release
-
-## Near-Term (next minor release)
-
-These items address known correctness gaps and the highest-scored missing
-features from the independent audit.
-
-### Correctness and Observability
-
-* **Enhancements to the existing `RateLimit-*` headers**: add `RateLimit-Policy`
-  (`100;w=60` form); make the standard set (`RateLimit-*`) and the legacy set
-  (`X-RateLimit-*`) independently configurable via `response.include-standard-headers`
-  and `response.include-legacy-headers`.
-* **Enhancements to RFC 9457 problem responses**: ensure `Content-Type:
-  application/problem+json` is always set, add `retryAfterMillis` to the body,
-  and support a custom `response.body-template` override. (Basic 429 JSON responses
-  shipped in 0.3.x; this work makes them fully spec-compliant and configurable.)
-* **`RateLimitResult` carries `limit` and `resetTimeMillis`**: the bucket capacity
-  and next-full epoch are propagated all the way from the Lua response to HTTP
-  response headers.
-* **Trusted-proxy validation for `X-Forwarded-For`**: `trusted-proxies` CIDR list;
-  `trust-client-ip-header` only honoured when the request comes from a listed proxy.
-* **Scoped key prefixes** (`ip:`, `user:`, `key:`, `custom:`, `global`): avoids
-  namespace collisions when multiple rule sets share a Redis keyspace.
-* **`missing-key-behavior: REJECT`**: rejects rather than falling back to IP when the
-  configured identity field is absent.
-
-### API
-
-* **`tryConsume(context, ruleSetId, permits)`**: weighted permit consumption for
-  cost-based rate limiting.
-* **`RateLimitRule` / `RateLimitBand` value equality**: `equals`/`hashCode` so rule
-  objects can be used in sets and as map keys reliably.
+* Scoped key prefixes (`ip:`, `user:`, `key:`, `custom:`, `global`)
+* `missing-key-behavior: REJECT`
+* `RateLimit-Policy` header, independently switchable standard / legacy header sets, and a custom `response.body-template`
+* Trusted-proxy validation (`trusted-proxies` CIDR list) for `X-Forwarded-For`
+* `tryConsume(context, ruleSetId, permits)` weighted consumption
+* Sliding window and fixed window algorithms
+* Calendar quotas (daily, weekly, monthly)
+* Path, method and header matching on rules
+* `RateLimitRule` / `RateLimitBand` value equality
+* Cross-rule consumption: a single Lua call on standalone Redis or within one slot, compensated (refund not atomic) across slots on Redis Cluster
 
 ## Medium-Term
 
 These items require more design work or depend on community demand.
-
-### Algorithms
-
-* **Sliding window** (Redis Sorted Set or approximate sliding window): current
-  token-bucket semantics cause burst allowances at window edges; a sliding window
-  eliminates this.
-* **Fixed window**: simpler and cheaper than token bucket for calendar-aligned quotas.
-* **Calendar quotas** (daily, weekly, monthly): use-case driven by API monetisation
-  and quota management.
-
-### Rule Matching
-
-* **Path and method matching on rules**: annotate a rule with `include-patterns` and
-  `methods` so one filter deployment can enforce different limits per endpoint without
-  registering multiple filter beans.
 
 ### Reactive Support
 
@@ -94,9 +57,11 @@ The following limitations are real and acknowledged. They are not on the active
 roadmap because they require significant redesign and no contributor has
 committed to them yet:
 
-* Cross-rule atomicity: multiple rules in one rule set are not evaluated in a
-  single atomic operation. Earlier rules consume tokens before a later rule rejects.
-  Use one rule with multiple bands when strict atomicity matters.
+* Strict cross-rule atomicity on Redis Cluster: when the keys of the matching rules
+  hash to different slots, rules are charged one by one and refunded if a later
+  rule rejects. The refund is not atomic with the charge. On a standalone Redis
+  or within one slot all rules are evaluated in a single Lua call. Use one rule
+  with multiple bands when strict atomicity matters on a cluster.
 * Servlet-only: the servlet filter blocks a thread during `WAIT_FOR_REFILL`. There
   is no WebFlux filter today.
 

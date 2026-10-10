@@ -129,20 +129,46 @@ The Redis-backed implementation of the `RateLimiter` interface.
  * <ul>
  *   <li>Token buckets live in Redis hashes, one per (rule set, rule, key, band)
  *   <li>The Lua script uses Redis TIME, so all nodes share one clock
- *   <li>Buckets expire through Redis TTL, derived from the band's window and capped by {@code
- *       fluxgate.redis.max-bucket-ttl}
+ *   <li>Buckets expire through Redis TTL, derived from the band's window. TOKEN_BUCKET and
+ *       SLIDING_WINDOW TTLs are capped by {@code fluxgate.redis.max-bucket-ttl}; a FIXED_WINDOW
+ *       counter is exempt and expires exactly at the end of its window
  *   <li>Supports multi-band rules (e.g. 10/sec AND 100/min AND 1000/hour)
  * </ul>
  *
  * <p><strong>Atomicity, honestly.</strong> Every band of <em>one</em> rule is evaluated in a single
  * Lua call, so within a rule the decision is atomic and all-or-nothing: a request rejected by the
- * per-minute band does not drain the per-second band. Across <em>rules</em> there is no atomicity -
- * each rule is a separate round trip, because different rules resolve different keys, which in a
- * cluster live in different hash slots. Evaluation stops at the first rejecting rule, but a rule
- * that already allowed the request keeps the tokens it charged. With N rules the worst case is
- * therefore that a rejected request has consumed a permit from the N-1 rules before it. Order your
- * rules from most to least likely to reject if that matters to you, or use a single rule with
- * several bands.
+ * per-minute band does not drain the per-second band. Across <em>rules</em> a rejected request
+ * costs nothing either, by one of two strategies:
+ *
+ * <ol>
+ *   <li><strong>One call.</strong> When every key of every matching rule may go into one script
+ *       call - always on a standalone Redis, and in a cluster when all keys hash to one slot - all
+ *       rules are evaluated together, all-or-nothing, exactly like the bands of one rule.
+ *   <li><strong>Compensation.</strong> Otherwise (a cluster, with rules whose hash tags land in
+ *       different slots) the rules are charged one by one; when one rejects, or Redis fails, the
+ *       rules already charged are refunded by {@link RedisTokenBucketStore#refund}.
+ * </ol>
+ *
+ * <p>Compensation is not atomic, and does not pretend to be. Between a rule's charge and its refund
+ * - one round trip per rule - concurrent requests see that rule a permit lower and may be rejected
+ * by it; that errs on the strict side and heals itself with the refund. If the refund itself cannot
+ * run (the process dies, or Redis fails between charge and refund) the permit stays spent, which is
+ * the pre-0.4 behaviour. A refund also only returns what is still there: a fixed window that rolled
+ * over, or a sliding sub-bucket that left the window, between charge and refund has nothing left to
+ * give back.
+ *
+ * <p><strong>Cost of a compensated rejection.</strong> When rule {@code k} of {@code n} rejects,
+ * the request costs {@code k} consume calls, {@code k - 1} refund calls and up to 8 check-only
+ * calls: the rules after the rejecting one are not charged, but are checked so that the reported
+ * Retry-After is the longest wait of all rules, not the first one found. Each call is one round
+ * trip, possibly to another cluster node. The checks are capped so that a rule set with many
+ * cross-slot rules cannot turn one rejected request into an unbounded number of round trips; rules
+ * beyond the cap are not consulted, and their wait - if longer - is only discovered when the client
+ * retries.
+ *
+ * <p>Thread-safe and suitable for distributed environments with multiple API gateway nodes.
+ *
+ * @see RedisTokenBucketStore
  */
 public class RedisRateLimiter implements RateLimiter, AutoCloseable {
 
@@ -154,39 +180,47 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
   /** Rule ids already warned about a window that the bucket TTL cap shortens. */
   private final Set<String> ttlClampWarnedRules = ConcurrentHashMap.newKeySet();
 
+  /**
+   * Path pattern matcher used to filter applicable rules via {@link
+   * RateLimitRuleSet#getMatchingRules}.
+   */
+  private final PathPatternMatcher pathMatcher;
+
   @Override
   public RateLimitResult tryConsume(
       RequestContext context, RateLimitRuleSet ruleSet, long permits) {
+    return tryConsume(context, ruleSet, permits, pathMatcher);
+  }
+
+  @Override
+  public RateLimitResult tryConsume(
+      RequestContext context, RateLimitRuleSet ruleSet, long permits, PathPatternMatcher matcher) {
 
     Objects.requireNonNull(context, "context must not be null");
     Objects.requireNonNull(ruleSet, "ruleSet must not be null");
+    Objects.requireNonNull(matcher, "matcher must not be null");
 
     if (permits <= 0) {
       throw new IllegalArgumentException("permits must be > 0");
     }
 
-    List<RateLimitRule> rules = ruleSet.getRules();
-    if (rules == null || rules.isEmpty()) {
-      log.debug("No rules in ruleSet {}, nothing to enforce", ruleSet.getId());
+    List<RateLimitRule> rules = ruleSet.getMatchingRules(context, matcher);
+    if (rules.isEmpty()) {
+      log.debug("No matching rules in ruleSet {}, nothing to enforce", ruleSet.getId());
       return record(context, ruleSet, RateLimitResult.allowedWithoutRule());
     }
 
     // ========================================================================
-    // Multi-Rule Rate Limiting with Per-Rule Key Resolution (Fail-Fast)
+    // Multi-Rule Rate Limiting with Per-Rule Key Resolution
     // ========================================================================
-    // Each rule can have a different LimitScope (PER_IP, PER_USER, PER_API_KEY, ...),
-    // so the KeyResolver is asked once per rule. All bands of one rule then go into a
-    // single Lua call, which is atomic for that rule. Evaluation stops at the first
-    // rejecting rule; see the class Javadoc for what that does and does not guarantee.
+    // Each rule can have a different LimitScope (PER_IP, PER_USER, PER_API_KEY, ...), so the
+    // KeyResolver is asked once per rule - for every rule before anything is charged, so a key
+    // that cannot be resolved rejects the request without having drained an earlier rule.
     // ========================================================================
 
-    Binding binding = null;
-
+    List<RuleCall> calls = new ArrayList<>(rules.size());
     for (RateLimitRule rule : rules) {
-      if (!rule.isEnabled()) {
-        continue;
-      }
-
+      // rules from getMatchingRules are already enabled and match the request path/method
       List<RateLimitBand> bands = rule.getBands();
       if (bands == null || bands.isEmpty()) {
         continue;
@@ -207,31 +241,124 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
       for (RateLimitBand band : bands) {
         bucketKeys.add(buildBucketKey(ruleSet.getId(), rule.getId(), logicalKey, band));
       }
-
-      BucketState state = tokenBucketStore.tryConsume(bucketKeys, bands, permits);
-      RateLimitBand bindingBand = bandAt(bands, state.bandIndex());
-
-      if (!state.consumed()) {
-        // Fail fast: no further rule is charged.
-        ...
-        return record(context, ruleSet, rejectedResult(logicalKey, rule, bindingBand, state));
-      }
-
-      if (binding == null || state.remainingTokens() < binding.state.remainingTokens()) {
-        binding = new Binding(logicalKey, rule, bindingBand, state);
-      }
+      calls.add(new RuleCall(rule, logicalKey, bands, bucketKeys));
     }
 
-    if (binding == null) {
-      // Every rule is disabled or has no bands: nothing to enforce, and no quota to advertise.
-      log.debug("No enabled rule with bands in ruleSet {}, nothing to enforce", ruleSet.getId());
+    if (calls.isEmpty()) {
+      // All matching rules have empty band lists: nothing to enforce.
+      log.debug("No rule with bands in ruleSet {}, nothing to enforce", ruleSet.getId());
       return record(context, ruleSet, RateLimitResult.allowedWithoutRule());
     }
 
-    return record(context, ruleSet, allowedResult(binding));
+    if (calls.size() > 1) {
+      List<String> allKeys = new ArrayList<>();
+      for (RuleCall call : calls) {
+        allKeys.addAll(call.bucketKeys);
+      }
+      if (new HashSet<>(allKeys).size() == allKeys.size()
+          && tokenBucketStore.canEvaluateAtomically(allKeys)) {
+        return record(context, ruleSet, consumeInOneCall(calls, allKeys, permits));
+      }
+    }
+    return record(context, ruleSet, consumeWithCompensation(calls, permits));
   }
+
+  /**
+   * Evaluates every rule in a single script call: the bands of all rules are concatenated, so the
+   * script's two passes make the whole decision all-or-nothing.
+   *
+   * <p>The script reports the rejecting band with the longest wait, or on allow the band with the
+   * fewest tokens left, in the concatenated order - the same band rule-by-rule evaluation reports,
+   * since that checks the rules after a rejecting one for a longer wait as well.
+   */
+  private RateLimitResult consumeInOneCall(
+      List<RuleCall> calls, List<String> allKeys, long permits) {
+    List<RateLimitBand> allBands = new ArrayList<>(allKeys.size());
+    for (RuleCall call : calls) {
+      allBands.addAll(call.bands);
+    }
+
+    BucketState state = tokenBucketStore.tryConsume(allKeys, allBands, permits);
+
+    RuleCall call = calls.get(0);
+    int localIndex = state.bandIndex();
+    for (RuleCall candidate : calls) {
+      call = candidate;
+      if (localIndex < candidate.bands.size()) {
+        break;
+      }
+      localIndex -= candidate.bands.size();
+    }
+    RateLimitBand band = bandAt(call.bands, localIndex);
+
+    if (!state.consumed()) {
+      Binding rejection = new Binding(call.key, call.rule, band, state);
+      logRejected(rejection);
+      return rejectedResult(call.key, call.rule, band, state);
+    }
+    Binding binding = new Binding(call.key, call.rule, band, state);
+    logAllowed(binding);
+    return allowedResult(binding);
+  }
+
+  /**
+   * Charges the rules one by one and, when one rejects or Redis fails, refunds the rules already
+   * charged. See the class Javadoc for the window in which this is not atomic.
+   */
+  private RateLimitResult consumeWithCompensation(List<RuleCall> calls, long permits) {
+    List<RuleCall> charged = new ArrayList<>(calls.size());
+    List<BucketState> chargedStates = new ArrayList<>(calls.size());
+    Binding binding = null;
+
+    for (int index = 0; index < calls.size(); index++) {
+      RuleCall call = calls.get(index);
+      BucketState state;
+      try {
+        state = tokenBucketStore.tryConsume(call.bucketKeys, call.bands, permits);
+      } catch (RuntimeException e) {
+        refund(charged, chargedStates, permits);
+        throw e;
+      }
+      RateLimitBand bindingBand = bandAt(call.bands, state.bandIndex());
+
+      if (!state.consumed()) {
+        // No further rule is charged, and the rules already charged get their permits back.
+        refund(charged, chargedStates, permits);
+        Binding rejection =
+            longestWait(
+                new Binding(call.key, call.rule, bindingBand, state),
+                calls.subList(index + 1, calls.size()),
+                permits);
+        logRejected(rejection);
+        return rejectedResult(rejection.key, rejection.rule, rejection.band, rejection.state);
+      }
+
+      charged.add(call);
+      chargedStates.add(state);
+      if (binding == null || state.remainingTokens() < binding.state.remainingTokens()) {
+        binding = new Binding(call.key, call.rule, bindingBand, state);
+      }
+    }
+
+    logAllowed(binding);
+    return allowedResult(binding);
+  }
+
+  // ... longestWait(), refund(), the result builders and the key helpers follow
 }
 ```
+
+`tryConsume` works in two phases:
+
+1. **Collect.** `ruleSet.getMatchingRules(context, matcher)` returns only the enabled rules whose
+   `RuleMatcher` matches the request (the 3-argument overload uses the limiter's own matcher,
+   `SimpleAntPathMatcher.INSTANCE` by default). For each rule with bands the key is resolved and the
+   bucket keys are built into a `RuleCall`. Nothing is charged yet, so a `MissingRateLimitKeyException`
+   in a later rule rejects the request without having drained an earlier one.
+2. **Charge.** With more than one `RuleCall`, distinct bucket keys and
+   `tokenBucketStore.canEvaluateAtomically(allKeys)`, every rule goes into one script call
+   (`consumeInOneCall`). Otherwise - a single rule, or rules spread over cluster slots - the rules
+   are charged one by one (`consumeWithCompensation`); for a single rule that is exactly one call.
 
 ### What changed in 0.4: one round trip per band → one per rule
 
@@ -249,43 +376,74 @@ limit landed below the configured one.
 passes, so the outcome is all-or-nothing.
 
 ```java
+// RedisRateLimiter.java - actual code (collect phase, then consumeWithCompensation)
 List<String> bucketKeys = new ArrayList<>(bands.size());
 for (RateLimitBand band : bands) {
   bucketKeys.add(buildBucketKey(ruleSet.getId(), rule.getId(), logicalKey, band));
 }
+calls.add(new RuleCall(rule, logicalKey, bands, bucketKeys));
 
-BucketState state = tokenBucketStore.tryConsume(bucketKeys, bands, permits);
+// ...
+
+state = tokenBucketStore.tryConsume(call.bucketKeys, call.bands, permits);
 ```
 
-### Still not atomic across rules
+### Across rules: one call, or compensation
 
 That is why the class Javadoc's headline is **"Atomicity, honestly."** Each rule resolves a
-different key, and in a cluster different keys live in different hash slots, so they cannot go into
-one Lua call.
+different key, and in a cluster different keys may live in different hash slots, so they cannot
+always go into one Lua call. 0.4 uses two strategies. Either way **the keys of all rules are
+resolved first**, so a request rejected for a missing key in a later rule charges no earlier rule.
+
+**1. One call (all-or-nothing).** When every key of every rule may go into one script call
+(always on a standalone Redis; in a cluster when all keys hash to one slot -
+`RedisTokenBucketStore.canEvaluateAtomically`) and no bucket key appears twice, the bands of all
+rules are concatenated and evaluated by a single `token_bucket_consume.lua` call
+(`consumeInOneCall`). The script's two passes become atomicity across rules. The band index in the
+result points into the concatenated list and is mapped back to its rule.
+
+**2. Compensation.** Otherwise the rules are charged one by one, and on a rejection (or a Redis
+failure) the rules already charged are refunded by `token_bucket_refund.lua`.
 
 ```
-A three-rule rule set where the third rule rejects:
+A three-rule rule set in different slots where the third rule rejects:
 
-Rule 1 (PER_IP)      → allowed, 1 token charged   ← not rolled back
-Rule 2 (PER_USER)    → allowed, 1 token charged   ← not rolled back
-Rule 3 (GLOBAL)      → rejected → immediate return (fail-fast)
+Rule 1 (PER_IP)      → allowed, 1 token charged   → refunded
+Rule 2 (PER_USER)    → allowed, 1 token charged   → refunded
+Rule 3 (GLOBAL)      → rejected → earlier rules refunded, then return
 
-The request gets a 429, but Rule 1 and 2 have already charged their tokens.
+The request gets a 429, and the remaining tokens of Rules 1 and 2 are what they were before it.
 ```
 
-The Javadoc offers two responses:
+A refund only returns what is still there: TOKEN_BUCKET adds back up to capacity, SLIDING_WINDOW
+decrements the sub-bucket of the charge time (the Redis TIME the consume script returns,
+`BucketState.redisTimeMicros()`) but not below zero, and FIXED_WINDOW decrements only while the
+counter still counts the window that was charged.
 
-1. **Put the rules most likely to reject first.** Fewer wasted charges.
-2. **If you need strict atomicity, use one rule with several bands.** Within a rule it is atomic.
+**What compensation still does not give you (honestly):**
+
+1. Between charge and refund (one round trip per rule) concurrent requests see the earlier rule a
+   permit lower. That errs on the strict side and heals itself with the refund.
+2. If the refund cannot run (process death, Redis failure in between) the permit stays spent - the
+   0.3.x outcome.
+3. If a fixed window rolls over, or a sliding sub-bucket leaves the window, between charge and
+   refund, there is nothing left to give back.
+4. Finding the longest wait costs round trips: when rule `k` of `n` rejects, the request makes `k`
+   consume calls, `k - 1` refunds and up to **8** check-only calls (`RedisTokenBucketStore.check`)
+   for the rules after it, so the Retry-After is the longest wait of all rules. Rules beyond those 8
+   are not consulted; a longer wait among them only shows up when the client retries.
+
+If you need strict atomicity on a cluster, use **one rule with several bands**.
 
 ### Choosing the binding band
 
-On the allowed path, all rules are evaluated and the result with the **fewest remaining tokens** is
-chosen.
+On the allowed path the result with the **fewest remaining tokens** is reported. In one call the
+script itself returns that band; under compensation every rule is charged and compared:
 
 ```java
+// RedisRateLimiter.java - actual code (consumeWithCompensation)
 if (binding == null || state.remainingTokens() < binding.state.remainingTokens()) {
-  binding = new Binding(logicalKey, rule, bindingBand, state);
+  binding = new Binding(call.key, call.rule, bindingBand, state);
 }
 ```
 
@@ -312,20 +470,21 @@ generous band would make clients believe in a far larger quota than they have.
 /**
  * Warns once per rule when the bucket TTL cap is shorter than one of its windows.
  *
- * <p>The Lua script clamps every TTL to {@code fluxgate.redis.max-bucket-ttl}, which means a
- * bucket of a longer window can expire - and be re-initialised full - before its window is over.
- * That is the deliberate trade against letting forgeable identity keys occupy Redis for weeks,
- * but it changes what the rule enforces, so an operator must be told rather than left to discover
- * it.
+ * <p>The Lua script clamps TOKEN_BUCKET and SLIDING_WINDOW TTLs to {@code
+ * fluxgate.redis.max-bucket-ttl}, which means a bucket of a longer window can expire - and be
+ * re-initialised full - before its window is over. That is the deliberate trade against letting
+ * forgeable identity keys occupy Redis for weeks, but it changes what the rule enforces, so an
+ * operator must be told rather than left to discover it. FIXED_WINDOW counters are exempt (they
+ * expire at their window end), so they never trigger the warning.
  */
 private void warnOnceIfBucketTtlClampsWindow(RateLimitRule rule, List<RateLimitBand> bands) {
   long capSeconds = tokenBucketStore.getMaxBucketTtl().getSeconds();
 
   for (RateLimitBand band : bands) {
-    long ttlSeconds = (long) Math.ceil(band.getWindow().getSeconds() * 1.1);
-    if (ttlSeconds <= capSeconds) {
+    if (!ttlCapShortensWindow(band, capSeconds)) {
       continue;
     }
+    long ttlSeconds = bucketTtlSeconds(band);
 
     String ruleId = rule.getId() != null ? rule.getId() : "unknown";
     if (ttlClampWarnedRules.add(ruleId)) {
@@ -334,10 +493,29 @@ private void warnOnceIfBucketTtlClampsWindow(RateLimitRule rule, List<RateLimitB
               + "fluxgate.redis.max-bucket-ttl is {}s: the bucket expires early and the window is "
               + "effectively shortened. Raise max-bucket-ttl for this deployment, or use a scope "
               + "with bounded cardinality for long windows.",
-          ...);
+          ruleId,
+          band.getKeyLabel(),
+          band.getWindow().getSeconds(),
+          ttlSeconds,
+          capSeconds);
     }
     return;
   }
+}
+
+/**
+ * Tells whether {@code max-bucket-ttl} cuts the bucket of this band short. Only TOKEN_BUCKET and
+ * SLIDING_WINDOW buckets are capped; a FIXED_WINDOW counter expires at its window end whatever
+ * the cap.
+ */
+static boolean ttlCapShortensWindow(RateLimitBand band, long capSeconds) {
+  return band.getAlgorithm() != RateLimitAlgorithm.FIXED_WINDOW
+      && bucketTtlSeconds(band) > capSeconds;
+}
+
+/** The TTL the Lua script would give this band's bucket without the cap: window + 10%. */
+private static long bucketTtlSeconds(RateLimitBand band) {
+  return (long) Math.ceil(band.getWindow().getSeconds() * 1.1);
 }
 ```
 
@@ -391,7 +569,11 @@ would pour out depending on destruction order.
 /**
  * Build the Redis key for a token bucket.
  *
- * <p>Format: {@code fluxgate:bucket:&#123;ruleSetId:ruleId:keyValue&#125;:bandKeyLabel}
+ * <p>Format: {@code fluxgate:bucket:&#123;ruleSetId:ruleId:keyValue&#125;:bandKeyLabel}, plus
+ * {@value #FIXED_WINDOW_KEY_SUFFIX} for a {@link RateLimitAlgorithm#FIXED_WINDOW} band, whose
+ * counter is a hash that records its window. The suffix keeps those counters apart from the plain
+ * string counters earlier 0.4 builds wrote under the bare name, which then age out on their own
+ * expiry instead of failing with {@code WRONGTYPE}.
  *
  * <p>Example: {@code fluxgate:bucket:{api-limits:per-ip-rule:ip:192.168.1.100}:100-per-60s}
  *
@@ -399,13 +581,21 @@ would pour out depending on destruction order.
  * of one rule and key lands in the same slot and the multi-band Lua script can be atomic. The
  * band segment uses {@link RateLimitBand#getKeyLabel()}, which is derived from the band
  * configuration when no label was set - two unlabelled bands of one rule can no longer collide.
+ *
+ * @param ruleSetId ID of the rule set
+ * @param ruleId ID of the rule
+ * @param key Rate limit key (e.g. IP address, API key), already sanitised by the core
+ * @param band Rate limit band
+ * @return Redis key string
  */
 private static String buildBucketKey(
     String ruleSetId, String ruleId, RateLimitKey key, RateLimitBand band) {
 
-  // ruleSetId and ruleId are sanitised so that Redis hash-tag delimiters (:, {, }) and SCAN glob
+  // ruleSetId and ruleId are escaped so that Redis hash-tag delimiters (:, {, }) and SCAN glob
   // metacharacters (*, ?, [, ], \) embedded in operator-controlled strings cannot alter the key
-  // namespace or the bucket key pattern. key.value() is already sanitised by the core.
+  // namespace or the bucket key pattern - reversibly, so two ids can never share a bucket. The
+  // band label is escaped too: a label "x:fw" must not land on the FIXED_WINDOW counter of a band
+  // labelled "x". key.value() is already sanitised by the core.
   return BUCKET_KEY_PREFIX
       + "{"
       + sanitizeSegment(ruleSetId)
@@ -414,7 +604,8 @@ private static String buildBucketKey(
       + ":"
       + key.value()
       + "}:"
-      + band.getKeyLabel();
+      + escapeBandLabel(band.getKeyLabel())
+      + (band.getAlgorithm() == RateLimitAlgorithm.FIXED_WINDOW ? FIXED_WINDOW_KEY_SUFFIX : "");
 }
 ```
 
@@ -491,30 +682,48 @@ structure.
 ```java
 // RedisRateLimiter.java - actual code
 /**
- * Replaces characters that are unsafe in a bucket-key segment with underscores.
+ * Percent-escapes the characters that are unsafe in a bucket-key segment.
  *
  * <p>Unsafe characters are: {@code :}, {@code {}, {@code }}, {@code *}, {@code ?}, {@code [},
- * {@code ]}, {@code \}, and any whitespace character. They are replaced rather than rejected so
- * that rule-set / rule IDs created with earlier versions continue to resolve instead of silently
- * routing every request to a different bucket.
+ * {@code ]}, {@code \}, any whitespace character, and {@code %} itself; each is replaced by the
+ * {@code %XX} escapes of its UTF-8 bytes. Escaping {@code %} keeps the mapping reversible, so two
+ * different ids can never share a bucket the way {@code a:b} and {@code a_b} did when unsafe
+ * characters were replaced by an underscore. Ids without any of these characters - the usual case
+ * - keep exactly the segment they had before.
  */
 static String sanitizeSegment(String value) {
   if (value == null) {
     return "";
   }
-  StringBuilder sb = new StringBuilder(value.length());
+  StringBuilder sb = null;
   for (int i = 0; i < value.length(); i++) {
     char c = value.charAt(i);
-    if (c == ':'
-        || c == '{'
-        || c == '}'
-        || c == '*'
-        || c == '?'
-        || c == '['
-        || c == ']'
-        || c == '\\'
-        || Character.isWhitespace(c)) {
-      sb.append('_');
+    if (isUnsafeSegmentChar(c)) {
+      if (sb == null) {
+        sb = new StringBuilder(value.length() + 8).append(value, 0, i);
+      }
+      appendEscaped(sb, c);
+    } else if (sb != null) {
+      sb.append(c);
+    }
+  }
+  return sb == null ? value : sb.toString();
+}
+
+/**
+ * Escapes the band label segment: {@code :} and {@code %} only, so that a label cannot imitate
+ * the {@value #FIXED_WINDOW_KEY_SUFFIX} suffix of a FIXED_WINDOW counter while every other label
+ * - including all derived ones such as {@code 100-per-60s} - keeps its key.
+ */
+static String escapeBandLabel(String label) {
+  if (label.indexOf(':') < 0 && label.indexOf('%') < 0) {
+    return label;
+  }
+  StringBuilder sb = new StringBuilder(label.length() + 8);
+  for (int i = 0; i < label.length(); i++) {
+    char c = label.charAt(i);
+    if (c == ':' || c == '%') {
+      appendEscaped(sb, c);
     } else {
       sb.append(c);
     }
@@ -523,9 +732,15 @@ static String sanitizeSegment(String value) {
 }
 ```
 
-**Replacing rather than rejecting** is deliberate. Throwing would fail every deployment carrying an
-id created by an earlier version right after upgrading. With replacement they keep working, and the
-same id always maps to the same bucket.
+**Reversible escaping rather than rejecting or replacing** is deliberate. The earlier scheme
+replaced unsafe characters with `_`, so `a:b` and `a_b` shared one bucket. Percent-escaping (`%XX` of
+the UTF-8 bytes, `%` included) is injective, so two different ids can never collide, while ids
+without unsafe characters keep exactly the segment they had before.
+
+The band label gets a narrower escape (`escapeBandLabel`: only `:` and `%`) so a label such as `x:fw`
+cannot imitate the `:fw` suffix that a `FIXED_WINDOW` band appends to its key. Fixed-window counters
+are hashes (they record their window), and the suffix keeps them apart from the plain string counters
+earlier 0.4 builds wrote under the bare name.
 
 ### The SCAN pattern
 
@@ -534,10 +749,11 @@ same id always maps to the same bucket.
 /**
  * Returns the {@code SCAN MATCH} pattern that selects every token bucket of one rule set.
  *
- * <p>{@code ruleSetId} is first sanitized so that embedded glob metacharacters and hash-tag
- * delimiters cannot corrupt the pattern, then any residual metacharacters are backslash-escaped
- * as a second line of defense. The pattern is anchored on {@link #BUCKET_KEY_PREFIX} and can
- * therefore never match {@code fluxgate:ruleset:*} or {@code fluxgate:rulesets}.
+ * <p>{@code ruleSetId} is first escaped exactly as in the bucket keys, so that embedded glob
+ * metacharacters and hash-tag delimiters cannot corrupt the pattern, then any residual
+ * metacharacters are backslash-escaped as a second line of defense. The pattern is anchored on
+ * {@link #BUCKET_KEY_PREFIX} and can therefore never match {@code fluxgate:ruleset:*} or {@code
+ * fluxgate:rulesets}.
  *
  * @return a glob pattern such as {@code fluxgate:bucket:&#123;api-limits:*}
  */
@@ -547,7 +763,7 @@ public static String bucketKeyPattern(String ruleSetId) {
 }
 ```
 
-Sanitise, then **escape the glob again** — defense in depth. Because the pattern is anchored on
+Escape the id, then **escape the glob again** — defense in depth. Because the pattern is anchored on
 `BUCKET_KEY_PREFIX`, it can never overlap the rule set definition keys.
 
 ---
@@ -564,7 +780,7 @@ fluxgate-redis-ratelimiter/src/main/java/org/fluxgate/redis/connection/
 The abstraction layer unifying Standalone and Cluster modes.
 
 ```java
-// RedisConnectionProvider.java - actual code (method list)
+// RedisConnectionProvider.java - method list (comments condensed)
 public interface RedisConnectionProvider extends AutoCloseable {
 
     RedisMode getMode();
@@ -606,6 +822,9 @@ public interface RedisConnectionProvider extends AutoCloseable {
     default java.util.List<String> scanKeys(String pattern, long count) {
         return keys(pattern);
     }
+
+    /** SCAN, page by page; the default delivers scanKeys(pattern, count) as one page */
+    default void scanKeys(String pattern, long count, Consumer<List<String>> pageConsumer) { ... }
 
     String flushdb();
     String ping();
@@ -654,6 +873,9 @@ default long unlink(String... keys) {
   return del(keys);
 }
 ```
+
+The bucket reset path uses the paged `scanKeys(pattern, count, pageConsumer)` overload and `UNLINK`s
+each page as it arrives, so the keys of a large rule set are never held in memory at once.
 
 | Command | Problem | Replacement |
 |---------|---------|-------------|
@@ -704,8 +926,8 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
 }
 ```
 
-`ScriptOutputType.MULTI` because the Lua script returns an array. The 0.4 script returns seven
-integers.
+`ScriptOutputType.MULTI` because the Lua script returns an array. The 0.4 consume script returns
+eight integers (the eighth is the Redis `TIME` of the decision), the refund script one per band.
 
 ### ClusterRedisConnection
 
@@ -729,7 +951,8 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
 
     @Override
     public String scriptLoad(String script) {
-        // Cluster mode: Lettuce broadcasts to every master node automatically
+        // In cluster mode, scriptLoad broadcasts to all nodes automatically
+        // Lettuce handles this via the cluster connection
         String sha = commands.scriptLoad(script);
         log.debug("Lua script loaded to cluster, SHA: {}", sha);
         return sha;
@@ -738,7 +961,8 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
     @Override
     @SuppressWarnings("unchecked")
     public <T> T evalsha(String sha, String[] keys, String[] args) {
-        // Lettuce routes automatically to the right node by the key's hash slot
+        // Lettuce cluster client automatically routes EVALSHA to the correct node
+        // based on the key's slot
         return (T) commands.evalsha(sha, ScriptOutputType.MULTI, keys, args);
     }
 }
@@ -750,30 +974,56 @@ tag above is what guarantees that.
 ### RedisConnectionFactory
 
 ```java
-// RedisConnectionFactory.java - actual code (gist)
+// RedisConnectionFactory.java - actual code (excerpt)
 public final class RedisConnectionFactory {
 
-    /**
-     * Creates a connection, auto-detecting the mode from the URI
-     * - a comma means Cluster mode
-     * - otherwise Standalone mode
-     */
-    public static RedisConnectionProvider create(String uri, Duration timeout) {
-        Objects.requireNonNull(uri, "uri must not be null");
+  /**
+   * Creates a Redis connection based on the provided URI with custom timeout.
+   *
+   * @param uri single URI or comma-separated URIs for cluster
+   * @param timeout connection timeout
+   * @return the appropriate Redis connection provider
+   */
+  public static RedisConnectionProvider create(String uri, Duration timeout) {
+    Objects.requireNonNull(uri, "uri must not be null");
 
-        if (uri.contains(",")) {
-            List<String> nodes = parseClusterNodes(uri);
-            log.info("Detected cluster mode with {} nodes", nodes.size());
-            return new ClusterRedisConnection(nodes, timeout);
-        }
-
-        log.info("Using standalone mode");
-        return new StandaloneRedisConnection(uri, timeout);
+    // Check if it's a cluster configuration (comma-separated nodes)
+    if (RedisUriUtils.detectMode(uri) == RedisConnectionProvider.RedisMode.CLUSTER) {
+      List<String> nodes = RedisUriUtils.splitNodes(uri);
+      log.info("Detected cluster mode with {} nodes", nodes.size());
+      return new ClusterRedisConnection(nodes, timeout);
     }
 
-    /** Creates a connection with an explicitly selected mode */
-    public static RedisConnectionProvider create(
-            RedisConnectionProvider.RedisMode mode, List<String> uris, Duration timeout) { ... }
+    log.info("Using standalone mode");
+    return new StandaloneRedisConnection(uri, timeout);
+  }
+
+  /**
+   * Creates a Redis connection with explicit mode selection.
+   *
+   * @param mode the desired Redis mode
+   * @param uris the Redis URIs (single for standalone, multiple for cluster)
+   * @param timeout connection timeout
+   * @return the appropriate Redis connection provider
+   */
+  public static RedisConnectionProvider create(
+      RedisConnectionProvider.RedisMode mode, List<String> uris, Duration timeout) { ... }
+}
+```
+
+The mode is not decided by "does the URI contain a comma". `RedisUriUtils` treats a URI as a
+cluster only when it carries more than one URI scheme or a comma outside the credentials, so
+`redis://:pa,ss@host:6379` - a password with a comma - stays standalone, and a comma inside a password never
+tears a node in two when the nodes are split.
+
+```java
+// RedisUriUtils.java - actual code
+public static RedisMode detectMode(String uri) {
+  return RedisUris.isCluster(uri) ? RedisMode.CLUSTER : RedisMode.STANDALONE;
+}
+
+public static List<String> splitNodes(String uri) {
+  return RedisUris.splitNodes(uri);
 }
 ```
 
@@ -784,7 +1034,15 @@ utility keeps the credentials of `redis://user:secret@host` from leaking into lo
 
 ```java
 // RedisRateLimiterConfig.java - actual code
-logInitialized(RedisUriUtils.mask(redisUri));
+public RedisRateLimiterConfig(String redisUri, Duration timeout, Duration maxBucketTtl) {
+  this(
+      () ->
+          RedisConnectionFactory.create(
+              Objects.requireNonNull(redisUri, "redisUri must not be null"),
+              Objects.requireNonNull(timeout, "timeout must not be null")),
+      maxBucketTtl,
+      redisUri == null ? null : RedisUriUtils.mask(redisUri));
+}
 ```
 
 `LazyRedisRateLimiter` addresses the same concern.
@@ -855,15 +1113,42 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
   private final boolean ownsConnectionProvider;
 
   public RedisRateLimiterConfig(String redisUri, Duration timeout, Duration maxBucketTtl) {
-    Objects.requireNonNull(redisUri, "redisUri must not be null");
-    Objects.requireNonNull(timeout, "timeout must not be null");
+    this(
+        () ->
+            RedisConnectionFactory.create(
+                Objects.requireNonNull(redisUri, "redisUri must not be null"),
+                Objects.requireNonNull(timeout, "timeout must not be null")),
+        maxBucketTtl,
+        redisUri == null ? null : RedisUriUtils.mask(redisUri));
+  }
 
-    this.connectionProvider = RedisConnectionFactory.create(redisUri, timeout);
+  /**
+   * Creates a config that owns the connection the given connector opens.
+   *
+   * <p>{@code maxBucketTtl} is validated before the connector runs, and the connection is closed
+   * again when the stores cannot be built, so a failed construction never leaves a Lettuce client
+   * (and its event loop threads) behind.
+   */
+  RedisRateLimiterConfig(
+      Supplier<RedisConnectionProvider> connector, Duration maxBucketTtl, String endpoint) {
+    validateMaxBucketTtl(maxBucketTtl);
+
+    RedisConnectionProvider provider = connector.get();
+    try {
+      this.tokenBucketStore = new RedisTokenBucketStore(provider, maxBucketTtl);
+      this.ruleSetStore = new RedisRuleSetStore(provider);
+    } catch (RuntimeException | Error e) {
+      try {
+        provider.close();
+      } catch (RuntimeException closeFailure) {
+        e.addSuppressed(closeFailure);
+      }
+      throw e;
+    }
+    this.connectionProvider = provider;
     this.ownsConnectionProvider = true;
-    this.tokenBucketStore = new RedisTokenBucketStore(connectionProvider, maxBucketTtl);
-    this.ruleSetStore = new RedisRuleSetStore(connectionProvider);
 
-    logInitialized(RedisUriUtils.mask(redisUri));
+    logInitialized(endpoint);
   }
 
   /**
@@ -892,7 +1177,11 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
     return tokenBucketStore;
   }
 
-  /** Whether {@link #close()} closes the connection provider. */
+  /**
+   * Whether {@link #close()} closes the connection provider.
+   *
+   * @return true when this config created the connection itself
+   */
   public boolean ownsConnectionProvider() {
     return ownsConnectionProvider;
   }
@@ -915,12 +1204,19 @@ if (!scripts.isLoaded()) {
 ```
 
 ```
-RedisRateLimiterConfig created
+RedisRateLimiterConfig created (URI or mode + uris)
+         |
+         v
++--------------------------------------+
+| (0) validate maxBucketTtl (>= 1s)    |
+|     before any connection is opened  |
++--------------------------------------+
          |
          v
 +--------------------------------------+
 | (1) RedisConnectionFactory.create    |
-|     - parse URI / detect mode by ',' |
+|     - RedisUriUtils.detectMode /     |
+|       splitNodes                     |
 |     - Standalone or Cluster connect  |
 +--------------------------------------+
          |
@@ -929,9 +1225,9 @@ RedisRateLimiterConfig created
 | (2) new RedisTokenBucketStore(...)   |
 |     - create LuaScriptRegistry       |
 |       (reads .lua from the classpath)|
+|     - validate maxBucketTtl (>= 1s)  |
 |     - if isLoaded() is false,        |
 |       loadInto() → SCRIPT LOAD → SHA |
-|     - validate maxBucketTtl (>= 1s)  |
 +--------------------------------------+
          |
          v
@@ -939,6 +1235,8 @@ RedisRateLimiterConfig created
 | (3) new RedisRuleSetStore(...)       |
 |     - @Deprecated 0.4.0              |
 +--------------------------------------+
+
+If (2) or (3) throws, the connection opened in (1) is closed again.
 ```
 
 ### ownsConnectionProvider: ownership made explicit
@@ -1063,7 +1361,7 @@ fluxgate:
     # uri: redis://node1:6379,redis://node2:6379,redis://node3:6379  # Cluster
     timeout-ms: 5000
     fail-fast: false      # true fails the boot when Redis is unavailable
-    max-bucket-ttl: 7d    # cap on every bucket TTL
+    max-bucket-ttl: 7d    # caps TOKEN_BUCKET / SLIDING_WINDOW bucket TTLs (not FIXED_WINDOW)
 ```
 
 ```java
@@ -1112,6 +1410,12 @@ escalates into **thread pool exhaustion.**
 @Override
 public RateLimitResult tryConsume(
     RequestContext context, RateLimitRuleSet ruleSet, long permits) {
+  return connectedDelegate().tryConsume(context, ruleSet, permits);
+}
+
+// the 4-argument overload (with a PathPatternMatcher) delegates the same way
+
+private RateLimiter connectedDelegate() {
   RateLimiter delegate = delegateRef.get();
   if (delegate == null) {
     // Deliberately does not connect: see the class Javadoc. The exception is non-retryable so the
@@ -1119,12 +1423,29 @@ public RateLimitResult tryConsume(
     throw new RedisUnavailableException(
         "FluxGate Redis rate limiter is not connected yet: " + lastErrorMessage.get());
   }
-  return delegate.tryConsume(context, ruleSet, permits);
+  return delegate;
 }
 ```
 
 Connection state is exposed through `RedisConnectionState`, so the health endpoint can report the
 limiter as DEGRADED.
+
+### Health check and Redis permissions
+
+`RedisHealthCheckerImpl` sends `PING` in every mode. In cluster mode it also runs **`CLUSTER NODES`**
+(node, master and replica counts) and **`CLUSTER INFO`** (`cluster_state`, `cluster_slots_fail`),
+and reports the cluster DOWN when either fails or returns nothing. With Redis ACLs, the health
+check's user therefore needs `ping`, `cluster|nodes` and `cluster|info` on top of what the limiter
+itself uses (the scripting commands, and the read/write commands and `TIME` its Lua scripts call -
+ACLs are checked inside scripts too), for example:
+
+```
+ACL SETUSER fluxgate on >secret ~fluxgate:* +@read +@write +@scripting +time +ping \
+    +cluster|nodes +cluster|info
+```
+
+Without the two cluster subcommands a healthy cluster is reported DOWN with `cluster_state unknown
+(CLUSTER INFO failed or returned nothing)` or `no cluster nodes reported`.
 
 ---
 

@@ -35,8 +35,8 @@ FluxGate의 핵심은 Redis Lua 스크립트로 실행되는 최적화된 토큰
 | 지표 | 복잡도 | 설명 |
 |------|--------|------|
 | **시간** | O(1) | Rate Limit 검사당 상수 시간 |
-| **공간** | O(1) per key | 버킷당 2개 필드 (tokens, last_refill_micros) |
-| **네트워크** | 1 RTT | 원자적 실행을 위한 단일 왕복 |
+| **공간** | 대역당 O(1) | 버킷당 2개 필드 (`tokens`, `last_refill_micros`) |
+| **네트워크** | 규칙당 1 RTT | 한 규칙의 모든 대역을 한 번의 왕복으로 처리 |
 
 ### 2.2 핵심 최적화
 
@@ -101,19 +101,28 @@ end
 
 ---
 
-#### Fix #4: TTL 안전 마진
+#### Fix #4: TTL 안전 마진과 설정 가능한 상한
 
-**문제:** Clock Skew로 인해 키가 조기 만료될 수 있음
+**문제:** Clock Skew로 인해 키가 조기 만료될 수 있음. 반대로 0.3.x의 고정 24시간 상한은 하루보다 긴
+윈도를 조용히 초기화했음
 
 ```lua
--- 10% 안전 마진 추가
-local desired_ttl = math.ceil(window_nanos / 1000000000 * 1.1)
-
--- 24시간으로 상한 설정 (무한 증가 방지)
-local actual_ttl = math.min(desired_ttl, 86400)
+-- 윈도에 Clock Skew 대비 10% 여유를 더하고, 최소 1초, 상한은 max_bucket_ttl(ARGV[2],
+-- fluxgate.redis.max-bucket-ttl, 기본 7일). TOKEN_BUCKET과 SLIDING_WINDOW에 쓴다.
+local function ttl_for_window(win_micros)
+    return math.min(max_ttl_seconds, math.max(1, math.ceil(win_micros / 1000000 * 1.1)))
+end
 ```
 
-**효과:** 버킷이 너무 일찍 만료되는 엣지 케이스 방지
+**효과:** 버킷이 너무 일찍 만료되지 않음. 이전의 `math.min(desired_ttl, 86400)` 상한은 7일 쿼터를
+24시간마다 초기화해 실질적으로 용량의 7배를 허용했음. FIXED_WINDOW 카운터는 윈도 끝에 만료되며
+(`PEXPIREAT`) 상한에서 제외됨. `max-bucket-ttl`보다 오래 유휴 상태인 TOKEN_BUCKET·SLIDING_WINDOW 버킷은
+만료되어 가득 찬 상태로 다시 시작하므로, 상한보다 긴 윈도는 유휴 호출자에게 실질적으로 짧아지며
+리미터는 그런 규칙마다 WARN을 한 번 남김
+
+거절할 때 스크립트는 모든 키에 `EXPIRE`를 걸지만 상태는 쓰지 않음. 존재하지 않는 키에 대한 `EXPIRE`는
+아무 일도 하지 않으므로 한 번도 차감되지 않은 대역은 생성되지 않으며, 거절만 받는 버킷도 마지막으로
+허용된 요청의 줄어드는 TTL을 물려받지 않고 예정대로 만료됨
 
 ---
 
@@ -184,29 +193,41 @@ switch (scope) {
 | 작업 | 시간 | 비고 |
 |------|------|------|
 | 캐시 갱신 | O(R) | R = MongoDB 규칙 수 |
-| 버킷 정리 (KEYS) | O(N) | N = 전체 Redis 키 (아래 최적화 참조) |
+| 버킷 정리 (SCAN + UNLINK) | 전체 O(N), 논블로킹 | N = 전체 Redis 키, SCAN 페이지 단위 (5.1 참조) |
 
 ---
 
 ## 5. 최적화 가능 영역
 
-### 5.1 버킷 삭제: KEYS → SCAN
+### 5.1 버킷 삭제: KEYS → SCAN (0.4에서 적용)
 
-**현재 구현 (O(N)):**
-```java
-// 경고: KEYS는 전체 키스페이스 스캔 동안 Redis 블로킹
-List<String> keys = connectionProvider.keys("fluxgate:*");
-```
+**0.3.x (O(N), 블로킹):** `connectionProvider.keys("fluxgate:*")` - `KEYS`는 전체 키스페이스를 훑는 동안
+Redis를 막고, `fluxgate:*` 패턴은 룰셋 정의까지 지웠습니다.
 
-**권장 개선안 (반복당 O(1)):**
+**0.4 (적용됨):** 리셋 경로(`deleteBucketsByRuleSetId`, `deleteAllBuckets`)는 `fluxgate:bucket:...` 패턴을
+`SCAN`으로 훑고, 페이지가 도착하는 대로 `UNLINK`로 지웁니다. 키 전체를 한꺼번에 메모리에 들지 않습니다.
+
 ```java
-// 논블로킹 점진적 스캔
-String cursor = "0";
-do {
-    ScanResult<String> result = redis.scan(cursor, "fluxgate:*", 100);
-    cursor = result.getCursor();
-    redis.del(result.getResult());
-} while (!cursor.equals("0"));
+// RedisTokenBucketStore.java - 실제 코드
+private long scanAndUnlink(String pattern) {
+  long[] deleted = {0L};
+  try {
+    connectionProvider.scanKeys(
+        pattern, BUCKET_SCAN_COUNT, page -> deleted[0] += deleteInBatches(page));
+  } catch (RedisException e) {
+    throw driverFailed("SCAN/UNLINK " + pattern, e);
+  }
+  return deleted[0];
+}
+
+private long deleteInBatches(List<String> keys) {
+  long deleted = 0;
+  for (int start = 0; start < keys.size(); start += DELETE_BATCH_SIZE) {
+    int end = Math.min(start + DELETE_BATCH_SIZE, keys.size());
+    deleted += connectionProvider.unlink(keys.subList(start, end).toArray(new String[0]));
+  }
+  return deleted;
+}
 ```
 
 | 방식 | 시간 | 블로킹 여부 |
