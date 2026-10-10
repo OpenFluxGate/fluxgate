@@ -263,7 +263,8 @@ def credential_acceptance(results, phases):
                  and report.get("scheduled") == len(samples) + report.get("omitted_schedules", -1)
                  and report.get("omitted_schedules") == 0
                  and all(sample.get("sequence") == index and sample.get("status") == 200
-                         and sample.get("body_valid") is True for index, sample in enumerate(samples))
+                         and sample.get("body_valid") is True and sample.get("error") is None
+                         and sample.get("transport_error") is None for index, sample in enumerate(samples))
                  and all(cleanup.get(field) is True for field in
                          ("pod_absent", "networkpolicy_absent", "ownership_checked")))
         availability = availability and valid
@@ -1716,7 +1717,7 @@ def credential_acceptance_self_test():
                     "credential proof confused protocol, requested availability and final acceptance")
             require("rollback" not in actions and retained.read_text() == "successfully-rotated-private-value",
                     "availability scoring rolled back completed credential rotations")
-        for mutation in ("omitted", "wrong-body", "transport", "cleanup", "missing-report", "empty", "accounting"):
+        for mutation in ("omitted", "wrong-body", "transport", "cleanup", "missing-report", "empty", "accounting", "contradictory-error", "contradictory-transport-error"):
             report = json.loads(json.dumps(clean))
             if mutation == "omitted":
                 report["scheduled"], report["omitted_schedules"] = 2, 1
@@ -1730,6 +1731,10 @@ def credential_acceptance_self_test():
                 report["samples"], report["scheduled"] = [], 0
             elif mutation == "accounting":
                 report["scheduled"] = 2
+            elif mutation == "contradictory-error":
+                report["samples"][0]["error"] = "TimeoutError"
+            elif mutation == "contradictory-transport-error":
+                report["samples"][0]["transport_error"] = "ConnectionResetError"
             results = {"rotation_traffic": {"stores": report}} if mutation != "missing-report" else {}
             require(not credential_acceptance(results, ["stores"])["rotation_availability_passed"],
                     "credential acceptance allowed missing/failed/omitted/unclean traffic")
