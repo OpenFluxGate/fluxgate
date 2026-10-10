@@ -250,6 +250,29 @@ def sampler_summary(report):
     return report
 
 
+def credential_acceptance(results, phases):
+    """Score completed protocol phases without initiating rollback on availability failure."""
+    planned = {phase for phase in phases if phase in ("mtls", "api-key", "stores")}
+    reports = results.get("rotation_traffic", {})
+    availability = bool(planned)
+    for phase in planned:
+        report = reports.get(phase, {})
+        samples = report.get("samples", [])
+        cleanup = report.get("cleanup", {})
+        valid = (report.get("interval_ms") == 100 and bool(samples)
+                 and report.get("scheduled") == len(samples) + report.get("omitted_schedules", -1)
+                 and report.get("omitted_schedules") == 0
+                 and all(sample.get("sequence") == index and sample.get("status") == 200
+                         and sample.get("body_valid") is True for index, sample in enumerate(samples))
+                 and all(cleanup.get(field) is True for field in
+                         ("pod_absent", "networkpolicy_absent", "ownership_checked")))
+        availability = availability and valid
+    complete = set(phases) == {"mtls", "api-key", "stores", "jwt"}
+    return {"protocol_passed": True, "rotation_availability_passed": availability,
+            "passed": availability, "complete": complete,
+            "final_acceptance_passed": complete and availability}
+
+
 class Proof:
     def __init__(self, fixture):
         self.fixture_path = Path(fixture).resolve()
@@ -1641,6 +1664,79 @@ def strict_tls_self_test():
             server.server_close()
 
 
+def credential_acceptance_self_test():
+    from unittest.mock import patch
+    import io
+    clean = {"interval_ms": 100, "scheduled": 1, "omitted_schedules": 0,
+             "samples": [{"sequence": 0, "status": 200, "body_valid": True}],
+             "cleanup": {"pod_absent": True, "networkpolicy_absent": True, "ownership_checked": True}}
+    with tempfile.TemporaryDirectory(prefix="credential-acceptance-test-") as directory:
+        output = Path(directory) / "result.json"
+        retained = Path(directory) / "committed-credential"
+        actions = []
+        selected_report = [clean]
+        class CompletedProof:
+            def __init__(self, fixture):
+                self.f, self.ns = {"context": "offline"}, "offline"
+                self.results = {}
+            def validate(self):
+                pass
+            def operation(self, label):
+                return contextlib.nullcontext()
+            @contextlib.contextmanager
+            def traffic_sampler(self, phase):
+                yield
+                self.results.setdefault("rotation_traffic", {})[phase] = json.loads(json.dumps(selected_report[0]))
+            def completed(self):
+                actions.append("completed")
+                private_write(retained, "successfully-rotated-private-value")
+            tls = api_keys = stores = jwt = completed
+            def cleanup_failed(self):
+                actions.append("rollback")
+                retained.unlink(missing_ok=True)
+        failed = json.loads(json.dumps(clean))
+        failed["samples"][0]["status"] = 503
+        for phases, report, passed, complete in (("mtls,api-key,stores,jwt", failed, False, True),
+                ("mtls,api-key,stores,jwt", clean, True, True), ("stores,jwt", clean, True, False)):
+            actions.clear()
+            selected_report[0] = report
+            exit_code = 0
+            with patch.dict(globals(), {"Proof": CompletedProof, "credential_runtime": lambda: {}}), \
+                    patch.object(sys, "argv", ["proof", "--fixture", "offline", "--output", str(output), "--phases", phases]), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                try:
+                    main()
+                except SystemExit as error:
+                    exit_code = error.code
+            result = json.loads(output.read_text())
+            require(result["passed"] is passed and (exit_code == 0) == passed,
+                    "completed credential protocol hid rotation availability failure")
+            require(result["protocol_passed"] is True and result["rotation_availability_passed"] is passed
+                    and result["complete"] is complete and result["final_acceptance_passed"] is (passed and complete),
+                    "credential proof confused protocol, requested availability and final acceptance")
+            require("rollback" not in actions and retained.read_text() == "successfully-rotated-private-value",
+                    "availability scoring rolled back completed credential rotations")
+        for mutation in ("omitted", "wrong-body", "transport", "cleanup", "missing-report", "empty", "accounting"):
+            report = json.loads(json.dumps(clean))
+            if mutation == "omitted":
+                report["scheduled"], report["omitted_schedules"] = 2, 1
+            elif mutation == "wrong-body":
+                report["samples"][0]["body_valid"] = False
+            elif mutation == "transport":
+                report["samples"][0]["status"] = None
+            elif mutation == "cleanup":
+                report["cleanup"]["pod_absent"] = False
+            elif mutation == "empty":
+                report["samples"], report["scheduled"] = [], 0
+            elif mutation == "accounting":
+                report["scheduled"] = 2
+            results = {"rotation_traffic": {"stores": report}} if mutation != "missing-report" else {}
+            require(not credential_acceptance(results, ["stores"])["rotation_availability_passed"],
+                    "credential acceptance allowed missing/failed/omitted/unclean traffic")
+        require(not credential_acceptance({}, ["jwt"])["rotation_availability_passed"],
+                "empty availability observations passed vacuously")
+
+
 def envoy_tls_barrier_self_test():
     from unittest.mock import patch
     def pem(value):
@@ -1948,6 +2044,7 @@ def tls_runtime_self_test():
 
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
+    credential_acceptance_self_test()
     envoy_tls_barrier_self_test()
     rotation_timeline_self_test()
     redis_policy_selection_self_test()
@@ -2167,6 +2264,8 @@ def main():
     proof = Proof(args.fixture)
     phases = args.phases.split(",")
     try:
+        require(len(phases) == len(set(phases)) and bool(phases)
+                and set(phases) <= {"mtls", "api-key", "stores", "jwt"}, "invalid or duplicate credential phases")
         proof.validate()
         for phase in phases:
             print("Credential phase: " + phase, flush=True)
@@ -2178,17 +2277,22 @@ def main():
                         method()
                 else:
                     method()
-        result = {"passed": True, "complete": set(phases) == {"mtls", "api-key", "stores", "jwt"},
-                  "context": proof.f["context"], "namespace": proof.ns, "runtime": runtime, "results": proof.results,
-                  "limits": ["Local ephemeral fixture only; no external credential authority tested.",
-                             "Rotation availability is measured by 100ms in-cluster samples with explicit errors and omissions; no zero-downtime guarantee is inferred.",
-                             "JWKS retirement records warm-cache behavior, checks an observed unknown-kid refresh, and checks a fresh decoder; key removal alone is not immediate revocation."]}
-        private_write(args.output, json.dumps(result, indent=2) + "\n")
-        print("Credential proof passed; evidence: " + str(Path(args.output).resolve()))
     except Exception as error:
         proof.cleanup_failed()
         # Error details may be secrets; output the safe proof assertion only.
         print("Credential proof failed: " + (str(error) if isinstance(error, ProofError) else type(error).__name__))
+        raise SystemExit(1)
+
+    result = {**credential_acceptance(proof.results, phases),
+                  "context": proof.f["context"], "namespace": proof.ns, "runtime": runtime, "results": proof.results,
+                  "limits": ["Local ephemeral fixture only; no external credential authority tested.",
+                             "Rotation availability is measured by 100ms in-cluster samples with explicit errors and omissions; no zero-downtime guarantee is inferred.",
+                             "JWKS retirement records warm-cache behavior, checks an observed unknown-kid refresh, and checks a fresh decoder; key removal alone is not immediate revocation."]}
+    private_write(args.output, json.dumps(result, indent=2) + "\n")
+    if result["passed"]:
+        print("Credential proof passed; evidence: " + str(Path(args.output).resolve()))
+    else:
+        print("Credential protocol passed; rotation availability failed; evidence: " + str(Path(args.output).resolve()))
         raise SystemExit(1)
 
 
