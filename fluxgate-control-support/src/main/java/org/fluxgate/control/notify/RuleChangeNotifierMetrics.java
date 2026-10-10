@@ -18,6 +18,7 @@ public class RuleChangeNotifierMetrics {
   private final AtomicLong publishedNotifications = new AtomicLong();
   private final AtomicLong retriedNotifications = new AtomicLong();
   private final AtomicLong failedNotifications = new AtomicLong();
+  private final AtomicLong noReceiverNotifications = new AtomicLong();
 
   /** Records a notification that was published successfully. */
   public void recordPublished() {
@@ -29,13 +30,23 @@ public class RuleChangeNotifierMetrics {
     retriedNotifications.incrementAndGet();
   }
 
+  /**
+   * Records a notification that Redis accepted but no subscriber received.
+   *
+   * @since 0.4.0
+   */
+  public void recordNoReceivers() {
+    noReceiverNotifications.incrementAndGet();
+  }
+
   /** Records a notification that was given up on after exhausting all attempts. */
   public void recordFailed() {
     failedNotifications.incrementAndGet();
   }
 
   /**
-   * Returns how many notifications were published successfully.
+   * Returns how many notifications were published and reached at least one subscriber (or were
+   * published through a notifier that cannot report receivers).
    *
    * @return the published count
    */
@@ -64,6 +75,19 @@ public class RuleChangeNotifierMetrics {
     return failedNotifications.get();
   }
 
+  /**
+   * Returns how many notifications were published while no subscriber was listening.
+   *
+   * <p>Anything above zero usually means the control plane's and the data plane's channel names
+   * disagree, or that no data plane instance was running.
+   *
+   * @return the count of notifications with zero receivers
+   * @since 0.4.0
+   */
+  public long getNoReceiverNotifications() {
+    return noReceiverNotifications.get();
+  }
+
   @Override
   public String toString() {
     return "RuleChangeNotifierMetrics{published="
@@ -72,6 +96,8 @@ public class RuleChangeNotifierMetrics {
         + retriedNotifications.get()
         + ", failed="
         + failedNotifications.get()
+        + ", noReceivers="
+        + noReceiverNotifications.get()
         + '}';
   }
 }

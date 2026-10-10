@@ -219,4 +219,32 @@ class ControlSupportAutoConfigurationTest {
       return new NoOpRuleChangeNotifier();
     }
   }
+
+  @Test
+  void shouldNeverLogTheRedisPassword(CapturedOutput output) {
+    runner
+        .withPropertyValues(
+            "fluxgate.control.redis.uri=redis://admin:s3cr3t-pa55@redis-a:6380/0",
+            "fluxgate.control.secret=" + "x".repeat(32))
+        .run(context -> assertThat(context).hasSingleBean(RuleChangeNotifier.class));
+
+    assertThat(output).doesNotContain("s3cr3t-pa55").contains("redis://redis-a:6380");
+  }
+
+  @Test
+  void shouldDescribeRedisUrisWithoutCredentials() {
+    assertThat(
+            ControlSupportAutoConfiguration.describeRedisUri(
+                "redis://:pw,1@redis-a:7000,redis://user:other@redis-b:7001"))
+        .isEqualTo("redis://redis-a:7000,redis://redis-b:7001");
+    // An unencoded '@' in the password confuses the parser, but must still not leak the secret.
+    assertThat(ControlSupportAutoConfiguration.describeRedisUri("redis://:p@ss,w0rd@redis-a:7000"))
+        .doesNotContain("w0rd")
+        .doesNotContain("ss,");
+    assertThat(ControlSupportAutoConfiguration.describeRedisUri("rediss://u:pw@host:6390"))
+        .isEqualTo("rediss://host:6390");
+    assertThat(ControlSupportAutoConfiguration.describeRedisUri("not a uri ::: pw"))
+        .doesNotContain("pw");
+    assertThat(ControlSupportAutoConfiguration.describeRedisUri(null)).isEqualTo("<none>");
+  }
 }

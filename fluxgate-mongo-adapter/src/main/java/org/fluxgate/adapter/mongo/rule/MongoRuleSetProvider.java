@@ -9,7 +9,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
+import org.fluxgate.adapter.mongo.spi.RuleSetAccessControlSource;
 import org.fluxgate.core.config.AccessControl;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.exception.FluxgateOperationException;
@@ -38,6 +38,11 @@ import org.slf4j.LoggerFactory;
  * <p>An empty result is logged at WARN once per rule set id: an operator who deletes the rules of a
  * live rule set by accident gets a signal instead of silence.
  *
+ * <p>The rule-set-level access control comes from a {@link RuleSetAccessControlSource}: the one
+ * passed to the constructor, or else the repository itself when it implements the interface (as
+ * {@code MongoRateLimitRuleRepository} does). A stored access control that cannot be parsed - a bad
+ * CIDR, say - is reported as a {@link FluxgateOperationException}, like any other store failure.
+ *
  * <p>Optionally supports {@link RateLimitMetricsRecorder} for metrics collection. If a
  * metricsRecorder is provided, it will be attached to each RuleSet and called after every rate
  * limit check. Supported implementations:
@@ -63,6 +68,9 @@ public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
    */
   private final RateLimitMetricsRecorder metricsRecorder;
 
+  /** Source of the rule-set-level access control, or null when there is none. */
+  private final RuleSetAccessControlSource accessControlSource;
+
   /**
    * Creates a MongoRuleSetProvider without metrics recording.
    *
@@ -84,9 +92,33 @@ public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
       RateLimitRuleRepository ruleRepository,
       KeyResolver keyResolver,
       RateLimitMetricsRecorder metricsRecorder) {
+    this(
+        ruleRepository,
+        keyResolver,
+        metricsRecorder,
+        ruleRepository instanceof RuleSetAccessControlSource
+            ? (RuleSetAccessControlSource) ruleRepository
+            : null);
+  }
+
+  /**
+   * Creates a MongoRuleSetProvider with an explicit access control source.
+   *
+   * @param ruleRepository repository for fetching rate limit rules
+   * @param keyResolver resolver for generating rate limit keys from request context
+   * @param metricsRecorder optional recorder for logging rate limit events (can be null)
+   * @param accessControlSource source of the rule-set-level access control, or null for none
+   * @since 0.4.0
+   */
+  public MongoRuleSetProvider(
+      RateLimitRuleRepository ruleRepository,
+      KeyResolver keyResolver,
+      RateLimitMetricsRecorder metricsRecorder,
+      RuleSetAccessControlSource accessControlSource) {
     this.ruleRepository = Objects.requireNonNull(ruleRepository, "ruleRepository must not be null");
     this.keyResolver = Objects.requireNonNull(keyResolver, "keyResolver must not be null");
     this.metricsRecorder = metricsRecorder; // nullable - metrics are optional
+    this.accessControlSource = accessControlSource; // nullable - no access control
   }
 
   @Override
@@ -115,14 +147,31 @@ public class MongoRuleSetProvider implements RateLimitRuleSetProvider {
       builder.metricsRecorder(metricsRecorder);
     }
 
-    // Extract rule-set-level access control from the repository when supported (0.4.0+)
-    if (ruleRepository instanceof MongoRateLimitRuleRepository) {
-      AccessControl accessControl =
-          ((MongoRateLimitRuleRepository) ruleRepository).findAccessControlByRuleSetId(ruleSetId);
-      builder.accessControl(accessControl);
+    if (accessControlSource != null) {
+      builder.accessControl(loadAccessControl(ruleSetId));
     }
 
     return Optional.of(builder.build());
+  }
+
+  /** Loads the access control of a rule set, turning store and parse failures into exceptions. */
+  private AccessControl loadAccessControl(String ruleSetId) {
+    try {
+      AccessControl accessControl = accessControlSource.findAccessControlByRuleSetId(ruleSetId);
+      return accessControl != null ? accessControl : AccessControl.EMPTY;
+    } catch (MongoSocketException | MongoTimeoutException | MongoNotPrimaryException e) {
+      throw new MongoConnectionException(
+          "Failed to load the access control of rule set '" + ruleSetId + "'", e);
+    } catch (MongoException e) {
+      throw new FluxgateOperationException(
+          "Failed to load the access control of rule set '" + ruleSetId + "'", e, true);
+    } catch (IllegalArgumentException e) {
+      // A bad CIDR or key list: retrying cannot fix stored data.
+      throw new FluxgateOperationException(
+          "Invalid access control stored for rule set '" + ruleSetId + "': " + e.getMessage(),
+          e,
+          false);
+    }
   }
 
   /** Loads the rules of a rule set, turning store failures into FluxGate exceptions. */

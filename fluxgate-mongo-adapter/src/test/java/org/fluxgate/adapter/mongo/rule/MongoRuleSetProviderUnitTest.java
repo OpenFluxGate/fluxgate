@@ -11,13 +11,17 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.bson.BsonDocument;
+import org.fluxgate.adapter.mongo.spi.RuleSetAccessControlSource;
+import org.fluxgate.core.config.AccessControl;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.exception.FluxgateOperationException;
 import org.fluxgate.core.exception.MongoConnectionException;
 import org.fluxgate.core.key.KeyResolver;
 import org.fluxgate.core.key.RateLimitKey;
+import org.fluxgate.core.match.CidrSet;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.spi.RateLimitRuleRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -106,5 +110,50 @@ class MongoRuleSetProviderUnitTest {
     assertThatThrownBy(() -> provider.findById("orders"))
         .isInstanceOf(FluxgateOperationException.class)
         .matches(e -> ((FluxgateOperationException) e).isRetryable());
+  }
+
+  @Test
+  void shouldTakeTheAccessControlFromAnExplicitSource() {
+    when(ruleRepository.findByRuleSetId("orders")).thenReturn(List.of(rule()));
+    AccessControl acl = AccessControl.builder().deniedKeys(Set.of("user:blocked")).build();
+    MongoRuleSetProvider withSource =
+        new MongoRuleSetProvider(ruleRepository, keyResolver, null, ruleSetId -> acl);
+
+    RateLimitRuleSet ruleSet = withSource.findById("orders").orElseThrow();
+
+    assertThat(ruleSet.getAccessControl().getDeniedKeys()).containsExactly("user:blocked");
+  }
+
+  @Test
+  void shouldUseARepositoryThatImplementsTheSpi(
+      @Mock(extraInterfaces = RuleSetAccessControlSource.class) RateLimitRuleRepository decorated) {
+    when(decorated.findByRuleSetId("orders")).thenReturn(List.of(rule()));
+    AccessControl acl =
+        AccessControl.builder().allowedIps(CidrSet.of(List.of("10.0.0.0/8"))).build();
+    when(((RuleSetAccessControlSource) decorated).findAccessControlByRuleSetId("orders"))
+        .thenReturn(acl);
+
+    RateLimitRuleSet ruleSet =
+        new MongoRuleSetProvider(decorated, keyResolver).findById("orders").orElseThrow();
+
+    assertThat(ruleSet.getAccessControl()).isSameAs(acl);
+  }
+
+  @Test
+  void shouldWrapAnInvalidStoredCidrInAnOperationException() {
+    when(ruleRepository.findByRuleSetId("orders")).thenReturn(List.of(rule()));
+    MongoRuleSetProvider withBadAcl =
+        new MongoRuleSetProvider(
+            ruleRepository,
+            keyResolver,
+            null,
+            ruleSetId -> {
+              throw new IllegalArgumentException("Invalid prefix length in '10.0.0.0/99'");
+            });
+
+    assertThatThrownBy(() -> withBadAcl.findById("orders"))
+        .isInstanceOf(FluxgateOperationException.class)
+        .hasMessageContaining("orders")
+        .matches(e -> !((FluxgateOperationException) e).isRetryable());
   }
 }

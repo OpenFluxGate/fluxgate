@@ -46,8 +46,10 @@ class RuleChangeNotifierMetricsTest {
     metrics.recordRetry();
     metrics.recordRetry();
     metrics.recordFailed();
+    metrics.recordNoReceivers();
 
     assertThat(metrics.toString())
-        .isEqualTo("RuleChangeNotifierMetrics{published=1, retried=2, failed=1}");
+        .isEqualTo("RuleChangeNotifierMetrics{published=1, retried=2, failed=1, noReceivers=1}");
+    assertThat(metrics.getNoReceiverNotifications()).isEqualTo(1);
   }
 }

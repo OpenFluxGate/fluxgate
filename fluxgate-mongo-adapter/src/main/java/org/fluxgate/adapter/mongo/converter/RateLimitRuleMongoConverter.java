@@ -22,6 +22,11 @@ import org.fluxgate.core.config.RateLimitRule;
  * <p>All 0.4.0 fields ({@code priority}, matcher fields, access-control lists, band {@code
  * algorithm} / {@code quotaPeriod} / {@code zoneId} / {@code slidingWindowBuckets}) are persisted
  * when present and defaulted gracefully when absent (backward compatibility with 0.3.x documents).
+ *
+ * <p>Numeric fields are read through {@link Number}, so a value written as Int32, Int64 or an
+ * integral Double (as the mongo shell and many tools do) loads the same way. A field of the wrong
+ * type, a fractional or out-of-range number, or an unknown enum value is reported as an {@link
+ * InvalidRuleDocumentException} rather than a {@link ClassCastException} or a silent default.
  */
 public final class RateLimitRuleMongoConverter {
 
@@ -84,7 +89,10 @@ public final class RateLimitRuleMongoConverter {
    * loads (new fields are simply ignored). The attributes field is stored as a nested document.
    *
    * <p>Access-control lists are stored as top-level arrays on the rule document. All rules in a
-   * rule set carry the same lists; the repository uses the first rule it finds.
+   * rule set carry the same lists; when copies diverge the repository merges them per list across
+   * every copy of the rule set (union for deny lists, intersection for allow lists, a copy without
+   * that list counting as empty), so the result does not depend on document order. The repository's
+   * {@code aclUpdatedAt} marker, which makes a copy count even with no list, is not written here.
    *
    * @param doc the DTO to convert (must not be null)
    * @return the BSON document
@@ -172,62 +180,52 @@ public final class RateLimitRuleMongoConverter {
    * @return the converted DTO
    */
   public static RateLimitRuleDocument fromBson(Document doc) {
-    String id = doc.getString("id");
-    String name = doc.getString("name");
-    boolean enabled = doc.getBoolean("enabled", true);
-    LimitScope scope = LimitScope.valueOf(doc.getString("scope"));
-    String keyStrategyId = doc.getString("keyStrategyId");
-    OnLimitExceedPolicy policy = OnLimitExceedPolicy.valueOf(doc.getString("onLimitExceedPolicy"));
-    String ruleSetId = doc.getString("ruleSetId");
+    String id = readString(doc, "id");
+    String name = readString(doc, "name");
+    boolean enabled = readBoolean(doc, "enabled", true);
+    LimitScope scope = readEnum(doc, "scope", LimitScope.class);
+    String keyStrategyId = readString(doc, "keyStrategyId");
+    OnLimitExceedPolicy policy = readEnum(doc, "onLimitExceedPolicy", OnLimitExceedPolicy.class);
+    String ruleSetId = readString(doc, "ruleSetId");
 
-    @SuppressWarnings("unchecked")
-    List<Document> bandDocs = (List<Document>) doc.get("bands");
     List<RateLimitBandDocument> bands = new ArrayList<>();
-    if (bandDocs != null) {
-      for (Document bd : bandDocs) {
-        bands.add(fromBsonBand(bd));
+    Object bandsValue = doc.get("bands");
+    if (bandsValue != null) {
+      if (!(bandsValue instanceof List)) {
+        throw invalid("bands", "an array", bandsValue);
+      }
+      for (Object bd : (List<?>) bandsValue) {
+        if (!(bd instanceof Document)) {
+          throw invalid("bands[]", "an embedded document", bd);
+        }
+        bands.add(fromBsonBand((Document) bd));
       }
     }
 
-    Map<String, Object> attributes = parseAttributes(doc.get("attributes", Document.class));
+    Map<String, Object> attributes = parseAttributes(readDocument(doc, "attributes"));
 
     RateLimitRuleDocument ruleDoc =
         new RateLimitRuleDocument(
             id, name, enabled, scope, keyStrategyId, policy, bands, ruleSetId, attributes);
 
     // ===== 0.4.0 matcher fields =====
-    int priority = doc.getInteger("priority", 0);
+    int priority = readInt(doc, "priority", 0);
 
-    @SuppressWarnings("unchecked")
-    List<String> methods = (List<String>) doc.get("methods");
-
-    @SuppressWarnings("unchecked")
-    List<String> pathPatterns = (List<String>) doc.get("pathPatterns");
-
-    @SuppressWarnings("unchecked")
-    List<String> excludePathPatterns = (List<String>) doc.get("excludePathPatterns");
-
-    Map<String, String> headerEquals = parseStringMap(doc.get("headerEquals", Document.class));
-
-    @SuppressWarnings("unchecked")
-    List<String> headerPresent = (List<String>) doc.get("headerPresent");
+    List<String> methods = readStringList(doc, "methods");
+    List<String> pathPatterns = readStringList(doc, "pathPatterns");
+    List<String> excludePathPatterns = readStringList(doc, "excludePathPatterns");
+    Map<String, String> headerEquals = parseStringMap(readDocument(doc, "headerEquals"));
+    List<String> headerPresent = readStringList(doc, "headerPresent");
 
     ruleDoc.withMatcher(
         priority, methods, pathPatterns, excludePathPatterns, headerEquals, headerPresent);
 
     // ===== 0.4.0 access-control fields =====
-    @SuppressWarnings("unchecked")
-    List<String> allowedIps = (List<String>) doc.get("allowedIps");
-
-    @SuppressWarnings("unchecked")
-    List<String> deniedIps = (List<String>) doc.get("deniedIps");
-
-    @SuppressWarnings("unchecked")
-    List<String> allowedKeysList = (List<String>) doc.get("allowedKeys");
+    List<String> allowedIps = readStringList(doc, "allowedIps");
+    List<String> deniedIps = readStringList(doc, "deniedIps");
+    List<String> allowedKeysList = readStringList(doc, "allowedKeys");
     Set<String> allowedKeys = allowedKeysList != null ? new HashSet<>(allowedKeysList) : null;
-
-    @SuppressWarnings("unchecked")
-    List<String> deniedKeysList = (List<String>) doc.get("deniedKeys");
+    List<String> deniedKeysList = readStringList(doc, "deniedKeys");
     Set<String> deniedKeys = deniedKeysList != null ? new HashSet<>(deniedKeysList) : null;
 
     ruleDoc.withAccessControl(allowedIps, deniedIps, allowedKeys, deniedKeys);
@@ -246,24 +244,150 @@ public final class RateLimitRuleMongoConverter {
    * @return the DTO
    */
   public static RateLimitBandDocument fromBsonBand(Document d) {
-    long windowSeconds = d.getLong("windowSeconds");
-    long capacity = d.getLong("capacity");
-    String label = d.getString("label");
+    long windowSeconds = readLong(d, "windowSeconds");
+    long capacity = readLong(d, "capacity");
+    String label = readString(d, "label");
 
-    // 0.4.0 fields with safe defaults for backward compatibility
-    String algorithm = d.getString("algorithm");
-    String quotaPeriod = d.getString("quotaPeriod");
-    String zoneId = d.getString("zoneId");
-    Integer slidingWindowBuckets = d.getInteger("slidingWindowBuckets");
+    // 0.4.0 fields with safe defaults for backward compatibility; an empty string is "absent"
+    String algorithm = emptyToNull(readString(d, "algorithm"));
+    String quotaPeriod = emptyToNull(readString(d, "quotaPeriod"));
+    String zoneId = emptyToNull(readString(d, "zoneId"));
+    int slidingWindowBuckets = readInt(d, "slidingWindowBuckets", 10);
 
-    return new RateLimitBandDocument(
-        windowSeconds,
-        capacity,
-        label,
-        algorithm != null ? algorithm : "TOKEN_BUCKET",
-        quotaPeriod,
-        zoneId != null ? zoneId : "UTC",
-        slidingWindowBuckets != null ? slidingWindowBuckets : 10);
+    try {
+      return new RateLimitBandDocument(
+          windowSeconds,
+          capacity,
+          label,
+          algorithm != null ? algorithm : "TOKEN_BUCKET",
+          quotaPeriod,
+          zoneId != null ? zoneId : "UTC",
+          slidingWindowBuckets);
+    } catch (IllegalArgumentException e) {
+      throw new InvalidRuleDocumentException("Invalid band: " + e.getMessage(), e);
+    }
+  }
+
+  /* ========= tolerant, type-checked BSON readers ========= */
+
+  private static InvalidRuleDocumentException invalid(String field, String expected, Object value) {
+    return new InvalidRuleDocumentException(
+        "Field '"
+            + field
+            + "' must be "
+            + expected
+            + " but is "
+            + (value == null ? "null" : value.getClass().getSimpleName()));
+  }
+
+  private static String emptyToNull(String value) {
+    return value == null || value.isEmpty() ? null : value;
+  }
+
+  private static String readString(Document d, String field) {
+    Object value = d.get(field);
+    if (value == null || value instanceof String) {
+      return (String) value;
+    }
+    throw invalid(field, "a string", value);
+  }
+
+  private static boolean readBoolean(Document d, String field, boolean defaultValue) {
+    Object value = d.get(field);
+    if (value == null) {
+      return defaultValue;
+    }
+    if (value instanceof Boolean) {
+      return (Boolean) value;
+    }
+    throw invalid(field, "a boolean", value);
+  }
+
+  private static Document readDocument(Document d, String field) {
+    Object value = d.get(field);
+    if (value == null || value instanceof Document) {
+      return (Document) value;
+    }
+    throw invalid(field, "an embedded document", value);
+  }
+
+  private static <E extends Enum<E>> E readEnum(Document d, String field, Class<E> type) {
+    String value = readString(d, field);
+    if (value == null) {
+      throw new InvalidRuleDocumentException("Field '" + field + "' is missing");
+    }
+    try {
+      return Enum.valueOf(type, value);
+    } catch (IllegalArgumentException e) {
+      throw new InvalidRuleDocumentException(
+          "Field '" + field + "' has unknown " + type.getSimpleName() + " '" + value + "'", e);
+    }
+  }
+
+  /** Reads a required integral number stored as Int32, Int64 or an integral Double. */
+  private static long readLong(Document d, String field) {
+    Object value = d.get(field);
+    if (value == null) {
+      throw new InvalidRuleDocumentException("Field '" + field + "' is missing");
+    }
+    return toLong(field, value);
+  }
+
+  private static int readInt(Document d, String field, int defaultValue) {
+    Object value = d.get(field);
+    if (value == null) {
+      return defaultValue;
+    }
+    long asLong = toLong(field, value);
+    if (asLong < Integer.MIN_VALUE || asLong > Integer.MAX_VALUE) {
+      throw new InvalidRuleDocumentException(
+          "Field '" + field + "' is out of the int range: " + asLong);
+    }
+    return (int) asLong;
+  }
+
+  private static long toLong(String field, Object value) {
+    if (value instanceof Integer || value instanceof Long) {
+      return ((Number) value).longValue();
+    }
+    if (value instanceof Double) {
+      double d = (Double) value;
+      if (Double.isNaN(d) || Double.isInfinite(d) || d != Math.rint(d)) {
+        throw new InvalidRuleDocumentException(
+            "Field '" + field + "' must be a whole number but is " + d);
+      }
+      if (d < Long.MIN_VALUE || d > Long.MAX_VALUE) {
+        throw new InvalidRuleDocumentException("Field '" + field + "' is out of range: " + d);
+      }
+      return (long) d;
+    }
+    if (value instanceof org.bson.types.Decimal128) {
+      try {
+        return ((org.bson.types.Decimal128) value).bigDecimalValue().longValueExact();
+      } catch (ArithmeticException e) {
+        throw new InvalidRuleDocumentException(
+            "Field '" + field + "' must be a whole number in the long range but is " + value, e);
+      }
+    }
+    throw invalid(field, "a number", value);
+  }
+
+  private static List<String> readStringList(Document d, String field) {
+    Object value = d.get(field);
+    if (value == null) {
+      return null;
+    }
+    if (!(value instanceof List)) {
+      throw invalid(field, "an array of strings", value);
+    }
+    List<String> result = new ArrayList<>();
+    for (Object element : (List<?>) value) {
+      if (!(element instanceof String)) {
+        throw invalid(field + "[]", "a string", element);
+      }
+      result.add((String) element);
+    }
+    return result;
   }
 
   private static Document toBson(RateLimitBandDocument doc) {
@@ -273,22 +397,18 @@ public final class RateLimitRuleMongoConverter {
             .append("capacity", doc.getCapacity())
             .append("label", doc.getLabel());
 
-    // 0.4.0 fields — only persist non-default values to minimise document bloat
-    String algorithm = doc.getAlgorithm();
-    if (algorithm != null && !algorithm.equals("TOKEN_BUCKET")) {
-      bson.append("algorithm", algorithm);
-    } else {
-      // Always persist algorithm for clarity (new documents)
-      bson.append("algorithm", algorithm != null ? algorithm : "TOKEN_BUCKET");
-    }
+    // 0.4.0 fields: the algorithm always (getAlgorithm() defaults to TOKEN_BUCKET), so a document
+    // says which algorithm it uses; the others only when they differ from their default.
+    bson.append("algorithm", doc.getAlgorithm());
 
     String quotaPeriod = doc.getQuotaPeriod();
     if (quotaPeriod != null) {
       bson.append("quotaPeriod", quotaPeriod);
     }
 
+    // UTC is the default under any spelling ("Z" from ZoneOffset.UTC, "Etc/UTC", ...): omit it
     String zoneId = doc.getZoneId();
-    if (zoneId != null && !zoneId.equals("UTC")) {
+    if (!RateLimitRuleConverter.isUtc(zoneId)) {
       bson.append("zoneId", zoneId);
     }
 
