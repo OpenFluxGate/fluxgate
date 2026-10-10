@@ -11,6 +11,7 @@ import contextlib
 import hashlib
 import http.client
 import http.server
+import inspect
 import json
 import os
 import re
@@ -230,6 +231,15 @@ def sampler_worker(config, stop_path):
             "interval_ms": 100, "scheduled": sequence, "omitted_schedules": omitted,
             "samples": samples, "duration_seconds": time.monotonic() - start,
             "transport": "in-cluster Gateway Service; fresh connection per sample"}
+
+
+def sampler_program(stop_path="/tmp/sampler-stop", started_path="/tmp/sampler-started"):
+    """Only the stdlib worker and private writer belong in the nonsecret exec argument."""
+    return ("import http.client,json,os,sys,time\nfrom pathlib import Path\n\n"
+            + inspect.getsource(private_write) + "\n" + inspect.getsource(sampler_worker)
+            + "\nconfig = json.loads(sys.stdin.readline())\n"
+            + "private_write(" + repr(str(started_path)) + ", 'yes')\n"
+            + "print(json.dumps(sampler_worker(config, " + repr(str(stop_path)) + ")), flush=True)\n")
 
 
 def sampler_summary(report):
@@ -876,8 +886,7 @@ class Proof:
                 created = self.kube("create", "-f", "-", "-o", "json", data=json.dumps(resource).encode())
                 expected_uids[kind] = json.loads(created.stdout)["metadata"]["uid"]
             self.kube("wait", "--for=condition=Ready", "pod/" + name, "--timeout=180s")
-            code = Path(__file__).read_text().rsplit('\nif __name__ == "__main__":', 1)[0]
-            code += "\nconfig=json.loads(sys.stdin.readline());private_write('/tmp/sampler-started','yes');print(json.dumps(sampler_worker(config,'/tmp/sampler-stop')),flush=True)\n"
+            code = sampler_program()
             # Code/command contains no secret. The API key enters only the exec stdin stream.
             process = subprocess.Popen(["kubectl", "--kubeconfig", self.f["kubeconfig"], "--context", self.f["context"],
                                         "-n", self.ns, "exec", "-i", name, "--", "python3", "-c", code],
@@ -2047,6 +2056,50 @@ def tls_runtime_self_test():
         ssl.HAS_TLSv1_3 = original
 
 
+def sampler_program_accounting_self_test():
+    from types import SimpleNamespace
+    # Execute the same generated worker definitions with a deterministic clock and transport.
+    namespace = {}
+    exec(sampler_program().rsplit("\nconfig = ", 1)[0], namespace)
+    clock = SimpleNamespace(now=0.0)
+    namespace["time"] = SimpleNamespace(monotonic=lambda: clock.now,
+        monotonic_ns=lambda: int(clock.now * 1e9), time_ns=lambda: int(clock.now * 1e9),
+        sleep=lambda seconds: setattr(clock, "now", clock.now + seconds))
+    with tempfile.TemporaryDirectory(prefix="sampler-program-accounting-") as directory:
+        stop = Path(directory) / "stop"
+        connections = []
+        class Connection:
+            def __init__(self, *args, **kwargs):
+                connections.append(self)
+            def request(self, method, path, headers):
+                require(method == "GET" and headers["Connection"] == "close", "sampler reused transport")
+            def getresponse(self):
+                if len(connections) == 1:
+                    clock.now += .35
+                    raise TimeoutError("offline transport failure")
+                return SimpleNamespace(status=200, read=lambda: b"marker\n")
+            def close(self):
+                if len(connections) == 2:
+                    private_write(stop, "stop")
+        namespace["http"] = SimpleNamespace(client=SimpleNamespace(HTTPConnection=Connection))
+        report = namespace["sampler_worker"]({"service": "offline", "port": 80, "host": "offline",
+            "path": "/load", "api_key": "offline-only", "body": "marker",
+            "positive_path": str(Path(directory) / "positive"),
+            "progress_path": str(Path(directory) / "progress")}, str(stop))
+        require(report["interval_ms"] == 100 and report["scheduled"] == 4 and
+                report["omitted_schedules"] == 2 and [s["sequence"] for s in report["samples"]] == [0, 3],
+                "generated sampler changed fixed schedules or omitted accounting")
+        require(report["samples"][0]["error"] == "TimeoutError" and
+                report["samples"][0]["status"] is None and report["samples"][1]["body_valid"],
+                "generated sampler changed errors or exact-body control")
+        require(set(report) == {"started_utc_ns", "started_monotonic_ns", "stopped_utc_ns",
+                "stopped_monotonic_ns", "interval_ms", "scheduled", "omitted_schedules", "samples",
+                "duration_seconds", "transport"}, "generated sampler report fields changed")
+        progress = json.loads((Path(directory) / "progress").read_text())
+        require(progress["scheduled"] == 1 and progress["samples"][0]["error"] == "TimeoutError" and
+                "offline-only" not in json.dumps(report), "generated sampler partial progress lost error or privacy")
+
+
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
     credential_acceptance_self_test()
@@ -2061,9 +2114,13 @@ def self_test():
     sampler_cleanup_self_test()
     require(redis_hash_contents(b"revision\n1\nepoch\nstable") ==
             redis_hash_contents(b"epoch\nstable\nrevision\n1"), "Redis metadata compared hash iteration order")
-    worker_source = Path(__file__).read_text().rsplit('\nif __name__ == "__main__":', 1)[0]
-    compile(worker_source + "\nconfig=json.loads(sys.stdin.readline());print(json.dumps(sampler_worker(config,'/tmp/stop')))\n",
-            "sampler-worker", "exec")
+    program = sampler_program()
+    require(len(program.encode()) < 16 * 1024, "sampler program exceeds conservative command argument budget")
+    compile(program, "sampler-worker", "exec")
+    from unittest.mock import patch
+    with patch.object(Path, "read_text", return_value="# unrelated module growth\n" * 6000):
+        require(sampler_program() == program, "sampler command grew with unrelated module source")
+    sampler_program_accounting_self_test()
     original = {"metadata": {"uid": "old"}, "spec": {"volumes": [{"persistentVolumeClaim": {"claimName": "data"}}]}}
     replacement = {"metadata": {"uid": "new"}, "spec": original["spec"]}
     pvc = {"data": {"metadata": {"uid": "pvc"}, "spec": {"volumeName": "pv"}}}
@@ -2102,10 +2159,23 @@ def self_test():
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
-            observed = sampler_summary(sampler_worker({"service": "127.0.0.1", "port": server.server_port,
+            configuration = {"service": "127.0.0.1", "port": server.server_port,
                 "path": "/load", "host": "local", "api_key": "offline-fixture", "body": "backend-marker",
                 "positive_path": str(Path(directory) / "positive"),
-                "progress_path": str(Path(directory) / "progress.json")}, str(stop)))
+                "progress_path": str(Path(directory) / "progress.json")}
+            worker_program = sampler_program(stop, Path(directory) / "started")
+            worker_args = [sys.executable, "-c", worker_program]
+            require(max(len(arg.encode()) for arg in worker_args) < 16 * 1024 and
+                    "offline-fixture" not in worker_program, "sampler argv contains credentials or oversized program")
+            executed = subprocess.run(worker_args, input=(json.dumps(configuration) + "\n").encode(),
+                                      capture_output=True, timeout=10)
+            require(executed.returncode == 0 and not executed.stderr, "standalone sampler program failed")
+            observed = sampler_summary(json.loads(executed.stdout))
+            require((Path(directory) / "started").read_text() == "yes" and
+                    (Path(directory) / "positive").read_text() == "yes" and
+                    (Path(directory) / "progress.json").stat().st_mode & 0o777 == 0o600,
+                    "standalone sampler markers/progress changed private-write contract")
+            require("offline-fixture" not in executed.stdout.decode(), "standalone sampler leaked stdin API key")
             require(observed["statuses"] == {"200": 4, "503": 1} and observed["unexpected_body_responses"] == 2 and
                     observed["backend_successes"] == 2 and not observed["uninterrupted_observed"],
                     "actual traffic sampler hid status/body failures")
