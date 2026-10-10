@@ -7,18 +7,19 @@ on:
   push:
     branches: [ "main" ]
 
-# Least-privilege: read-only on most resources; id-token + security-events are
-# needed for Scorecard's OIDC publish and SARIF upload respectively.
-permissions:
-  contents: read
-  actions: read
-  id-token: write
-  security-events: write
+# Nothing at workflow level; the job asks for exactly what Scorecard needs (id-token for the OIDC
+# publish, security-events for the SARIF upload).
+permissions: read-all
 
 jobs:
   scorecard:
     name: Scorecard analysis
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      security-events: write
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

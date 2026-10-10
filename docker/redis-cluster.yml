@@ -2,7 +2,7 @@
 #
 # Backs the tests behind the `redis-cluster-it` Maven profile:
 #   docker compose -f docker/redis-cluster.yml up -d
-#   ./mvnw -pl fluxgate-redis-ratelimiter -Predis-cluster-it verify
+#   ./mvnw -pl fluxgate-redis-ratelimiter -am -Predis-cluster-it verify
 #
 # Ports are published on 127.0.0.1 so the unauthenticated cluster is unreachable from the
 # surrounding network.

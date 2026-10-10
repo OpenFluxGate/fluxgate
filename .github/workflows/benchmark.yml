@@ -6,6 +6,14 @@ name: Benchmark
 on:
   push:
     branches: [main]
+    # Only changes that can move a number; docs and unrelated modules do not need a run.
+    paths:
+      - 'fluxgate-core/**'
+      - 'fluxgate-redis-ratelimiter/**'
+      - 'fluxgate-mongo-adapter/**'
+      - 'fluxgate-benchmarks/**'
+      - 'pom.xml'
+      - '.github/workflows/benchmark.yml'
   workflow_dispatch:
     inputs:
       run_redis_benchmark:
@@ -19,15 +27,17 @@ on:
         default: 'false'
         type: boolean
 
-# contents: write is what github-action-benchmark needs to push the results to gh-pages and to
-# comment on a regression. Nothing here touches the deployments API.
+# Read-only by default. github-action-benchmark needs contents: write only to push the results to
+# gh-pages and to comment on a regression, so each "Store benchmark result" job grants it to itself.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   benchmark-standalone:
     name: Standalone Benchmark (No Redis)
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # pushes results to gh-pages
 
     steps:
       - name: Checkout
@@ -81,10 +91,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: benchmark-standalone
     if: always() && (github.event.inputs.run_redis_benchmark == 'true' || github.event_name == 'push')
+    permissions:
+      contents: write   # pushes results to gh-pages
 
     services:
       redis:
-        image: redis:7-alpine
+        image: redis:7.2.5-alpine
         ports:
           - 6379:6379
         options: >-
@@ -148,10 +160,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: benchmark-redis
     if: always() && (github.event.inputs.run_mongo_benchmark == 'true' || github.event_name == 'push')
+    permissions:
+      contents: write   # pushes results to gh-pages
 
     services:
       mongo:
-        image: mongo:7
+        image: mongo:7.0.14
         ports:
           - 27017:27017
         env:
