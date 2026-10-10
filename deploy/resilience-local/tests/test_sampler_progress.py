@@ -11,7 +11,8 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 
-from sampler_test_support import MODULE,load_sampler,local_server
+SOURCE = Path(os.environ.get('FLUXGATE_PROGRESS_TEST_SOURCE', str(Path(__file__).resolve().parents[1] / 'verify-credentials.py')))
+MODULE = runpy.run_path(str(SOURCE))
 
 
 class SamplerProgress(unittest.TestCase):
@@ -22,7 +23,8 @@ class SamplerProgress(unittest.TestCase):
         stop, progress = directory / 'stop', directory / 'progress'
         count, snapshots, outcome = [], [], {}
         enough = threading.Event()
-        namespace = load_sampler().__dict__
+        namespace = {}
+        exec(MODULE['sampler_program']().split('\nconfig = ', 1)[0], namespace)
         original = namespace['private_write']
         def capture(path, contents):
             if Path(path).name.startswith('progress'):
@@ -31,10 +33,18 @@ class SamplerProgress(unittest.TestCase):
                 writer(snapshot)
             original(path, contents)
         namespace['private_write'] = capture
-        port,count,enough=local_server(self)
+        class Connection:
+            def __init__(self,*args,**kwargs):
+                count.append(self)
+                if len(count) >= 5:
+                    enough.set()
+            def request(self,*args,**kwargs): pass
+            def getresponse(self): return SimpleNamespace(status=200, read=lambda:b'backend')
+            def close(self): pass
+        namespace['http'] = SimpleNamespace(client=SimpleNamespace(HTTPConnection=Connection))
         def run():
             try:
-                outcome['report'] = namespace['sampler_worker']({'service':'127.0.0.1','port':port,
+                outcome['report'] = namespace['sampler_worker']({'service':'offline','port':80,
                     'host':'offline','api_key':'offline','path':'/load','body':'backend',
                     'progress_path':str(progress),'positive_path':str(directory/'positive')},str(stop))
             except BaseException as error:

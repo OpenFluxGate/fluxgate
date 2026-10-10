@@ -7,8 +7,8 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from sampler_test_support import MODULE,load_sampler,local_server
-SAMPLER = load_sampler().sampler_worker
+MODULE = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'verify-credentials.py'))
+SAMPLER = MODULE['sampler_worker']
 
 
 class PositiveMarker(unittest.TestCase):
@@ -18,7 +18,24 @@ class PositiveMarker(unittest.TestCase):
         root = Path(directory.name)
         stop, positive, progress = root / 'stop', root / 'positive', root / 'progress'
         requests, enough, outcome = [], threading.Event(), {'progress_snapshots': []}
-        port,requests,enough=local_server(self,body=b'backend\n')
+        request_lock = threading.Lock()
+
+        class Connection:
+            def __init__(self, *args, **kwargs):
+                self.closed = False
+            def request(self, method, path, headers):
+                with request_lock:
+                    requests.append(self)
+                    if len(requests) >= 5:
+                        enough.set()
+            def getresponse(self):
+                return self
+            def read(self):
+                return b'backend\n'
+            status = 200
+            def close(self):
+                self.closed = True
+
         original_write = MODULE['private_write']
         def write(path, data):
             if Path(path) == positive:
@@ -29,19 +46,22 @@ class PositiveMarker(unittest.TestCase):
 
         def run():
             try:
-                outcome['report'] = SAMPLER({'service': '127.0.0.1', 'port': port, 'path': '/load',
+                outcome['report'] = SAMPLER({'service': 'offline', 'port': 80, 'path': '/load',
                     'host': 'offline', 'api_key': 'offline', 'body': 'backend',
                     'positive_path': str(positive), 'progress_path': str(progress)}, str(stop))
             except BaseException as error:
                 outcome['error'] = error
 
         patcher = patch.dict(SAMPLER.__globals__, private_write=write)
+        http_patcher = patch.object(MODULE['http'].client, 'HTTPConnection', Connection)
         patcher.start()
+        http_patcher.start()
         thread = threading.Thread(target=run, daemon=True)
         thread.start()
         def cleanup():
             stop.touch()
             thread.join(7)
+            http_patcher.stop()
             patcher.stop()
         self.addCleanup(cleanup)
         return stop, progress, requests, enough, outcome, thread
@@ -66,7 +86,7 @@ class PositiveMarker(unittest.TestCase):
         self.assertEqual(len(writes), 1)
         self.assertEqual(writes[0][1], 'yes')
         self.assertGreaterEqual(len(requests), 5)
-        self.assertEqual(len({connection.address for connection in requests}), len(requests))
+        self.assertEqual(len({id(connection) for connection in requests}), len(requests))
         self.assertTrue(all(connection.closed for connection in requests))
         self.assertEqual(report['worker_failures'], 0)
 
