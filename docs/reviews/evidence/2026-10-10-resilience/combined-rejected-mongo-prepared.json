@@ -1,0 +1,81 @@
+{
+  "passed": false,
+  "complete": false,
+  "diagnostic_only": true,
+  "reason": "Publication helper ran a second JVM in the serving cgroup; actual authz OOM kills invalidated the injected-fault observation. The tool now uses a separate bounded Pod.",
+  "artifacts": {
+    "summary.json": {
+      "sha256": "8712bb113cf34355ad39b346b321c6760dfa90b43362170ce280da219cfacd97",
+      "bytes": 1702
+    },
+    "raw-load.json": {
+      "sha256": "a48a02818408c05b25975bfe72c69fb2700c51e792faa9ee45ea92cb4c0c0486",
+      "bytes": 8417990
+    },
+    "readiness.json": {
+      "sha256": "db5db03f302025c166866f46ad81e25b1e55ab071fa3dcf9ff6534704511531f",
+      "bytes": 803
+    },
+    "ha/failure.json": {
+      "sha256": "d516087d51f1e2c0cd8ac148a04bf947b0f749885f84d1fd5a9586aaff31b7ad",
+      "bytes": 12658
+    }
+  },
+  "load_result": "FAIL",
+  "load_failure_stage": null,
+  "warmup": {
+    "target_requests": 500,
+    "planned_requests": 500,
+    "submitted_requests": 500,
+    "completed_requests": 500,
+    "target_rps": 100.0,
+    "achieved_rps": 99.97526941695075,
+    "measurement_seconds": 5,
+    "elapsed_including_drain_seconds": 5.001236835028976,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 500
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 500
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "latency_ms": {
+      "p50": 6.644667126238346,
+      "p95": 11.101084994152188,
+      "p99": 17.848083982244134,
+      "max": 23.20054196752608
+    },
+    "dispatch_lag_ms": {
+      "p95": 0.9119180031120777,
+      "max": 2.50558415427804
+    },
+    "schedule_start_unix_ms": 1791583208664.5913,
+    "schedule_end_unix_ms": 1791583213664.5913,
+    "clock_unix_offset_seconds": 1790353654.4958646
+  },
+  "ha_failure": {
+    "phase": "mongo-election-publication",
+    "exception_class": "AssertionError",
+    "timestamps": {
+      "rto_budget_started": {
+        "unix_ms": 1791583221092,
+        "utc": "2026-10-09T22:00:21.092Z"
+      },
+      "fault_start": {
+        "unix_ms": 1791583221258,
+        "utc": "2026-10-09T22:00:21.258Z"
+      },
+      "paused_verified": {
+        "unix_ms": 1791583221435,
+        "utc": "2026-10-09T22:00:21.435Z"
+      }
+    }
+  }
+}

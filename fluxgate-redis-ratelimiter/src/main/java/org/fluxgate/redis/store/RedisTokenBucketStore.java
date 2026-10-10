@@ -63,6 +63,7 @@ import org.slf4j.LoggerFactory;
 public class RedisTokenBucketStore {
 
   private static final Logger log = LoggerFactory.getLogger(RedisTokenBucketStore.class);
+  private static final String POLICY_KEY_PREFIX = "fluxgate:policy:";
   private static final String SCRIPT_NAME = "token_bucket_consume.lua";
   private static final String REFUND_SCRIPT_NAME = "token_bucket_refund.lua";
   private static final long BUCKET_SCAN_COUNT = 1000L;
@@ -230,7 +231,13 @@ public class RedisTokenBucketStore {
    * @throws ScriptExecutionException if the Lua script fails or returns an unexpected result
    */
   public BucketState tryConsume(List<String> bucketKeys, List<RateLimitBand> bands, long permits) {
-    return evaluate(bucketKeys, bands, permits, false);
+    return evaluate(
+        bucketKeys,
+        bands,
+        permits,
+        false,
+        Collections.nCopies(bands.size(), 0L),
+        Collections.nCopies(bands.size(), ""));
   }
 
   /**
@@ -250,11 +257,58 @@ public class RedisTokenBucketStore {
    * @throws ScriptExecutionException if the Lua script fails or returns an unexpected result
    */
   public BucketState check(List<String> bucketKeys, List<RateLimitBand> bands, long permits) {
-    return evaluate(bucketKeys, bands, permits, true);
+    return evaluate(
+        bucketKeys,
+        bands,
+        permits,
+        true,
+        Collections.nCopies(bands.size(), 0L),
+        Collections.nCopies(bands.size(), ""));
+  }
+
+  public BucketState tryConsume(
+      List<String> keys, List<RateLimitBand> bands, long permits, long revision) {
+    return tryConsume(keys, bands, permits, revision, "");
+  }
+
+  public BucketState tryConsume(
+      List<String> keys, List<RateLimitBand> bands, long permits, long revision, String epoch) {
+    return tryConsumeFenced(
+        keys,
+        bands,
+        permits,
+        Collections.nCopies(bands.size(), revision),
+        Collections.nCopies(bands.size(), epoch));
+  }
+
+  /** Per-band revisions preserve single-call atomicity when several rules share a slot. */
+  public BucketState tryConsumeFenced(
+      List<String> keys,
+      List<RateLimitBand> bands,
+      long permits,
+      List<Long> revisions,
+      List<String> epochs) {
+    return evaluate(keys, bands, permits, false, revisions, epochs);
+  }
+
+  public BucketState checkFenced(
+      List<String> keys, List<RateLimitBand> bands, long permits, long revision, String epoch) {
+    return evaluate(
+        keys,
+        bands,
+        permits,
+        true,
+        Collections.nCopies(bands.size(), revision),
+        Collections.nCopies(bands.size(), epoch));
   }
 
   private BucketState evaluate(
-      List<String> bucketKeys, List<RateLimitBand> bands, long permits, boolean checkOnly) {
+      List<String> bucketKeys,
+      List<RateLimitBand> bands,
+      long permits,
+      boolean checkOnly,
+      List<Long> revisions,
+      List<String> epochs) {
     Objects.requireNonNull(bucketKeys, "bucketKeys must not be null");
     Objects.requireNonNull(bands, "bands must not be null");
 
@@ -308,16 +362,33 @@ public class RedisTokenBucketStore {
       }
     }
 
-    // KEYS[1..n] = bucketKeys
-    // ARGV[1] = permits, ARGV[2] = max_bucket_ttl_seconds, then 5 values per band:
-    //   capacity, window_micros, algorithm_code, buckets_or_zero, window_end_micros_or_zero
-    // and, in check-only mode, a trailing "1"
-    String[] keys = bucketKeys.toArray(new String[0]);
-    String[] args = scriptArgs(permits, maxBucketTtlSeconds, bands);
-    if (checkOnly) {
-      args = Arrays.copyOf(args, args.length + 1);
-      args[args.length - 1] = CHECK_ONLY_FLAG;
+    // n buckets + n metadata + n rule/epoch fences. No legacy Java caller bypasses fences.
+    int count = bands.size();
+    if (revisions.size() != count || epochs.size() != count) {
+      throw new IllegalArgumentException("one revision and epoch required per band");
     }
+    String[] keys = new String[3 * count];
+    String[] args = Arrays.copyOf(scriptArgs(permits, maxBucketTtlSeconds, bands), 4 + 6 * count);
+    java.util.Map<String, Long> fenceRevisions = new java.util.HashMap<>();
+    for (int i = 0; i < count; i++) {
+      long revision = revisions.get(i);
+      if (revision < 0 || revision > 9_007_199_254_740_991L) {
+        throw new IllegalArgumentException(
+            "revision must be in the exact nonnegative Lua integer range");
+      }
+      keys[i] = bucketKeys.get(i);
+      keys[count + i] = metadataKey(keys[i]);
+      String epoch = Objects.requireNonNull(epochs.get(i), "epoch");
+      // Epoch changes reset buckets, never the monotonic rule fence.
+      keys[2 * count + i] = revisionKey(keys[i]);
+      Long previous = fenceRevisions.putIfAbsent(keys[2 * count + i], revision);
+      if (previous != null && previous.longValue() != revision) {
+        throw new IllegalArgumentException("inconsistent revisions for the same rule fence");
+      }
+      args[2 + 5 * count + i] = String.valueOf(revision);
+    }
+    args[args.length - 2] = checkOnly ? CHECK_ONLY_FLAG : "0";
+    args[args.length - 1] = "FENCED";
 
     List<Long> result =
         executeScriptWithFallback(
@@ -407,13 +478,20 @@ public class RedisTokenBucketStore {
           "bucketKeys (" + bucketKeys.size() + ") and bands (" + bands.size() + ") must match");
     }
 
-    String[] args = scriptArgs(permits, consumedAtMicros, bands);
+    int count = bands.size();
+    String[] refundKeys = new String[2 * count];
+    for (int i = 0; i < count; i++) {
+      refundKeys[i] = bucketKeys.get(i);
+      refundKeys[count + i] = metadataKey(refundKeys[i]);
+    }
+    String[] args = Arrays.copyOf(scriptArgs(permits, consumedAtMicros, bands), 3 + 5 * count);
+    args[args.length - 1] = "FENCED";
     List<Long> result =
         executeScriptWithFallback(
             scripts.getTokenBucketRefundSha(),
             scripts.getTokenBucketRefundScript(),
             REFUND_SCRIPT_NAME,
-            bucketKeys.toArray(new String[0]),
+            refundKeys,
             args);
     if (result == null || result.size() != bands.size()) {
       throw new ScriptExecutionException(
@@ -496,6 +574,49 @@ public class RedisTokenBucketStore {
               + " sub-buckets of "
               + band.getWindow()
               + " is shorter than 1 ms; use fewer sub-buckets or a longer window");
+    }
+  }
+
+  /** Dedicated metadata namespace keeps arbitrary band labels from colliding with bucket state. */
+  public static String metadataKey(String bucketKey) {
+    String prefix = POLICY_KEY_PREFIX;
+    if (hashTagEnd(bucketKey) >= 0) return prefix + bucketKey;
+    // A tag must precede the original key: empty/malformed braces in a raw key otherwise
+    // prevent Redis from interpreting an appended tag. Preserve the original bucket identity.
+    return prefix + "{" + RawKeySlotTags.TAGS[SlotHash.getSlot(bucketKey)] + "}:" + bucketKey;
+  }
+
+  /** The legacy fence follows the rule/key hash tag, never the band label. */
+  public static String revisionKey(String bucketKey) {
+    int close = hashTagEnd(bucketKey);
+    String root = close >= 0 ? bucketKey.substring(0, close + 1) : bucketKey;
+    return metadataKey(root) + ":revision";
+  }
+
+  private static int hashTagEnd(String key) {
+    int open = key.indexOf('{');
+    if (open < 0) return -1;
+    int close = key.indexOf('}', open + 1);
+    return close > open + 1 ? close : -1;
+  }
+
+  /** Lazily built, bounded table shared by all stores; raw-key calls need no per-call search. */
+  private static final class RawKeySlotTags {
+    private static final String[] TAGS = build();
+
+    private static String[] build() {
+      String[] tags = new String[16384];
+      int remaining = tags.length;
+      for (int candidate = 0; remaining > 0 && candidate < 1_000_000; candidate++) {
+        String tag = "raw" + candidate;
+        int slot = SlotHash.getSlot(tag);
+        if (tags[slot] == null) {
+          tags[slot] = tag;
+          remaining--;
+        }
+      }
+      if (remaining != 0) throw new IllegalStateException("Unable to construct Redis slot tags");
+      return tags;
     }
   }
 

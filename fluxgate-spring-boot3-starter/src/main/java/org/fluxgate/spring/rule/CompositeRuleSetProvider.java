@@ -44,6 +44,11 @@ public final class CompositeRuleSetProvider implements RateLimitRuleSetProvider 
   }
 
   @Override
+  public boolean requiresFreshRead() {
+    return primary.requiresFreshRead() || delegate.requiresFreshRead();
+  }
+
+  @Override
   public Optional<RateLimitRuleSet> findById(String ruleSetId) {
     Optional<RateLimitRuleSet> result = primary.findById(ruleSetId);
     if (result.isPresent()) {

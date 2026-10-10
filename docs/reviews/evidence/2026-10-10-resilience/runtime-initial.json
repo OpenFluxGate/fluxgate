@@ -1,0 +1,448 @@
+{
+  "phase": "Initial fixture snapshot before final Mongo timeout fix and rejected connectivity run",
+  "context": "kind-fluxgate-resilience",
+  "default_context": "kind-fluxgate-eg",
+  "hardware": {
+    "docker_cpus": 6,
+    "docker_memory_bytes": 16485851136,
+    "docker_architecture": "aarch64"
+  },
+  "pods": [
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "echo-78477458b7-789d9",
+      "uid": "398ad7eb-5831-4c5c-b15d-d14353be8c33",
+      "node": "fluxgate-resilience-worker2",
+      "containers": [
+        {
+          "containerID": "containerd://f79e9ccc46f01b2c50cbd02e246a3a02ffb3d708011a634526f76c489c306f27",
+          "image": "docker.io/hashicorp/http-echo:1.0.0",
+          "imageID": "docker.io/hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186",
+          "name": "echo",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "echo-78477458b7-kcjx6",
+      "uid": "c753b26a-c708-4bbe-bc0a-1ccf480afbb2",
+      "node": "fluxgate-resilience-worker",
+      "containers": [
+        {
+          "containerID": "containerd://f277c9dc5ba6afc75fc11f9ef22b2649642b8c0f29c43561de2dfc652d036dc2",
+          "image": "docker.io/hashicorp/http-echo:1.0.0",
+          "imageID": "docker.io/hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186",
+          "name": "echo",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "fluxgate-authz-695fcc8666-5vtwb",
+      "uid": "e75f8d92-f10a-46c9-a7b4-089eb00f94e9",
+      "node": "fluxgate-resilience-worker2",
+      "containers": [
+        {
+          "containerID": "containerd://9809631aaefd2c1682b07ffb61fe2bad44ff917f6f1a59b2b162d340eaff59b0",
+          "image": "docker.io/library/fluxgate-envoy-extauth:resilience",
+          "imageID": "sha256:d7f6e3f918afcadebe6094f0b89adf635cf71161c024a14367c3943d12fe010b",
+          "name": "authz",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "fluxgate-authz-695fcc8666-bcl6h",
+      "uid": "95469991-929f-4143-a9a0-d5b4460e75f1",
+      "node": "fluxgate-resilience-worker",
+      "containers": [
+        {
+          "containerID": "containerd://e78b2cfa12b9b32aea32b303e163be687aa5031199351d5b56cbb6acc7424219",
+          "image": "docker.io/library/fluxgate-envoy-extauth:resilience",
+          "imageID": "sha256:d7f6e3f918afcadebe6094f0b89adf635cf71161c024a14367c3943d12fe010b",
+          "name": "authz",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "fluxgate-load-266d75e747b3",
+      "uid": "3d7cef1d-ff5b-4a9a-ace8-e46e5cd31041",
+      "node": "fluxgate-resilience-worker",
+      "containers": [
+        {
+          "containerID": "containerd://48ec83f66cf28ac4b572dbdef2c2703ecf5aaef558c65598afb5b45738c0a83f",
+          "image": "docker.io/library/python:3.12-alpine",
+          "imageID": "docker.io/library/python@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4",
+          "name": "generator",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "mongo-0",
+      "uid": "8c8a545c-8db2-4e72-b8d4-506baac5fe3c",
+      "node": "fluxgate-resilience-worker2",
+      "containers": [
+        {
+          "containerID": "containerd://eaf77ac7974a14fbaff3241466edb68daa1d2ccc55ba6268c9e257ceac5ae0ed",
+          "image": "docker.io/library/mongo:7",
+          "imageID": "docker.io/library/mongo@sha256:1f995ad6fdb93244a1addab1b58f934a0bc2f5643c38e02f5e9d7f0c7d227a7b",
+          "name": "mongo",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "mongo-1",
+      "uid": "a948843a-75d5-4738-bbc1-971046af85cf",
+      "node": "fluxgate-resilience-worker",
+      "containers": [
+        {
+          "containerID": "containerd://4378f9f4788b1de5d57715cb8354377035ba8c7a796163ca8adf7a5257a35d2b",
+          "image": "docker.io/library/mongo:7",
+          "imageID": "docker.io/library/mongo@sha256:1f995ad6fdb93244a1addab1b58f934a0bc2f5643c38e02f5e9d7f0c7d227a7b",
+          "name": "mongo",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "mongo-2",
+      "uid": "fed39a41-daf5-484c-9d4d-38c90a1f9ae0",
+      "node": "fluxgate-resilience-control-plane",
+      "containers": [
+        {
+          "containerID": "containerd://121cfe649127e31957c075ea69a46332ef61616920d0af4da6a493e6909a2610",
+          "image": "docker.io/library/mongo:7",
+          "imageID": "docker.io/library/mongo@sha256:1f995ad6fdb93244a1addab1b58f934a0bc2f5643c38e02f5e9d7f0c7d227a7b",
+          "name": "mongo",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "redis-0-0",
+      "uid": "1da9f95e-1387-4411-ac2c-92066b625b96",
+      "node": "fluxgate-resilience-control-plane",
+      "containers": [
+        {
+          "containerID": "containerd://3af114263b4d15a688e40c85e6063b01e70b19336d27b1c2f1d4fbaa30e19319",
+          "image": "docker.io/library/redis:7.4-alpine",
+          "imageID": "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+          "name": "redis",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "redis-1-0",
+      "uid": "97af5d0c-2e00-48f4-ad22-8332ab8e280c",
+      "node": "fluxgate-resilience-worker",
+      "containers": [
+        {
+          "containerID": "containerd://8e46056b85a1af60ece284a089911d5c956136940fe5343dbc7f552a759eaa68",
+          "image": "docker.io/library/redis:7.4-alpine",
+          "imageID": "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+          "name": "redis",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "redis-2-0",
+      "uid": "c56a8476-c8fd-4bf7-8b1e-e4a2b6c56666",
+      "node": "fluxgate-resilience-worker2",
+      "containers": [
+        {
+          "containerID": "containerd://297af64aa1def625452594830cc302cf15568a8fd6c0b705cb6da4de9ee8628d",
+          "image": "docker.io/library/redis:7.4-alpine",
+          "imageID": "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+          "name": "redis",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "redis-3-0",
+      "uid": "2c9c67af-2db3-4c70-b24d-8a2dfee673a9",
+      "node": "fluxgate-resilience-worker",
+      "containers": [
+        {
+          "containerID": "containerd://f033dcd135555d2dac12d377ee8246e4e928ed35fd31e6d4456620d11e0f7d3f",
+          "image": "docker.io/library/redis:7.4-alpine",
+          "imageID": "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+          "name": "redis",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "redis-4-0",
+      "uid": "68afa560-0109-4e49-bd1d-78ecae76c350",
+      "node": "fluxgate-resilience-worker2",
+      "containers": [
+        {
+          "containerID": "containerd://13279ebb9a950df41fcd0e251a0fe0b466007461f6d421e208936df35036b3f7",
+          "image": "docker.io/library/redis:7.4-alpine",
+          "imageID": "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+          "name": "redis",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "redis-5-0",
+      "uid": "78608478-7ba1-467c-a65a-da517ccf503f",
+      "node": "fluxgate-resilience-control-plane",
+      "containers": [
+        {
+          "containerID": "containerd://be8a77c3047baac4aa06b31dbf52a168cce28e63b9f3ffd7d259a2dc84241904",
+          "image": "docker.io/library/redis:7.4-alpine",
+          "imageID": "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+          "name": "redis",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "redis-6-0",
+      "uid": "7442c7b1-bff3-42a7-87c5-237607074596",
+      "node": "fluxgate-resilience-worker2",
+      "containers": [
+        {
+          "containerID": "containerd://971f343f65d62816b10b0f13ed5a2a4f0a00c04d164d302a7b02e1313c8afd57",
+          "image": "docker.io/library/redis:7.4-alpine",
+          "imageID": "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+          "name": "redis",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "redis-7-0",
+      "uid": "1079e4fa-0e79-47de-aa9a-6cfab421e504",
+      "node": "fluxgate-resilience-control-plane",
+      "containers": [
+        {
+          "containerID": "containerd://331cc42c7ff8427ab59d51ea570a49ae5a18c3052afa000c0cc6c39e81bff2ad",
+          "image": "docker.io/library/redis:7.4-alpine",
+          "imageID": "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+          "name": "redis",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "fluxgate-resilience",
+      "name": "redis-8-0",
+      "uid": "80844c88-827b-43bb-b233-4bfa90c5455a",
+      "node": "fluxgate-resilience-worker",
+      "containers": [
+        {
+          "containerID": "containerd://f9c7f710c806d35613adbb5e09b14cd967836de7899c99ab4ded1410ec510bd2",
+          "image": "docker.io/library/redis:7.4-alpine",
+          "imageID": "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+          "name": "redis",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "envoy-gateway-system",
+      "name": "envoy-fluxgate-resilience-fluxgate-resilience-gateway-fc3djcj28",
+      "uid": "13057bed-5ab1-4672-9f0d-49b08eed9a91",
+      "node": "fluxgate-resilience-worker",
+      "containers": [
+        {
+          "containerID": "containerd://cde0ef9dd880a616c031a9f339d20a2cad272abf903ede1c7e8a80486af068a9",
+          "image": "sha256:370bbc1c75d7593733a11822c83fa99ce79247d3f79fb76bca210311ab12ec9a",
+          "imageID": "docker.io/envoyproxy/envoy@sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4",
+          "name": "envoy",
+          "ready": true,
+          "restartCount": 0
+        },
+        {
+          "containerID": "containerd://1e979774fe23379b630b9cdd17e80e3bdfbc1e70cbea842365180f10a5cd3034",
+          "image": "docker.io/envoyproxy/gateway:v1.9.2",
+          "imageID": "docker.io/envoyproxy/gateway@sha256:9d67017c442a70e6ae9f1a358e6c80eb653c67c2e40823d9a991e0daf37ba926",
+          "name": "shutdown-manager",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "envoy-gateway-system",
+      "name": "envoy-fluxgate-resilience-fluxgate-resilience-gateway-fc3dwmvfr",
+      "uid": "de32ea46-6d35-441d-b12e-6d0553f05e87",
+      "node": "fluxgate-resilience-worker2",
+      "containers": [
+        {
+          "containerID": "containerd://1d0d9967802ac40aa6d05658f1628b45f14d9a9c7bffcdd5f222954b6f57c3b7",
+          "image": "sha256:370bbc1c75d7593733a11822c83fa99ce79247d3f79fb76bca210311ab12ec9a",
+          "imageID": "docker.io/envoyproxy/envoy@sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4",
+          "name": "envoy",
+          "ready": true,
+          "restartCount": 0
+        },
+        {
+          "containerID": "containerd://e2b541f72562d11619ec8c1da98e426172da3c0a03b3d66d693c1cb6c5bf13a5",
+          "image": "docker.io/envoyproxy/gateway:v1.9.2",
+          "imageID": "docker.io/envoyproxy/gateway@sha256:9d67017c442a70e6ae9f1a358e6c80eb653c67c2e40823d9a991e0daf37ba926",
+          "name": "shutdown-manager",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "envoy-gateway-system",
+      "name": "envoy-gateway-775c98fbb-2bdhr",
+      "uid": "759d9376-22d2-4d04-bf07-c9c3149d50c7",
+      "node": "fluxgate-resilience-worker",
+      "containers": [
+        {
+          "containerID": "containerd://6c4895c27a73c15dcec5934e44355faf42d29f31c685cf136067287a47ad9b58",
+          "image": "docker.io/envoyproxy/gateway:v1.9.2",
+          "imageID": "docker.io/envoyproxy/gateway@sha256:9d67017c442a70e6ae9f1a358e6c80eb653c67c2e40823d9a991e0daf37ba926",
+          "name": "envoy-gateway",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    },
+    {
+      "namespace": "envoy-gateway-system",
+      "name": "envoy-gateway-775c98fbb-2kr2k",
+      "uid": "9a0879d5-22f9-4d32-bc30-233aacc7772e",
+      "node": "fluxgate-resilience-worker2",
+      "containers": [
+        {
+          "containerID": "containerd://b089f85f43018f4a2173b9097cafc0f904b3f5330beb1b4ad9c8134396871d39",
+          "image": "docker.io/envoyproxy/gateway:v1.9.2",
+          "imageID": "docker.io/envoyproxy/gateway@sha256:9d67017c442a70e6ae9f1a358e6c80eb653c67c2e40823d9a991e0daf37ba926",
+          "name": "envoy-gateway",
+          "ready": true,
+          "restartCount": 0
+        }
+      ]
+    }
+  ],
+  "pvc": [
+    {
+      "name": "data-mongo-0",
+      "uid": "1e0fea16-ea36-469e-a901-e0dc4e521850",
+      "volume": "pvc-1e0fea16-ea36-469e-a901-e0dc4e521850",
+      "phase": "Bound"
+    },
+    {
+      "name": "data-mongo-1",
+      "uid": "1c1b2dcb-4625-470e-9b77-2c8015754eec",
+      "volume": "pvc-1c1b2dcb-4625-470e-9b77-2c8015754eec",
+      "phase": "Bound"
+    },
+    {
+      "name": "data-mongo-2",
+      "uid": "c49121e9-472b-4a89-bffa-63e22badac35",
+      "volume": "pvc-c49121e9-472b-4a89-bffa-63e22badac35",
+      "phase": "Bound"
+    },
+    {
+      "name": "data-redis-0-0",
+      "uid": "a6fcdcaf-ee02-4edf-b552-f9deb40a315a",
+      "volume": "pvc-a6fcdcaf-ee02-4edf-b552-f9deb40a315a",
+      "phase": "Bound"
+    },
+    {
+      "name": "data-redis-1-0",
+      "uid": "9ba004a6-c1b4-4b39-9266-df6638324b71",
+      "volume": "pvc-9ba004a6-c1b4-4b39-9266-df6638324b71",
+      "phase": "Bound"
+    },
+    {
+      "name": "data-redis-2-0",
+      "uid": "3d40626b-a85d-4d25-bc4f-5b36e54db709",
+      "volume": "pvc-3d40626b-a85d-4d25-bc4f-5b36e54db709",
+      "phase": "Bound"
+    },
+    {
+      "name": "data-redis-3-0",
+      "uid": "285424d5-ab96-43bb-9df7-9c7584fba694",
+      "volume": "pvc-285424d5-ab96-43bb-9df7-9c7584fba694",
+      "phase": "Bound"
+    },
+    {
+      "name": "data-redis-4-0",
+      "uid": "37aeabb3-d3a4-4147-a330-7c2f620ddf85",
+      "volume": "pvc-37aeabb3-d3a4-4147-a330-7c2f620ddf85",
+      "phase": "Bound"
+    },
+    {
+      "name": "data-redis-5-0",
+      "uid": "2c621113-ca42-4263-83d7-0f2c635834e8",
+      "volume": "pvc-2c621113-ca42-4263-83d7-0f2c635834e8",
+      "phase": "Bound"
+    },
+    {
+      "name": "data-redis-6-0",
+      "uid": "95b09695-15d2-4a20-b6d4-b5e531a7e529",
+      "volume": "pvc-95b09695-15d2-4a20-b6d4-b5e531a7e529",
+      "phase": "Bound"
+    },
+    {
+      "name": "data-redis-7-0",
+      "uid": "7b87b840-97e1-4678-9038-5c5e7b8f3d7b",
+      "volume": "pvc-7b87b840-97e1-4678-9038-5c5e7b8f3d7b",
+      "phase": "Bound"
+    },
+    {
+      "name": "data-redis-8-0",
+      "uid": "6d706346-e2f3-440e-8739-1d1fe0ee9941",
+      "volume": "pvc-6d706346-e2f3-440e-8739-1d1fe0ee9941",
+      "phase": "Bound"
+    }
+  ],
+  "lease": {
+    "acquireTime": "2026-10-09T20:47:10.476104Z",
+    "holderIdentity": "envoy-gateway-775c98fbb-2kr2k_e53eb781-6eae-4fcb-a921-f8426f52bd1b",
+    "leaseDurationSeconds": 15,
+    "leaseTransitions": 1,
+    "renewTime": "2026-10-09T20:49:06.755481Z"
+  },
+  "application_jar_sha256": "8d302c3c6f28a97f5aebc58c87ff404c4a906636cdc0530f4a4df0eff128aaf7",
+  "credential_values_included": false,
+  "prior_local_clusters_preserved": true
+}

@@ -103,6 +103,7 @@
 | **fluxgate-control-support** | 컨트롤 플레인 보조: `@NotifyRuleChange` / `@NotifyFullReload` 와 Redis 규칙 변경 통지기 |
 | **fluxgate-testkit** | 통합 테스트 유틸리티 |
 | **fluxgate-benchmarks** | JMH 벤치마크 (배포되지 않음) |
+| **fluxgate-envoy-extauth** | 기존 엔진과 MongoDB·Redis 어댑터를 사용하는 Envoy Gateway 외부 판정 서비스 |
 | **fluxgate-samples** | 다양한 사용 사례를 보여주는 샘플 애플리케이션 |
 
 ## 빠른 시작

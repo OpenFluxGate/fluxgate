@@ -1,0 +1,100 @@
+{
+  "kind": "load-decision-diagnostics",
+  "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+  "source_commit_at_invocation": "3a9a0cffae66a9a3d812f2c0e28e3aa828a1dda4",
+  "management_observation_count": 288,
+  "processes": [
+    {
+      "anonymous_process": 1,
+      "uid_sha256": "4fe149fc260e81b7f0d1fccb5dce2a55e5f6c78fbeb42260bf3bde7d3c018237",
+      "sample_count": 144,
+      "first_unix_ms": 1791596521827,
+      "last_completed_unix_ms": 1791596669420,
+      "reason_counter_deltas": {
+        "admission_rejected": 150,
+        "invalid_permits": 0,
+        "unavailable_snapshot": 0,
+        "wait_policy": 0,
+        "engine_infrastructure": 0,
+        "runtime_exception": 0
+      },
+      "telemetry_counter_deltas": {
+        "accepted": 17180,
+        "succeeded": 17180,
+        "failed": 0,
+        "rejected": 0,
+        "cancelled": 0
+      },
+      "final_telemetry": {
+        "queue": 0,
+        "inflight": 0,
+        "outstanding": 0
+      },
+      "final_admission_inflight": 0
+    },
+    {
+      "anonymous_process": 2,
+      "uid_sha256": "4307fcf903200dfa77917e6153484aa696759fac410fefa68bdc1abcaea9520b",
+      "sample_count": 144,
+      "first_unix_ms": 1791596521842,
+      "last_completed_unix_ms": 1791596669426,
+      "reason_counter_deltas": {
+        "admission_rejected": 120,
+        "invalid_permits": 0,
+        "unavailable_snapshot": 0,
+        "wait_policy": 0,
+        "engine_infrastructure": 0,
+        "runtime_exception": 0
+      },
+      "telemetry_counter_deltas": {
+        "accepted": 17001,
+        "succeeded": 17001,
+        "failed": 0,
+        "rejected": 0,
+        "cancelled": 0
+      },
+      "final_telemetry": {
+        "queue": 0,
+        "inflight": 0,
+        "outstanding": 0
+      },
+      "final_admission_inflight": 0
+    }
+  ],
+  "admission_rejection_delta_total": 270,
+  "other_503_reason_delta_total": 0,
+  "provenance": {
+    "raw": {
+      "sha256": "8f860a1d9fcb8bbebe59c61284f638cdeba0442715f2222dace57c06077fe53d",
+      "bytes": 225762
+    },
+    "witness": {
+      "sha256": "9e9db096e10e6bc0a3644946d60dca438bb715969772e0229b4e6ec4310b8688",
+      "bytes": 6099
+    },
+    "observer_log": {
+      "sha256": "15589707039fb80a300838cd8ac2ecbd31f1878713d5e39500c26a17f403bcca",
+      "bytes": 52
+    }
+  },
+  "limits": [
+    "Management snapshots are sequential observations of concurrent processes, not atomic snapshots across both replicas.",
+    "Counter deltas are aggregate observations over the sampled interval; they do not individually attribute each HTTP response.",
+    "No causal attribution to earlier rejected load attempts is made."
+  ],
+  "loaded_invoked_helper_sha256": "4c54976d9c86d523da242bc9457bf51e70d622b68ab475b5bc6c79b316e3eabf",
+  "observer_helper_sha_at_export": {
+    "sha256": "4c54976d9c86d523da242bc9457bf51e70d622b68ab475b5bc6c79b316e3eabf",
+    "bytes": 4411
+  },
+  "helper_provenance_limit": "Current observer helper bytes are hashed separately; witness records the actual invoked helper hash.",
+  "independent_export_review": {
+    "passed": true,
+    "roles": [
+      "rule-change-review",
+      "enterprise-review"
+    ],
+    "scope": "Faithful local gate evidence or explicitly rejected historical control; not production approval."
+  },
+  "staging_source_sha256": "d112cee19939f2f54f8ec2569b6d397564afa6f0de620fc5dca266c87d0af558"
+}

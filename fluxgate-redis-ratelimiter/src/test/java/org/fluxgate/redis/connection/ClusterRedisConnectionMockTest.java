@@ -92,10 +92,11 @@ class ClusterRedisConnectionMockTest {
   }
 
   @Test
-  @DisplayName("The default topology refresh period is 30 seconds")
+  @DisplayName(
+      "The default topology refresh period supports failover discovery within five seconds")
   void defaultTopologyRefreshPeriod() {
     assertThat(ClusterRedisConnection.DEFAULT_TOPOLOGY_REFRESH_PERIOD)
-        .isEqualTo(Duration.ofSeconds(30));
+        .isEqualTo(Duration.ofSeconds(5));
   }
 
   @Test

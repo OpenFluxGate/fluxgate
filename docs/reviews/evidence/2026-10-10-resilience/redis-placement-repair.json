@@ -1,0 +1,365 @@
+{
+  "replica_migration_before": {
+    "d7b8e2835ab6edfc1fa2c1da6269d33d2f314262": {
+      "pod": "redis-3-0",
+      "flags": [
+        "slave"
+      ],
+      "parent": "99a0826bb05b50d9292a4d091e5f44934dc88edf",
+      "slots": []
+    },
+    "caa8c31e2d651e8cd1944fc82dfae94ff57784d6": {
+      "pod": "redis-4-0",
+      "flags": [
+        "slave"
+      ],
+      "parent": "ae46077ac840870d94e633c398d4518ead131cbc",
+      "slots": []
+    },
+    "d5ca12747cc77482763e542fc8f4f399c57a61e3": {
+      "pod": "redis-2-0",
+      "flags": [
+        "slave"
+      ],
+      "parent": "530555b5eb32a70c1a8a7aa8331d90f9461b3454",
+      "slots": []
+    },
+    "ae46077ac840870d94e633c398d4518ead131cbc": {
+      "pod": "redis-1-0",
+      "flags": [
+        "master"
+      ],
+      "parent": "-",
+      "slots": [
+        "5461-10922"
+      ]
+    },
+    "5262fa48591539d3e262da81c9932788a5cbb3c6": {
+      "pod": "redis-6-0",
+      "flags": [
+        "slave"
+      ],
+      "parent": "530555b5eb32a70c1a8a7aa8331d90f9461b3454",
+      "slots": []
+    },
+    "c3c50a890a9231b2cb163907ec60b598854b6660": {
+      "pod": "redis-7-0",
+      "flags": [
+        "slave"
+      ],
+      "parent": "ae46077ac840870d94e633c398d4518ead131cbc",
+      "slots": []
+    },
+    "f5ad1646830991b1aa1d9c348bd403c1bd94c9ca": {
+      "pod": "redis-8-0",
+      "flags": [
+        "slave"
+      ],
+      "parent": "530555b5eb32a70c1a8a7aa8331d90f9461b3454",
+      "slots": []
+    },
+    "99a0826bb05b50d9292a4d091e5f44934dc88edf": {
+      "pod": "redis-0-0",
+      "flags": [
+        "myself",
+        "master"
+      ],
+      "parent": "-",
+      "slots": [
+        "0-5460"
+      ]
+    },
+    "530555b5eb32a70c1a8a7aa8331d90f9461b3454": {
+      "pod": "redis-5-0",
+      "flags": [
+        "master"
+      ],
+      "parent": "-",
+      "slots": [
+        "10923-16383"
+      ]
+    }
+  },
+  "counter_before": {
+    "tokens": "0",
+    "last_refill_micros": "1791580572294017"
+  },
+  "serial_restarts": [
+    {
+      "pod": "redis-3-0",
+      "previous_uid": "2c9c67af-2db3-4c70-b24d-8a2dfee673a9",
+      "replacement_uid": "21b9f314-a09c-45cc-9777-af0280c4d96f",
+      "claims": [
+        "data-redis-3-0"
+      ],
+      "shards": {
+        "ae46077ac840870d94e633c398d4518ead131cbc": [
+          "redis-1-0",
+          "redis-4-0",
+          "redis-7-0"
+        ],
+        "99a0826bb05b50d9292a4d091e5f44934dc88edf": [
+          "redis-0-0",
+          "redis-3-0",
+          "redis-6-0"
+        ],
+        "530555b5eb32a70c1a8a7aa8331d90f9461b3454": [
+          "redis-5-0",
+          "redis-2-0",
+          "redis-8-0"
+        ]
+      },
+      "replica_migration": "no",
+      "counter_and_policy_unchanged": true
+    },
+    {
+      "pod": "redis-4-0",
+      "previous_uid": "68afa560-0109-4e49-bd1d-78ecae76c350",
+      "replacement_uid": "9365b3a7-3c05-4906-9de2-086390283731",
+      "claims": [
+        "data-redis-4-0"
+      ],
+      "shards": {
+        "ae46077ac840870d94e633c398d4518ead131cbc": [
+          "redis-1-0",
+          "redis-4-0",
+          "redis-7-0"
+        ],
+        "99a0826bb05b50d9292a4d091e5f44934dc88edf": [
+          "redis-0-0",
+          "redis-3-0",
+          "redis-6-0"
+        ],
+        "530555b5eb32a70c1a8a7aa8331d90f9461b3454": [
+          "redis-5-0",
+          "redis-2-0",
+          "redis-8-0"
+        ]
+      },
+      "replica_migration": "no",
+      "counter_and_policy_unchanged": true
+    },
+    {
+      "pod": "redis-2-0",
+      "previous_uid": "c56a8476-c8fd-4bf7-8b1e-e4a2b6c56666",
+      "replacement_uid": "acf94552-d125-4719-9cc5-310bfd1740ef",
+      "claims": [
+        "data-redis-2-0"
+      ],
+      "shards": {
+        "ae46077ac840870d94e633c398d4518ead131cbc": [
+          "redis-1-0",
+          "redis-4-0",
+          "redis-7-0"
+        ],
+        "99a0826bb05b50d9292a4d091e5f44934dc88edf": [
+          "redis-0-0",
+          "redis-3-0",
+          "redis-6-0"
+        ],
+        "530555b5eb32a70c1a8a7aa8331d90f9461b3454": [
+          "redis-5-0",
+          "redis-2-0",
+          "redis-8-0"
+        ]
+      },
+      "replica_migration": "no",
+      "counter_and_policy_unchanged": true
+    },
+    {
+      "pod": "redis-6-0",
+      "previous_uid": "7442c7b1-bff3-42a7-87c5-237607074596",
+      "replacement_uid": "25516516-1f12-43b5-9911-a6074ec96029",
+      "claims": [
+        "data-redis-6-0"
+      ],
+      "shards": {
+        "ae46077ac840870d94e633c398d4518ead131cbc": [
+          "redis-1-0",
+          "redis-4-0",
+          "redis-7-0"
+        ],
+        "99a0826bb05b50d9292a4d091e5f44934dc88edf": [
+          "redis-0-0",
+          "redis-3-0",
+          "redis-6-0"
+        ],
+        "530555b5eb32a70c1a8a7aa8331d90f9461b3454": [
+          "redis-5-0",
+          "redis-2-0",
+          "redis-8-0"
+        ]
+      },
+      "replica_migration": "no",
+      "counter_and_policy_unchanged": true
+    },
+    {
+      "pod": "redis-7-0",
+      "previous_uid": "1079e4fa-0e79-47de-aa9a-6cfab421e504",
+      "replacement_uid": "59e97f97-cb74-4403-8ff9-a6e71f11ddc6",
+      "claims": [
+        "data-redis-7-0"
+      ],
+      "shards": {
+        "ae46077ac840870d94e633c398d4518ead131cbc": [
+          "redis-1-0",
+          "redis-4-0",
+          "redis-7-0"
+        ],
+        "99a0826bb05b50d9292a4d091e5f44934dc88edf": [
+          "redis-0-0",
+          "redis-3-0",
+          "redis-6-0"
+        ],
+        "530555b5eb32a70c1a8a7aa8331d90f9461b3454": [
+          "redis-5-0",
+          "redis-2-0",
+          "redis-8-0"
+        ]
+      },
+      "replica_migration": "no",
+      "counter_and_policy_unchanged": true
+    },
+    {
+      "pod": "redis-8-0",
+      "previous_uid": "698433a4-3d6d-4129-b670-d26233df4dd8",
+      "replacement_uid": "3c9997c1-e4c9-4f3d-a1f2-a43c5ca2ac1c",
+      "claims": [
+        "data-redis-8-0"
+      ],
+      "shards": {
+        "ae46077ac840870d94e633c398d4518ead131cbc": [
+          "redis-1-0",
+          "redis-4-0",
+          "redis-7-0"
+        ],
+        "99a0826bb05b50d9292a4d091e5f44934dc88edf": [
+          "redis-0-0",
+          "redis-3-0",
+          "redis-6-0"
+        ],
+        "530555b5eb32a70c1a8a7aa8331d90f9461b3454": [
+          "redis-5-0",
+          "redis-2-0",
+          "redis-8-0"
+        ]
+      },
+      "replica_migration": "no",
+      "counter_and_policy_unchanged": true
+    },
+    {
+      "pod": "redis-1-0",
+      "previous_uid": "97af5d0c-2e00-48f4-ad22-8332ab8e280c",
+      "replacement_uid": "d20ee451-1b3c-4313-b352-804cf5c07fe4",
+      "claims": [
+        "data-redis-1-0"
+      ],
+      "shards": {
+        "ae46077ac840870d94e633c398d4518ead131cbc": [
+          "redis-1-0",
+          "redis-4-0",
+          "redis-7-0"
+        ],
+        "99a0826bb05b50d9292a4d091e5f44934dc88edf": [
+          "redis-0-0",
+          "redis-3-0",
+          "redis-6-0"
+        ],
+        "530555b5eb32a70c1a8a7aa8331d90f9461b3454": [
+          "redis-5-0",
+          "redis-2-0",
+          "redis-8-0"
+        ]
+      },
+      "replica_migration": "no",
+      "counter_and_policy_unchanged": true
+    },
+    {
+      "pod": "redis-0-0",
+      "previous_uid": "1da9f95e-1387-4411-ac2c-92066b625b96",
+      "replacement_uid": "575a982c-2bb6-4a46-9d01-825333d42b19",
+      "claims": [
+        "data-redis-0-0"
+      ],
+      "shards": {
+        "530555b5eb32a70c1a8a7aa8331d90f9461b3454": [
+          "redis-5-0",
+          "redis-2-0",
+          "redis-8-0"
+        ],
+        "99a0826bb05b50d9292a4d091e5f44934dc88edf": [
+          "redis-0-0",
+          "redis-3-0",
+          "redis-6-0"
+        ],
+        "ae46077ac840870d94e633c398d4518ead131cbc": [
+          "redis-1-0",
+          "redis-4-0",
+          "redis-7-0"
+        ]
+      },
+      "replica_migration": "no",
+      "counter_and_policy_unchanged": true
+    },
+    {
+      "pod": "redis-5-0",
+      "previous_uid": "78608478-7ba1-467c-a65a-da517ccf503f",
+      "replacement_uid": "6cee5000-89ee-4154-8d53-399819f70a4f",
+      "claims": [
+        "data-redis-5-0"
+      ],
+      "shards": {
+        "530555b5eb32a70c1a8a7aa8331d90f9461b3454": [
+          "redis-5-0",
+          "redis-2-0",
+          "redis-8-0"
+        ],
+        "99a0826bb05b50d9292a4d091e5f44934dc88edf": [
+          "redis-0-0",
+          "redis-3-0",
+          "redis-6-0"
+        ],
+        "ae46077ac840870d94e633c398d4518ead131cbc": [
+          "redis-1-0",
+          "redis-4-0",
+          "redis-7-0"
+        ]
+      },
+      "replica_migration": "no",
+      "counter_and_policy_unchanged": true
+    }
+  ],
+  "repair": {
+    "member": "redis-6-0",
+    "current_slot_primary": "redis-0-0",
+    "current_slot_primary_id": "99a0826bb05b50d9292a4d091e5f44934dc88edf",
+    "replica_had_no_slots": true
+  },
+  "passed": true,
+  "all_nine_restarted": true,
+  "final_shards": {
+    "530555b5eb32a70c1a8a7aa8331d90f9461b3454": [
+      "redis-5-0",
+      "redis-2-0",
+      "redis-8-0"
+    ],
+    "99a0826bb05b50d9292a4d091e5f44934dc88edf": [
+      "redis-0-0",
+      "redis-3-0",
+      "redis-6-0"
+    ],
+    "ae46077ac840870d94e633c398d4518ead131cbc": [
+      "redis-1-0",
+      "redis-4-0",
+      "redis-7-0"
+    ]
+  },
+  "counter_after": {
+    "tokens": "0",
+    "last_refill_micros": "1791580572294017"
+  },
+  "policy_pointer_unchanged": true,
+  "existing_counters_deleted_or_reset": false,
+  "process_exit": 0,
+  "raw_sha256": "44d5ed7283ca597a3f2c095c41c211421dec31f30714717bc06ee788b3049c6a"
+}

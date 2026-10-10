@@ -106,8 +106,11 @@ class RedisTokenBucketStoreMockTest {
     verify(connectionProvider)
         .evalsha(
             anyString(),
-            eq(new String[] {"k1"}),
-            eq(new String[] {"1", String.valueOf(REDIS_TIME), "100", "60000000", "1", "0", "0"}));
+            eq(new String[] {"k1", RedisTokenBucketStore.metadataKey("k1")}),
+            eq(
+                new String[] {
+                  "1", String.valueOf(REDIS_TIME), "100", "60000000", "1", "0", "0", "FENCED"
+                }));
   }
 
   @Test
@@ -328,10 +331,24 @@ class RedisTokenBucketStoreMockTest {
     verify(connectionProvider)
         .evalsha(
             eq("test-sha-123"),
-            eq(new String[] {"my-bucket-key"}),
             eq(
                 new String[] {
-                  "1", DEFAULT_TTL_ARG, "100", String.valueOf(MINUTE_MICROS), "1", "0", "0"
+                  "my-bucket-key",
+                  RedisTokenBucketStore.metadataKey("my-bucket-key"),
+                  RedisTokenBucketStore.revisionKey("my-bucket-key")
+                }),
+            eq(
+                new String[] {
+                  "1",
+                  DEFAULT_TTL_ARG,
+                  "100",
+                  String.valueOf(MINUTE_MICROS),
+                  "1",
+                  "0",
+                  "0",
+                  "0",
+                  "0",
+                  "FENCED"
                 }));
   }
 
@@ -352,8 +369,25 @@ class RedisTokenBucketStoreMockTest {
     verify(connectionProvider)
         .evalsha(
             eq("test-sha-123"),
-            eq(new String[] {"my-bucket-key"}),
-            eq(new String[] {"1", "21600", "100", String.valueOf(MINUTE_MICROS), "1", "0", "0"}));
+            eq(
+                new String[] {
+                  "my-bucket-key",
+                  RedisTokenBucketStore.metadataKey("my-bucket-key"),
+                  RedisTokenBucketStore.revisionKey("my-bucket-key")
+                }),
+            eq(
+                new String[] {
+                  "1",
+                  "21600",
+                  "100",
+                  String.valueOf(MINUTE_MICROS),
+                  "1",
+                  "0",
+                  "0",
+                  "0",
+                  "0",
+                  "FENCED"
+                }));
   }
 
   @Test
@@ -416,7 +450,15 @@ class RedisTokenBucketStoreMockTest {
     verify(connectionProvider)
         .evalsha(
             eq("test-sha-123"),
-            eq(new String[] {"k-fast", "k-slow"}),
+            eq(
+                new String[] {
+                  "k-fast",
+                  "k-slow",
+                  RedisTokenBucketStore.metadataKey("k-fast"),
+                  RedisTokenBucketStore.metadataKey("k-slow"),
+                  RedisTokenBucketStore.revisionKey("k-fast"),
+                  RedisTokenBucketStore.revisionKey("k-slow")
+                }),
             eq(
                 new String[] {
                   "1",
@@ -430,7 +472,11 @@ class RedisTokenBucketStoreMockTest {
                   String.valueOf(MINUTE_MICROS),
                   "1",
                   "0",
-                  "0"
+                  "0",
+                  "0",
+                  "0",
+                  "0",
+                  "FENCED"
                 }));
   }
 
@@ -449,10 +495,24 @@ class RedisTokenBucketStoreMockTest {
     verify(connectionProvider)
         .evalsha(
             eq("test-sha-123"),
-            eq(new String[] {"my-bucket-key"}),
             eq(
                 new String[] {
-                  "1", DEFAULT_TTL_ARG, "100", String.valueOf(MINUTE_MICROS), "1", "0", "0", "1"
+                  "my-bucket-key",
+                  RedisTokenBucketStore.metadataKey("my-bucket-key"),
+                  RedisTokenBucketStore.revisionKey("my-bucket-key")
+                }),
+            eq(
+                new String[] {
+                  "1",
+                  DEFAULT_TTL_ARG,
+                  "100",
+                  String.valueOf(MINUTE_MICROS),
+                  "1",
+                  "0",
+                  "0",
+                  "0",
+                  "1",
+                  "FENCED"
                 }));
   }
 

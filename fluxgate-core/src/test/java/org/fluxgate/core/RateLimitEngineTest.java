@@ -23,6 +23,65 @@ import org.junit.jupiter.api.Test;
 class RateLimitEngineTest {
 
   @Test
+  void snapshotExecutesExactInstanceWithoutReadingProvider() {
+    RateLimitRuleSet snapshot =
+        RateLimitRuleSet.builder("snapshot")
+            .keyResolver((context, rule) -> RateLimitKey.of("identity"))
+            .rules(
+                java.util.List.of(
+                    RateLimitRule.builder("rule")
+                        .addBand(RateLimitBand.builder(java.time.Duration.ofMinutes(1), 10).build())
+                        .build()))
+            .build();
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(
+                id -> {
+                  throw new AssertionError("snapshot must not read provider");
+                })
+            .rateLimiter(
+                (context, policy, permits) -> {
+                  assertThat(policy).isSameAs(snapshot);
+                  assertThat(permits).isEqualTo(2);
+                  return RateLimitResult.allowedWithoutRule();
+                })
+            .build();
+    assertThat(engine.checkUsingSnapshot(snapshot, RequestContext.builder().build(), 2).isAllowed())
+        .isTrue();
+  }
+
+  @Test
+  void snapshotRetainsSingleEncodingForDeniedSpecialCharacterIdentity() {
+    RateLimitKey identity = RateLimitKey.of("user:", "a+1");
+    RateLimitRuleSet snapshot =
+        RateLimitRuleSet.builder("acl")
+            .keyResolver((context, rule) -> identity)
+            .rules(
+                java.util.List.of(
+                    RateLimitRule.builder("rule")
+                        .addBand(RateLimitBand.builder(java.time.Duration.ofMinutes(1), 10).build())
+                        .build()))
+            .accessControl(
+                org.fluxgate.core.config.AccessControl.builder()
+                    .deniedKeys(java.util.Set.of(identity.value()))
+                    .build())
+            .build();
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(id -> Optional.empty())
+            .rateLimiter(
+                (context, policy, permits) -> {
+                  throw new AssertionError("ACL must not consume");
+                })
+            .build();
+    RateLimitResult result =
+        engine.checkUsingSnapshot(snapshot, RequestContext.builder().build(), 1);
+    assertThat(result.getDecisionReason()).isEqualTo(RateLimitResult.DecisionReason.ACCESS_DENIED);
+    assertThat(result.getKey().value()).isEqualTo("denied:" + identity.value());
+    assertThat(identity).isNotEqualTo(RateLimitKey.of("user:", "a_1"));
+  }
+
+  @Test
   void should_delegate_to_rate_limiter_and_return_result() {
     // given
     String ruleSetId = "auth-api-default";

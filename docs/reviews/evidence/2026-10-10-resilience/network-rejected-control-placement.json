@@ -1,0 +1,9 @@
+{
+  "accepted": false,
+  "cause": "Temporary Gateway policy-identity control labels matched realEnvoy requiredanti-affinity; two workers occupied and controlplane taint untolerated",
+  "diagnostic_exit_code": 1,
+  "raw_summary_sha256": "6cb068d82445264dcb16991171183e3866f93b8c55284bf452697d112a1a5b59",
+  "serving_placement_and_policies_relaxed": false,
+  "fix_commit": "bf211d5",
+  "fresh_live_validation": "pending"
+}

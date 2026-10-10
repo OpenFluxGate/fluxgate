@@ -1,0 +1,55 @@
+{
+  "accepted": false,
+  "fault_started": true,
+  "application_jar_sha256": "b03409f989d8a6b228689bf8daf8880d3b68a1e95b2166b7ae46625e32485a40",
+  "local_mongo_preset": {
+    "electionTimeoutMillis": 5000,
+    "catchUpTimeoutMillis": 2000
+  },
+  "reason": "HA Primary identity selector used stale remote PRIMARY member instead of writable self; assertion failed before dense verification",
+  "actual_publication": {
+    "elapsedSeconds": 6.586389169,
+    "beforeRevision": 8,
+    "revision": 9,
+    "epochPreserved": true,
+    "majorityReadVerified": true,
+    "idempotentReplay": true,
+    "transientFailureClasses": [
+      "MongoTimeoutException",
+      "MongoTimeoutException"
+    ]
+  },
+  "observation": {
+    "completed_requests": 12000,
+    "all_statuses": {
+      "200": 11346,
+      "503": 654
+    },
+    "omitted_schedules": 0,
+    "achieved_rps": 99.96274946027539,
+    "latency_ms": {
+      "p50": 5.173236131668091,
+      "p95": 17.1143829356879,
+      "p99": 2006.092051975429,
+      "max": 4064.5051759202033
+    }
+  },
+  "last_minute": {
+    "completed_requests": 6000,
+    "all_statuses": {
+      "200": 6000
+    },
+    "omitted_schedules": 0,
+    "achieved_rps": 100.0,
+    "latency_ms": {
+      "p50": 4.9707910511642694,
+      "p95": 10.065746027976274,
+      "p99": 28.51412002928555,
+      "max": 250.85957697592676
+    }
+  },
+  "publisher_cleanup_absence_verified": true,
+  "raw_sha256": "92de96ac6a8318a7d5fe5f059eb098dec012679af09da6f5c7943da2fb241838",
+  "ha_failure_sha256": "43f34d564ad6ab4ae3cd38550e2252abb0bb3b00d1a1b8f4185003c0b99adbfe",
+  "scope": "Publication success alone is not sustained Gateway recovery or full combined acceptance."
+}

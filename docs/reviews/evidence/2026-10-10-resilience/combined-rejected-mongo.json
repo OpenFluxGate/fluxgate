@@ -1,0 +1,68 @@
+{
+  "passed": false,
+  "complete": false,
+  "diagnostic_only": true,
+  "reason": "Publication-tool archive transfer ran during load and timed out before any primary fault injection.",
+  "artifacts": {
+    "summary.json": {
+      "sha256": "622658ddb22cd823199c7b5bcc8f1fc0de4e19ed1a9f78fba550f805b6629b09",
+      "bytes": 938
+    },
+    "raw-load.json": {
+      "sha256": "5ec26aa189d1eb97d86547d8b3a0ca6955b789e01e7acbd003f03f1dc0ad5d53",
+      "bytes": 8512470
+    },
+    "readiness.json": {
+      "sha256": "1e407497b1813a23740f4e3b01a3030e1a17478b825428eef4cbc318f06128cb",
+      "bytes": 800
+    },
+    "ha/failure.json": {
+      "sha256": "454f97416bf5ac8f462dd97cab202763e099d8c800ac5588474813c4f5aab46a",
+      "bytes": 11143
+    }
+  },
+  "load_result": "OBSERVATION_COMPLETE",
+  "load_failure_stage": null,
+  "warmup": {
+    "target_requests": 500,
+    "planned_requests": 500,
+    "submitted_requests": 500,
+    "completed_requests": 500,
+    "target_rps": 100.0,
+    "achieved_rps": 99.98532797374347,
+    "measurement_seconds": 5,
+    "elapsed_including_drain_seconds": 5.000733708962798,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 500
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 500
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "latency_ms": {
+      "p50": 8.595417020842433,
+      "p95": 33.9490429032594,
+      "p99": 70.96412498503923,
+      "max": 169.19612511992455
+    },
+    "dispatch_lag_ms": {
+      "p95": 1.7885828856378794,
+      "max": 6.319043226540089
+    },
+    "schedule_start_unix_ms": 1791582671304.3264,
+    "schedule_end_unix_ms": 1791582676304.3264,
+    "clock_unix_offset_seconds": 1790353654.4911997
+  },
+  "ha_failure": {
+    "phase": "mongo-election-publication",
+    "exception_class": "TimeoutExpired",
+    "timestamps": {}
+  }
+}

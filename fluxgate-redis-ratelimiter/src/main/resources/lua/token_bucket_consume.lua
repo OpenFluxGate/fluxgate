@@ -132,15 +132,85 @@ local ALG_FIXED_WINDOW   = 3
 -- ========================================================================
 -- Parse and validate arguments
 -- ========================================================================
-local band_count = #KEYS
+-- Fenced wire: n buckets, n metadata hashes, n rule fences; per-band revisions.
+-- Legacy raw Lua calls remain readable for compatibility, but Java always uses fences.
+local extended = ARGV[#ARGV] == 'FENCED'
+local band_count = extended and (#KEYS / 3) or #KEYS
 if band_count < 1 then
     return redis.error_reply("at least one bucket key is required")
 end
-if #ARGV ~= 2 + 5 * band_count and #ARGV ~= 3 + 5 * band_count then
+if (extended and (#KEYS % 3 ~= 0 or #ARGV ~= 4 + 6 * band_count))
+    or (not extended and #ARGV ~= 2 + 5 * band_count and #ARGV ~= 3 + 5 * band_count) then
     return redis.error_reply(
         "expected " .. (2 + 5 * band_count) .. " arguments for " .. band_count .. " band(s)")
 end
-local check_only = #ARGV == 3 + 5 * band_count and ARGV[#ARGV] == '1'
+local check_only = extended and ARGV[#ARGV - 1] == '1'
+    or (not extended and #ARGV == 3 + 5 * band_count and ARGV[#ARGV] == '1')
+local revisions, metadata = {}, {}
+local function key_type(key)
+    return redis.call('TYPE', key).ok
+end
+local function numeric_field(value)
+    if not value then return true end
+    local number = tonumber(value)
+    return number ~= nil and number == number and number ~= math.huge and number ~= -math.huge
+end
+-- Redis does not roll scripts back. Validate the type and stored numeric state of EVERY
+-- bucket, metadata hash and fence before migration can mutate any earlier band.
+for i = 1, band_count do
+    local kind = key_type(KEYS[i])
+    if kind ~= 'none' and kind ~= 'hash' then
+        return redis.error_reply('WRONGTYPE: bucket must be a hash')
+    end
+    if extended then
+        local meta_kind = key_type(KEYS[band_count + i])
+        local fence_kind = key_type(KEYS[2 * band_count + i])
+        if meta_kind ~= 'none' and meta_kind ~= 'hash' then
+            return redis.error_reply('WRONGTYPE: metadata must be a hash')
+        end
+        if fence_kind ~= 'none' and fence_kind ~= 'string' then
+            return redis.error_reply('WRONGTYPE: revision fence must be a string')
+        end
+        local fence = redis.call('GET', KEYS[2 * band_count + i])
+        if fence and (not numeric_field(fence) or tonumber(fence) < 0
+            or tonumber(fence) ~= math.floor(tonumber(fence)) or tonumber(fence) > 9007199254740991) then
+            return redis.error_reply('INVALID_POLICY_STATE: revision fence')
+        end
+        local fields = redis.call('HMGET', KEYS[band_count + i], 'revision', 'capacity', 'window_micros', 'algorithm', 'buckets')
+        for j = 1, 5 do
+            if not numeric_field(fields[j]) then
+                return redis.error_reply('INVALID_POLICY_STATE: metadata numeric field')
+            end
+        end
+        if (fields[1] and (tonumber(fields[1]) < 0 or tonumber(fields[1]) ~= math.floor(tonumber(fields[1]))))
+            or (fields[2] and tonumber(fields[2]) <= 0) or (fields[3] and tonumber(fields[3]) <= 0)
+            or (fields[4] and (tonumber(fields[4]) < 1 or tonumber(fields[4]) > 3)) then
+            return redis.error_reply('INVALID_POLICY_STATE: metadata bounds')
+        end
+    end
+    local state = redis.call('HMGET', KEYS[i], 'tokens', 'last_refill_micros', 'count', 'window_end_micros')
+    for j = 1, 4 do
+        if not numeric_field(state[j]) then
+            return redis.error_reply('INVALID_POLICY_STATE: bucket numeric field')
+        end
+    end
+end
+-- No write, including TTL refresh, occurs before ALL revision fences have passed.
+if extended then
+    for i = 1, band_count do
+        local revision = tonumber(ARGV[2 + 5 * band_count + i])
+        if revision == nil or revision < 0 or revision ~= math.floor(revision) or revision > 9007199254740991 then
+            return redis.error_reply('policy revision must be an exact nonnegative integer')
+        end
+        revisions[i] = revision
+        local fence = tonumber(redis.call('GET', KEYS[2 * band_count + i])) or 0
+        local raw = redis.call('HMGET', KEYS[band_count + i], 'revision', 'capacity', 'window_micros', 'algorithm', 'buckets')
+        if revision < fence or revision < (tonumber(raw[1]) or 0) then
+            return redis.error_reply('STALE_POLICY: revision fence')
+        end
+        metadata[i] = {capacity = tonumber(raw[2]), window = tonumber(raw[3]), algorithm = tonumber(raw[4]), buckets = tonumber(raw[5])}
+    end
+end
 
 local permits = tonumber(ARGV[1])
 if permits == nil or permits <= 0 then
@@ -185,6 +255,15 @@ for i = 1, band_count do
         return redis.error_reply("sliding window sub-bucket must be at least 1 ms")
     end
 
+    if alg ~= ALG_TOKEN_BUCKET and alg ~= ALG_SLIDING_WINDOW and alg ~= ALG_FIXED_WINDOW then
+        return redis.error_reply('unknown algorithm code: ' .. tostring(alg))
+    end
+    if extended and metadata[i].capacity ~= nil and redis.call('EXISTS', KEYS[i]) == 1
+        and (metadata[i].window ~= win_micros or metadata[i].algorithm ~= alg
+            or (alg == ALG_SLIDING_WINDOW and metadata[i].buckets ~= nil and metadata[i].buckets ~= buckets)) then
+        return redis.error_reply('POLICY_RESET_REQUIRED: algorithm/window change')
+    end
+
     capacities[i]    = capacity
     windows[i]       = win_micros
     algorithms[i]    = alg
@@ -221,13 +300,67 @@ local function sw_field(field)
     return tonumber(idx), tonumber(dur)
 end
 
+-- HINCRBY parses canonical signed 64-bit integer strings. Validate every SW field
+-- before ANY migration write, and compare the increment using decimal strings so
+-- IEEE-754 rounding near Long.MAX_VALUE cannot hide an overflow.
+local MAX_REDIS_INTEGER = '9223372036854775807'
+local function exceeds_redis_integer(value)
+    return #value > #MAX_REDIS_INTEGER
+        or (#value == #MAX_REDIS_INTEGER and value > MAX_REDIS_INTEGER)
+end
+local function redis_nonnegative_integer(value)
+    return string.match(value, '^%d+$') ~= nil
+        and (#value == 1 or string.sub(value, 1, 1) ~= '0')
+        and not exceeds_redis_integer(value)
+end
+local function decimal_sum(left, right)
+    local result, carry = '', 0
+    local l, r = #left, #right
+    while l > 0 or r > 0 or carry > 0 do
+        local a = l > 0 and tonumber(string.sub(left, l, l)) or 0
+        local b = r > 0 and tonumber(string.sub(right, r, r)) or 0
+        local sum = a + b + carry
+        result = tostring(sum % 10) .. result
+        carry = math.floor(sum / 10)
+        l, r = l - 1, r - 1
+    end
+    return result
+end
+for i = 1, band_count do
+    if algorithms[i] == ALG_SLIDING_WINDOW then
+        if not redis_nonnegative_integer(ARGV[1]) then
+            return redis.error_reply('INVALID_POLICY_STATE: sliding increment must be a Redis integer')
+        end
+        local duration = math.floor(windows[i] / bucket_counts[i])
+        local current = math.floor(now_micros / duration)
+        local field = string.format('%.0f', current) .. '@' .. string.format('%.0f', duration)
+        local raw = redis.call('HGETALL', KEYS[i])
+        for j = 1, #raw, 2 do
+            local index, geometry = sw_field(raw[j])
+            if index ~= nil and geometry ~= nil then
+                if not redis_nonnegative_integer(raw[j + 1]) then
+                    return redis.error_reply('INVALID_POLICY_STATE: sliding count must be a Redis integer')
+                end
+                if raw[j] == field and exceeds_redis_integer(decimal_sum(raw[j + 1], ARGV[1])) then
+                    return redis.error_reply('INVALID_POLICY_STATE: sliding count increment overflow')
+                end
+            end
+        end
+    end
+end
+
 -- Refresh TTLs for TOKEN_BUCKET and SLIDING_WINDOW keys on the reject path.
 -- EXPIRE is a no-op on keys that do not exist yet; FIXED_WINDOW keys are not touched
 -- because PEXPIREAT (an absolute timestamp) must not be overridden with a relative one.
+local debt_ttls = {}
+local function band_ttl(i)
+    return math.max(ttl_for_window(windows[i]), debt_ttls[i] or 0)
+end
 local function refresh_ttls()
     for j = 1, band_count do
         if algorithms[j] == ALG_TOKEN_BUCKET or algorithms[j] == ALG_SLIDING_WINDOW then
-            redis.call('EXPIRE', KEYS[j], ttl_for_window(windows[j]))
+            redis.call('EXPIRE', KEYS[j], band_ttl(j))
+            if extended then redis.call('EXPIRE', KEYS[band_count + j], band_ttl(j)) end
         end
     end
 end
@@ -248,6 +381,67 @@ local sw_raw     = {}   -- raw HGETALL output, reused in pass 2 to avoid a secon
 -- FIXED_WINDOW
 local fw_counts  = {}   -- current counter value
 local fw_ends    = {}   -- resolved window end (micros)
+
+-- Refill using the STORED rate before a capacity transition, then carry signed usage debt.
+-- Separate whole windows from the remainder so elapsed*capacity stays within the Java guard.
+local function refill(tokens, last_refill, capacity, window)
+    local elapsed = math.max(0, now_micros - last_refill)
+    local full_windows = math.floor(elapsed / window)
+    local remainder = elapsed - full_windows * window
+    local to_add = full_windows * capacity + math.floor(remainder * capacity / window)
+    local refilled = math.min(capacity, tokens + to_add)
+    local next_refill = last_refill
+    if to_add > 0 then next_refill = last_refill + math.floor(to_add / capacity * window) end
+    if refilled >= capacity then next_refill = now_micros end
+    return refilled, next_refill
+end
+
+if extended then
+    -- Compute EVERY migration and its debt lifetime without writing. An invalid later
+    -- transition must leave earlier bucket state, metadata, fences and TTLs unchanged.
+    local changed_bands = {}
+    for i = 1, band_count do
+        if algorithms[i] == ALG_TOKEN_BUCKET then
+            local raw = redis.call('HMGET', KEYS[i], 'tokens', 'last_refill_micros')
+            local tokens, timestamp = tonumber(raw[1]), tonumber(raw[2])
+            local old_capacity = metadata[i].capacity or capacities[i]
+            local old_window = metadata[i].window or windows[i]
+            if tokens ~= nil and timestamp ~= nil then
+                local refilled, next_refill = refill(tokens, timestamp, old_capacity, old_window)
+                local changed = old_capacity ~= capacities[i]
+                if changed then
+                    refilled = refilled + capacities[i] - old_capacity
+                    next_refill = now_micros
+                end
+                tb_tokens[i], tb_refills[i] = refilled, next_refill
+                changed_bands[i] = changed
+                local recovery = math.max(0, capacities[i] - refilled) / capacities[i] * windows[i]
+                local required_ttl = math.max(1, math.ceil(recovery / 1000000 * 1.1))
+                if changed and required_ttl > max_ttl_seconds then
+                    return redis.error_reply('POLICY_RESET_REQUIRED: usage debt exceeds maximum bucket TTL')
+                end
+                debt_ttls[i] = math.min(max_ttl_seconds, required_ttl)
+            end
+        end
+    end
+    if not check_only then
+        for i = 1, band_count do
+            if changed_bands[i] then
+                -- Configuration migration persists on quota denial, independently of consumption.
+                redis.call('HMSET', KEYS[i], 'tokens', string.format('%.0f', tb_tokens[i]),
+                    'last_refill_micros', string.format('%.0f', tb_refills[i]))
+            end
+            if algorithms[i] == ALG_TOKEN_BUCKET or algorithms[i] == ALG_SLIDING_WINDOW then
+                redis.call('EXPIRE', KEYS[i], band_ttl(i))
+            end
+            redis.call('HMSET', KEYS[band_count + i], 'revision', string.format('%.0f', revisions[i]),
+                'capacity', string.format('%.0f', capacities[i]), 'window_micros', string.format('%.0f', windows[i]),
+                'algorithm', algorithms[i], 'buckets', bucket_counts[i])
+            redis.call('EXPIRE', KEYS[band_count + i], band_ttl(i))
+            redis.call('SET', KEYS[2 * band_count + i], string.format('%.0f', revisions[i]), 'EX', max_ttl_seconds)
+        end
+    end
+end
 
 -- The rejecting band with the longest wait so far (note 10): its result array, or nil.
 local rejection = nil
@@ -278,21 +472,11 @@ for i = 1, band_count do
             last_refill = now_micros
         end
 
-        -- math.max handles a clock that moved backwards; math.min caps at one window so
-        -- elapsed * capacity stays inside the 2^53 safe range (the Java caller validates this).
-        local elapsed = math.min(math.max(0, now_micros - last_refill), win_micros)
-
-        -- Only whole tokens are credited, and the timestamp advances only by the time those
-        -- tokens cost, so the sub-token remainder is carried into the next call.
-        local to_add      = math.floor(elapsed * capacity / win_micros)
-        local next_refill = last_refill
-        if to_add > 0 then
-            next_refill = last_refill + math.floor(to_add * win_micros / capacity)
-        end
-        local refilled = math.min(capacity, cur_tokens + to_add)
-        if refilled >= capacity then
-            -- Bucket is full; no deficit to carry.
-            next_refill = now_micros
+        local refilled, next_refill
+        if tb_tokens[i] ~= nil then
+            refilled, next_refill = tb_tokens[i], tb_refills[i]
+        else
+            refilled, next_refill = refill(cur_tokens, last_refill, capacity, win_micros)
         end
 
         tb_tokens[i]  = refilled
@@ -304,7 +488,7 @@ for i = 1, band_count do
             local deficit       = capacity - refilled
             local full_micros   = deficit > 0 and math.ceil(deficit * win_micros / capacity) or 0
             local reset_millis  = math.floor((now_micros + full_micros) / 1000)
-            reject(i, refilled, wait, reset_millis)
+            reject(i, math.max(0, refilled), wait, reset_millis)
         end
 
     -- ---- SLIDING_WINDOW ----
@@ -338,7 +522,7 @@ for i = 1, band_count do
         sw_sums[i] = total
 
         if total + permits > capacity then
-            local remaining = capacity - total
+            local remaining = math.max(0, capacity - total)
             -- micros_to_wait (note 11): sub-bucket k stops counting at (k + buckets) * sub_dur, and
             -- the sub-buckets leave oldest first. Wait for the first one whose departure frees
             -- enough: total - freed + permits <= capacity. permits <= capacity, so the newest
@@ -388,7 +572,7 @@ for i = 1, band_count do
             if redis.call('PTTL', KEYS[i]) == -1 then
                 redis.call('PEXPIREAT', KEYS[i], string.format('%.0f', fixed_window_expire_millis(win_end)))
             end
-            local remaining    = capacity - count
+            local remaining    = math.max(0, capacity - count)
             local wait         = math.max(0, win_end - now_micros)
             local reset_millis = math.floor(win_end / 1000)
             reject(i, remaining, wait, reset_millis)
@@ -443,7 +627,7 @@ for i = 1, band_count do
         redis.call('HMSET', KEYS[i],
             'tokens',             string.format('%.0f', remaining),
             'last_refill_micros', string.format('%.0f', tb_refills[i]))
-        redis.call('EXPIRE', KEYS[i], ttl_for_window(win_micros))
+        redis.call('EXPIRE', KEYS[i], band_ttl(i))
         tb_tokens[i] = remaining   -- updated for reset_time_millis calculation below
 
         if binding_remaining == nil or remaining < binding_remaining then
@@ -472,8 +656,8 @@ for i = 1, band_count do
         end
 
         redis.call('HINCRBY', KEYS[i],
-            string.format('%.0f', cur_sub) .. '@' .. string.format('%.0f', sub_dur), permits)
-        redis.call('EXPIRE', KEYS[i], ttl_for_window(win_micros))
+            string.format('%.0f', cur_sub) .. '@' .. string.format('%.0f', sub_dur), ARGV[1])
+        redis.call('EXPIRE', KEYS[i], band_ttl(i))
 
         local remaining = capacity - sw_sums[i] - permits
 

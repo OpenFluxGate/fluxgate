@@ -102,6 +102,7 @@ delegates to `RateLimitEngine`, which resolves the rule set and calls a `RateLim
 | **fluxgate-control-support** | Control-plane helpers: `@NotifyRuleChange` / `@NotifyFullReload` and the Redis rule-change notifier |
 | **fluxgate-testkit** | Integration testing utilities |
 | **fluxgate-benchmarks** | JMH benchmarks (not published) |
+| **fluxgate-envoy-extauth** | Envoy Gateway external authorization service using the existing engine and MongoDB/Redis adapters |
 | **fluxgate-samples** | Sample applications demonstrating various use cases |
 
 ## Quick Start

@@ -31,6 +31,34 @@ class CachingRuleSetProviderTest {
   }
 
   @Test
+  void freshProviderBypassesPopulatedCacheAndPropagatesThroughWrappers() {
+    RateLimitRuleSet stale = createTestRuleSet("published");
+    RateLimitRuleSet current = createTestRuleSet("published");
+    cache.put("published", stale);
+    AtomicInteger reads = new AtomicInteger();
+    RateLimitRuleSetProvider authoritative =
+        new RateLimitRuleSetProvider() {
+          @Override
+          public boolean requiresFreshRead() {
+            return true;
+          }
+
+          @Override
+          public Optional<RateLimitRuleSet> findById(String id) {
+            reads.incrementAndGet();
+            return Optional.of(current);
+          }
+        };
+    CachingRuleSetProvider inner = new CachingRuleSetProvider(authoritative, cache);
+    CachingRuleSetProvider outer = new CachingRuleSetProvider(inner, cache);
+    assertThat(outer.requiresFreshRead()).isTrue();
+    assertThat(outer.findById("published")).containsSame(current);
+    assertThat(outer.findById("published")).containsSame(current);
+    assertThat(reads).hasValue(2);
+    assertThat(cache.get("published")).containsSame(stale);
+  }
+
+  @Test
   void shouldReturnCachedRuleSetOnHit() {
     RateLimitRuleSet ruleSet = createTestRuleSet("test-rule");
     cache.put("test-rule", ruleSet);
