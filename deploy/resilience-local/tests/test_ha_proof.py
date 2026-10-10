@@ -9,7 +9,7 @@ import runpy
 import subprocess
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'verify-ha.py'
@@ -50,7 +50,7 @@ class Response:
 
 
 def dense_samples(statuses, budget=10, body=b'backend\n', headers=None, read_error=False,
-                  error_body=b'unavailable'):
+                  error_body=b'unavailable', handshake_delay=None):
     clock, statuses = Clock(), iter(statuses)
 
     class Opener:
@@ -63,14 +63,25 @@ def dense_samples(statuses, budget=10, body=b'backend\n', headers=None, read_err
                 raise status
             return Response(status, body if status == 200 else error_body, headers or {}, read_error)
 
+    class Input:
+        def readline(self):
+            clock.sleep(handshake_delay or 0)
+            return json.dumps({'remaining_seconds': budget}) + '\n'
+
     output = io.StringIO()
-    with patch.object(sys, 'argv', ['dense', 'http://gateway', '/api/load', 'fixture', 'backend', str(budget)]), \
+    budget_arg = 'handshake' if handshake_delay is not None else str(budget)
+    with patch.object(sys, 'argv', ['dense', 'http://gateway', '/api/load', 'fixture', 'backend', budget_arg]), \
+            patch.object(sys, 'stdin', Input()), \
             patch('pathlib.Path.read_text', return_value='public-test-key'), \
             patch('urllib.request.build_opener', return_value=Opener()), \
             patch('time.monotonic', clock.monotonic), patch('time.time_ns', clock.time_ns), \
             patch('time.sleep', clock.sleep), redirect_stdout(output):
         exec(MODULE['DENSE_RECOVERY_SOURCE'], {})
-    return json.loads(output.getvalue())
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    result = events[-1]
+    if handshake_delay is not None:
+        result['stream_events'] = events[:-1]
+    return result
 
 
 def nested_function(name):
@@ -138,7 +149,9 @@ class DenseRecoveryTests(unittest.TestCase):
 
         environment = {'time': clock, 'fixture': {'gateway_service': 'gateway', 'gateway_namespace': 'eg',
                        'load_path': '/api/load', 'gateway_host': 'fixture', 'backend_body': 'backend'},
-                       'json': json, 'ns': 'fixture', 'probe': 'probe', 'kube': kube,
+                       'json': json, 'ns': 'fixture', 'probe': 'probe', 'kube_base': ['kubectl'], 'env': {},
+                       'run_dense_gateway_probe': lambda command, env, deadline: json.loads(kube(command, deadline - clock.now)),
+                       'DenseProbeFailure': MODULE['DenseProbeFailure'], 'subprocess': subprocess,
                        'DENSE_RECOVERY_SOURCE': MODULE['DENSE_RECOVERY_SOURCE'],
                        'utc_milestone': lambda: {'unix_ms': clock.time_ns() // 1_000_000}}
         function = nested_function('dense_gateway_recovery')
@@ -148,7 +161,7 @@ class DenseRecoveryTests(unittest.TestCase):
         self.assertEqual(elapsed, 6)
         self.assertEqual(len(calls), 3)
         self.assertTrue(evidence['dense_gateway_batches'][0]['background_window_rejected'])
-        clock.now = 29.8
+        clock.now = 30
         with self.assertRaisesRegex(RuntimeError, 'original 30s'):
             environment['dense_gateway_recovery'](0, lambda: True, background, {'timestamps': {}})
         self.assertEqual(len(calls), 3)
@@ -378,6 +391,119 @@ class ReplicaRepairTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'deadline'): self.repair(expired=True)
         for drift in ('policy', 'counter'):
             with self.subTest(drift=drift), self.assertRaises(AssertionError): self.repair(drift=drift)
+
+
+class DenseDeadlineDiagnosticsTests(unittest.TestCase):
+    def test_partial_stream_whitelist_excludes_credentials_and_raw_bodies(self):
+        partial = '\n'.join([json.dumps({'event': 'ready', 'remote_started_unix_ms': 100}),
+                    json.dumps({'event': 'sample', 'status': 503, 'body_valid': False,
+                                'request_seconds': 2, 'api_key': 'DO-NOT-PERSIST', 'body': 'DO-NOT-PERSIST'}),
+                    'incomplete {'])
+        result = MODULE['dense_stream_evidence'](partial)
+        self.assertEqual(result['samples'][0]['status'], 503)
+        self.assertNotIn('DO-NOT-PERSIST', json.dumps(result))
+        self.assertNotIn('recovered', result)
+
+    def test_expired_root_deadline_starts_no_process(self):
+        with patch('subprocess.Popen') as popen, patch('time.monotonic', return_value=30):
+            with self.assertRaises(MODULE['DenseProbeFailure']):
+                MODULE['run_dense_gateway_probe'](['owned-kubectl'], {}, 30)
+            popen.assert_not_called()
+
+
+    def test_actual_stream_budget_includes_grant_transit_and_preserves_public_samples(self):
+        result = dense_samples([200] * 100, budget=3.5, handshake_delay=2)
+        self.assertFalse(result['recovered'])  # Grant is measured from READY, not its late arrival.
+        self.assertEqual(result['stream_events'][0]['event'], 'ready')
+        samples = result['stream_events'][1:]
+        self.assertTrue(samples)
+        self.assertTrue(all(sample['event'] == 'sample' for sample in samples))
+        self.assertTrue(all('request_seconds' in sample and 'body_valid' in sample for sample in samples))
+        self.assertNotIn('public-test-key', json.dumps(result))
+        self.assertTrue(dense_samples([200] * 100, budget=5, handshake_delay=2)['recovered'])
+
+    def rpc(self, overrun=False, timeout=False):
+        clock = Clock()
+        process = MagicMock()
+        process.pid, process.returncode = 12345, 0
+        process.stdout.fileno.return_value = 42
+        process.poll.return_value = None if timeout or overrun else 0
+        ready = json.dumps({'event': 'ready', 'remote_started_unix_ms': 900000,
+                            'remote_started_monotonic_seconds': 1000}).encode() + b'\n'
+        sample = json.dumps({'event': 'sample', 'status': 503, 'body_valid': False,
+                             'request_seconds': 2, 'requested_unix_ms': 910000,
+                             'api_key': 'DO-NOT-PERSIST', 'body': 'DO-NOT-PERSIST'}).encode() + b'\n'
+        result = json.dumps({'event': 'result', 'recovered': True, 'samples': [],
+                             'consecutive_successes': 10, 'success_window': []}).encode() + b'\n'
+        grants = []
+        timeout_failure = timeout
+
+        def ready_readable(*args):
+            clock.now = 3  # Remote startup/readiness transit consumes three of the ORIGINAL thirty seconds.
+            return [process.stdout], [], []
+
+        def communicate(input=None, timeout=None):
+            if input is None: return b'', b''  # Independent bounded child-group cleanup.
+            grants.append(json.loads(input)['remaining_seconds'])
+            self.assertEqual(timeout, 27)
+            clock.now = 31 if overrun or timeout_failure else 5
+            if timeout_failure: raise subprocess.TimeoutExpired('dense-probe', timeout, output=sample)
+            return sample + result, b'ignored-private-stderr'
+
+        process.communicate.side_effect = communicate
+        with patch('subprocess.Popen', return_value=process) as popen, \
+                patch('time.monotonic', clock.monotonic), patch('time.time_ns', clock.time_ns), \
+                patch('select.select', side_effect=ready_readable), patch('os.read', return_value=ready), \
+                patch('os.killpg') as kill:
+            if timeout or overrun:
+                with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                    MODULE['run_dense_gateway_probe'](['owned-kubectl'], {}, 30)
+                evidence = raised.exception.dense_evidence
+                self.assertTrue(evidence['root_rpc_timed_out'])
+                self.assertEqual(evidence['sample_count'], 1)
+                self.assertNotIn('DO-NOT-PERSIST', json.dumps(evidence))
+                self.assertNotIn('ignored-private-stderr', json.dumps(evidence))
+                self.assertNotIn('recovered', evidence)  # Final or partial recovery can NEVER override root timeout.
+                self.assertEqual(kill.call_count, 2)
+            else:
+                accepted = MODULE['run_dense_gateway_probe'](['owned-kubectl'], {}, 30)
+                self.assertTrue(accepted['recovered'])
+                self.assertEqual(accepted['rpc_diagnostics']['rpc_startup_seconds'], 3)
+                self.assertEqual(accepted['rpc_diagnostics']['root_rpc_seconds'], 5)
+            self.assertTrue(popen.call_args.kwargs['start_new_session'])
+        self.assertAlmostEqual(grants[0], 26.9)
+
+    def test_rpc_startup_consumes_original_root_budget_without_utc_clock_alignment(self):
+        self.rpc()
+
+    def test_rpc_timeout_retains_whitelisted_partial_samples_and_failure(self):
+        self.rpc(timeout=True)
+
+    def test_late_final_recovery_result_cannot_override_original_root_deadline(self):
+        self.rpc(overrun=True)
+
+
+    def test_actual_payload_streams_through_real_owned_local_child(self):
+        # Real pipes/select/communicate; the child HTTP opener and credential reader are offline fakes.
+        setup = """import pathlib,sys,urllib.request
+pathlib.Path.read_text=lambda self:'public-test-key'
+class Response:
+    status=200
+    headers={}
+    def __enter__(self):return self
+    def __exit__(self,*args):pass
+    def read(self):return b'backend\\n'
+class Opener:
+    def open(self,*args,**kwargs):return Response()
+urllib.request.build_opener=lambda *args:Opener()
+sys.argv=['dense','http://offline','/api/load','fixture','backend','handshake']
+"""
+        command = [sys.executable, '-u', '-c', setup + MODULE['DENSE_RECOVERY_SOURCE']]
+        result = MODULE['run_dense_gateway_probe'](command, {}, MODULE['time'].monotonic() + 8)
+        self.assertTrue(result['recovered'])
+        self.assertGreaterEqual(result['consecutive_successes'], 10)
+        self.assertGreaterEqual(result['rpc_diagnostics']['sample_count'], 10)
+        self.assertNotIn('public-test-key', json.dumps(result))
 
 
 if __name__ == '__main__':

@@ -7,6 +7,7 @@ import io
 import json
 import os
 import re
+import select
 import signal as process_signal
 from pathlib import Path
 import subprocess
@@ -114,18 +115,24 @@ def home_failover_targets(redis_nodes, placements):
 
 DENSE_RECOVERY_SOURCE = r'''import json,pathlib,sys,time,urllib.request,urllib.error
 host,path,hostname,backend,budget=sys.argv[1:]
-started=time.monotonic();deadline=started+float(budget);samples=[];streak=[];recovered=False
+started=time.monotonic();stream=budget=='handshake';samples=[];streak=[];recovered=False
+if stream:
+    print(json.dumps({'event':'ready','remote_started_unix_ms':time.time_ns()//1000000,'remote_started_monotonic_seconds':started}),flush=True)
+    budget=json.loads(sys.stdin.readline())['remaining_seconds']
+deadline=started+float(budget)
 opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
 key=pathlib.Path('/key/load-api-key').read_text().strip()
 while time.monotonic()<deadline:
-    item={'requested_unix_ms':time.time_ns()//1000000}
+    request_started=time.monotonic();item={'requested_unix_ms':time.time_ns()//1000000}
     try:
         req=urllib.request.Request(host+path,headers={'Host':hostname,'X-API-Key':key})
         try: response=opener.open(req,timeout=max(.01,min(2,deadline-time.monotonic())))
         except urllib.error.HTTPError as error: response=error
+        item['response_headers_seconds']=round(time.monotonic()-request_started,6)
         with response:
             item['status']=response.status
-            body=response.read()
+            read_started=time.monotonic();body=response.read()
+            item['body_read_seconds']=round(time.monotonic()-read_started,6)
             item['body_valid']=body in (backend.encode(),backend.encode()+b'\n')
             item['backend_marker_present']=backend.encode() in body
             item['route_marker_valid']='x-ha-controller-proof' not in response.headers
@@ -135,15 +142,121 @@ while time.monotonic()<deadline:
             item['unexpected']=True
     except Exception as error:
         item['transport_error']=type(error).__name__
-    item['completed_unix_ms']=time.time_ns()//1000000;samples.append(item)
+    item['completed_unix_ms']=time.time_ns()//1000000
+    item['request_seconds']=round(time.monotonic()-request_started,6);item['remote_elapsed_seconds']=round(time.monotonic()-started,6)
+    samples.append(item)
+    if stream: print(json.dumps(dict(item,event='sample')),flush=True)
     if item.get('unexpected'): break
     if item.get('status')==200 and item.get('body_valid') and item.get('route_marker_valid') and not item.get('transport_error'): streak.append(item)
     else: streak=[]
     if len(streak)>=10 and streak[-1]['completed_unix_ms']-streak[0]['completed_unix_ms']>=2000:
         recovered=True;break
     time.sleep(min(.2,max(0,deadline-time.monotonic())))
-print(json.dumps({'recovered':recovered,'samples':samples,'consecutive_successes':len(streak),'success_window':streak}))
+result={'recovered':recovered,'samples':samples,'consecutive_successes':len(streak),'success_window':streak}
+print(json.dumps(dict(result,event='result') if stream else result),flush=True)
 '''
+
+
+
+
+class DenseProbeFailure(RuntimeError):
+    def __init__(self, evidence):
+        super().__init__('Dense Gateway RPC failed within the original root deadline')
+        self.evidence = evidence
+
+
+def dense_stream_evidence(output):
+    if isinstance(output, bytes):
+        output = output.decode('utf-8', errors='replace')
+    evidence = {'samples': []}
+    sample_fields = {'status', 'body_valid', 'backend_marker_present', 'route_marker_valid', 'unexpected',
+                     'requested_unix_ms', 'completed_unix_ms', 'request_seconds', 'response_headers_seconds',
+                     'body_read_seconds', 'remote_elapsed_seconds'}
+    for line in (output or '').splitlines():
+        try:
+            item = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(item, dict):
+            continue
+        if item.get('event') == 'ready':
+            evidence['remote_ready'] = {key: item[key] for key in ('remote_started_unix_ms', 'remote_started_monotonic_seconds')
+                                        if isinstance(item.get(key), (int, float))}
+        elif item.get('event') == 'sample':
+            sample = {key: value for key, value in item.items() if key in sample_fields and isinstance(value, (int, float, bool))}
+            if isinstance(item.get('transport_error'), str) and re.fullmatch(r'[A-Za-z]+Error', item['transport_error']):
+                sample['transport_error'] = item['transport_error']
+            evidence['samples'].append(sample)
+    evidence['sample_count'] = len(evidence['samples'])
+    return evidence
+
+
+def run_dense_gateway_probe(command, env, deadline):
+    started = time.monotonic()
+    timing = {'root_rpc_started': utc_milestone(), 'root_deadline_monotonic_seconds': deadline,
+              'clock_contract': 'Remote duration starts at READY before root grants remaining time; no UTC clock alignment assumed'}
+    if started >= deadline:
+        raise DenseProbeFailure(dict(timing, root_deadline_expired=True, samples=[], sample_count=0))
+    process = subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, start_new_session=True)
+    prefix, output = b'', b''
+    try:
+        while b'\n' not in prefix:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([process.stdout], [], [], remaining)[0]:
+                raise subprocess.TimeoutExpired('dense-probe', max(0, remaining))
+            chunk = os.read(process.stdout.fileno(), 4096)
+            if not chunk or len(prefix) + len(chunk) > 4096:
+                raise RuntimeError('Dense Gateway READY marker missing or oversized')
+            prefix += chunk
+        ready = json.loads(prefix.split(b'\n', 1)[0])
+        assert ready.get('event') == 'ready', 'Dense Gateway READY marker invalid'
+        timing['root_ready_received'] = utc_milestone()
+        timing['rpc_startup_seconds'] = round(time.monotonic() - started, 6)
+        # READY predates root receipt, so grant expiry also includes the handshake transit time.
+        remaining = deadline - time.monotonic()
+        grant = remaining - .1
+        if grant <= 0:
+            raise subprocess.TimeoutExpired('dense-probe', max(0, remaining))
+        timing['granted_remote_seconds'] = grant
+        output, _ = process.communicate(input=(json.dumps({'remaining_seconds': grant}) + '\n').encode(), timeout=remaining)
+        timing['root_rpc_finished'] = utc_milestone()
+        timing['root_rpc_seconds'] = round(time.monotonic() - started, 6)
+        if time.monotonic() > deadline:
+            raise subprocess.TimeoutExpired('dense-probe', remaining, output=output)
+        assert process.returncode == 0, 'Dense Gateway RPC exited unsuccessfully'
+        events = [json.loads(line) for line in output.splitlines()]
+        result = next(event for event in reversed(events) if event.get('event') == 'result')
+        result['rpc_diagnostics'] = dict(timing, **dense_stream_evidence(prefix + output))
+        return result
+    except Exception as error:
+        if isinstance(error, subprocess.TimeoutExpired):
+            output = error.output or output
+        evidence = dict(timing, **dense_stream_evidence(prefix + output), root_rpc_failed=True,
+                        root_rpc_timed_out=isinstance(error, subprocess.TimeoutExpired),
+                        root_observed_elapsed_seconds=round(time.monotonic() - started, 6))
+        if isinstance(error, subprocess.TimeoutExpired):
+            error.dense_evidence = evidence
+            raise error from None
+        raise DenseProbeFailure(evidence) from None
+    finally:
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, process_signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.communicate(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                os.killpg(process.pid, process_signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                process.communicate(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
 
 
 
@@ -436,11 +549,14 @@ with response: print(json.dumps({'status':response.status,'body':response.read()
         host = f'http://{fixture["gateway_service"]}.{fixture["gateway_namespace"]}.svc.cluster.local'
         while time.monotonic() - started < 30:
             assert while_down(), 'Fault target or application clients changed during dense recovery'
-            remaining = 30 - (time.monotonic() - started) - .5
-            if remaining <= 0:
+            if time.monotonic() >= started + 30:
                 break
-            result = json.loads(kube(['-n', ns, 'exec', probe, '--', 'python', '-c', DENSE_RECOVERY_SOURCE,
-                                      host, fixture['load_path'], fixture['gateway_host'], fixture['backend_body'], str(remaining)], timeout=remaining + .5))
+            try:
+                result = run_dense_gateway_probe(kube_base + ['-n', ns, 'exec', '-i', probe, '--', 'python', '-u', '-c', DENSE_RECOVERY_SOURCE,
+                                                 host, fixture['load_path'], fixture['gateway_host'], fixture['backend_body'], 'handshake'], env, started + 30)
+            except (DenseProbeFailure, subprocess.TimeoutExpired) as error:
+                batches.append(error.evidence if isinstance(error, DenseProbeFailure) else error.dense_evidence)
+                raise
             batches.append(result)
             assert not any(s.get('unexpected') for s in result['samples']), 'Dense Gateway probe received invalid status/body/route marker'
             if result['recovered']:
