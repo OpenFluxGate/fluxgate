@@ -2,6 +2,9 @@ server:
   port: 8080
   shutdown: graceful
 spring:
+  servlet:
+    multipart:
+      enabled: false
   lifecycle:
     timeout-per-shutdown-phase: 20s
   application:
