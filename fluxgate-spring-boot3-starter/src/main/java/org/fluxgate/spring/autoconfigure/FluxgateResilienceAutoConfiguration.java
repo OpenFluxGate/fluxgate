@@ -84,8 +84,8 @@ public class FluxgateResilienceAutoConfiguration {
             .permittedCallsInHalfOpenState(cbProps.getPermittedCallsInHalfOpenState())
             .fallbackStrategy(cbProps.getFallback());
 
-    // Only set explicitly: passing a value forces the legacy consecutive-failure rule and disables
-    // the sliding-window failure rate.
+    // Only set explicitly: passing a value adds the legacy consecutive-failure rule alongside the
+    // sliding-window failure rate.
     if (cbProps.getFailureThreshold() != null) {
       builder.failureThreshold(cbProps.getFailureThreshold());
     }

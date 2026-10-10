@@ -46,27 +46,43 @@ class RedisRateLimiterKeyTest {
     }
 
     @Test
-    @DisplayName("colon replaced with underscore")
+    @DisplayName("colon is percent-escaped")
     void colon() {
-      assertThat(RedisRateLimiter.sanitizeSegment("a:b")).isEqualTo("a_b");
+      assertThat(RedisRateLimiter.sanitizeSegment("a:b")).isEqualTo("a%3Ab");
     }
 
     @Test
-    @DisplayName("braces replaced with underscores")
+    @DisplayName("braces are percent-escaped")
     void braces() {
-      assertThat(RedisRateLimiter.sanitizeSegment("{foo}")).isEqualTo("_foo_");
+      assertThat(RedisRateLimiter.sanitizeSegment("{foo}")).isEqualTo("%7Bfoo%7D");
     }
 
     @Test
-    @DisplayName("glob metacharacters replaced")
+    @DisplayName("glob metacharacters are percent-escaped")
     void globChars() {
-      assertThat(RedisRateLimiter.sanitizeSegment("*?[\\]")).isEqualTo("_____");
+      assertThat(RedisRateLimiter.sanitizeSegment("*?[\\]")).isEqualTo("%2A%3F%5B%5C%5D");
     }
 
     @Test
-    @DisplayName("whitespace replaced")
+    @DisplayName("whitespace is percent-escaped")
     void whitespace() {
-      assertThat(RedisRateLimiter.sanitizeSegment("a b\tc")).isEqualTo("a_b_c");
+      assertThat(RedisRateLimiter.sanitizeSegment("a b\tc")).isEqualTo("a%20b%09c");
+    }
+
+    @Test
+    @DisplayName("the escape character itself is escaped, so escaping stays reversible")
+    void percent() {
+      assertThat(RedisRateLimiter.sanitizeSegment("100%")).isEqualTo("100%25");
+    }
+
+    @Test
+    @DisplayName("ids that used to collide after sanitising now map to distinct segments")
+    void escapingIsInjective() {
+      assertThat(RedisRateLimiter.sanitizeSegment("a:b"))
+          .isNotEqualTo(RedisRateLimiter.sanitizeSegment("a_b"))
+          .isNotEqualTo(RedisRateLimiter.sanitizeSegment("a%3Ab"));
+      assertThat(RedisRateLimiter.sanitizeSegment("a b"))
+          .isNotEqualTo(RedisRateLimiter.sanitizeSegment("a_b"));
     }
 
     @Test
@@ -79,9 +95,18 @@ class RedisRateLimiterKeyTest {
     @DisplayName("bucketKeyPattern sanitizes ruleSetId so embedded * is not a SCAN wildcard")
     void bucketKeyPatternSanitizes() {
       String pattern = RedisRateLimiter.bucketKeyPattern("evil*set");
-      // The * should have been replaced; the resulting pattern must not match the entire keyspace
+      // The * should have been escaped; the resulting pattern must not match the entire keyspace
       assertThat(pattern).doesNotContain("evil*set");
-      assertThat(pattern).contains("evil_set");
+      assertThat(pattern).contains("evil%2Aset");
+    }
+
+    @Test
+    @DisplayName("a band label's ':' and '%' are escaped, other characters are kept")
+    void bandLabel() {
+      assertThat(RedisRateLimiter.escapeBandLabel("x:fw")).isEqualTo("x%3Afw");
+      assertThat(RedisRateLimiter.escapeBandLabel("50%")).isEqualTo("50%25");
+      assertThat(RedisRateLimiter.escapeBandLabel("per minute")).isEqualTo("per minute");
+      assertThat(RedisRateLimiter.escapeBandLabel("100-per-60s-sw")).isEqualTo("100-per-60s-sw");
     }
   }
 

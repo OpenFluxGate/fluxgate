@@ -6,11 +6,12 @@ The Engine Layer resolves a rule set by id and delegates token consumption.
 
 ---
 
-> **There is no rule matching by path or method.** `RateLimitRule` has no `path`, `method` or
-> `priority` field, and `RateLimitEngine` contains no matching logic. The engine looks a rule set up
-> by id and hands it to a `RateLimiter`, which evaluates **every enabled rule** in it. To vary limits
-> by request surface, register several filters with different `include-patterns`, or set
-> `default-rule-set-id` per application.
+> **Rules match requests (0.4).** Each `RateLimitRule` has a `RuleMatcher` (`methods`,
+> `pathPatterns`, `excludePathPatterns`, `headerEquals`, `headerPresent`) and a `priority`. The engine
+> looks a rule set up by id, applies its access control, and hands it to a `RateLimiter`, which
+> evaluates the enabled rules returned by `RateLimitRuleSet#getMatchingRules` - those whose matcher
+> accepts the request, highest `priority` first (ties by id). A rule with an empty matcher matches
+> every request, so a 0.3.x rule set without matchers still evaluates every enabled rule.
 
 ## Components
 
@@ -30,10 +31,15 @@ public RateLimitResult check(String ruleSetId, RequestContext context, long perm
 **Responsibilities:**
 - Look the rule set up through `RateLimitRuleSetProvider.findById(ruleSetId)`
 - Apply `OnMissingRuleSetStrategy` when it is absent
-- Delegate to `RateLimiter.tryConsume(context, ruleSet, permits)`
+- Evaluate the rule set's `AccessControl` first: `DENY` rejects with a `denied:` synthetic key and
+  `ALLOW_BYPASS` allows without consuming tokens (keys are resolved only when key lists are set)
+- Delegate to `RateLimiter.tryConsume(context, ruleSet, permits, pathMatcher)`, passing the engine's
+  `PathPatternMatcher` (default `SimpleAntPathMatcher.INSTANCE`) so the limiter selects the matching
+  rules with the same matcher
 - Never return `null` — a `RateLimiter` that breaks that contract raises `IllegalStateException`
 
-`OnMissingRuleSetStrategy`, which the starter wires from `fluxgate.ratelimit.missing-rule-behavior`:
+`OnMissingRuleSetStrategy`, which the starter wires from `fluxgate.ratelimit.missing-rule-behavior`
+(`ALLOW` or `DENY`, default `DENY`; `THROW` is the builder default):
 
 | Strategy | Result |
 |----------|--------|
@@ -109,8 +115,10 @@ that behaviour at all.
 
 ### KeyResolver
 
-Keys are resolved by the **rate limiter**, once per rule, through `ruleSet.getKeyResolver()` — not by
-the engine.
+Keys for the buckets are resolved by the **rate limiter**, once per matching rule, through
+`ruleSet.getKeyResolver()`. The engine resolves keys only when the rule set's `AccessControl` has
+allowed or denied key lists: it then resolves the key of every matching rule once, before calling the
+limiter, to compare them against those lists (and the limiter resolves them again for its buckets).
 
 ```java
 public interface KeyResolver {

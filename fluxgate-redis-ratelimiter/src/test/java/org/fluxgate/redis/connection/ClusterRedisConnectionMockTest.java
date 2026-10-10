@@ -5,9 +5,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import io.lettuce.core.KeyScanCursor;
+import io.lettuce.core.RedisURI;
+import io.lettuce.core.ScanArgs;
+import io.lettuce.core.ScanCursor;
 import io.lettuce.core.ScriptOutputType;
+import io.lettuce.core.TimeoutOptions;
+import io.lettuce.core.cluster.ClusterClientOptions;
+import io.lettuce.core.cluster.ClusterTopologyRefreshOptions;
+import io.lettuce.core.cluster.ClusterTopologyRefreshOptions.RefreshTrigger;
 import io.lettuce.core.cluster.api.sync.RedisAdvancedClusterCommands;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -35,6 +46,56 @@ class ClusterRedisConnectionMockTest {
   @BeforeEach
   void setUp() {
     connection = new ClusterRedisConnection(commands);
+  }
+
+  @Test
+  @DisplayName(
+      "Every node URI carries the configured timeout (Lettuce cluster ignores the default)")
+  void everyNodeUriCarriesTheConfiguredTimeout() {
+    List<RedisURI> uris =
+        ClusterRedisConnection.toRedisUris(
+            List.of("redis://127.0.0.1:7100", "redis://127.0.0.1:7101"), Duration.ofMillis(750));
+
+    assertThat(uris).hasSize(2);
+    assertThat(uris)
+        .allSatisfy(uri -> assertThat(uri.getTimeout()).isEqualTo(Duration.ofMillis(750)));
+  }
+
+  @Test
+  @DisplayName("Client options enforce the configured command timeout")
+  void clientOptionsEnforceTheCommandTimeout() {
+    ClusterClientOptions options =
+        ClusterRedisConnection.clientOptions(Duration.ofMillis(750), Duration.ofSeconds(30));
+
+    TimeoutOptions timeoutOptions = options.getTimeoutOptions();
+    assertThat(timeoutOptions.isTimeoutCommands()).isTrue();
+    assertThat(
+            timeoutOptions
+                .getSource()
+                .getTimeUnit()
+                .toMillis(timeoutOptions.getSource().getTimeout(null)))
+        .isEqualTo(750L);
+    assertThat(options.getSocketOptions().getConnectTimeout()).isEqualTo(Duration.ofMillis(750));
+  }
+
+  @Test
+  @DisplayName("Client options refresh the topology periodically and on every adaptive trigger")
+  void clientOptionsRefreshTheTopology() {
+    ClusterClientOptions options =
+        ClusterRedisConnection.clientOptions(Duration.ofSeconds(5), Duration.ofSeconds(30));
+
+    ClusterTopologyRefreshOptions refresh = options.getTopologyRefreshOptions();
+    assertThat(refresh.isPeriodicRefreshEnabled()).isTrue();
+    assertThat(refresh.getRefreshPeriod()).isEqualTo(Duration.ofSeconds(30));
+    assertThat(refresh.getAdaptiveRefreshTriggers())
+        .containsExactlyInAnyOrderElementsOf(EnumSet.allOf(RefreshTrigger.class));
+  }
+
+  @Test
+  @DisplayName("The default topology refresh period is 30 seconds")
+  void defaultTopologyRefreshPeriod() {
+    assertThat(ClusterRedisConnection.DEFAULT_TOPOLOGY_REFRESH_PERIOD)
+        .isEqualTo(Duration.ofSeconds(30));
   }
 
   @Test
@@ -267,5 +328,39 @@ class ClusterRedisConnectionMockTest {
 
     assertThat(connection.unlink("a", "b")).isEqualTo(2L);
     verify(commands).unlink("a", "b");
+  }
+
+  @Test
+  @DisplayName("scanKeys hands every SCAN page to the consumer as it arrives")
+  void scanKeysStreamsPageByPage() {
+    when(commands.scan(any(ScanCursor.class), any(ScanArgs.class)))
+        .thenReturn(page("1", false, "k1", "k2"))
+        .thenReturn(page("0", true, "k3"));
+
+    List<List<String>> pages = new ArrayList<>();
+    connection.scanKeys("fluxgate:bucket:*", 100L, pages::add);
+
+    assertThat(pages).containsExactly(List.of("k1", "k2"), List.of("k3"));
+  }
+
+  @Test
+  @DisplayName("scanKeys does not call the consumer for empty SCAN pages")
+  void scanKeysSkipsEmptyPages() {
+    when(commands.scan(any(ScanCursor.class), any(ScanArgs.class)))
+        .thenReturn(page("7", false))
+        .thenReturn(page("0", true, "k1"));
+
+    List<List<String>> pages = new ArrayList<>();
+    connection.scanKeys("fluxgate:bucket:*", 100L, pages::add);
+
+    assertThat(pages).containsExactly(List.of("k1"));
+  }
+
+  private static KeyScanCursor<String> page(String cursor, boolean finished, String... keys) {
+    KeyScanCursor<String> page = new KeyScanCursor<>();
+    page.getKeys().addAll(Arrays.asList(keys));
+    page.setCursor(cursor);
+    page.setFinished(finished);
+    return page;
   }
 }

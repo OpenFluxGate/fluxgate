@@ -24,6 +24,7 @@ English | [한국어](README.ko.md)
 
 ### Guides
 
+- [**YAML Rule Sets Guide**](en/guides/yaml-rule-sets.md) - `fluxgate.ratelimit.rule-sets`: matcher, algorithms, calendar quotas, access control, startup validation
 - [**@RateLimit Annotation Guide**](en/guides/annotation.md) - `@EnableFluxgateAspect`, every annotation attribute, exception handling, non-web usage, filter vs. aspect decision table
 
 ### Customization

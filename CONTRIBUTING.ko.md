@@ -27,7 +27,7 @@ FluxGate에 관심을 가져주셔서 감사합니다! 이 문서는 개발 환�
 
 | 도구 | 최소 버전 |
 |---|---|
-| Java | 11 이상 (core + boot2 스타터 빌드); boot3 스타터는 17; 샘플은 21 |
+| Java | core·Redis·MongoDB 모듈은 11; boot2 스타터는 테스트 의존성인 `fluxgate-control-support`를 먼저 17로 설치한 뒤 11로 빌드 (산출물은 Java 11에서 실행); boot3 스타터는 17; 전체 빌드와 샘플은 21 |
 | Maven | 3.8 이상 (제공된 `./mvnw` 래퍼 사용 — 시스템 Maven 사용 금지) |
 | Docker | 24 이상 (통합 테스트용; 단위 테스트는 Docker 없이 실행 가능) |
 | Git | 2.x |
@@ -110,7 +110,7 @@ Redis 클러스터 프로필은 실행 중인 클러스터가 필요합니다:
 
 ```bash
 docker compose -f docker/redis-cluster.yml up -d
-./mvnw -pl fluxgate-redis-ratelimiter -Predis-cluster-it verify
+./mvnw -pl fluxgate-redis-ratelimiter -am -Predis-cluster-it verify
 docker compose -f docker/redis-cluster.yml down
 ```
 

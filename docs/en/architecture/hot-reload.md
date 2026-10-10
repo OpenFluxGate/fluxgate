@@ -55,7 +55,7 @@ request reads the stale rules and refills the buckets you just cleared to the ol
 Polls the provider and compares a content hash per rule set.
 
 ```java
-private static int computeVersion(RateLimitRuleSet ruleSet) {
+private int computeVersion(RateLimitRuleSet ruleSet) {
   return Objects.hash(ruleSet.getId(), ruleSet.getDescription(), ruleSet.getRules());
 }
 ```
@@ -75,10 +75,18 @@ Message handling:
 
 | Payload | Effect |
 |---------|--------|
-| `{"version": 1, "ruleSetId": "api-limits"}` | reload that rule set |
-| `"*"` | deliberate full reload |
+| `{"version": 2, "ruleSetId": "api-limits", ...}` | reload that rule set (`version` 1 or 2; missing means 1) |
+| `"*"` | deliberate full reload (only without a secret) |
 | `{"fullReload": true}` | deliberate full reload |
 | empty, not JSON, not an object, unknown `version` | WARN and **ignored** |
+
+With `fluxgate.reload.pubsub.secret` set, only signed JSON is accepted: version 2 is verified over
+`HmacSigner.canonicalRuleChangeV2`, which binds the subscribed channel and a per-message `nonce`;
+version 1 (no nonce, no channel binding) only while `accept-legacy-signed` is `true` (the default).
+The `timestamp` must lie inside `max-message-age` (60s by default), and a message seen again inside
+that window (same nonce, or same signature for version 1) is ignored as a replay. The plain-text
+`"*"` and `"ruleSetId"` forms are ignored. Without a secret the starter refuses `PUBSUB` (and `AUTO`
+falls back to polling) unless `allow-unsigned=true`.
 
 The last row used to be a full reload, which meant one malformed message wiped every bucket — an
 unauthenticated global rate limit bypass window for anyone who could publish to Redis.
@@ -130,7 +138,8 @@ public interface BucketResetHandler {
   that was rolled back.
 - Failures are retried three times with jittered backoff; a final failure is logged at ERROR and
   counted in `RuleChangeNotifierMetrics.getFailedNotifications()`.
-- Messages carry `version: 1`.
+- Messages carry `version: 2` (`RuleChangeMessage.SCHEMA_VERSION`) and a per-message `nonce`;
+  version 1 (`LEGACY_SCHEMA_VERSION`) is what a subscriber assumes for a message without a version.
 - SpEL such as `#ruleSetId` needs the annotated class compiled with `-parameters` (Spring Boot's
   parent POM does this), or the positional `#a0` / `#p0` form.
 
@@ -155,8 +164,11 @@ Admin updates MongoDB
 ```
 
 > **Security.** The reload channel is a control-plane channel: `PUBLISH` access to it is equivalent to
-> write access to your rules. FluxGate does not authenticate publishers — protect the channel with
-> Redis AUTH, TLS and ACLs. See [SECURITY.md](../../../SECURITY.md).
+> write access to your rules. Since 0.4 FluxGate authenticates the **message**: set the same
+> `fluxgate.reload.pubsub.secret` / `fluxgate.control.secret` on both sides and unsigned, stale,
+> replayed or wrongly bound messages are ignored (without a secret `AUTO` polls and `PUBSUB` fails
+> startup). Still protect the channel itself with Redis AUTH, TLS and ACLs. See
+> [SECURITY.md](../../../SECURITY.md).
 
 ---
 

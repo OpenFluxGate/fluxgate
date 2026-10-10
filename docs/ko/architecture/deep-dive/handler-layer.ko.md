@@ -187,7 +187,7 @@ public final class RateLimitResponse {
 | `retryAfterMillis` | long | 재시도까지 대기 시간 (ms). 나노초에서 **올림** 변환 |
 | `onLimitExceedPolicy` | OnLimitExceedPolicy | 한도 초과 시 정책 (허용 시 null) |
 | `limit` | long | 결정을 만든 **binding 대역**의 용량 (`-1`이면 알 수 없음) |
-| `resetTimeMillis` | long | 그 버킷이 **다시 가득 차는** epoch 밀리초 (`-1`이면 알 수 없음) |
+| `resetTimeMillis` | long | binding 대역의 리셋 시각 (epoch 밀리초). TOKEN_BUCKET은 **다시 가득 찰** 시각, SLIDING_WINDOW는 세어진 요청이 모두 윈도를 떠나는 시각, FIXED_WINDOW는 윈도 끝. 인메모리 limiter는 알고리즘과 관계없이 가득 찰 때까지를 추정 (`-1`이면 알 수 없음) |
 | `windowSeconds` | long | `limit`에 대응하는 윈도 길이(초). `RateLimit-Policy`용 (`-1`이면 알 수 없음) |
 | `bandLabel` | String | binding 대역의 라벨 (`RateLimitBand.getKeyLabel()`) |
 
@@ -223,7 +223,8 @@ public final class RateLimitResponse {
 | `limit` + `windowSeconds` | - | `RateLimit-Policy: <limit>;w=<window>` |
 | `retryAfterMillis` | `Retry-After` (거부 시에만, 최소 1) | 같음 |
 
-두 `Reset` 헤더는 모두 "버킷이 **다시 가득 차는** 시점"을 가리킵니다. `Retry-After`는 "다음 요청이
+두 `Reset` 헤더는 모두 binding 대역의 **리셋 시점**(TOKEN_BUCKET은 다시 가득 찰 때, SLIDING_WINDOW는
+세어진 요청이 모두 윈도를 떠날 때, FIXED_WINDOW는 윈도 끝)을 가리킵니다. `Retry-After`는 "다음 요청이
 통과할 수 있을 때까지의 대기"이므로 보통 `Reset`보다 훨씬 짧습니다. 둘은 다른 질문에 답하며,
 헤더 라이터도 서로 다른 값에서 계산합니다.
 
@@ -274,9 +275,17 @@ public class EngineBackedRateLimitHandler implements FluxgateRateLimitHandler {
 
   private static final Logger log = LoggerFactory.getLogger(EngineBackedRateLimitHandler.class);
 
+  /** Key prefix {@code RateLimitEngine} uses for an unknown rule set under DENY. */
+  private static final String MISSING_RULE_SET_PREFIX = "missing-rule-set:";
+
   private final RateLimitEngine engine;
   private final Set<String> warnedRuleSetIds = ConcurrentHashMap.newKeySet();
 
+  /**
+   * Creates a handler delegating to the given engine.
+   *
+   * @param engine the engine that resolves rule sets and consumes permits
+   */
   public EngineBackedRateLimitHandler(RateLimitEngine engine) {
     this.engine = Objects.requireNonNull(engine, "engine must not be null");
     log.info("EngineBackedRateLimitHandler initialized");
@@ -289,24 +298,47 @@ public class EngineBackedRateLimitHandler implements FluxgateRateLimitHandler {
 
   @Override
   public RateLimitResponse tryConsume(RequestContext context, String ruleSetId, long permits) {
+    RateLimitResult result;
     try {
-      return RateLimitResponse.from(engine.check(ruleSetId, context, permits));
+      result = engine.check(ruleSetId, context, permits);
     } catch (MissingRateLimitKeyException e) {
       logConfigurationProblem(
           ruleSetId, "no rate limit key could be resolved, rejecting the request", e);
       return RateLimitResponse.rejected(0L);
     } catch (InvalidRuleConfigException e) {
+      // A request cost no band can hold is the client's error (HTTP 429), not a broken rule set.
+      PermitsExceedCapacityException tooCostly = PermitsExceedCapacityException.from(e, permits);
+      if (tooCostly != null) {
+        log.debug("Rule set '{}': {}", ruleSetId, tooCostly.getMessage());
+        throw tooCostly;
+      }
       logConfigurationProblem(ruleSetId, "the rule configuration is invalid", e);
-      return RateLimitResponse.rejected(0L);
+      throw new RateLimiterUnavailableException(
+          "Rule set '" + ruleSetId + "' has an invalid configuration",
+          RateLimiterUnavailableException.UNKNOWN_RETRY_AFTER,
+          e);
     }
+    if (!result.isAllowed() && isMissingRuleSet(result)) {
+      logConfigurationProblem(
+          ruleSetId, "no such rule set (missing-rule-behavior=DENY), rejecting the request", null);
+      throw new RateLimiterUnavailableException("Rule set '" + ruleSetId + "' is not configured");
+    }
+    return RateLimitResponse.from(result);
+  }
+
+  /** The engine reports an unknown rule set under DENY with this synthetic key. */
+  private static boolean isMissingRuleSet(RateLimitResult result) {
+    RateLimitKey key = result.getKey();
+    return key != null && key.value() != null && key.value().startsWith(MISSING_RULE_SET_PREFIX);
   }
 
   /** Logs a configuration problem at WARN the first time it is seen, then at DEBUG. */
   private void logConfigurationProblem(String ruleSetId, String what, RuntimeException e) {
+    String detail = e != null ? e.getMessage() : "";
     if (warnedRuleSetIds.add(ruleSetId)) {
-      log.warn("Rule set '{}': {}: {}", ruleSetId, what, e.getMessage());
+      log.warn("Rule set '{}': {}: {}", ruleSetId, what, detail);
     } else {
-      log.debug("Rule set '{}': {}: {}", ruleSetId, what, e.getMessage());
+      log.debug("Rule set '{}': {}: {}", ruleSetId, what, detail);
     }
   }
 }
@@ -316,19 +348,23 @@ public class EngineBackedRateLimitHandler implements FluxgateRateLimitHandler {
 
 1. `engine.check(...)` 호출 — 룰셋 조회, 키 해석, 토큰 소비는 전부 아래 계층의 일입니다
 2. `RateLimitResult` → `RateLimitResponse` 변환 (`RateLimitResponse.from`)
-3. **설정 오류를 거부로 번역** — 예외를 필터까지 올려보내지 않습니다
+3. **설정 오류를 응답 종류로 번역** — 클라이언트의 문제는 429, 운영자의 문제는 503
 4. 그 오류를 룰셋 id마다 **한 번만** WARN으로, 이후에는 DEBUG로 기록
 
 3번과 4번이 중요한 이유:
 
-| 예외 | 원인 | 동작 |
+| 상황 | 원인 | 동작 |
 |------|------|------|
-| `MissingRateLimitKeyException` | `missing-key-behavior=REJECT`인데 스코프가 요구하는 값이 없음 | `rejected(0L)` — 대기 시간 0 |
-| `InvalidRuleConfigException` | permits가 어떤 대역의 용량보다 큼 등, 규칙 자체가 성립 불가 | `rejected(0L)` — 대기 시간 0 |
+| `MissingRateLimitKeyException` | `missing-key-behavior=REJECT`인데 스코프가 요구하는 값이 없음 | `rejected(0L)` — 대기 시간 0, HTTP 429 |
+| `InvalidRuleConfigException` 중 permits가 대역 용량보다 큼 | 가중치 요청의 비용이 어떤 대역에도 들어가지 않음(호출자 오류) | `PermitsExceedCapacityException`을 던짐(DEBUG 로그만) → HTTP 429 |
+| 그 밖의 `InvalidRuleConfigException` | 룰셋 자체를 만들 수 없음 | `RateLimiterUnavailableException`을 던짐 → HTTP 503 |
+| 룰셋 없음 (`missing-rule-behavior=DENY`) | 엔진이 `missing-rule-set:` 합성 키로 거부 | `RateLimiterUnavailableException`을 던짐 → HTTP 503 |
 
-두 경우 모두 **대기 시간이 0**입니다. 부족한 것은 토큰이 아니라 헤더 또는 설정이므로, 기다린다고
-해결되지 않습니다. `Retry-After`는 헤더 라이터에서 최소 1초로 올라가지만, 이 값이 "리필까지의 시간"이
-아니라는 사실은 유지됩니다.
+키가 없는 거부는 **대기 시간이 0**입니다. 부족한 것은 토큰이 아니라 헤더이므로 기다린다고 해결되지
+않습니다. `Retry-After`는 헤더 라이터에서 최소 1초로 올라가지만, 이 값이 "리필까지의 시간"이 아니라는
+사실은 유지됩니다. 룰셋을 만들 수 없거나 없는 경우는 한도 초과가 아니라 설정 문제이므로 429가 아니라
+503입니다. `failure-behavior=ALLOW`여도 마찬가지입니다. 그 설정은 리미터 장애를 다루지 설정 오류를
+다루지 않습니다.
 
 `warnedRuleSetIds`가 없다면 잘못 설정된 룰셋 하나가 **요청마다** WARN을 찍어 로그를 채웁니다.
 핫 패스에서 로그 볼륨은 그 자체로 장애 요인입니다.
@@ -354,12 +390,14 @@ public FluxgateRateLimitHandler fluxgateRateLimitHandler(RateLimitEngine engine)
 @ConditionalOnMissingBean(RateLimitEngine.class)
 @ConditionalOnBean({RateLimiter.class, RateLimitRuleSetProvider.class})
 public RateLimitEngine fluxgateRateLimitEngine(
-    RateLimitRuleSetProvider ruleSetProvider, RateLimiter rateLimiter) {
+    RateLimitRuleSetProvider ruleSetProvider,
+    RateLimiter rateLimiter,
+    ObjectProvider<PathPatternMatcher> pathMatcherProvider) {
   OnMissingRuleSetStrategy strategy =
       properties.getRatelimit().isDenyWhenRuleMissing()
           ? OnMissingRuleSetStrategy.DENY
           : OnMissingRuleSetStrategy.ALLOW;
-  ...
+  // ...
 }
 ```
 
@@ -376,7 +414,7 @@ EngineBackedRateLimitHandler
         │
         v
    RateLimitEngine
-        │  (fluxgate.ratelimit.missing-rule-behavior → THROW / ALLOW / DENY)
+        │  (fluxgate.ratelimit.missing-rule-behavior → ALLOW / DENY)
         v
    ResilientRateLimiter        @Primary
         │  재시도 + 서킷 브레이커(fluxgate.resilience), 실패 시 강등
@@ -398,22 +436,61 @@ EngineBackedRateLimitHandler
 @Override
 public RateLimitResult tryConsume(
     RequestContext context, RateLimitRuleSet ruleSet, long permits) {
+  return execute(context, ruleSet, permits, null);
+}
+
+// PathPatternMatcher를 받는 인자 4개짜리 오버로드는 execute(context, ruleSet, permits, pathMatcher)를 호출합니다
+
+/** Runs the primary limiter through the executor; a null matcher uses the 3-arg overload. */
+private RateLimitResult execute(
+    RequestContext context,
+    RateLimitRuleSet ruleSet,
+    long permits,
+    PathPatternMatcher pathMatcher) {
+  // A cost that can never fit is the client's error: reject it before the breaker sees the call.
+  checkPermitsFitCapacity(context, ruleSet, permits, pathMatcher);
+
   // Remembers the failure so the fallback can tag the metric with its cause; an open circuit
   // never runs the action, which is why the reference can still be empty in the fallback.
   AtomicReference<Throwable> failure = new AtomicReference<>();
-  return executor.executeWithFallback(
-      OPERATION,
-      () -> {
-        try {
-          return delegate.tryConsume(context, ruleSet, permits);
-        } catch (RuntimeException e) {
-          failure.set(e);
-          throw e;
-        }
-      },
-      () -> degrade(context, ruleSet, permits, failure.get()));
+  // A client or configuration error leaves the executor as an IgnoredCallException, which the
+  // breaker records as neither a success nor a failure and never answers with the fallback.
+  AtomicReference<RuntimeException> clientError = new AtomicReference<>();
+  try {
+    return executor.executeWithFallback(
+        OPERATION,
+        () -> {
+          try {
+            return consume(delegate, context, ruleSet, permits, pathMatcher);
+          } catch (RuntimeException e) {
+            if (isClientError(e)) {
+              clientError.set(e);
+              throw new IgnoredCallException(e);
+            }
+            failure.set(e);
+            throw e;
+          }
+        },
+        () -> {
+          // a custom breaker that does not know IgnoredCallException falls back instead
+          RuntimeException rejected = clientError.get();
+          if (rejected != null) {
+            throw rejected;
+          }
+          return degrade(context, ruleSet, permits, pathMatcher, failure.get());
+        });
+  } catch (IgnoredCallException e) {
+    RuntimeException rejected = clientError.get();
+    throw rejected != null ? rejected : e;
+  }
 }
 ```
+
+강등 대상은 리미터의 장애뿐입니다. 클라이언트나 설정의 오류(`FluxgateConfigurationException`,
+`IllegalArgumentException`)는 `IgnoredCallException`으로 감싸
+실행기를 빠져나가므로, 재시도되지 않고 서킷 브레이커의 성공·실패 어느 쪽에도 집계되지 않으며 fallback으로
+답하지도 않습니다. 같은 호출은 매번 같은 방식으로 실패하기 때문입니다. 대역 용량을 넘는 permits는
+`checkPermitsFitCapacity`가 브레이커를 거치기 전에 미리 거부합니다.
 
 강등은 조용히 일어나지 않습니다. 매번 `fluxgate.limiter.failures` 카운터가
 `fallback_in_memory` / `fail_open` / `fail_closed` 태그와 함께 증가하고 로그가 남습니다.

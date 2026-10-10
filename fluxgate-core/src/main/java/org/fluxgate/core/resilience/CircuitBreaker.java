@@ -20,6 +20,10 @@ import java.util.function.Supplier;
  * #executeWithFallback(Supplier, Supplier)} returns the caller-supplied fallback. Neither ever
  * returns {@code null} on behalf of the caller, so callers that need fail-open behaviour must pass
  * an explicit fallback.
+ *
+ * <p>An action that throws {@link IgnoredCallException} reports an outcome that is neither a
+ * success nor a failure. The built-in implementations record nothing for it and rethrow it from
+ * both entry points, without using the fallback.
  */
 public interface CircuitBreaker {
 

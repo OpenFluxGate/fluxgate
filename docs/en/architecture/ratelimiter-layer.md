@@ -32,10 +32,10 @@ Implementations are expected to be thread-safe.
 
 | Step | Detail |
 |------|--------|
-| 1 | Iterate the rule set's **enabled** rules. There is no path or method matching |
+| 1 | Take the rules that match the request: `ruleSet.getMatchingRules(context, matcher)` returns the **enabled** rules whose method, path and header matchers accept it |
 | 2 | Resolve a key per rule via `ruleSet.getKeyResolver().resolve(context, rule)` |
 | 3 | Evaluate **all bands of that rule together**, all-or-nothing |
-| 4 | Stop at the first rejecting rule (fail fast) |
+| 4 | A rejected request charges no rule. Of the rejecting bands and rules, the one with the **longest wait** is reported, so a retry after `Retry-After` is not refused by another band |
 | 5 | Report `limit`, `resetTimeMillis`, `policy`, `bandLabel` and the real remaining tokens of the binding band |
 
 A `MissingRateLimitKeyException` (from `missing-key-behavior=REJECT`) becomes a rejected result with
@@ -59,9 +59,10 @@ permit spent. Keys of all rules are resolved before anything is charged.
 In-memory, used by `fluxgate.ratelimit.mode=IN_MEMORY` and by
 `fluxgate.ratelimit.fallback.mode=IN_MEMORY`.
 
-- Buckets live in a **Caffeine cache**, not an unbounded map: `maximumSize` (default 100 000) and a
-  fixed `expireAfterAccess` (default 1 hour). The unbounded map it replaced was a memory leak and an
-  OOM denial-of-service vector.
+- Buckets live in a **Caffeine cache**, not an unbounded map: `maximumSize` (default 100 000), and
+  each bucket expires after it has been idle for the longer of `expireAfterAccess` (default 1 hour,
+  a minimum) and its longest band window, so idling never resets a daily or monthly quota. The
+  unbounded map it replaced was a memory leak and an OOM denial-of-service vector.
 - One multi-bandwidth bucket per `(ruleSetId, ruleId, key)`, so the bands of a rule are atomic
   inside Bucket4j.
 - All-or-nothing across rules: every rule's key is resolved first, the buckets of all matching rules
@@ -69,7 +70,9 @@ In-memory, used by `fluxgate.ratelimit.mode=IN_MEMORY` and by
   `estimateAbilityToConsume`, and only if all can serve the request is each charged. A request
   rejected by a later rule costs the earlier rules nothing; should a charge fail after the check, the
   rules already charged get their tokens back through `addTokens` (capped at capacity). Requests
-  contend only on buckets they share, for a few in-memory calls.
+  contend only on buckets they share, for a few in-memory calls. Once the locks are held the cache is
+  checked again, and a bucket evicted or reset between lookup and lock is looked up afresh, so a
+  request never charges a bucket other requests no longer see.
 - `reset(String ruleSetId)`, `resetAll()`, `size()` support the in-memory reset handler and the
   testkit.
 
@@ -83,7 +86,11 @@ Single instance, development, and Redis-outage fallback are its uses.
 └── RedisRateLimiter.java
 ```
 
-Distributed. One Lua call per rule, all of that rule's band keys in one cluster hash tag.
+Distributed. One Lua call per request on a standalone Redis, or when the keys of every matching rule
+hash to one cluster slot; otherwise one call per rule, with a refund of the rules already charged when
+a later one rejects. All band keys of one rule share one cluster hash tag. The bands can use
+`TOKEN_BUCKET`, `SLIDING_WINDOW` or `FIXED_WINDOW`; see
+[Redis Rate Limiter](redis-ratelimiter.md) for the script contract.
 
 ```
 fluxgate:bucket:{api-limits:per-ip-rule:ip:192.168.1.100}:100-per-60s

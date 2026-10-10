@@ -22,6 +22,8 @@ English | [한국어](README.ko.md)
 
 - **Distributed Rate Limiting** - Redis-backed token bucket algorithm with atomic Lua scripts
 - **Multi-Band Support** - Multiple rate limit tiers (e.g., 100/sec + 1000/min + 10000/hour), evaluated all-or-nothing per rule
+- **Three Algorithms** - `TOKEN_BUCKET` (default), `SLIDING_WINDOW` and `FIXED_WINDOW`, the last with calendar-aligned `DAILY` / `WEEKLY` / `MONTHLY` quotas in any time zone
+- **Rule Matching** - A rule applies to requests selected by path patterns, HTTP methods and header conditions, from MongoDB or from YAML (`fluxgate.ratelimit.rule-sets`)
 - **Dynamic Rule Management** - Store and update rules in MongoDB without restart
 - **Spring Boot Auto-Configuration** - Working out of the box; the starter provides the rate limit handler
 - **In-Memory Mode** - `fluxgate.ratelimit.mode=IN_MEMORY` gives a single-instance limiter with no infrastructure
@@ -129,7 +131,7 @@ will start and enforce a 5-requests-per-minute limit per client IP.
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
-    <version>0.3.7</version>
+    <version>0.4.0</version>
 </dependency>
 ```
 
@@ -234,8 +236,9 @@ Content-Type: application/problem+json;charset=UTF-8
  "detail":"Rate limit exceeded, retry after 12 seconds","retryAfterMillis":11923}
 ```
 
-> **Verified** — the output above was captured against a real running instance of the
-> sample app at commit `feature/review-overhaul`.
+> **Verified** — the output above was captured against a running instance of the sample app
+> built from the 0.4 development branch (`feature/review-overhaul`). The numbers you see depend
+> on your rule.
 
 ---
 
@@ -255,13 +258,13 @@ docker compose -f docker/redis-standalone.yml up -d
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
-    <version>0.3.7</version>
+    <version>0.4.0</version>
 </dependency>
 <!-- Redis rate limiter (Lua-based, atomic) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
-    <version>0.3.7</version>
+    <version>0.4.0</version>
 </dependency>
 ```
 
@@ -301,7 +304,7 @@ Add the MongoDB adapter:
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
-    <version>0.3.7</version>
+    <version>0.4.0</version>
 </dependency>
 ```
 
@@ -357,7 +360,8 @@ every instance that connects to the same Redis.
 Note that `/*` matches a **single** path segment; use `/**` for nested paths.
 
 FluxGate's auto-configuration is fail-closed by default (`failure-behavior: DENY`,
-`missing-rule-behavior: DENY`). Forwarded client IP headers are ignored unless
+`missing-rule-behavior: DENY`): a limiter failure or a missing rule set is answered with
+**503 Service Unavailable**, not 429, because the client did not send too many requests. Forwarded client IP headers are ignored unless
 `fluxgate.ratelimit.trust-client-ip-header=true` is set; when you enable that, also list
 trusted proxy CIDRs in `fluxgate.ratelimit.trusted-proxies`.
 
@@ -424,7 +428,16 @@ fluxgate:
 
 ### Running Samples
 
+The samples depend on the current `SNAPSHOT` of the FluxGate modules, which a fresh clone does not
+have in the local Maven repository yet. Install them once before the first `spring-boot:run`, either
+the whole project (needs JDK 21) or each sample with only the modules it depends on
+(`-pl <sample> -am`). See [Build Once](fluxgate-samples/README.md#build-once) for the JDK each
+sample needs.
+
 ```bash
+# Install the modules the two samples below need (JDK 17+)
+./mvnw -B install -DskipTests -pl fluxgate-samples/fluxgate-sample-redis,fluxgate-samples/fluxgate-sample-filter -am
+
 # Start infrastructure (local development only; ports bind to 127.0.0.1)
 docker compose -f docker/redis-standalone.yml -f docker/mongo.yml up -d
 
@@ -469,7 +482,7 @@ All defaults below are the values in `FluxgateProperties` and
 | `fluxgate.ratelimit.enabled` | `true` | Master switch. `false` registers neither the filter nor the aspect |
 | `fluxgate.ratelimit.mode` | `AUTO` | `AUTO` (Redis when enabled, else in-memory), `REDIS`, `IN_MEMORY` |
 | `fluxgate.ratelimit.default-rule-set-id` | _(unset)_ | Rule set applied when nothing else selects one. No default value |
-| `fluxgate.ratelimit.failure-behavior` | `DENY` | `DENY` or `ALLOW` when the limiter itself fails |
+| `fluxgate.ratelimit.failure-behavior` | `DENY` | `DENY` (503) or `ALLOW` when the limiter itself fails. A rule set that cannot be built is a configuration error and answers 503 under either value |
 | `fluxgate.ratelimit.missing-rule-behavior` | `DENY` | `DENY` or `ALLOW` when no rule set is found |
 | `fluxgate.ratelimit.missing-key-behavior` | `FALLBACK_TO_IP` | `FALLBACK_TO_IP` or `REJECT` when a scope's value is absent |
 | `fluxgate.ratelimit.identity.source` | `PRINCIPAL` | `PRINCIPAL`, `HEADERS`, or `PRINCIPAL_THEN_HEADERS`. The two header sources are an explicit opt-in for a trusted proxy and log a WARN at startup. The effective value is logged once at startup |
@@ -485,18 +498,20 @@ All defaults below are the values in `FluxgateProperties` and
 | `fluxgate.ratelimit.collect-headers` | `false` | Copy allow-listed request headers into `RequestContext` |
 | `fluxgate.ratelimit.header-allowlist` | `[]` | Header names that may be copied (case-insensitive) |
 | `fluxgate.ratelimit.log-query-string` | `false` | Put the raw query string into the logging MDC |
-| `fluxgate.ratelimit.cost-header` | _(unset)_ | Header carrying the request cost in permits |
+| `fluxgate.ratelimit.cost-header` | _(unset)_ | Header carrying the request cost in permits. A cost above the capacity of a matching band is answered with 429 (no `Retry-After`) and never counts against the circuit breaker |
 | `fluxgate.ratelimit.max-cost` | `1000` | Upper bound applied to `cost-header`. Must be **> 0** when `cost-header` is set; a `0` typo used to mean "unlimited" |
-| `fluxgate.ratelimit.fail-on-missing-handler` | `false` | `true` fails startup instead of running with no rule set provider |
+| `fluxgate.ratelimit.rule-sets` | `[]` | Rule sets defined in YAML. They are tried first; an id not defined in YAML falls back to MongoDB (or your own provider). Schema: [YAML rule sets guide](docs/en/guides/yaml-rule-sets.md) |
+| `fluxgate.ratelimit.fail-on-missing-handler` | `false` | `true` fails startup (`MissingConfigurationException`) instead of starting without limits: when a limiter has no rule set provider (Redis enabled or `fluxgate.ratelimit.mode` set), and when the filter or the aspect has no `FluxgateRateLimitHandler` at all — including the default configuration with no rule source. `false` logs an ERROR or WARN and applies `failure-behavior` |
 | `fluxgate.ratelimit.include-headers` | `true` | Master switch over both rate limit header families |
 | `fluxgate.ratelimit.response.include-legacy-headers` | `true` | Write `X-RateLimit-Limit/Remaining/Reset` |
 | `fluxgate.ratelimit.response.include-standard-headers` | `true` | Write `RateLimit-Limit/Remaining/Reset/Policy` |
 | `fluxgate.ratelimit.response.content-type` | `application/problem+json` | 429 content type (`;charset=UTF-8` is appended) |
-| `fluxgate.ratelimit.response.body-template` | _(unset)_ | Replaces the problem document. Placeholders: `{status}`, `{retryAfterSeconds}`, `{retryAfterMillis}`, `{remaining}`, `{limit}` |
+| `fluxgate.ratelimit.response.body-template` | _(unset)_ | Replaces the problem document. Placeholders: `{status}`, `{retryAfterSeconds}`, `{retryAfterMillis}`, `{remaining}`, `{limit}`. Also renders the 503 (with `{status}` = 503, unknown values `-1`) unless `unavailable-body-template` is set |
+| `fluxgate.ratelimit.response.unavailable-body-template` | _(unset: `body-template`)_ | Body of the 503 sent when rate limiting is unavailable or not configured; same placeholders |
 | `fluxgate.ratelimit.fallback.mode` | `NONE` | `IN_MEMORY` keeps per-instance limits while Redis is down |
 | `fluxgate.ratelimit.fallback.max-buckets` | `100000` | Fallback bucket cache size |
 | `fluxgate.ratelimit.fallback.expire-after-access` | `1h` | Fallback bucket idle expiry |
-| `fluxgate.ratelimit.wait-for-refill.enabled` | `false` | Enable the WAIT_FOR_REFILL policy |
+| `fluxgate.ratelimit.wait-for-refill.enabled` | unset (`null`) | A rule's WAIT_FOR_REFILL policy waits only when this is `true`. `@RateLimit(waitForRefill = true)` waits unless this is explicitly `false` |
 | `fluxgate.ratelimit.wait-for-refill.max-wait-time-ms` | `5000` | Maximum time a request may wait; also caps `@RateLimit(maxWaitTimeMs)`. Waiting blocks a worker thread — prefer 429 + `Retry-After` |
 | `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits` | `50` | Maximum requests waiting at once, across the application |
 | `fluxgate.ratelimit.filter-enabled` | `false` | **Deprecated and inert.** Use `fluxgate.ratelimit.enabled` |
@@ -510,6 +525,7 @@ All defaults below are the values in `FluxgateProperties` and
 | `fluxgate.metrics.endpoint-normalization` | `true` | Replace numeric/UUID/24-hex path segments with `{id}` |
 | `fluxgate.metrics.max-endpoint-tags` | `1000` | Cap on distinct `endpoint` tag values |
 | `fluxgate.actuator.health.enabled` | `true` | Register the `fluxgate` health indicator |
+| `fluxgate.actuator.health.degraded-http-status` | `503` | HTTP status for the custom `DEGRADED` health status. `0` or negative adds no mapping (Spring Boot then answers 200). Spring Boot's own `DOWN` / `OUT_OF_SERVICE` = 503 defaults are kept, and your own `management.endpoint.health.status.http-mapping` entries win |
 | `fluxgate.actuator.health.include-endpoint-details` | `false` | Include `host:port`, cluster node counts and failure messages in the health payload. Turn on only behind `show-details=when_authorized` |
 | `fluxgate.reload.enabled` | `true` | Enable hot reload of rule sets |
 | `fluxgate.reload.strategy` | `AUTO` | `AUTO`, `POLLING`, `PUBSUB`, `NONE` |
@@ -519,10 +535,13 @@ All defaults below are the values in `FluxgateProperties` and
 | `fluxgate.reload.polling.interval` | `30s` | Polling interval |
 | `fluxgate.reload.polling.initial-delay` | `10s` | Delay before the first poll |
 | `fluxgate.reload.pubsub.channel` | `fluxgate:rule-reload` | Pub/Sub channel |
+| `fluxgate.reload.pubsub.retry-on-failure` | `true` | Retry the Pub/Sub subscription when it fails |
+| `fluxgate.reload.pubsub.retry-interval` | `5s` | Interval between subscription retries |
 | `fluxgate.reload.pubsub.backstop-polling-interval` | `60s` | Polling backstop behind Pub/Sub (`0` disables) |
 | `fluxgate.reload.pubsub.secret` | _(unset)_ | Shared HMAC-SHA256 secret, required for Pub/Sub: without it `AUTO` falls back to polling (WARN) and an explicit `PUBSUB` fails startup. Every reload message without a valid signature — the legacy `"*"` included — is WARNed and ignored. Must equal the control plane's `fluxgate.control.secret` |
 | `fluxgate.reload.pubsub.allow-unsigned` | `false` | Development escape hatch: start without `secret` and obey unsigned messages (WARN at startup). Ignored when `secret` is set |
-| `fluxgate.reload.pubsub.max-message-age` | `5m` | How old a signed message may be before it is ignored (replay window). Only applied when `secret` is set |
+| `fluxgate.reload.pubsub.accept-legacy-signed` | `true` | Accept signed schema version 1 messages (no nonce, no channel binding) from pre-0.4 publishers; the first one accepted is logged at WARN. Set to `false` once every publisher signs version 2. Only applied when `secret` is set |
+| `fluxgate.reload.pubsub.max-message-age` | `60s` | How old a signed message may be before it is ignored (replay window); a nonce already seen inside the window is ignored too. Only applied when `secret` is set. Was `5m` in the property before 0.4.0 |
 
 ### Resilience
 
@@ -544,14 +563,69 @@ All defaults below are the values in `FluxgateProperties` and
 | `fluxgate.resilience.circuit-breaker.permitted-calls-in-half-open-state` | `3` | Concurrent trial calls allowed |
 | `fluxgate.resilience.circuit-breaker.fallback` | `FAIL_OPEN` | **Deprecated and inert.** Behaviour comes from the fallback you pass |
 
+### Control plane (`fluxgate-control-support`)
+
+Read by the module that publishes rule change notifications. The notifier is created only when
+`fluxgate.control.redis.uri` is set explicitly.
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `fluxgate.control.redis.uri` | `redis://localhost:6379` | Redis the notifications are published to (comma-separated for a cluster). Setting it activates the notifier |
+| `fluxgate.control.redis.channel` | `fluxgate:rule-reload` | Pub/Sub channel. Must equal the data plane's `fluxgate.reload.pubsub.channel`: a message signed for another channel is ignored |
+| `fluxgate.control.redis.timeout` | `5s` | Connection timeout |
+| `fluxgate.control.source` | `fluxgate-control` | Source identifier carried in each message |
+| `fluxgate.control.secret` | _(unset)_ | HMAC-SHA256 signing secret, required: the notifier refuses to start without it. Must equal the data plane's `fluxgate.reload.pubsub.secret` |
+| `fluxgate.control.allow-unsigned` | `false` | Development escape hatch: publish unsigned when no `secret` is set (WARN). Ignored when `secret` is set |
+
+Messages are published after the surrounding transaction commits (and not at all on rollback).
+Roll out data planes before control planes: messages are schema version 2, and a data plane that
+only knows version 1 drops them until its polling backstop catches up.
+
+Against a standalone Redis the notifier reports how many subscribers received each message and logs
+one WARN when nobody did (usually a channel mismatch). In Redis Cluster a `PUBLISH` reply counts only
+the subscribers on the node that served it, so the count is reported as unknown (`-1`) and that WARN
+is not logged; verify the channel names and the data plane's reload metrics instead.
+
+### YAML rule sets
+
+`fluxgate.ratelimit.rule-sets` defines rule sets in `application.yml`, with path / method / header
+matching, three algorithms, calendar quotas and access control, and no database:
+
+```yaml
+fluxgate:
+  ratelimit:
+    default-rule-set-id: api-limits
+    rule-sets:
+      - id: api-limits
+        rules:
+          - id: per-ip-100rpm
+            scope: PER_IP
+            matcher:
+              path-patterns: [/api/**]
+              methods: [GET, POST]
+            bands:
+              - capacity: 100
+                window: 60s
+```
+
+Every rule set is built and validated at startup. See the
+[YAML rule sets guide](docs/en/guides/yaml-rule-sets.md) for every key.
+
 ### MongoDB DDL Auto Mode
 
 The `fluxgate.mongo.ddl-auto` property controls how FluxGate handles MongoDB collections:
 
 | Mode | Description |
 |------|-------------|
-| `validate` | (Default) Validates that collections exist. Throws an error if missing. |
-| `create` | Creates collections if they don't exist, plus a `{ruleSetId: 1}` index and a unique `{ruleSetId: 1, id: 1}` index. Index failures are logged as warnings, not fatal. |
+| `validate` | (Default) Validates that the collection exists **and** has a unique index on `{ruleSetId: 1, id: 1}` (any index name) that is not `sparse`, has no `partialFilterExpression` and no collation other than `simple`. Startup fails with the `createIndex` command otherwise. |
+| `create` | Creates the collection if it doesn't exist and builds the indexes `ruleSetId_1_id_1_unique` (unique) and `id_1` through `MongoRateLimitRuleRepository#ensureIndexes()`. Duplicate `(ruleSetId, id)` pairs or a conflicting index **fail startup**, listing the pairs. |
+
+Before upgrading an existing `validate` deployment, create the index yourself (details in the
+[migration guide](docs/en/operations/migration-0.4.md#161-mongodb-unique-rule-index-and-rule-identity-breaking-28-29)):
+
+```javascript
+db.rate_limit_rules.createIndex({ ruleSetId: 1, id: 1 }, { unique: true, name: "ruleSetId_1_id_1_unique" })
+```
 
 **Example configuration:**
 
@@ -603,8 +677,11 @@ label moves that band's bucket, which resets it once.
 | `PER_API_KEY` | `RequestContext.apiKey` | `key:abc123` |
 | `CUSTOM` | `attributes.get(keyStrategyId)` | `custom:<value>` |
 
-Key values are sanitised: characters outside `[A-Za-z0-9._:@-]` become `_`, and a value
-longer than 256 characters is replaced by its SHA-256 hex digest. When the value a scope
+Key values are sanitised injectively: a value of at most 256 `[A-Za-z0-9._:@-]` characters that
+does not start with `h:` is kept as is; any other value becomes
+`h:<restricted value>:<16 hex of its SHA-256>` (`a+1` becomes `h:a_1:<16 hex>`), or `h:<64 hex>`
+when that form would exceed 256 characters (a value longer than 237 characters). The scope prefix
+stays outside the hash (`user:h:<64 hex>`), so two different identities never share a bucket. When the value a scope
 needs is missing, `fluxgate.ratelimit.missing-key-behavior` decides between falling back
 to the client IP (the key then carries `ip:`, its real source) and rejecting the request.
 
@@ -692,12 +769,12 @@ as unknown (`-1`) is omitted rather than written as a misleading number.
 |--------|--------|---------|
 | `X-RateLimit-Limit` | legacy | Capacity of the band that produced the decision |
 | `X-RateLimit-Remaining` | legacy | Tokens left in that band |
-| `X-RateLimit-Reset` | legacy | Epoch **seconds** at which the bucket is full again |
+| `X-RateLimit-Reset` | legacy | Epoch **seconds** at which that band resets: TOKEN_BUCKET full again, SLIDING_WINDOW everything counted has left the window, FIXED_WINDOW window end |
 | `RateLimit-Limit` | IETF | Capacity of the band that produced the decision |
 | `RateLimit-Remaining` | IETF | Tokens left in that band |
-| `RateLimit-Reset` | IETF | **Delta seconds** until the bucket is full again |
+| `RateLimit-Reset` | IETF | **Delta seconds** until that band resets (same per-algorithm meaning) |
 | `RateLimit-Policy` | IETF | Quota policy, for example `100;w=60`. Omitted when the window is unknown or sub-second |
-| `Retry-After` | both | Rejections only. Whole seconds, rounded up, never `0` |
+| `Retry-After` | always | Rejections only, even with both families switched off. Whole seconds, rounded up, never `0` |
 
 Switch the families independently with
 `fluxgate.ratelimit.response.include-legacy-headers` and
@@ -783,6 +860,7 @@ Limiter failures are exposed through `fluxgate.limiter.failures` with `rule_set`
 | `fluxgate_requests_duration_seconds` | Timer | Time spent deciding |
 | `fluxgate_limiter_failures_total` | Counter | Limiter dependency failures by `action` and `exception` |
 | `fluxgate_tokens_remaining` | Gauge | Remaining tokens in the bucket |
+| `fluxgate_limiter_bucket_evictions_total` | Counter | In-memory buckets evicted by size or idle expiry. Each eviction resets that key's quota to full |
 
 The meter is named `fluxgate.requests`; Prometheus appends `_total` to the counter. The
 separate untagged `fluxgate.requests.total` meter that older versions also registered has
@@ -839,17 +917,21 @@ The `fluxgate` health indicator reports on the Redis and MongoDB dependencies, t
 configured `failureBehavior` / `missingRuleBehavior`, and whether a filter and aspect bean
 actually exist.
 
-An unhealthy dependency reports the custom status **`DEGRADED`**, which Spring Boot maps to
-HTTP 200 by default. Map it explicitly if a load balancer probes this endpoint:
+An unhealthy dependency reports the custom status **`DEGRADED`**, and FluxGate maps it to
+**HTTP 503** by default, so a load balancer probing this endpoint takes the instance out of
+rotation. Spring Boot's default status order does not know `DEGRADED` and would aggregate it to
+`UP`, so FluxGate also contributes
+`management.endpoint.health.status.order=down,out-of-service,degraded,up,unknown`: the root
+`/actuator/health` and the readiness group (when it includes `fluxgate`) report `DEGRADED` and
+answer 503 too. `fluxgate.actuator.health.degraded-http-status` changes the code (`0` leaves the
+mapping to Spring Boot, which answers 200). FluxGate adds the order and the mapping as
+lowest-precedence property defaults next to Spring Boot's own `DOWN` and `OUT_OF_SERVICE` = 503,
+so any `management.endpoint.health.status.order` or `http-mapping` entry of yours still wins; an
+order of yours that leaves out `degraded` is reported with a WARN at startup. A Redis Cluster that
+reports `cluster_state` other than `ok`, failing slots, or an unreadable topology is `DOWN`.
 
-```yaml
-management:
-  endpoint:
-    health:
-      status:
-        http-mapping:
-          DEGRADED: 503
-```
+When rate limiting itself is unavailable the filter answers **503** (with `Retry-After` only when
+the wait is known), not 429: see `failure-behavior` and `missing-rule-behavior`.
 
 Monitor `/actuator/health/fluxgate` for `DEGRADED` and `dependencyIssues=true`.
 
@@ -860,7 +942,8 @@ Monitor `/actuator/health/fluxgate` for `DEGRADED` and `dependencyIssues=true`.
 git clone https://github.com/OpenFluxGate/fluxgate.git
 cd fluxgate
 
-# Build all modules
+# Build all modules (needs JDK 21: the Boot 3 starter targets Java 17 and
+# fluxgate-sample-standalone-java21 targets Java 21)
 ./mvnw clean install
 
 # Build without tests
@@ -882,7 +965,7 @@ FluxGate has two test tiers, so a clean checkout tests fully without infrastruct
 ./mvnw verify -DskipITs
 
 # Redis Cluster integration tests (opt-in profile)
-./mvnw -pl fluxgate-redis-ratelimiter -Predis-cluster-it verify
+./mvnw -pl fluxgate-redis-ratelimiter -am -Predis-cluster-it verify
 ```
 
 Integration tests are the classes named `*IntegrationTest` or `*IT`. They obtain Redis and
@@ -916,11 +999,6 @@ FluxGate is honest about what it does not do yet:
 - **Servlet only.** There is no WebFlux or reactive support, and no Spring Cloud Gateway
   filter. `WAIT_FOR_REFILL` blocks a worker thread, which would need redesigning for a
   reactive stack.
-- **One algorithm.** Token bucket only. No sliding window, no fixed window, no calendar
-  quotas (daily/monthly).
-- **No rule matching by path or method.** A rule has a scope and bands, not a path
-  pattern. Select the rule set per request surface by registering more than one filter with
-  different `include-patterns`, or by setting `default-rule-set-id` per application.
 - **No bucket introspection or manual reset API.** There is no endpoint to read or clear a
   single caller's bucket; a rule-set reload resets the buckets of that rule set.
 
@@ -933,6 +1011,7 @@ FluxGate is honest about what it does not do yet:
 - [Testkit](fluxgate-testkit/README.md) - In-memory handler, rule builders, JUnit 5 extension
 - [Documentation Index](docs/README.md) - Architecture deep dives, customization guides, migration notes
 - [@RateLimit Annotation Guide](docs/en/guides/annotation.md) - `@EnableFluxgateAspect`, all annotation attributes, `throwOnReject`, `@RestControllerAdvice` example, non-web usage, filter vs. aspect table
+- [YAML Rule Sets Guide](docs/en/guides/yaml-rule-sets.md) - `fluxgate.ratelimit.rule-sets`: matcher, algorithms, calendar quotas, access control
 - [Migrating to 0.4](docs/en/operations/migration-0.4.md) - Upgrade impact from 0.3.x
 - [Changelog](CHANGELOG.md) - What changed, with the breaking list
 - [Security Policy](SECURITY.md) - Reporting, secure defaults, tenant isolation
@@ -964,9 +1043,11 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 - [x] In-memory limiter and in-memory fallback during a Redis outage
 - [x] Standard IETF `RateLimit-*` response headers and RFC 9457 problem responses
 - [x] Modularization
-- [ ] Sliding window rate limiting algorithm
-- [ ] Calendar quotas (daily / monthly)
-- [ ] Rule matching by path and method
+- [x] Sliding window and fixed window algorithms
+- [x] Calendar quotas (daily / weekly / monthly)
+- [x] Rule matching by path, method and header
+- [x] Scoped key prefixes, `missing-key-behavior: REJECT`, trusted proxies, `RateLimit-Policy` and a response body template
+- [x] Weighted `tryConsume(permits)` and cross-rule consumption (one Lua call, or compensated on Redis Cluster)
 - [ ] WebFlux / reactive support and a Spring Cloud Gateway filter
 - [ ] gRPC API support
 - [ ] Bucket introspection and manual reset API

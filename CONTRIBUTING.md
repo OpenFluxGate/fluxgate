@@ -28,7 +28,7 @@ which provides an encrypted channel to the maintainers.
 
 | Tool | Minimum version |
 |---|---|
-| Java | 11 (to build core + boot2 starter); 17 for boot3 starter; 21 for samples |
+| Java | 11 for core, Redis and MongoDB modules; boot2 starter: install `fluxgate-control-support` (a test dependency) with 17 first, then build with 11 (its artifacts run on Java 11); 17 for boot3 starter; 21 for the full build and the samples |
 | Maven | 3.8 (use the provided `./mvnw` wrapper — do not use a system Maven) |
 | Docker | 24+ (for integration tests; unit tests run without Docker) |
 | Git | 2.x |
@@ -111,7 +111,7 @@ The Redis Cluster profile needs a running cluster:
 
 ```bash
 docker compose -f docker/redis-cluster.yml up -d
-./mvnw -pl fluxgate-redis-ratelimiter -Predis-cluster-it verify
+./mvnw -pl fluxgate-redis-ratelimiter -am -Predis-cluster-it verify
 docker compose -f docker/redis-cluster.yml down
 ```
 

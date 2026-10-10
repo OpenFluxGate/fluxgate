@@ -11,8 +11,9 @@ import java.util.function.Supplier;
  *
  * <p>The contract of {@link CircuitBreaker} still holds: the circuit never opens, so {@link
  * #execute(String, Supplier)} never throws {@link CircuitBreakerOpenException} and {@link
- * #executeWithFallback(Supplier, Supplier)} only falls back when the action itself fails. Neither
- * method ever returns {@code null} on behalf of the caller.
+ * #executeWithFallback(Supplier, Supplier)} only falls back when the action itself fails (an {@link
+ * IgnoredCallException} is rethrown instead). Neither method ever returns {@code null} on behalf of
+ * the caller.
  */
 public class NoOpCircuitBreaker implements CircuitBreaker {
 
@@ -46,6 +47,8 @@ public class NoOpCircuitBreaker implements CircuitBreaker {
     Objects.requireNonNull(fallback, "fallback must not be null");
     try {
       return action.get();
+    } catch (IgnoredCallException e) {
+      throw e;
     } catch (RuntimeException e) {
       return fallback.get();
     }

@@ -7,6 +7,7 @@ import java.util.Optional;
 import org.fluxgate.core.config.AccessControl;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.context.RequestContext;
+import org.fluxgate.core.exception.MissingRateLimitKeyException;
 import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.match.PathPatternMatcher;
 import org.fluxgate.core.match.SimpleAntPathMatcher;
@@ -33,6 +34,9 @@ public final class RateLimitEngine {
   /** Prefix of the synthetic key reported when access control denies the request. */
   private static final String DENIED_KEY_PREFIX = "denied:";
 
+  /** Scope prefix of IP keys, as {@link org.fluxgate.core.key.LimitScopeKeyResolver} writes it. */
+  private static final String IP_KEY_PREFIX = "ip:";
+
   /** Strategy when no rule set is found for a given id. */
   public enum OnMissingRuleSetStrategy {
     /** Throw an IllegalArgumentException when the rule set id is not found. */
@@ -47,7 +51,8 @@ public final class RateLimitEngine {
     /**
      * Fail-closed: reject the request without applying any rate limiting. The returned result has
      * no matched rule, {@code nanosToWait = 0} and a synthetic key of the form {@code
-     * missing-rule-set:<id>} so the rejection is traceable in metrics and logs.
+     * missing-rule-set:<id>} so the rejection is traceable in metrics and logs. Only the id is
+     * sanitised, so the prefix survives an id that has to be rewritten.
      */
     DENY
   }
@@ -119,7 +124,12 @@ public final class RateLimitEngine {
     AccessControl accessControl = ruleSet.getAccessControl();
     if (!accessControl.isEmpty()) {
       List<RateLimitKey> resolvedKeys = new ArrayList<>();
-      RateLimitKey primaryKey = resolveKeysForAccessControl(context, ruleSet, resolvedKeys);
+      RateLimitKey primaryKey = null;
+      // Keys are only compared against the key lists; with IP lists alone there is nothing to
+      // resolve, and resolving would cost a resolver call per matching rule for nothing.
+      if (!accessControl.getAllowedKeys().isEmpty() || !accessControl.getDeniedKeys().isEmpty()) {
+        primaryKey = resolveKeysForAccessControl(context, ruleSet, resolvedKeys);
+      }
       AccessControl.Decision decision =
           accessControl.evaluate(context.getClientIp(), primaryKey, resolvedKeys);
       if (decision == AccessControl.Decision.DENY) {
@@ -151,9 +161,11 @@ public final class RateLimitEngine {
    * Resolves the rate limit keys used for access control key-list evaluation.
    *
    * <p>Adds the key of every matching rule (highest priority first) to {@code keys}, so a denied
-   * key is caught regardless of which matching rule resolves it. Rules whose key cannot be resolved
-   * are skipped. Falls back to a single synthetic IP key when no key could be resolved; {@code
-   * keys} is never left empty.
+   * key is caught regardless of which matching rule resolves it. Rules whose key is missing ({@link
+   * MissingRateLimitKeyException}) are skipped; any other resolver failure propagates, as it would
+   * from the limiter a moment later. Falls back to a single synthetic IP key, built the way {@link
+   * org.fluxgate.core.key.LimitScopeKeyResolver} builds {@code ip:} keys, when no key could be
+   * resolved; {@code keys} is never left empty.
    *
    * @return the key of the highest-priority matching rule (the only key allowed to grant a
    *     key-based bypass), the synthetic IP key when no rule matches, or {@code null} when the
@@ -170,15 +182,15 @@ public final class RateLimitEngine {
         if (i == 0) {
           primaryKey = key;
         }
-      } catch (Exception e) {
+      } catch (MissingRateLimitKeyException e) {
         // skip: the IP lists are still checked against the client IP
       }
     }
     if (keys.isEmpty()) {
-      // fallback: synthetic IP key
+      // fallback: synthetic IP key with the resolver's shape, so ip: entries match it
       String ip = context.getClientIp();
       RateLimitKey fallback =
-          RateLimitKey.of("ip:" + (ip != null && !ip.isEmpty() ? ip : "unknown"));
+          RateLimitKey.of(IP_KEY_PREFIX, ip != null && !ip.isEmpty() ? ip : "unknown");
       keys.add(fallback);
       if (matchingRules.isEmpty()) {
         primaryKey = fallback;
@@ -190,7 +202,10 @@ public final class RateLimitEngine {
   /**
    * Builds the synthetic key reported for a denied request, naming the cause: {@code
    * denied:ip:<clientIp>} when the client IP is denied, otherwise {@code denied:<key>} for the
-   * first denied key.
+   * first denied key. The client IP is a raw value and goes through {@link RateLimitKey#of(String,
+   * String)}; a resolved key is already sanitised and goes through {@link
+   * RateLimitKey#withPrefix(String, RateLimitKey)}, so it is reported verbatim instead of being
+   * encoded a second time. Either way the {@code denied:} prefix is kept.
    */
   private static RateLimitKey deniedKey(
       AccessControl accessControl, String clientIp, List<RateLimitKey> keys) {
@@ -198,14 +213,20 @@ public final class RateLimitEngine {
         && !clientIp.isEmpty()
         && !accessControl.getDeniedIps().isEmpty()
         && accessControl.getDeniedIps().contains(clientIp)) {
-      return RateLimitKey.of(DENIED_KEY_PREFIX + "ip:" + clientIp);
+      return RateLimitKey.of(DENIED_KEY_PREFIX + IP_KEY_PREFIX, clientIp);
     }
     for (RateLimitKey key : keys) {
       if (accessControl.getDeniedKeys().contains(key.value())) {
-        return RateLimitKey.of(DENIED_KEY_PREFIX + key.value());
+        return RateLimitKey.withPrefix(DENIED_KEY_PREFIX, key);
       }
     }
-    return RateLimitKey.of(DENIED_KEY_PREFIX + keys.get(0).value());
+    if (keys.isEmpty()) {
+      // only the IP lists were evaluated and no key was resolved
+      return RateLimitKey.of(
+          DENIED_KEY_PREFIX + IP_KEY_PREFIX,
+          clientIp != null && !clientIp.isEmpty() ? clientIp : "unknown");
+    }
+    return RateLimitKey.withPrefix(DENIED_KEY_PREFIX, keys.get(0));
   }
 
   private RateLimitResult onMissingRuleSet(String ruleSetId) {
@@ -214,7 +235,7 @@ public final class RateLimitEngine {
         throw new IllegalArgumentException("Unknown ruleSetId: " + ruleSetId);
       case DENY:
         // Fail-closed branch: do not call RateLimiter at all.
-        return RateLimitResult.builder(RateLimitKey.of(MISSING_RULE_SET_KEY_PREFIX + ruleSetId))
+        return RateLimitResult.builder(RateLimitKey.of(MISSING_RULE_SET_KEY_PREFIX, ruleSetId))
             .allowed(false)
             .remainingTokens(0L)
             .nanosToWaitForRefill(0L)

@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,7 +55,8 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
 
     log.info("Creating standalone Redis connection to: {}", RedisUriUtils.mask(redisUri));
 
-    RedisURI uri = RedisURI.create(redisUri);
+    RedisURI uri = RedisUriUtils.parse(redisUri);
+    uri.setTimeout(timeout);
     this.redisClient = RedisClient.create(uri);
     this.redisClient.setOptions(
         ClientOptions.builder()
@@ -69,7 +71,10 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
     } catch (Exception e) {
       redisClient.close();
       throw new org.fluxgate.core.exception.RedisConnectionException(
-          "Failed to connect to Redis", RedisUriUtils.mask(redisUri), e);
+          "Failed to connect to Redis",
+          RedisUriUtils.mask(redisUri),
+          e,
+          org.fluxgate.core.exception.RedisConnectionException.Phase.CONNECT);
     }
   }
 
@@ -200,20 +205,28 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
 
   @Override
   public List<String> scanKeys(String pattern, long count) {
+    List<String> keys = new ArrayList<>();
+    scanKeys(pattern, count, keys::addAll);
+    return keys;
+  }
+
+  @Override
+  public void scanKeys(String pattern, long count, Consumer<List<String>> pageConsumer) {
     Objects.requireNonNull(pattern, "pattern must not be null");
+    Objects.requireNonNull(pageConsumer, "pageConsumer must not be null");
     if (count <= 0) {
       throw new IllegalArgumentException("count must be > 0");
     }
 
-    List<String> keys = new ArrayList<>();
     ScanArgs scanArgs = ScanArgs.Builder.matches(pattern).limit(count);
     ScanCursor cursor = ScanCursor.INITIAL;
     do {
       KeyScanCursor<String> result = commands.scan(cursor, scanArgs);
-      keys.addAll(result.getKeys());
+      if (!result.getKeys().isEmpty()) {
+        pageConsumer.accept(result.getKeys());
+      }
       cursor = result;
     } while (!cursor.isFinished());
-    return keys;
   }
 
   @Override

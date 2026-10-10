@@ -148,6 +148,27 @@ class RateLimitEngineTest {
   }
 
   @Test
+  void deny_synthetic_key_keeps_its_prefix_when_the_rule_set_id_is_rewritten() {
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(id -> Optional.empty())
+            .rateLimiter(
+                (context, ruleSet, permits) -> {
+                  throw new IllegalStateException("Should not be called in DENY mode");
+                })
+            .onMissingRuleSetStrategy(OnMissingRuleSetStrategy.DENY)
+            .build();
+
+    RateLimitResult result =
+        engine.check("orders v2", RequestContext.builder().clientIp("127.0.0.1").build());
+
+    assertThat(result.isAllowed()).isFalse();
+    assertThat(result.getKey().value())
+        .isEqualTo(RateLimitKey.of("missing-rule-set:", "orders v2").value())
+        .matches("missing-rule-set:h:orders_v2:[0-9a-f]{16}");
+  }
+
+  @Test
   void should_throw_when_rate_limiter_returns_null() {
     // given
     String ruleSetId = "auth-api-default";

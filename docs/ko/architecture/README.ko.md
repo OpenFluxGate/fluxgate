@@ -337,10 +337,10 @@ flowchart TB
 
 | 클래스 | 설명 |
 |--------|------|
-| `RateLimitRule` | 단일 Rate Limit 규칙 (id, scope, keyStrategyId, bands, policy, attributes). path·method·priority는 **없습니다** |
+| `RateLimitRule` | 단일 Rate Limit 규칙 (id, scope, keyStrategyId, bands, policy, attributes, priority, `RuleMatcher`) |
 | `RateLimitBand` | 한 계층: `(window, capacity)` + 선택적 label |
 | `LimitScope` | 키 범위 (`GLOBAL`, `PER_IP`, `PER_USER`, `PER_API_KEY`, `CUSTOM`) |
-| `RateLimitEngine` | 룰셋 해석 + `RateLimiter` 위임 (규칙 매칭 로직 없음) |
+| `RateLimitEngine` | 룰셋 해석, 접근 제어, `RateLimiter` 위임 (일치하는 규칙을 평가) |
 | `RequestContext` | 요청 메타데이터 (clientIp, userId, apiKey, endpoint, method, headers, attributes) |
 
 #### LimitScope Enum
@@ -369,7 +369,7 @@ flowchart TB
     subgraph Redis["fluxgate-redis-ratelimiter"]
         subgraph Connection["연결"]
             CF[RedisConnectionFactory]
-            POOL[커넥션 풀]
+            POOL[Standalone / Cluster 연결]
             CLUSTER[클러스터 지원]
         end
 
@@ -381,12 +381,13 @@ flowchart TB
 
         subgraph Script["Lua 스크립트"]
             CONSUME[token_bucket_consume.lua]
+            REFUND[token_bucket_refund.lua]
             MULTI[다중 대역폭 원자적 처리]
         end
 
         subgraph Config["설정"]
             CONF[RedisRateLimiterConfig]
-            LOADER[LuaScriptLoader]
+            LOADER[LuaScriptRegistry]
         end
 
         subgraph Health["헬스"]
@@ -399,7 +400,7 @@ flowchart TB
     TBS --> CONSUME
     TBS --> STATE
     CONF --> CF
-    LOADER --> CONSUME
+    LOADER --> CONSUME & REFUND
     HC --> CF
 
     style TBS fill:#ffebee
@@ -411,8 +412,8 @@ flowchart TB
 
 | 기능 | 설명 |
 |------|------|
-| **Lua 스크립트** | 원자적 토큰 소비 (Race Condition 방지) |
-| **다중 대역폭** | 한 규칙의 모든 대역을 단일 Lua 호출로, 전부-또는-전무 처리 |
+| **Lua 스크립트** | `TOKEN_BUCKET`·`SLIDING_WINDOW`·`FIXED_WINDOW` 대역의 원자적 소비 (Race Condition 방지) |
+| **다중 대역폭** | 한 규칙의 모든 대역을 단일 Lua 호출로, 전부-또는-전무 처리. 매칭 규칙들의 키가 한 슬롯에 모이면(단독 Redis는 항상) 모든 규칙도 한 호출로, 아니면 규칙마다 호출 + 환불 |
 | **서버 시간** | Redis 서버 시간을 마이크로초로 사용 (Clock Drift 방지) |
 | **클러스터** | Redis Cluster 자동 감지. `{...}` 해시 태그로 한 규칙의 대역들을 한 슬롯에 고정 |
 | **범위 제한 삭제** | `fluxgate:bucket:*`만 대상으로 `SCAN` + `UNLINK`. `KEYS`를 쓰지 않습니다 |
@@ -421,47 +422,47 @@ flowchart TB
 
 ```lua
 -- token_bucket_consume.lua (간략화. 전체 계약은 모듈 README 참고)
--- KEYS[1..n]   한 규칙의 대역마다 하나의 버킷 키. 모두 같은 해시 태그 안에 있어야 합니다
--- ARGV[1]      permits
--- ARGV[2+3i]   capacity,  ARGV[3+3i] window_micros,  ARGV[4+3i] 예약 ("0")
+-- KEYS[1..n]   대역마다 하나의 버킷 키. 모두 한 슬롯에 있어야 합니다(한 규칙의 대역은 해시 태그 공유)
+-- ARGV[1]      permits,   ARGV[2] max_bucket_ttl_seconds
+-- 대역 i마다:   capacity, window_micros, algorithm_code, buckets_or_zero, window_end_or_zero
+--              ARGV[2 + 5(i-1) + 1 .. 5]에 위치. 맨 뒤의 선택적 "1"은 check-only
 
-local time_info = redis.call('TIME')
+local time_info  = redis.call('TIME')
 local now_micros = tonumber(time_info[1]) * 1000000 + tonumber(time_info[2])
 
--- 1패스: 아무것도 쓰기 전에 모든 대역을 리필하고 검사
+-- 1패스: 모든 대역을 읽고 검사만 합니다(쓰지 않음). 거부한 대역이 있어도 루프를 멈추지 않고
+-- reject()가 대기가 가장 긴 거부를 기억합니다 (TOKEN_BUCKET 분기만 표시).
 for i = 1, band_count do
-    local bucket_data = redis.call('HMGET', KEYS[i], 'tokens', 'last_refill_micros')
-    local current_tokens = tonumber(bucket_data[1])
-    local last_refill_micros = tonumber(bucket_data[2])
-    if current_tokens == nil or last_refill_micros == nil then
-        current_tokens = capacity          -- 없거나 0.3.x 버킷: 가득 찬 상태로 시작
-        last_refill_micros = now_micros
+    local data        = redis.call('HMGET', KEYS[i], 'tokens', 'last_refill_micros')
+    local cur_tokens  = tonumber(data[1])
+    local last_refill = tonumber(data[2])
+    if cur_tokens == nil or last_refill == nil then
+        cur_tokens  = capacity               -- 없거나 0.3.x 버킷: 가득 찬 상태로 시작
+        last_refill = now_micros
     end
-
-    local elapsed_micros = math.min(math.max(0, now_micros - last_refill_micros), window_micros)
-    local tokens_to_add = math.floor(elapsed_micros * capacity / window_micros)
-    local refilled = math.min(capacity, current_tokens + tokens_to_add)
-
+    local elapsed  = math.min(math.max(0, now_micros - last_refill), win_micros)
+    local to_add   = math.floor(elapsed * capacity / win_micros)
+    local refilled = math.min(capacity, cur_tokens + to_add)
     if refilled < permits then
-        -- 거부: 상태를 쓰지 않습니다. TTL만 갱신합니다(EXPIRE는 없는 키에는 no-op).
-        -- 허용했을 대역은 토큰을 그대로 유지합니다.
-        for j = 1, band_count do
-            redis.call('EXPIRE', KEYS[j], ttl_seconds(windows[j]))
-        end
-        return {0, i, refilled, micros_to_wait, reset_time_millis, capacity, i}
+        reject(i, refilled, wait, reset_millis)
     end
 end
 
--- 2패스: 전부 가능하므로 모든 대역에서 차감
+if rejection ~= nil then
+    refresh_ttls()      -- TOKEN_BUCKET·SLIDING_WINDOW 키만 EXPIRE (없는 키에는 no-op)
+    return rejection    -- {0, 대역, 남은 양, 대기, 리셋, 용량, 대역, now_micros}
+end
+
+-- 2패스: 전부 가능하므로 모든 대역에 기록
 for i = 1, band_count do
     redis.call('HMSET', KEYS[i],
-        'tokens', string.format('%.0f', remaining),
-        'last_refill_micros', string.format('%.0f', refill_micros[i]))
-    redis.call('EXPIRE', KEYS[i], ttl_seconds(windows[i]))   -- max(1, ceil(window*1.1)), 상한 없음
+        'tokens',             string.format('%.0f', remaining),
+        'last_refill_micros', string.format('%.0f', tb_refills[i]))
+    redis.call('EXPIRE', KEYS[i], ttl_for_window(win_micros))  -- min(상한, max(1, ceil(window * 1.1)))
 end
 
 -- 리셋 시각은 소비 **후**에 계산합니다.
-return {1, 0, tokens[binding], 0, reset_time_millis, binding_capacity, binding}
+return {1, 0, binding_remaining, 0, reset_millis, binding_capacity, binding, now_micros}
 ```
 
 시간 단위는 나노초가 아니라 **마이크로초**입니다. Redis의 Lua 5.1에서 모든 수는 정확한 정수 범위가
@@ -488,12 +489,12 @@ flowchart TB
         end
 
         subgraph Conversion["변환"]
-            CONV[DocumentConverter]
+            CONV["RateLimitRuleMongoConverter / RateLimitRuleConverter"]
             ATTR[커스텀 속성]
         end
 
         subgraph Health["헬스"]
-            HC[MongoHealthChecker]
+            HC[MongoHealthCheckerImpl]
         end
     end
 
@@ -518,27 +519,49 @@ flowchart TB
   "keyStrategyId": null,
   "onLimitExceedPolicy": "REJECT_REQUEST",
   "bands": [
-    { "label": "per-second", "capacity": 100, "windowSeconds": 1 },
-    { "label": "per-minute", "capacity": 1000, "windowSeconds": 60 }
+    { "label": "per-second", "capacity": 100, "windowSeconds": 1, "algorithm": "TOKEN_BUCKET" },
+    { "label": "per-minute", "capacity": 1000, "windowSeconds": 60, "algorithm": "TOKEN_BUCKET" }
   ],
   "enabled": true,
   "attributes": {
     "tenant": "enterprise",
     "tier": "premium"
-  }
+  },
+  "priority": 10,
+  "methods": ["GET", "POST"],
+  "pathPatterns": ["/api/**"],
+  "excludePathPatterns": ["/api/health"],
+  "allowedIps": ["192.168.0.0/16"],
+  "deniedIps": ["10.0.0.0/8"],
+  "allowedKeys": ["user:admin"],
+  "deniedKeys": ["user:blocked"],
+  "aclUpdatedAt": { "$date": "2026-10-10T00:00:00Z" }
 }
 ```
 
-`path`, `method`, `priority`, `compositeKeyFields` 필드는 **없습니다.** 규칙은 스코프와 대역을 갖고,
-룰셋 안의 모든 활성 규칙이 평가됩니다.
+규칙은 `(ruleSetId, id)`로 식별됩니다. 0.4 매처 필드(`priority`, `methods`, `pathPatterns`,
+`excludePathPatterns`, `headerEquals`, `headerPresent`)는 규칙이 적용될 요청을 고릅니다. 비어 있는 매처
+필드는 저장하지 않으며 모든 요청에 일치하므로, 매처가 요청을 받아들이는 활성 규칙이 모두 `priority`가 높은
+순서로 평가됩니다. `compositeKeyFields` 필드는 없습니다.
+
+접근 제어 목록(`allowedIps`, `deniedIps`, `allowedKeys`, `deniedKeys`)은 도메인 `RateLimitRule`이 아니라
+규칙 세트에 속합니다. 규칙 세트의 모든 규칙 문서가 사본을 갖고, `findAccessControlByRuleSetId`가 사본을
+병합합니다(거부 목록은 합집합, 허용 목록은 교집합). `aclUpdatedAt`은 저장소가 쓴 사본임을 표시하므로, 목록을
+모두 지운 사본도 병합에 참여합니다. 존재 여부만 의미가 있습니다. `saveAccessControl`과 `moveRule`은 서버
+시각을, 새 규칙 삽입은 클라이언트 시각을 씁니다(`$setOnInsert`에서는 `$currentDate`를 쓸 수 없음).
 
 #### 인덱스
 
 ```javascript
-// fluxgate.mongo.ddl-auto=create가 자동으로 생성합니다
-db.rate_limit_rules.createIndex({ "ruleSetId": 1 })
-db.rate_limit_rules.createIndex({ "ruleSetId": 1, "id": 1 }, { unique: true })
+// fluxgate.mongo.ddl-auto=create일 때 MongoRateLimitRuleRepository#ensureIndexes()가 생성합니다
+db.rate_limit_rules.createIndex({ "ruleSetId": 1, "id": 1 }, { unique: true, name: "ruleSetId_1_id_1_unique" })
+db.rate_limit_rules.createIndex({ "id": 1 }, { name: "id_1" })
 ```
+
+인덱스 생성 실패는 치명적입니다. `(ruleSetId, id)` 중복이나 충돌하는 인덱스가 있으면 중복 목록을 담은
+`IllegalStateException`으로 시작이 실패합니다. `ddl-auto=validate`에서는 `{ruleSetId: 1, id: 1}` 유니크
+인덱스가 없거나, 있더라도 `sparse`·partial(`partialFilterExpression`)이거나 collation이 `simple`이 아니면
+시작이 실패합니다. 그런 인덱스는 모든 규칙의 고유성을 보장하지 않으므로 이름을 밝혀 거부합니다.
 
 ---
 
@@ -691,8 +714,8 @@ sequenceDiagram
         R->>K: resolve(context, rule)
         K-->>R: RateLimitKey
         R->>S: tryConsume(bucketKeys, bands, permits)
-        S->>L: EVALSHA (규칙 단위 원자적)
-        L-->>S: 정수 7개
+        S->>L: EVALSHA (호출 단위 원자적)
+        L-->>S: 정수 8개
         S-->>R: BucketState
     end
     R-->>E: RateLimitResult

@@ -30,6 +30,10 @@ import org.slf4j.LoggerFactory;
  * built as {@code ip:10.0.0.1:user:u-1} resolves to {@code custom:ip:10.0.0.1:user:u-1}; prefix
  * each component when you compose a key yourself so the components stay unambiguous.
  *
+ * <p>Only the value after the prefix is sanitised and length-limited (see {@link
+ * KeyValueSanitizer}), so the prefix is kept even when the value is hashed: a 300-character user id
+ * resolves to {@code user:h:<sha256 hex>}.
+ *
  * <p><b>Missing key behavior:</b> when the value required by the scope is absent, {@link
  * MissingKeyBehavior#FALLBACK_TO_IP} (the default) falls back to the client IP and the key carries
  * the {@code ip:} prefix of its actual source, while {@link MissingKeyBehavior#REJECT} throws
@@ -126,7 +130,45 @@ public class LimitScopeKeyResolver implements KeyResolver {
 
     log.debug("Resolved key for rule {} with scope {}: {}", rule.getId(), scope, mask(keyValue));
 
-    return new RateLimitKey(keyValue);
+    return RateLimitKey.ofSanitized(keyValue);
+  }
+
+  /**
+   * Normalises a configured resolved key (for example an allow or deny list entry such as {@code
+   * user:alice}) the same way {@link #resolve} builds keys: a known scope prefix ({@code ip:},
+   * {@code user:}, {@code key:}, {@code custom:}) is kept and only the value after it is sanitised;
+   * any other key is sanitised as a whole, like {@link RateLimitKey#of(String)} does for custom
+   * resolvers.
+   *
+   * <p>Only the four built-in prefixes are recognised. A key built by a custom resolver with {@link
+   * RateLimitKey#of(String, String)} and another prefix, such as {@code tenant:}, is therefore
+   * matched by its raw form only when the value is clean ({@code tenant:acme}); otherwise configure
+   * it in encoded form ({@code tenant:h:a_1:<16 hex>}). A raw {@code tenant:a+1} is sanitised as a
+   * whole to {@code h:tenant:a_1:<16 hex>}, the key {@code RateLimitKey.of("tenant:a+1")} produces:
+   * the normaliser cannot tell where an unknown prefix ends.
+   *
+   * <p>A value that is already in encoded form ({@code h:<restricted>:<16 hex>} or {@code h:<64
+   * hex>}, with or without a scope prefix, for example {@code user:h:a_1:<16 hex>} copied from a
+   * log or metric) is kept as is instead of being encoded again, which makes this method
+   * idempotent. That is safe: a raw value that merely looks encoded is itself re-encoded by the
+   * resolver, so such an entry only ever matches the identity whose encoding it is.
+   *
+   * @param resolvedKey the configured key (must not be null)
+   * @return the key exactly as a resolver would produce it for the same identity
+   * @since 0.4.0
+   */
+  public static String normalizeResolvedKey(String resolvedKey) {
+    Objects.requireNonNull(resolvedKey, "resolvedKey must not be null");
+    for (String prefix : new String[] {PREFIX_IP, PREFIX_USER, PREFIX_API_KEY, PREFIX_CUSTOM}) {
+      if (resolvedKey.startsWith(prefix) && resolvedKey.length() > prefix.length()) {
+        return prefix + normalizeValue(resolvedKey.substring(prefix.length()));
+      }
+    }
+    return normalizeValue(resolvedKey);
+  }
+
+  private static String normalizeValue(String value) {
+    return KeyValueSanitizer.isEncoded(value) ? value : KeyValueSanitizer.sanitize(value);
   }
 
   private String resolveClientIp(RequestContext context, RateLimitRule rule, LimitScope scope) {

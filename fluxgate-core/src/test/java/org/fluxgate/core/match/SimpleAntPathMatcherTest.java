@@ -2,7 +2,9 @@ package org.fluxgate.core.match;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 
+import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -55,6 +57,75 @@ class SimpleAntPathMatcherTest {
       assertThat(matcher.matches("/api/**/users", "/api/v1/users")).isTrue();
       assertThat(matcher.matches("/api/**/users", "/api/v1/v2/users")).isTrue();
       assertThat(matcher.matches("/api/**/users", "/api/users")).isTrue();
+    }
+  }
+
+  // ===== ** segment boundaries and complexity =====
+
+  @Nested
+  @DisplayName("** segment boundaries")
+  class DoubleStarBoundaryTests {
+
+    @Test
+    @DisplayName("/**/health matches only a whole 'health' segment")
+    void leadingDoubleStarRespectsSegmentBoundary() {
+      assertThat(matcher.matches("/**/health", "/health")).isTrue();
+      assertThat(matcher.matches("/**/health", "/api/health")).isTrue();
+      assertThat(matcher.matches("/**/health", "/a/b/health")).isTrue();
+      assertThat(matcher.matches("/**/health", "/api/unhealth")).isFalse();
+      assertThat(matcher.matches("/**/health", "/unhealth")).isFalse();
+    }
+
+    @Test
+    @DisplayName("/api/**/users does not match a segment that merely ends with 'users'")
+    void middleDoubleStarRespectsSegmentBoundary() {
+      assertThat(matcher.matches("/api/**/users", "/api/v1/superusers")).isFalse();
+      assertThat(matcher.matches("/api/**/users", "/api/xusers")).isFalse();
+      assertThat(matcher.matches("/api/**/users", "/api/v1/users")).isTrue();
+      assertThat(matcher.matches("/api/**/users", "/api/users")).isTrue();
+    }
+
+    @Test
+    @DisplayName("**/ at the pattern start matches zero or more leading segments")
+    void patternStartDoubleStar() {
+      assertThat(matcher.matches("**/x.json", "x.json")).isTrue();
+      assertThat(matcher.matches("**/x.json", "a/b/x.json")).isTrue();
+      assertThat(matcher.matches("**/x.json", "ax.json")).isFalse();
+    }
+
+    @Test
+    @DisplayName("consecutive ** are equivalent to a single **")
+    void consecutiveDoubleStars() {
+      assertThat(matcher.matches("/a/**/**/b", "/a/b")).isTrue();
+      assertThat(matcher.matches("/a/**/**/b", "/a/x/y/b")).isTrue();
+      assertThat(matcher.matches("/a/**/**/b", "/a/xb")).isFalse();
+      assertThat(matcher.matches("/a/****", "/a/x/y")).isTrue();
+    }
+
+    @Test
+    @DisplayName("a ** that does not start a segment is not merged with a following /**")
+    void midSegmentDoubleStarIsNotCollapsed() {
+      assertThat(matcher.matches("a**/**", "abc")).isFalse();
+      assertThat(matcher.matches("a**/**", "abc/")).isTrue();
+      assertThat(matcher.matches("a**/**", "ab/c/d")).isTrue();
+      assertThat(matcher.matches("/a**/**/b", "/ab")).isFalse();
+      assertThat(matcher.matches("/a**/**/b", "/ax/b")).isTrue();
+    }
+
+    @Test
+    @DisplayName("pathological pattern against a 6000-char path completes quickly")
+    void pathologicalPatternIsFast() {
+      String pattern = "/**/a*/**/a*/**/a*/**/a*/**/a*/**/a*/**/b";
+      StringBuilder sb = new StringBuilder();
+      while (sb.length() < 6000) {
+        sb.append("/aaaaaaaa");
+      }
+      String path = sb.append("/c").toString();
+
+      boolean result =
+          assertTimeoutPreemptively(Duration.ofMillis(200), () -> matcher.matches(pattern, path));
+
+      assertThat(result).isFalse();
     }
   }
 

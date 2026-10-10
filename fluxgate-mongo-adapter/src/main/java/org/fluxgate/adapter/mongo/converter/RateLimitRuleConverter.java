@@ -126,22 +126,27 @@ public final class RateLimitRuleConverter {
    */
   public static RateLimitBand toDomain(RateLimitBandDocument doc) {
     RateLimitAlgorithm algorithm = parseAlgorithm(doc.getAlgorithm());
-    QuotaPeriod quotaPeriod =
-        doc.getQuotaPeriod() != null ? QuotaPeriod.valueOf(doc.getQuotaPeriod()) : null;
+    QuotaPeriod quotaPeriod = parseQuotaPeriod(doc.getQuotaPeriod());
     ZoneId zoneId = parseZoneId(doc.getZoneId());
 
-    RateLimitBand.Builder builder =
-        RateLimitBand.builder(Duration.ofSeconds(doc.getWindowSeconds()), doc.getCapacity())
-            .label(doc.getLabel())
-            .algorithm(algorithm)
-            .zoneId(zoneId)
-            .slidingWindowBuckets(doc.getSlidingWindowBuckets());
+    try {
+      RateLimitBand.Builder builder =
+          RateLimitBand.builder(Duration.ofSeconds(doc.getWindowSeconds()), doc.getCapacity())
+              .label(doc.getLabel())
+              .algorithm(algorithm)
+              .zoneId(zoneId)
+              .slidingWindowBuckets(doc.getSlidingWindowBuckets());
 
-    if (quotaPeriod != null) {
-      builder.quotaPeriod(quotaPeriod);
+      if (quotaPeriod != null) {
+        builder.quotaPeriod(quotaPeriod);
+      }
+
+      return builder.build();
+    } catch (InvalidRuleDocumentException e) {
+      throw e;
+    } catch (IllegalArgumentException | IllegalStateException e) {
+      throw new InvalidRuleDocumentException("Invalid band: " + e.getMessage(), e);
     }
-
-    return builder.build();
   }
 
   /**
@@ -157,7 +162,7 @@ public final class RateLimitRuleConverter {
         band.getLabel() != null ? band.getLabel() : "default",
         band.getAlgorithm().name(),
         band.getQuotaPeriod() != null ? band.getQuotaPeriod().name() : null,
-        band.getZoneId().getId(),
+        isUtc(band.getZoneId().getId()) ? "UTC" : band.getZoneId().getId(),
         band.getSlidingWindowBuckets());
   }
 
@@ -171,11 +176,26 @@ public final class RateLimitRuleConverter {
    * @return the access control (never null)
    */
   public static AccessControl toAccessControl(RateLimitRuleDocument doc) {
-    List<String> allowedIpsList = doc.getAllowedIps();
-    List<String> deniedIpsList = doc.getDeniedIps();
-    Set<String> allowedKeySet = doc.getAllowedKeys();
-    Set<String> deniedKeySet = doc.getDeniedKeys();
+    return toAccessControl(
+        doc.getAllowedIps(), doc.getDeniedIps(), doc.getAllowedKeys(), doc.getDeniedKeys());
+  }
 
+  /**
+   * Builds an {@link AccessControl} from raw access-control lists.
+   *
+   * @param allowedIpsList allowed IP CIDRs (never null, may be empty)
+   * @param deniedIpsList denied IP CIDRs (never null, may be empty)
+   * @param allowedKeySet allowed resolved key values (never null, may be empty)
+   * @param deniedKeySet denied resolved key values (never null, may be empty)
+   * @return the access control, {@link AccessControl#EMPTY} when every list is empty
+   * @throws IllegalArgumentException when a CIDR cannot be parsed
+   * @since 0.4.0
+   */
+  public static AccessControl toAccessControl(
+      List<String> allowedIpsList,
+      List<String> deniedIpsList,
+      Set<String> allowedKeySet,
+      Set<String> deniedKeySet) {
     boolean hasData =
         !allowedIpsList.isEmpty()
             || !deniedIpsList.isEmpty()
@@ -282,6 +302,10 @@ public final class RateLimitRuleConverter {
     return builder.build();
   }
 
+  /**
+   * Parses the algorithm. Absent means {@code TOKEN_BUCKET} (the 0.3.x behaviour); an unknown name
+   * is rejected, because silently enforcing a different algorithm changes what the rule limits.
+   */
   private static RateLimitAlgorithm parseAlgorithm(String name) {
     if (name == null || name.isEmpty()) {
       return RateLimitAlgorithm.TOKEN_BUCKET;
@@ -289,18 +313,53 @@ public final class RateLimitRuleConverter {
     try {
       return RateLimitAlgorithm.valueOf(name);
     } catch (IllegalArgumentException e) {
-      return RateLimitAlgorithm.TOKEN_BUCKET;
+      throw new InvalidRuleDocumentException("Unknown rate limit algorithm '" + name + "'", e);
     }
   }
 
+  /** Parses the quota period. Absent means none; an unknown name is rejected. */
+  private static QuotaPeriod parseQuotaPeriod(String name) {
+    if (name == null || name.isEmpty()) {
+      return null;
+    }
+    try {
+      return QuotaPeriod.valueOf(name);
+    } catch (IllegalArgumentException e) {
+      throw new InvalidRuleDocumentException("Unknown quota period '" + name + "'", e);
+    }
+  }
+
+  /**
+   * Whether the zone id names UTC under any spelling ({@code "UTC"}, {@code "Z"}, {@code
+   * "Etc/UTC"}, {@code "+00:00"}, ...). The core default is {@code ZoneOffset.UTC}, whose id is
+   * {@code "Z"}, so a literal comparison with {@code "UTC"} would miss it.
+   */
+  static boolean isUtc(String id) {
+    if (id == null || id.isEmpty()) {
+      return true;
+    }
+    try {
+      return ZoneId.of(id).normalized().equals(java.time.ZoneOffset.UTC);
+    } catch (java.time.DateTimeException e) {
+      return false;
+    }
+  }
+
+  /**
+   * Parses the zone id. Absent or any UTC spelling means {@code ZoneOffset.UTC} (the 0.3.x
+   * behaviour and the core default); an invalid id is rejected instead of silently aligning
+   * calendar quotas to UTC.
+   */
   private static ZoneId parseZoneId(String id) {
     if (id == null || id.isEmpty()) {
       return java.time.ZoneOffset.UTC;
     }
     try {
-      return ZoneId.of(id);
-    } catch (Exception e) {
-      return java.time.ZoneOffset.UTC;
+      ZoneId zone = ZoneId.of(id);
+      // Any UTC spelling reads back as the core default, so a written-then-read band stays equal
+      return zone.normalized().equals(java.time.ZoneOffset.UTC) ? java.time.ZoneOffset.UTC : zone;
+    } catch (java.time.DateTimeException e) {
+      throw new InvalidRuleDocumentException("Invalid zone id '" + id + "'", e);
     }
   }
 }

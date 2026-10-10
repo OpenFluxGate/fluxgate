@@ -323,4 +323,54 @@ class RuleChangeAspectTest {
     assertThat(notifier.published).hasSize(5);
     assertThat(aspect.getMetrics().getPublishedNotifications()).isEqualTo(5);
   }
+
+  @Test
+  void shouldNotCountAPublishWithoutReceiversAsPublished() throws Exception {
+    RuleChangeNotifier nobodyListening =
+        new RuleChangeNotifier() {
+          @Override
+          public void notifyChange(String ruleSetId) {}
+
+          @Override
+          public void notifyFullReload() {}
+
+          @Override
+          public long publishChange(String ruleSetId) {
+            return 0L;
+          }
+
+          @Override
+          public long publishFullReload() {
+            return 0L;
+          }
+
+          @Override
+          public void close() {}
+        };
+    RuleChangeNotifierMetrics zeroMetrics = new RuleChangeNotifierMetrics();
+    RuleChangeAspect zeroAspect = new RuleChangeAspect(nobodyListening, zeroMetrics);
+    try {
+      zeroAspect.afterRuleChange(
+          joinPointFor("updateRule", "orders"), ruleChangeAnnotation(), null);
+      zeroAspect.afterFullReload(joinPointFor("deleteAll"), fullReloadAnnotation());
+
+      assertThat(zeroMetrics.getPublishedNotifications()).isZero();
+      assertThat(zeroMetrics.getNoReceiverNotifications()).isEqualTo(2);
+    } finally {
+      zeroAspect.shutdown();
+    }
+  }
+
+  @Test
+  void shouldCountARetryDroppedAtShutdownAsFailed() throws Exception {
+    notifier.failNextTimes(1);
+
+    aspect.afterRuleChange(joinPointFor("updateRule", "orders"), ruleChangeAnnotation(), null);
+    assertThat(metrics.getRetriedNotifications()).isEqualTo(1);
+
+    aspect.shutdown(); // the retry is still waiting for its ~100ms backoff
+
+    assertThat(metrics.getFailedNotifications()).isEqualTo(1);
+    assertThat(notifier.published).isEmpty();
+  }
 }

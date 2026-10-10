@@ -1,12 +1,15 @@
 package org.fluxgate.spring.autoconfigure;
 
 import org.aspectj.lang.annotation.Aspect;
+import org.fluxgate.core.exception.MissingConfigurationException;
 import org.fluxgate.core.handler.FluxgateRateLimitHandler;
-import org.fluxgate.core.handler.RateLimitResponse;
 import org.fluxgate.core.ratelimiter.RateLimiter;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.fluxgate.spring.annotation.EnableFluxgateAspect;
 import org.fluxgate.spring.aop.RateLimitAspect;
+import org.fluxgate.spring.aop.RateLimitExceededException;
+import org.fluxgate.spring.aop.RateLimitExceededExceptionHandler;
+import org.fluxgate.spring.filter.FluxgateWaitPermits;
 import org.fluxgate.spring.filter.IdentitySource;
 import org.fluxgate.spring.filter.ProblemDetailRateLimitResponseWriter;
 import org.fluxgate.spring.filter.RateLimitDurationRecorder;
@@ -14,6 +17,7 @@ import org.fluxgate.spring.filter.RateLimitHeaderWriter;
 import org.fluxgate.spring.filter.RateLimitResponseWriter;
 import org.fluxgate.spring.filter.RequestContextCustomizer;
 import org.fluxgate.spring.filter.RequestContextFactory;
+import org.fluxgate.spring.handler.RateLimiterUnavailableException;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.fluxgate.spring.properties.FluxgateProperties.IdentityProperties;
 import org.fluxgate.spring.properties.FluxgateProperties.RateLimitProperties;
@@ -65,8 +69,12 @@ import org.springframework.util.StringUtils;
  *
  * <p>The aspect is not restricted to servlet applications: a {@code @RateLimit} method invoked
  * without an HTTP request (a scheduled task, a message listener) is still limited, and a rejection
- * is reported by throwing {@link org.fluxgate.spring.aop.RateLimitExceededException} instead of
- * writing a response.
+ * is reported by throwing {@link RateLimitExceededException} instead of writing a response.
+ *
+ * <p>In a servlet web application {@link FluxgateAopExceptionHandlerAutoConfiguration} registers a
+ * {@link RateLimitExceededExceptionHandler} that maps that exception to HTTP 429 (or 503 when rate
+ * limiting is unavailable) with {@code Retry-After}, instead of the HTTP 500 an unhandled exception
+ * produces.
  *
  * @see EnableFluxgateAspect
  * @see RateLimitAspect
@@ -107,6 +115,7 @@ public class FluxgateAopAutoConfiguration {
       ObjectProvider<RequestContextCustomizer> customizerProvider,
       ObjectProvider<RateLimitResponseWriter> responseWriterProvider,
       ObjectProvider<RateLimitDurationRecorder> durationRecorderProvider,
+      ObjectProvider<FluxgateWaitPermits> waitPermitsProvider,
       FluxgateProperties properties) {
 
     RateLimitProperties rateLimit = properties.getRatelimit();
@@ -130,7 +139,11 @@ public class FluxgateAopAutoConfiguration {
         rateLimit.isAllowWhenLimiterFails(),
         rateLimit.isDenyWhenRuleMissing(),
         rateLimit.getWaitForRefill().isEnabled(),
-        rateLimit.getWaitForRefill().getMaxConcurrentWaits(),
+        !rateLimit.getWaitForRefill().disablesAllWaits(),
+        waitPermitsProvider
+            .getIfAvailable(
+                () -> new FluxgateWaitPermits(rateLimit.getWaitForRefill().getMaxConcurrentWaits()))
+            .semaphore(),
         rateLimit.getWaitForRefill().getMaxWaitTimeMs(),
         new RequestContextFactory(
             rateLimit.getClientIpHeader(),
@@ -163,19 +176,29 @@ public class FluxgateAopAutoConfiguration {
     if (!hasLimiter && !hasRuleSetProvider) {
       cause = "neither a RateLimiter nor a RateLimitRuleSetProvider bean exists";
       remedy =
-          "Set fluxgate.redis.enabled=true (or fluxgate.ratelimit.mode=IN_MEMORY) and supply"
-              + " a RateLimitRuleSetProvider (e.g. enable fluxgate.mongo), or define a"
-              + " FluxgateRateLimitHandler bean directly.";
+          "FluxgateRateLimiterAutoConfiguration registers a RateLimiter unless it is excluded:"
+              + " re-enable it or define a RateLimiter bean, and supply a RateLimitRuleSetProvider"
+              + " (e.g. enable fluxgate.mongo or declare fluxgate.ratelimit.rule-sets), or define"
+              + " a FluxgateRateLimitHandler bean directly.";
     } else if (!hasLimiter) {
       cause = "no RateLimiter bean exists";
       remedy =
-          "Set fluxgate.redis.enabled=true, or fluxgate.ratelimit.mode=IN_MEMORY for a"
-              + " single-instance limiter, or define a FluxgateRateLimitHandler bean.";
+          "FluxgateRateLimiterAutoConfiguration registers a RateLimiter unless it is excluded:"
+              + " re-enable it, define a RateLimiter bean, or define a FluxgateRateLimitHandler"
+              + " bean.";
     } else {
       cause = "a RateLimiter bean exists but no RateLimitRuleSetProvider";
       remedy =
-          "Enable fluxgate.mongo, or define a RateLimitRuleSetProvider bean named"
-              + " 'delegateRuleSetProvider', or supply your own FluxgateRateLimitHandler.";
+          "Enable fluxgate.mongo, declare fluxgate.ratelimit.rule-sets, define a"
+              + " RateLimitRuleSetProvider bean, or supply your own FluxgateRateLimitHandler.";
+    }
+    if (rateLimit.isFailOnMissingHandler()) {
+      throw new MissingConfigurationException(
+          "fluxgate.ratelimit.fail-on-missing-handler",
+          "No FluxgateRateLimitHandler available for the @RateLimit aspect ("
+              + cause
+              + "). "
+              + remedy);
     }
     if (rateLimit.isAllowWhenLimiterFails()) {
       log.warn(
@@ -185,14 +208,17 @@ public class FluxgateAopAutoConfiguration {
       return FluxgateRateLimitHandler.ALLOW_ALL;
     }
     log.warn(
-        "No FluxgateRateLimitHandler available ({}). {} Every invocation is rejected because"
+        "No FluxgateRateLimitHandler available ({}). {} Every invocation is rejected (503) because"
             + " fluxgate.ratelimit.failure-behavior=DENY.",
         cause,
         remedy);
-    return (requestContext, ruleSetId) -> RateLimitResponse.rejected(0);
+    String reason = "No FluxgateRateLimitHandler available: " + cause;
+    return (requestContext, ruleSetId) -> {
+      throw new RateLimiterUnavailableException(reason);
+    };
   }
 
-  private RateLimitHeaderWriter headerWriter(RateLimitProperties rateLimit) {
+  static RateLimitHeaderWriter headerWriter(RateLimitProperties rateLimit) {
     ResponseProperties response = rateLimit.getResponse();
     boolean headersEnabled = rateLimit.isIncludeHeaders();
     return new RateLimitHeaderWriter(
@@ -200,10 +226,12 @@ public class FluxgateAopAutoConfiguration {
         headersEnabled && response.isIncludeStandardHeaders());
   }
 
-  private RateLimitResponseWriter defaultResponseWriter(RateLimitProperties rateLimit) {
+  static RateLimitResponseWriter defaultResponseWriter(RateLimitProperties rateLimit) {
     ResponseProperties response = rateLimit.getResponse();
     return new ProblemDetailRateLimitResponseWriter(
-        response.getContentType(), response.getBodyTemplate());
+        response.getContentType(),
+        response.getBodyTemplate(),
+        response.getUnavailableBodyTemplate());
   }
 
   private String defaultRuleSetId(RateLimitProperties rateLimit) {

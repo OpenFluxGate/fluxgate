@@ -781,4 +781,38 @@ class RateLimitResponseTest {
       assertTrue(base.toString().contains("bandLabel='m'"));
     }
   }
+
+  @Nested
+  @DisplayName("Overflow-safe rounding")
+  class OverflowTests {
+
+    @Test
+    @DisplayName("a huge wait does not overflow into a negative Retry-After")
+    void hugeWaitStaysPositive() {
+      RateLimitResult result =
+          RateLimitResult.builder(RateLimitKey.of("ip:10.0.0.1"))
+              .allowed(false)
+              .nanosToWaitForRefill(Long.MAX_VALUE)
+              .build();
+
+      assertEquals(
+          Long.MAX_VALUE / 1_000_000L + 1, RateLimitResponse.from(result).getRetryAfterMillis());
+    }
+
+    @Test
+    @DisplayName("a huge band window does not overflow into a negative window")
+    void hugeWindowStaysPositive() {
+      RateLimitBand band =
+          RateLimitBand.builder(Duration.ofMillis(Long.MAX_VALUE), 1).label("x").build();
+      RateLimitRule rule = RateLimitRule.builder("r").addBand(band).build();
+      RateLimitResult result =
+          RateLimitResult.builder(RateLimitKey.of("ip:10.0.0.1"))
+              .allowed(false)
+              .matchedRule(rule)
+              .bandLabel("x")
+              .build();
+
+      assertEquals(Long.MAX_VALUE / 1000L + 1, RateLimitResponse.from(result).getWindowSeconds());
+    }
+  }
 }

@@ -1,5 +1,0 @@
-# Mockito 5 - which the Boot 3 starter gets from spring-boot-starter-test - uses the inline mock
-# maker by default. Spring Boot 2.7 pins Mockito 4.5, whose default subclass mock maker cannot mock
-# final classes such as org.fluxgate.core.ratelimiter.RateLimitRuleSet. Selecting the inline maker
-# here keeps the mirrored tests identical to the Boot 3 starter's.
-mock-maker-inline

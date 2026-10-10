@@ -18,14 +18,13 @@
 #   - Elasticsearch: 127.0.0.1:9200
 #   - Kibana:        127.0.0.1:5601
 #   - Logstash:      127.0.0.1:5044 (TCP input), 127.0.0.1:9600 (monitoring)
-version: "3.8"
 
 services:
   # ============================================
   # MongoDB - Rule Storage
   # ============================================
   mongo:
-    image: mongo:7.0
+    image: mongo:7.0.14
     container_name: fluxgate-mongo
     ports:
       - "127.0.0.1:27017:27017"
@@ -40,7 +39,7 @@ services:
   # Redis Standalone - Rate Limiting
   # ============================================
   redis:
-    image: redis:7.2-alpine
+    image: redis:7.2.5-alpine
     container_name: fluxgate-redis
     ports:
       - "127.0.0.1:6379:6379"

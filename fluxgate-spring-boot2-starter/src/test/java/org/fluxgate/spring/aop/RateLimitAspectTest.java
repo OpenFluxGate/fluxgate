@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
+import java.io.IOException;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.concurrent.TimeUnit;
@@ -18,6 +19,7 @@ import org.fluxgate.core.handler.RateLimitResponse;
 import org.fluxgate.spring.annotation.RateLimit;
 import org.fluxgate.spring.filter.IdentitySource;
 import org.fluxgate.spring.filter.ProblemDetailRateLimitResponseWriter;
+import org.fluxgate.spring.filter.RateLimitDurationRecorder;
 import org.fluxgate.spring.filter.RateLimitHeaderWriter;
 import org.fluxgate.spring.filter.RequestContextCustomizer;
 import org.fluxgate.spring.filter.RequestContextFactory;
@@ -57,6 +59,9 @@ class RateLimitAspectTest {
 
     // Set up RequestContextHolder with real ServletRequestAttributes
     RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request, response));
+
+    // By default the intercepted method is a controller handler, so rejections are written.
+    stubWebHandler();
   }
 
   @AfterEach
@@ -86,6 +91,73 @@ class RateLimitAspectTest {
     assertThat(result).isEqualTo(expectedResult);
     verify(joinPoint).proceed();
     verify(response).setHeader("X-RateLimit-Remaining", "50");
+  }
+
+  @Test
+  void aFailingDurationRecorderDoesNotReplaceTheMethodResult() throws Throwable {
+    // Given
+    aspect =
+        new RateLimitAspect(
+            handler,
+            "",
+            true,
+            false,
+            false,
+            50,
+            new RequestContextFactory(null, false, null, false, null, null),
+            new RateLimitHeaderWriter(true, true),
+            new ProblemDetailRateLimitResponseWriter(),
+            (ruleSetId, endpoint, method, duration) -> {
+              throw new IllegalStateException("metrics backend down");
+            });
+    when(rateLimit.ruleSetId()).thenReturn(RULE_SET_ID);
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+    when(joinPoint.proceed()).thenReturn("success");
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
+        .thenReturn(RateLimitResponse.allowed(50, 0));
+
+    // When
+    Object result = aspect.aroundMethod(joinPoint, rateLimit);
+
+    // Then
+    assertThat(result).isEqualTo("success");
+    verify(joinPoint, times(1)).proceed();
+  }
+
+  @Test
+  void aDurationRecorderThrowingACheckedExceptionDoesNotReplaceTheMethodResult() throws Throwable {
+    // Given
+    aspect =
+        aspectWithDurationRecorder(
+            (ruleSetId, endpoint, method, duration) ->
+                sneakyThrow(new IOException("metrics backend down")));
+    stubAllowedWebCall();
+    when(joinPoint.proceed()).thenReturn("success");
+
+    // When
+    Object result = aspect.aroundMethod(joinPoint, rateLimit);
+
+    // Then
+    assertThat(result).isEqualTo("success");
+    verify(joinPoint, times(1)).proceed();
+  }
+
+  @Test
+  void aFailingDurationRecorderDoesNotReplaceTheMethodException() throws Throwable {
+    // Given
+    aspect =
+        aspectWithDurationRecorder(
+            (ruleSetId, endpoint, method, duration) -> {
+              throw new IllegalStateException("metrics backend down");
+            });
+    stubAllowedWebCall();
+    IllegalArgumentException original = new IllegalArgumentException("bad argument");
+    when(joinPoint.proceed()).thenThrow(original);
+
+    // When / Then
+    assertThatThrownBy(() -> aspect.aroundMethod(joinPoint, rateLimit)).isSameAs(original);
   }
 
   @Test
@@ -223,7 +295,8 @@ class RateLimitAspectTest {
     assertThat(result).isNull();
     verify(joinPoint, never()).proceed();
     verify(handler, never()).tryConsume(any(), any());
-    verify(response).setStatus(429);
+    // Item 10: unconfigured rate limiting is 503, not 429.
+    verify(response).setStatus(503);
   }
 
   @Test
@@ -252,6 +325,8 @@ class RateLimitAspectTest {
 
   @Test
   void shouldFailOpenOnHandlerException() throws Throwable {
+    // Explicitly trusting X-Forwarded-For and failing open: the legacy constructor no longer does.
+    aspect = new RateLimitAspect(handler, null, "X-Forwarded-For", true, true, "");
     // Given
     when(rateLimit.ruleSetId()).thenReturn(RULE_SET_ID);
     when(request.getRequestURI()).thenReturn("/api/users");
@@ -472,12 +547,17 @@ class RateLimitAspectTest {
 
   @Test
   void shouldExtractClientIpFromXForwardedFor() throws Throwable {
+    // Explicitly trusting X-Forwarded-For and failing open: the legacy constructor no longer does.
+    aspect = new RateLimitAspect(handler, null, "X-Forwarded-For", true, true, "");
     // Given
     when(rateLimit.ruleSetId()).thenReturn(RULE_SET_ID);
     when(rateLimit.waitForRefill()).thenReturn(false);
     when(request.getRequestURI()).thenReturn("/api/users");
     when(request.getMethod()).thenReturn("GET");
-    when(request.getHeader("X-Forwarded-For")).thenReturn("203.0.113.50, 70.41.3.18");
+    when(request.getHeaders("X-Forwarded-For"))
+        .thenAnswer(
+            invocation ->
+                java.util.Collections.enumeration(java.util.List.of("203.0.113.50, 70.41.3.18")));
 
     Object expectedResult = "success";
     when(joinPoint.proceed()).thenReturn(expectedResult);
@@ -562,7 +642,7 @@ class RateLimitAspectTest {
     verify(joinPoint, times(1)).proceed();
   }
 
-  // ===== C1: the wait semaphore is aspect wide =====
+  // ===== C1: the wait semaphore outlives the invocation =====
 
   @Test
   void shouldRejectTheWaiterBeyondTheSemaphorePermits() throws Throwable {
@@ -802,6 +882,58 @@ class RateLimitAspectTest {
     when(joinPoint.getSignature()).thenReturn(signature);
   }
 
+  /** Stubs the join point as a {@code @GetMapping} method of {@link ApiController}. */
+  private void stubWebHandler() {
+    try {
+      org.aspectj.lang.reflect.MethodSignature signature =
+          mock(org.aspectj.lang.reflect.MethodSignature.class);
+      when(signature.getMethod()).thenReturn(ApiController.class.getMethod("handle"));
+      when(signature.getDeclaringType()).thenReturn(ApiController.class);
+      when(signature.getName()).thenReturn("handle");
+      when(joinPoint.getSignature()).thenReturn(signature);
+      when(joinPoint.getTarget()).thenReturn(new ApiController());
+    } catch (NoSuchMethodException e) {
+      throw new IllegalStateException(e);
+    }
+  }
+
+  /** Stand-in for an application controller. */
+  static class ApiController {
+
+    @org.springframework.web.bind.annotation.GetMapping("/api/users")
+    public Object handle() {
+      return "handled";
+    }
+  }
+
   /** Stand-in for a user class whose simple name the endpoint is derived from. */
   private static final class OrderService {}
+
+  private RateLimitAspect aspectWithDurationRecorder(RateLimitDurationRecorder durationRecorder) {
+    return new RateLimitAspect(
+        handler,
+        "",
+        true,
+        false,
+        false,
+        50,
+        new RequestContextFactory(null, false, null, false, null, null),
+        new RateLimitHeaderWriter(true, true),
+        new ProblemDetailRateLimitResponseWriter(),
+        durationRecorder);
+  }
+
+  private void stubAllowedWebCall() {
+    when(rateLimit.ruleSetId()).thenReturn(RULE_SET_ID);
+    when(request.getRequestURI()).thenReturn("/api/users");
+    when(request.getMethod()).thenReturn("GET");
+    when(request.getRemoteAddr()).thenReturn("192.168.1.100");
+    when(handler.tryConsume(any(RequestContext.class), eq(RULE_SET_ID)))
+        .thenReturn(RateLimitResponse.allowed(50, 0));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <T extends Throwable> void sneakyThrow(Throwable t) throws T {
+    throw (T) t;
+  }
 }

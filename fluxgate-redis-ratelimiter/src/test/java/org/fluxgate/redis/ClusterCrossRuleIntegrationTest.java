@@ -14,7 +14,7 @@ import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.redis.connection.RedisConnectionProvider.RedisMode;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
-import org.junit.jupiter.api.Assumptions;
+import org.fluxgate.redis.support.ClusterTestSupport;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -25,7 +25,9 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
  * rules whose keys live in different hash slots (compensation), rules whose keys happen to share a
  * slot (one script call), and the FIXED_WINDOW counter hash.
  *
- * <p>Requires a cluster on localhost:7100-7105 and the {@code redis-cluster-it} profile:
+ * <p>Requires a cluster on localhost:7100-7105 (or the nodes named by {@code
+ * -Dfluxgate.redis.cluster.uri}, see {@link ClusterTestSupport}) and the {@code redis-cluster-it}
+ * profile:
  *
  * <pre>
  * docker compose -p fluxgate-atomicity -f docker/redis-cluster.yml up -d
@@ -35,15 +37,15 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 @EnabledIfSystemProperty(named = "fluxgate.redis.cluster.tests", matches = "true")
 class ClusterCrossRuleIntegrationTest extends CrossRuleAtomicityContract {
 
-  private static final String CLUSTER_URI =
-      "redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102";
+  private static final String CLUSTER_URI = ClusterTestSupport.clusterUri();
 
   @BeforeAll
   static void setUp() {
     try {
       connect(CLUSTER_URI);
     } catch (RuntimeException e) {
-      Assumptions.abort("No Redis Cluster reachable at " + CLUSTER_URI + ": " + e.getMessage());
+      ClusterTestSupport.clusterUnavailable(
+          "No Redis Cluster reachable at " + CLUSTER_URI + ": " + e.getMessage());
     }
     assertThat(redis().getMode()).isEqualTo(RedisMode.CLUSTER);
   }

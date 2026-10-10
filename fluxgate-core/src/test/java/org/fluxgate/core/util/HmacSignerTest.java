@@ -83,4 +83,67 @@ class HmacSignerTest {
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("canonical");
   }
+
+  @Test
+  @DisplayName("v2: a separator inside a field cannot shift the boundary of its neighbour")
+  void v2ShouldLengthPrefixEveryField() {
+    String first = HmacSigner.canonicalRuleChangeV2(2, "ch", "a|b", false, 1L, "c", "n");
+    String second = HmacSigner.canonicalRuleChangeV2(2, "ch", "a", false, 1L, "b|c", "n");
+
+    assertThat(first).isNotEqualTo(second);
+  }
+
+  @Test
+  @DisplayName("v2: a null field and an empty field have different encodings")
+  void v2ShouldDistinguishNullFromEmpty() {
+    assertThat(HmacSigner.canonicalRuleChangeV2(2, "ch", null, true, 1L, "cp", "n"))
+        .isNotEqualTo(HmacSigner.canonicalRuleChangeV2(2, "ch", "", true, 1L, "cp", "n"));
+    assertThat(HmacSigner.canonicalRuleChangeV2(2, "ch", null, true, 42L, "cp", "n-1"))
+        .isEqualTo("fluxgate-rule-change|1:2|2:ch|-|4:true|2:42|2:cp|3:n-1");
+  }
+
+  @Test
+  @DisplayName("v2: the channel and the nonce are covered by the signature")
+  void v2ShouldBindChannelAndNonce() {
+    String signed = HmacSigner.canonicalRuleChangeV2(2, "prod", "orders", false, 1L, "cp", "n1");
+    String signature = HmacSigner.sign(SECRET, signed);
+
+    assertThat(HmacSigner.verify(SECRET, signed, signature)).isTrue();
+    assertThat(
+            HmacSigner.verify(
+                SECRET,
+                HmacSigner.canonicalRuleChangeV2(2, "staging", "orders", false, 1L, "cp", "n1"),
+                signature))
+        .isFalse();
+    assertThat(
+            HmacSigner.verify(
+                SECRET,
+                HmacSigner.canonicalRuleChangeV2(2, "prod", "orders", false, 1L, "cp", "n2"),
+                signature))
+        .isFalse();
+  }
+
+  @Test
+  @DisplayName("v2: field lengths are counted in UTF-8 bytes")
+  void v2ShouldCountUtf8Bytes() {
+    assertThat(HmacSigner.canonicalRuleChangeV2(2, "ch", "\uc8fc\ubb38", false, 1L, null, null))
+        .contains("|6:\uc8fc\ubb38|");
+  }
+
+  @Test
+  @DisplayName("Secrets are trimmed and a blank secret is absent, on every side")
+  void shouldNormaliseSecrets() {
+    assertThat(HmacSigner.normalizeSecret(null)).isNull();
+    assertThat(HmacSigner.normalizeSecret("  \n")).isNull();
+    assertThat(HmacSigner.normalizeSecret(" abc\n")).isEqualTo("abc");
+  }
+
+  @Test
+  @DisplayName("A secret shorter than 32 bytes is reported as weak")
+  void shouldFlagWeakSecrets() {
+    assertThat(HmacSigner.isWeakSecret(null)).isFalse();
+    assertThat(HmacSigner.isWeakSecret("short")).isTrue();
+    assertThat(HmacSigner.isWeakSecret("0123456789abcdef0123456789abcde")).isTrue();
+    assertThat(HmacSigner.isWeakSecret("0123456789abcdef0123456789abcdef")).isFalse();
+  }
 }

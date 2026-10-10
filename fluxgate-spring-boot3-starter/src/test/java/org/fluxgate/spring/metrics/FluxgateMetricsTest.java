@@ -197,4 +197,38 @@ class FluxgateMetricsTest {
     assertThat(registry.find("fluxgate.limiter.failures").counter().getId().getTag("endpoint"))
         .isEqualTo("other");
   }
+
+  @Test
+  void shouldNormalizeLimiterFailureEndpointsLikeTheRecorder() {
+    metrics.recordLimiterFailure(
+        "api-limits", "/api/users/12345", "fail_open", new IllegalStateException());
+
+    assertThat(registry.find("fluxgate.limiter.failures").counter().getId().getTag("endpoint"))
+        .isEqualTo("/api/users/{id}");
+  }
+
+  @Test
+  void shouldShareTheRecordersBudgetWhenBuiltFromIt() {
+    MicrometerMetricsRecorder recorder = new MicrometerMetricsRecorder(registry, true, true, 1);
+    FluxgateMetrics shared = new FluxgateMetrics(registry, recorder);
+
+    recorder.recordDuration("rules", "/api/aaa", "GET", java.time.Duration.ofMillis(1));
+    shared.recordLimiterFailure("rules", "/api/aab", "fail_open", new IllegalStateException());
+
+    assertThat(registry.find("fluxgate.limiter.failures").counter().getId().getTag("endpoint"))
+        .isEqualTo("other");
+  }
+
+  @Test
+  void shouldOmitTheEndpointTagWhenTheRecorderDoesNotIncludeIt() {
+    MicrometerMetricsRecorder recorder = new MicrometerMetricsRecorder(registry, false, true, 10);
+    FluxgateMetrics shared = new FluxgateMetrics(registry, recorder);
+
+    shared.recordLimiterFailure("rules", "/api/aab", "fail_open", new IllegalStateException());
+    shared.recordAllowed("rules", "/api/aab");
+
+    assertThat(registry.find("fluxgate.limiter.failures").counter().getId().getTag("endpoint"))
+        .isNull();
+    assertThat(registry.find("fluxgate.requests").counter().getId().getTag("endpoint")).isNull();
+  }
 }

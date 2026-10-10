@@ -278,14 +278,22 @@ public final class RateLimitResponse {
 
   /** Rounds a window length up to whole seconds, never below one. */
   private static long millisToSecondsCeil(long millis) {
-    return Math.max(1L, (millis + 999L) / 1000L);
+    return Math.max(1L, ceilDiv(millis, 1000L));
   }
 
   private static long nanosToMillisCeil(long nanos) {
     if (nanos <= 0) {
       return nanos; // 0 stays 0, -1 (unknown) stays -1
     }
-    return (nanos + 999_999L) / 1_000_000L;
+    return ceilDiv(nanos, 1_000_000L);
+  }
+
+  /**
+   * Ceiling division for non-negative values that cannot overflow, unlike {@code (a + b - 1) / b}.
+   */
+  private static long ceilDiv(long dividend, long divisor) {
+    long quotient = dividend / divisor;
+    return dividend % divisor == 0 ? quotient : quotient + 1;
   }
 
   @Override

@@ -22,7 +22,7 @@ Spring Boot 2.7 auto-configuration for FluxGate, on `javax.servlet`.
 `@AutoConfiguration`, which arrived in Boot 2.7, so it does not work on Boot 2.0 – 2.6. The
 `META-INF/spring.factories` file that ships alongside
 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` exists for older
-tooling and documentation generators, not to extend version support; both files list the same eight
+tooling and documentation generators, not to extend version support; both files list the same nine
 auto-configurations and a test fails the build if they diverge.
 
 > **Spring Boot 2.7 reached OSS end of life in November 2023** and receives no further community
@@ -37,7 +37,7 @@ auto-configurations and a test fails the build if they diverge.
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot2-starter</artifactId>
-    <version>0.3.7</version>
+    <version>0.4.0</version>
 </dependency>
 ```
 
@@ -50,7 +50,8 @@ management, exactly as with the Boot 3 starter.
 |---|---|---|
 | Servlet API | `jakarta.servlet.*` | `javax.servlet.*` |
 | Java | 17+ | 11+ |
-| Auto-config registration | `AutoConfiguration.imports` | `AutoConfiguration.imports` + a legacy `spring.factories` |
+| Auto-config registration | `AutoConfiguration.imports` | `AutoConfiguration.imports` + a legacy `spring.factories` listing the same nine classes |
+| Health status mapping (`FluxgateHealthStatusEnvironmentPostProcessor`) | `spring.factories` | `spring.factories` (identical) |
 | Problem responses | `org.springframework.http.HttpStatus` based; same RFC 9457 body | identical |
 | Everything else | — | identical class names, packages, properties and behaviour |
 

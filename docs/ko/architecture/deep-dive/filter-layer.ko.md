@@ -68,6 +68,7 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
 
 ```java
 // FluxgateRateLimitFilter.java - 실제 코드
+
 @Override
 protected void doFilterInternal(
     HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
@@ -95,21 +96,29 @@ protected void doFilterInternal(
 
     if (!StringUtils.hasText(ruleSetId)) {
       if (denyWhenRuleMissing) {
-        log.warn("No rule set ID configured, rejecting request");
-        reject(request, response, RateLimitResponse.rejected(0), startTimeMs);
+        logMissingRuleSetId("rejecting request");
+        rejectUnavailable(
+            request, response, RateLimiterUnavailableException.UNKNOWN_RETRY_AFTER, startTimeMs);
       } else {
-        log.warn("No rule set ID configured, skipping rate limiting");
+        logMissingRuleSetId("skipping rate limiting");
         filterChain.doFilter(request, response);
       }
       return;
     }
 
     RequestContext context = contextFactory.create(request, path);
+    putIdentityMdc(context.getUserId(), context.getApiKey());
     Decision decision = decide(context, resolvePermits(request));
 
     // C2/C-1: the chain runs exactly once, outside the rate limiter's try/catch, so an exception
     // thrown by the application propagates instead of triggering a replay.
-    if (decision.allowed) {
+    if (decision.unavailable) {
+      rejectUnavailable(request, response, decision.retryAfterMillis, startTimeMs);
+      recordDuration(path, request.getMethod(), startTimeMs);
+    } else if (decision.costExceeded != null) {
+      rejectCostExceeded(request, response, decision.costExceeded, startTimeMs);
+      recordDuration(path, request.getMethod(), startTimeMs);
+    } else if (decision.allowed) {
       headerWriter.write(response, decision.result);
       filterChain.doFilter(request, response);
       MDC.put(MdcKeys.STATUS_CODE, String.valueOf(response.getStatus()));
@@ -176,6 +185,19 @@ private Decision decide(RequestContext context, long permits) {
 
     MDC.put(MdcKeys.RETRY_AFTER_MS, String.valueOf(result.getRetryAfterMillis()));
     return Decision.rejected(result);
+  } catch (PermitsExceedCapacityException e) {
+    // The client asked for more than a band can ever hold: its error, not a limiter failure, so
+    // neither failure-behavior nor a 503 applies.
+    MDC.put(MdcKeys.ERROR, e.getClass().getSimpleName());
+    log.debug("Request cost exceeds the rule capacity, rejecting: {}", e.getMessage());
+    return Decision.costExceeded(e);
+  } catch (RateLimiterUnavailableException e) {
+    // failure-behavior / missing-rule-behavior already decided to reject; the cause was logged
+    // where it happened.
+    MDC.put(MdcKeys.ERROR, e.getClass().getSimpleName());
+    MDC.put(MdcKeys.ERROR_MESSAGE, LogSanitizer.sanitize(e.getMessage()));
+    log.debug("Rate limiting unavailable, rejecting request: {}", e.getMessage());
+    return Decision.unavailable(e.getRetryAfterMillis());
   } catch (Exception e) {
     MDC.put(MdcKeys.ERROR, e.getClass().getSimpleName());
     MDC.put(MdcKeys.ERROR_MESSAGE, LogSanitizer.sanitize(e.getMessage()));
@@ -184,7 +206,7 @@ private Decision decide(RequestContext context, long permits) {
       return Decision.allowed(null);
     }
     log.error("Error during rate limiting, rejecting request", e);
-    return Decision.rejected(RateLimitResponse.rejected(0));
+    return Decision.unavailable(RateLimiterUnavailableException.UNKNOWN_RETRY_AFTER);
   }
 }
 ```
@@ -198,7 +220,7 @@ private Decision decide(RequestContext context, long permits) {
 fluxgate:
   ratelimit:
     failure-behavior: DENY    # 기본값 DENY = fail-closed, ALLOW = fail-open
-    deny-when-rule-missing: false
+    missing-rule-behavior: DENY  # 기본값 DENY, ALLOW = 룰셋이 없으면 통과
 ```
 
 기본값이 `DENY`(fail-closed)입니다. 0.3.x가 하드코딩한 fail-open과 **반대 방향**의 기본값이라는
@@ -211,6 +233,15 @@ limiter 내부 강등이 같은 설정을 따릅니다.
 
 `denyWhenRuleMissing`은 `ruleSetId`가 설정되지 않은 경우에도 적용됩니다. 설정 누락이 조용히
 Rate Limiting 비활성화가 되지 않습니다.
+
+`decide()`는 결과를 네 갈래로 나눕니다. 응답 코드가 다른 이유는 "누구의 문제인가"가 다르기 때문입니다.
+
+| `Decision` | 원인 | 응답 |
+|-----------|------|------|
+| `allowed` | 허용 (또는 `failure-behavior=ALLOW`에서의 리미터 오류) | 체인 실행 |
+| `rejected` | 한도 초과 | 429 + `Retry-After` |
+| `costExceeded` | `PermitsExceedCapacityException`: 요청 비용이 어떤 대역에도 들어가지 않음(클라이언트 오류) | 429 |
+| `unavailable` | `RateLimiterUnavailableException`(설정 오류·룰셋 없음·이미 강등이 거부로 결정), `failure-behavior=DENY`에서의 리미터 오류, `ruleSetId` 미설정 + `missing-rule-behavior=DENY` | 503 |
 
 ### 가중 permits (cost header)
 
@@ -289,8 +320,33 @@ private void populateRequestMdc(HttpServletRequest request, String path) {
   MDC.put(MdcKeys.METHOD, LogSanitizer.sanitize(request.getMethod(), 16));
   MDC.put(MdcKeys.ENDPOINT, LogSanitizer.sanitize(path));
   MDC.put(MdcKeys.CLIENT_IP, LogSanitizer.sanitize(contextFactory.extractClientIp(request), 45));
-  ...
-  Optional.ofNullable(request.getHeader(Headers.API_KEY))
+  MDC.put(MdcKeys.PROTOCOL, LogSanitizer.sanitize(request.getProtocol(), 16));
+  MDC.put(MdcKeys.SERVER_PORT, String.valueOf(request.getServerPort()));
+
+  if (logQueryString) {
+    Optional.ofNullable(request.getQueryString())
+        .ifPresent(v -> MDC.put(MdcKeys.QUERY_STRING, LogSanitizer.sanitize(v)));
+  }
+  Optional.ofNullable(request.getHeader(USER_AGENT_HEADER))
+      .ifPresent(v -> MDC.put(MdcKeys.USER_AGENT, LogSanitizer.sanitize(v)));
+  Optional.ofNullable(request.getHeader(REFERER_HEADER))
+      .ifPresent(v -> MDC.put(MdcKeys.REFERER, LogSanitizer.sanitize(v)));
+
+  // C-4: identity headers are client input. Log them as the caller's identity only when the
+  // identity source actually reads them; otherwise the resolved identity is added once the
+  // context exists (putResolvedIdentityMdc).
+  if (contextFactory.usesIdentityHeaders()) {
+    putIdentityMdc(
+        request.getHeader(contextFactory.getUserIdHeader()),
+        request.getHeader(contextFactory.getApiKeyHeader()));
+  }
+}
+
+/** Records the identity the limiter actually used, such as the authenticated principal. */
+private static void putIdentityMdc(String userId, String apiKey) {
+  Optional.ofNullable(userId)
+      .ifPresent(v -> MDC.put(MdcKeys.USER_ID, LogSanitizer.sanitize(v, 128)));
+  Optional.ofNullable(apiKey)
       .ifPresent(v -> MDC.put(MdcKeys.API_KEY, maskSensitive(LogSanitizer.sanitize(v, 128))));
 }
 ```
@@ -302,6 +358,10 @@ private void populateRequestMdc(HttpServletRequest request, String path) {
 
 **(2) API 키는 `maskSensitive`를 한 번 더 거칩니다.** 로그 파일이 자격 증명 저장소가 되지 않게
 합니다.
+
+**(3) 신원 헤더는 신원 출처가 실제로 그 헤더를 읽을 때만 기록합니다.** 헤더는 클라이언트 입력이므로,
+인증 주체 등 다른 출처를 쓰는 배포에서는 컨텍스트가 만들어진 뒤 리미터가 실제로 쓴 신원을
+`putIdentityMdc(context.getUserId(), context.getApiKey())`로 기록합니다.
 
 ### MDC 복원
 
@@ -545,7 +605,12 @@ public class RequestContextFactory {
     return contextCustomizer.customize(builder, request).build();
   }
 
-  /** Extracts the client IP using the configured trust settings. */
+  /**
+   * Extracts the client IP using the configured trust settings.
+   *
+   * @param request the HTTP request
+   * @return the client IP address
+   */
   public String extractClientIp(HttpServletRequest request) {
     return ClientIpExtractor.extract(request, clientIpHeader, trustClientIpHeader, trustedProxies);
   }
@@ -666,24 +731,34 @@ public static String extract(HttpServletRequest request) {
  * Extracts the client IP address, honouring the forwarding header only for requests that arrived
  * through a trusted proxy.
  *
- * <p>Selection rules:
+ * <p>Every line of the forwarding header is read ({@link HttpServletRequest#getHeaders}), in
+ * order, and the hops are walked from the right (the hop closest to this server):
  *
  * <ul>
  *   <li>{@code trustClientIpHeader = false}: always use {@link
  *       HttpServletRequest#getRemoteAddr()}.
  *   <li>Non-empty {@code trustedProxies} that does not contain the remote address: the header is
  *       forged or the deployment is misconfigured, so use the remote address.
- *   <li>Non-empty {@code trustedProxies} containing the remote address: walk the forwarded chain
- *       from the right (the hop closest to this server) and return the first entry that is not
- *       itself a trusted proxy.
- *   <li>Empty {@code trustedProxies}: use the right-most valid hop (appended by the immediate
- *       proxy, harder to forge than the left-most client-supplied value). Nothing can be verified
+ *   <li>Non-empty {@code trustedProxies} containing the remote address: skip hops that are
+ *       trusted proxies and return the first one that is not.
+ *   <li>Empty {@code trustedProxies}: return the right-most hop (appended by the immediate proxy,
+ *       harder to forge than the left-most client-supplied value). Nothing can be verified
  *       end-to-end, so the auto-configuration logs one startup WARN asking for a trusted-proxies
  *       list for multi-hop setups.
  * </ul>
  *
- * <p>In every case a candidate is only accepted when it is a valid IPv4 or IPv6 literal of at
- * most 45 characters, so a forged header cannot inject an arbitrary string into the bucket key.
+ * <p>R4: a hop is normalised before it is judged: {@code ip:port}, {@code [v6]} and {@code
+ * [v6]:port} are reduced to the address. When the hop that would be returned is not a valid IPv4
+ * or IPv6 literal of at most 45 characters, the extraction fails closed to the remote address
+ * instead of skipping it, because everything to its left is client-controlled. The returned
+ * address is canonical ({@link InetAddress#getHostAddress()}), so different spellings of one
+ * address share one bucket key.
+ *
+ * @param request the HTTP request
+ * @param clientIpHeader forwarding header to inspect when trusted
+ * @param trustClientIpHeader whether forwarding headers are trusted
+ * @param trustedProxies the proxies allowed to set the forwarding header (never null)
+ * @return the client IP address
  */
 public static String extract(
     HttpServletRequest request,
@@ -691,7 +766,7 @@ public static String extract(
     boolean trustClientIpHeader,
     TrustedProxies trustedProxies) {
 
-  String remoteAddr = request.getRemoteAddr();
+  String remoteAddr = canonicalOrSelf(request.getRemoteAddr());
   if (!trustClientIpHeader) {
     return remoteAddr;
   }
@@ -703,37 +778,45 @@ public static String extract(
 
   String headerName =
       StringUtils.hasText(clientIpHeader) ? clientIpHeader : Headers.X_FORWARDED_FOR;
-  String forwardedFor = request.getHeader(headerName);
-  if (!StringUtils.hasText(forwardedFor)) {
+  List<String> hops = forwardedHops(request, headerName);
+  if (hops.isEmpty()) {
     return remoteAddr;
   }
 
-  String[] hops = forwardedFor.split(",");
-  if (proxies.isEmpty()) {
-    // Nothing can be verified end-to-end. Take the right-most valid hop: it was appended by the
-    // immediate proxy (the one that set this header), which is harder to forge than the
-    // left-most client-supplied value. The startup WARN tells operators to configure
-    // trusted-proxies for multi-hop setups.
-    for (int i = hops.length - 1; i >= 0; i--) {
-      String candidate = hops[i].trim();
-      if (TrustedProxies.isIpLiteral(candidate)) {
-        return candidate;
-      }
+  for (int i = hops.size() - 1; i >= 0; i--) {
+    String candidate = canonicalHop(hops.get(i));
+    if (candidate == null) {
+      // Fail closed: an unparseable hop cannot be attributed, and every hop to its left is
+      // under the client's control.
+      return remoteAddr;
     }
-    return remoteAddr;
-  }
-
-  for (int i = hops.length - 1; i >= 0; i--) {
-    String candidate = hops[i].trim();
-    if (!TrustedProxies.isIpLiteral(candidate)) {
-      continue;
-    }
-    if (!proxies.contains(candidate)) {
+    if (proxies.isEmpty() || !proxies.contains(candidate)) {
       return candidate;
     }
   }
   return remoteAddr;
 }
+
+/** Collects the comma-separated hops of every line of the header, in order. */
+private static List<String> forwardedHops(HttpServletRequest request, String headerName) {
+  List<String> hops = new ArrayList<>();
+  Enumeration<String> lines = request.getHeaders(headerName);
+  if (lines == null) {
+    return hops;
+  }
+  while (lines.hasMoreElements()) {
+    String line = lines.nextElement();
+    if (line == null || line.trim().isEmpty()) {
+      continue;
+    }
+    for (String hop : line.split(",", -1)) {
+      hops.add(hop.trim());
+    }
+  }
+  return hops;
+}
+
+// ... canonicalHop(): ip:port, [v6], [v6]:port를 정규화한 주소로 줄이고, IP 리터럴이 아니면 null
 ```
 
 #### 오른쪽에서 왼쪽으로 걷는 이유
@@ -751,6 +834,15 @@ X-Forwarded-For: 1.2.3.4, 10.0.0.1, 10.0.0.2
 각 프록시는 자기가 본 상대 주소를 **오른쪽에 덧붙입니다.** 따라서 오른쪽 끝은 바로 앞 프록시가
 쓴 값이고, 왼쪽 끝은 클라이언트가 쓴 값입니다. 오른쪽에서 걸으며 **신뢰 목록에 없는 첫 항목**을
 찾으면 그것이 실제 클라이언트입니다.
+
+걷는 동안 지켜지는 세부:
+
+- 헤더가 여러 줄로 와도 모든 줄을 순서대로 읽습니다(`request.getHeaders`). 첫 줄만 읽으면 뒤 줄에
+  붙은 프록시 홉을 놓칩니다.
+- 각 홉은 판정 전에 정규화됩니다. `ip:port`, `[v6]`, `[v6]:port`는 주소만 남기고, 결과는
+  `InetAddress#getHostAddress()`의 정규형이라 같은 주소의 다른 표기가 한 버킷 키를 씁니다.
+- 반환할 차례의 홉이 IP 리터럴이 아니면 **건너뛰지 않고 원격 주소로 닫힙니다(fail closed).** 그 왼쪽은
+  모두 클라이언트가 쓴 값이므로, 건너뛰면 위조 값을 채택할 수 있습니다.
 
 ```yaml
 fluxgate:
@@ -791,7 +883,7 @@ fluxgate-core/src/main/java/org/fluxgate/core/context/
 ```
 
 ```java
-// RequestContext.java - 실제 코드
+// RequestContext.java - 구조 요약 (접근자는 한 줄로 줄이고 Javadoc은 생략)
 public final class RequestContext {
 
     private final String clientIp;    // 클라이언트 IP
@@ -812,8 +904,15 @@ public final class RequestContext {
         this.apiKey = builder.apiKey;
         this.endpoint = builder.endpoint;
         this.method = builder.method;
-        this.headers = Collections.unmodifiableMap(new HashMap<>(builder.headers));
+        Map<String, String> headerCopy = newHeaderMap();
+        headerCopy.putAll(builder.headers);
+        this.headers = Collections.unmodifiableMap(headerCopy);
         this.attributes = Collections.unmodifiableMap(new HashMap<>(builder.attributes));
+    }
+
+    /** Header names are case-insensitive; {@code CASE_INSENSITIVE_ORDER} is locale-independent. */
+    private static Map<String, String> newHeaderMap() {
+        return new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
     }
 
     public static Builder builder() {
@@ -826,7 +925,7 @@ public final class RequestContext {
         private String apiKey;
         private String endpoint;
         private String method;
-        private final Map<String, String> headers = new HashMap<>();
+        private final Map<String, String> headers = newHeaderMap();
         private final Map<String, Object> attributes = new HashMap<>();
 
         public Builder clientIp(String clientIp) { this.clientIp = clientIp; return this; }
@@ -838,13 +937,13 @@ public final class RequestContext {
         public Builder header(String name, String value) { ... }
         public Builder headers(Map<String, String> headers) { ... }
 
-        /** Adds a custom attribute. */
+        // Adds a custom attribute.
         public Builder attribute(String key, Object value) {
             this.attributes.put(key, value);
             return this;
         }
 
-        /** Adds multiple custom attributes at once. */
+        // Adds multiple custom attributes at once.
         public Builder attributes(Map<String, Object> attributes) {
             if (attributes != null) {
                 this.attributes.putAll(attributes);
@@ -881,7 +980,7 @@ public final class RequestContext {
 | `apiKey`     | String | API 키 (선택)  |
 | `endpoint`   | String | 요청 경로       |
 | `method`     | String | HTTP 메서드    |
-| `headers`    | Map    | HTTP 요청 헤더 (수집은 opt-in) |
+| `headers`    | Map    | HTTP 요청 헤더 (수집은 opt-in). 이름은 대소문자를 구분하지 않음: `getHeader("x-tier")`가 `X-Tier`로 넣은 헤더를 찾음 |
 | `attributes` | Map    | 사용자 정의 속성   |
 
 ### 빌더에 getter가 있는 이유

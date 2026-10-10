@@ -1,5 +1,6 @@
 package org.fluxgate.redis;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -18,6 +19,7 @@ import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.ratelimiter.RateLimiter;
+import org.fluxgate.core.util.LogThrottle;
 import org.fluxgate.redis.store.BucketState;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
 import org.slf4j.Logger;
@@ -31,8 +33,9 @@ import org.slf4j.LoggerFactory;
  * <ul>
  *   <li>Token buckets live in Redis hashes, one per (rule set, rule, key, band)
  *   <li>The Lua script uses Redis TIME, so all nodes share one clock
- *   <li>Buckets expire through Redis TTL, derived from the band's window and capped by {@code
- *       fluxgate.redis.max-bucket-ttl}
+ *   <li>Buckets expire through Redis TTL, derived from the band's window. TOKEN_BUCKET and
+ *       SLIDING_WINDOW TTLs are capped by {@code fluxgate.redis.max-bucket-ttl}; a FIXED_WINDOW
+ *       counter is exempt and expires exactly at the end of its window
  *   <li>Supports multi-band rules (e.g. 10/sec AND 100/min AND 1000/hour)
  * </ul>
  *
@@ -58,6 +61,15 @@ import org.slf4j.LoggerFactory;
  * over, or a sliding sub-bucket that left the window, between charge and refund has nothing left to
  * give back.
  *
+ * <p><strong>Cost of a compensated rejection.</strong> When rule {@code k} of {@code n} rejects,
+ * the request costs {@code k} consume calls, {@code k - 1} refund calls and up to 8 check-only
+ * calls: the rules after the rejecting one are not charged, but are checked so that the reported
+ * Retry-After is the longest wait of all rules, not the first one found. Each call is one round
+ * trip, possibly to another cluster node. The checks are capped so that a rule set with many
+ * cross-slot rules cannot turn one rejected request into an unbounded number of round trips; rules
+ * beyond the cap are not consulted, and their wait - if longer - is only discovered when the client
+ * retries.
+ *
  * <p>Thread-safe and suitable for distributed environments with multiple API gateway nodes.
  *
  * @see RedisTokenBucketStore
@@ -75,6 +87,14 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
   /** Characters Redis treats as glob metacharacters in {@code SCAN MATCH} patterns. */
   private static final String GLOB_METACHARACTERS = "*?[]\\";
 
+  private static final char[] HEX_DIGITS = "0123456789ABCDEF".toCharArray();
+
+  /**
+   * Upper bound on the check-only calls one compensated rejection makes to find the longest wait
+   * among the rules after the rejecting one. See the class Javadoc.
+   */
+  static final int MAX_LONGEST_WAIT_CHECKS = 8;
+
   /** Number of leading characters of a key value that survive masking in logs. */
   private static final int MASK_VISIBLE_CHARS = 4;
 
@@ -88,6 +108,9 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
    * RateLimitRuleSet#getMatchingRules}.
    */
   private final PathPatternMatcher pathMatcher;
+
+  /** Throttles the warning about a failing metrics recorder. */
+  private final LogThrottle recorderFailureWarnings = new LogThrottle();
 
   /**
    * Create a new RedisRateLimiter with the given token bucket store.
@@ -197,9 +220,9 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
    * Evaluates every rule in a single script call: the bands of all rules are concatenated, so the
    * script's two passes make the whole decision all-or-nothing.
    *
-   * <p>The script reports the first rejecting band, or the band with the fewest tokens left, in the
-   * concatenated order - the same band rule-by-rule evaluation would have reported, since that
-   * stops at the first rejecting rule and keeps the first, strictly most restrictive one.
+   * <p>The script reports the rejecting band with the longest wait, or on allow the band with the
+   * fewest tokens left, in the concatenated order - the same band rule-by-rule evaluation reports,
+   * since that checks the rules after a rejecting one for a longer wait as well.
    */
   private RateLimitResult consumeInOneCall(
       List<RuleCall> calls, List<String> allKeys, long permits) {
@@ -222,7 +245,8 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
     RateLimitBand band = bandAt(call.bands, localIndex);
 
     if (!state.consumed()) {
-      logRejected(call, band, state);
+      Binding rejection = new Binding(call.key, call.rule, band, state);
+      logRejected(rejection);
       return rejectedResult(call.key, call.rule, band, state);
     }
     Binding binding = new Binding(call.key, call.rule, band, state);
@@ -239,7 +263,8 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
     List<BucketState> chargedStates = new ArrayList<>(calls.size());
     Binding binding = null;
 
-    for (RuleCall call : calls) {
+    for (int index = 0; index < calls.size(); index++) {
+      RuleCall call = calls.get(index);
       BucketState state;
       try {
         state = tokenBucketStore.tryConsume(call.bucketKeys, call.bands, permits);
@@ -252,8 +277,13 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
       if (!state.consumed()) {
         // No further rule is charged, and the rules already charged get their permits back.
         refund(charged, chargedStates, permits);
-        logRejected(call, bindingBand, state);
-        return rejectedResult(call.key, call.rule, bindingBand, state);
+        Binding rejection =
+            longestWait(
+                new Binding(call.key, call.rule, bindingBand, state),
+                calls.subList(index + 1, calls.size()),
+                permits);
+        logRejected(rejection);
+        return rejectedResult(rejection.key, rejection.rule, rejection.band, rejection.state);
       }
 
       charged.add(call);
@@ -265,6 +295,43 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
 
     logAllowed(binding);
     return allowedResult(binding);
+  }
+
+  /**
+   * Returns the rejection with the longest wait: {@code rejection} itself, or one of the rules
+   * after it that would reject for longer.
+   *
+   * <p>The rules after a rejecting one are not charged, so on their own they never show up in the
+   * result - and a Retry-After taken from the first rejecting rule alone would send the client back
+   * while a later rule still rejects. They are therefore asked with {@link
+   * RedisTokenBucketStore#check}, which consumes nothing. A check that fails is ignored: the
+   * request is rejected either way. At most {@value #MAX_LONGEST_WAIT_CHECKS} rules are checked.
+   */
+  private Binding longestWait(Binding rejection, List<RuleCall> unchecked, long permits) {
+    Binding longest = rejection;
+    int checks = Math.min(unchecked.size(), MAX_LONGEST_WAIT_CHECKS);
+    if (checks < unchecked.size()) {
+      log.debug(
+          "Checking {} of the {} rules after rule {} for a longer wait",
+          checks,
+          unchecked.size(),
+          rejection.rule.getId());
+    }
+    for (RuleCall call : unchecked.subList(0, checks)) {
+      BucketState state;
+      try {
+        state = tokenBucketStore.check(call.bucketKeys, call.bands, permits);
+      } catch (RuntimeException e) {
+        log.debug("Could not check rule {} for its wait: {}", call.rule.getId(), e.getMessage());
+        continue;
+      }
+      if (state != null
+          && !state.consumed()
+          && state.nanosToWaitForRefill() > longest.state.nanosToWaitForRefill()) {
+        longest = new Binding(call.key, call.rule, bandAt(call.bands, state.bandIndex()), state);
+      }
+    }
+    return longest;
   }
 
   /**
@@ -295,14 +362,14 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
     }
   }
 
-  private static void logRejected(RuleCall call, RateLimitBand band, BucketState state) {
+  private static void logRejected(Binding rejection) {
     if (log.isDebugEnabled()) {
       log.debug(
           "Rate limit REJECTED for key {}: rule {}, band {}, wait {} ns",
-          mask(call.key),
-          call.rule.getId(),
-          band != null ? band.getKeyLabel() : "unknown",
-          state.nanosToWaitForRefill());
+          mask(rejection.key),
+          rejection.rule.getId(),
+          rejection.band != null ? rejection.band.getKeyLabel() : "unknown",
+          rejection.state.nanosToWaitForRefill());
     }
   }
 
@@ -356,7 +423,7 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
       MissingRateLimitKeyException e, RateLimitRule rule) {
 
     log.debug("Rejecting request because no rate limit key could be resolved: {}", e.getMessage());
-    return RateLimitResult.builder(RateLimitKey.of("missing-key:" + rule.getId()))
+    return RateLimitResult.builder(RateLimitKey.of("missing-key:", rule.getId()))
         .allowed(false)
         .matchedRule(rule)
         .policy(rule.getOnLimitExceedPolicy())
@@ -374,20 +441,21 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
   /**
    * Warns once per rule when the bucket TTL cap is shorter than one of its windows.
    *
-   * <p>The Lua script clamps every TTL to {@code fluxgate.redis.max-bucket-ttl}, which means a
-   * bucket of a longer window can expire - and be re-initialised full - before its window is over.
-   * That is the deliberate trade against letting forgeable identity keys occupy Redis for weeks,
-   * but it changes what the rule enforces, so an operator must be told rather than left to discover
-   * it.
+   * <p>The Lua script clamps TOKEN_BUCKET and SLIDING_WINDOW TTLs to {@code
+   * fluxgate.redis.max-bucket-ttl}, which means a bucket of a longer window can expire - and be
+   * re-initialised full - before its window is over. That is the deliberate trade against letting
+   * forgeable identity keys occupy Redis for weeks, but it changes what the rule enforces, so an
+   * operator must be told rather than left to discover it. FIXED_WINDOW counters are exempt (they
+   * expire at their window end), so they never trigger the warning.
    */
   private void warnOnceIfBucketTtlClampsWindow(RateLimitRule rule, List<RateLimitBand> bands) {
     long capSeconds = tokenBucketStore.getMaxBucketTtl().getSeconds();
 
     for (RateLimitBand band : bands) {
-      long ttlSeconds = (long) Math.ceil(band.getWindow().getSeconds() * 1.1);
-      if (ttlSeconds <= capSeconds) {
+      if (!ttlCapShortensWindow(band, capSeconds)) {
         continue;
       }
+      long ttlSeconds = bucketTtlSeconds(band);
 
       String ruleId = rule.getId() != null ? rule.getId() : "unknown";
       if (ttlClampWarnedRules.add(ruleId)) {
@@ -406,12 +474,43 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
     }
   }
 
-  private static RateLimitResult record(
+  /**
+   * Tells whether {@code max-bucket-ttl} cuts the bucket of this band short. Only TOKEN_BUCKET and
+   * SLIDING_WINDOW buckets are capped; a FIXED_WINDOW counter expires at its window end whatever
+   * the cap.
+   */
+  static boolean ttlCapShortensWindow(RateLimitBand band, long capSeconds) {
+    return band.getAlgorithm() != RateLimitAlgorithm.FIXED_WINDOW
+        && bucketTtlSeconds(band) > capSeconds;
+  }
+
+  /** The TTL the Lua script would give this band's bucket without the cap: window + 10%. */
+  private static long bucketTtlSeconds(RateLimitBand band) {
+    return (long) Math.ceil(band.getWindow().getSeconds() * 1.1);
+  }
+
+  private RateLimitResult record(
       RequestContext context, RateLimitRuleSet ruleSet, RateLimitResult result) {
 
     RateLimitMetricsRecorder recorder = ruleSet.getMetricsRecorder();
     if (recorder != null) {
-      recorder.record(context, result);
+      // The tokens are already charged in Redis: a recorder failure must not turn the decision
+      // into an exception, which ResilientRateLimiter would answer by charging the fallback too.
+      try {
+        recorder.record(context, result);
+      } catch (Exception e) {
+        if (recorderFailureWarnings.tryAcquire()) {
+          log.warn(
+              "Metrics recorder {} failed for rule set '{}'; the decision is returned unchanged."
+                  + " Further failures within {} are logged at DEBUG.",
+              recorder.getClass().getName(),
+              ruleSet.getId(),
+              LogThrottle.DEFAULT_INTERVAL,
+              e);
+        } else {
+          log.debug("Metrics recorder {} failed", recorder.getClass().getName(), e);
+        }
+      }
     }
     return result;
   }
@@ -441,9 +540,11 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
   private static String buildBucketKey(
       String ruleSetId, String ruleId, RateLimitKey key, RateLimitBand band) {
 
-    // ruleSetId and ruleId are sanitised so that Redis hash-tag delimiters (:, {, }) and SCAN glob
+    // ruleSetId and ruleId are escaped so that Redis hash-tag delimiters (:, {, }) and SCAN glob
     // metacharacters (*, ?, [, ], \) embedded in operator-controlled strings cannot alter the key
-    // namespace or the bucket key pattern. key.value() is already sanitised by the core.
+    // namespace or the bucket key pattern - reversibly, so two ids can never share a bucket. The
+    // band label is escaped too: a label "x:fw" must not land on the FIXED_WINDOW counter of a band
+    // labelled "x". key.value() is already sanitised by the core.
     return BUCKET_KEY_PREFIX
         + "{"
         + sanitizeSegment(ruleSetId)
@@ -452,17 +553,18 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
         + ":"
         + key.value()
         + "}:"
-        + band.getKeyLabel()
+        + escapeBandLabel(band.getKeyLabel())
         + (band.getAlgorithm() == RateLimitAlgorithm.FIXED_WINDOW ? FIXED_WINDOW_KEY_SUFFIX : "");
   }
 
   /**
    * Returns the {@code SCAN MATCH} pattern that selects every token bucket of one rule set.
    *
-   * <p>{@code ruleSetId} is first sanitized so that embedded glob metacharacters and hash-tag
-   * delimiters cannot corrupt the pattern, then any residual metacharacters are backslash-escaped
-   * as a second line of defense. The pattern is anchored on {@link #BUCKET_KEY_PREFIX} and can
-   * therefore never match {@code fluxgate:ruleset:*} or {@code fluxgate:rulesets}.
+   * <p>{@code ruleSetId} is first escaped exactly as in the bucket keys, so that embedded glob
+   * metacharacters and hash-tag delimiters cannot corrupt the pattern, then any residual
+   * metacharacters are backslash-escaped as a second line of defense. The pattern is anchored on
+   * {@link #BUCKET_KEY_PREFIX} and can therefore never match {@code fluxgate:ruleset:*} or {@code
+   * fluxgate:rulesets}.
    *
    * @param ruleSetId the rule set whose buckets should be matched
    * @return a glob pattern such as {@code fluxgate:bucket:&#123;api-limits:*}
@@ -473,35 +575,72 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
   }
 
   /**
-   * Replaces characters that are unsafe in a bucket-key segment with underscores.
+   * Percent-escapes the characters that are unsafe in a bucket-key segment.
    *
    * <p>Unsafe characters are: {@code :}, {@code {}, {@code }}, {@code *}, {@code ?}, {@code [},
-   * {@code ]}, {@code \}, and any whitespace character. They are replaced rather than rejected so
-   * that rule-set / rule IDs created with earlier versions continue to resolve instead of silently
-   * routing every request to a different bucket.
+   * {@code ]}, {@code \}, any whitespace character, and {@code %} itself; each is replaced by the
+   * {@code %XX} escapes of its UTF-8 bytes. Escaping {@code %} keeps the mapping reversible, so two
+   * different ids can never share a bucket the way {@code a:b} and {@code a_b} did when unsafe
+   * characters were replaced by an underscore. Ids without any of these characters - the usual case
+   * - keep exactly the segment they had before.
    */
   static String sanitizeSegment(String value) {
     if (value == null) {
       return "";
     }
-    StringBuilder sb = new StringBuilder(value.length());
+    StringBuilder sb = null;
     for (int i = 0; i < value.length(); i++) {
       char c = value.charAt(i);
-      if (c == ':'
-          || c == '{'
-          || c == '}'
-          || c == '*'
-          || c == '?'
-          || c == '['
-          || c == ']'
-          || c == '\\'
-          || Character.isWhitespace(c)) {
-        sb.append('_');
+      if (isUnsafeSegmentChar(c)) {
+        if (sb == null) {
+          sb = new StringBuilder(value.length() + 8).append(value, 0, i);
+        }
+        appendEscaped(sb, c);
+      } else if (sb != null) {
+        sb.append(c);
+      }
+    }
+    return sb == null ? value : sb.toString();
+  }
+
+  /**
+   * Escapes the band label segment: {@code :} and {@code %} only, so that a label cannot imitate
+   * the {@value #FIXED_WINDOW_KEY_SUFFIX} suffix of a FIXED_WINDOW counter while every other label
+   * - including all derived ones such as {@code 100-per-60s} - keeps its key.
+   */
+  static String escapeBandLabel(String label) {
+    if (label.indexOf(':') < 0 && label.indexOf('%') < 0) {
+      return label;
+    }
+    StringBuilder sb = new StringBuilder(label.length() + 8);
+    for (int i = 0; i < label.length(); i++) {
+      char c = label.charAt(i);
+      if (c == ':' || c == '%') {
+        appendEscaped(sb, c);
       } else {
         sb.append(c);
       }
     }
     return sb.toString();
+  }
+
+  private static boolean isUnsafeSegmentChar(char c) {
+    return c == ':'
+        || c == '{'
+        || c == '}'
+        || c == '*'
+        || c == '?'
+        || c == '['
+        || c == ']'
+        || c == '\\'
+        || c == '%'
+        || Character.isWhitespace(c);
+  }
+
+  private static void appendEscaped(StringBuilder sb, char c) {
+    for (byte b : String.valueOf(c).getBytes(StandardCharsets.UTF_8)) {
+      sb.append('%').append(HEX_DIGITS[(b >> 4) & 0x0F]).append(HEX_DIGITS[b & 0x0F]);
+    }
   }
 
   private static String escapeGlob(String value) {

@@ -45,14 +45,14 @@ import org.junit.jupiter.api.*;
  * never inherited from an earlier run, and only those keys are deleted afterwards.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-class MongoRedisRateLimitIntegrationTest {
+class MongoRedisIsolationAndKeysIntegrationTest {
 
   /** Makes every rule set id - and therefore every Redis bucket key - unique to this JVM run. */
   private static final String RUN_ID = RedisContainerSupport.newRunId();
 
   // Test constants
   private static final String RULE_SET_ID = "e2e-test-ruleset-" + RUN_ID;
-  private static final String RULE_ID = "per-ip-100-per-minute";
+  private static final String RULE_ID = "per-ip-100-per-day";
   private static final String TEST_IP = "203.0.113.10";
 
   // MongoDB components
@@ -131,14 +131,16 @@ class MongoRedisRateLimitIntegrationTest {
 
     // Step 1: Create and store rate limit rule in MongoDB
     System.out.println("STEP 1: Storing rule in MongoDB");
-    System.out.println("  Rule: PER_IP, 100 requests per minute");
+    System.out.println("  Rule: PER_IP, 100 requests per day");
 
+    // A day-long window refills one token every 864 s, so no token comes back while the loop runs
+    // (100 per minute refilled one every 600 ms and let request #101 through on a loaded machine).
     RateLimitBand band =
-        RateLimitBand.builder(Duration.ofMinutes(1), 100).label("100-per-minute").build();
+        RateLimitBand.builder(Duration.ofDays(1), 100).label("100-per-day").build();
 
     RateLimitRule rule =
         RateLimitRule.builder(RULE_ID)
-            .name("E2E Test: 100 requests per minute per IP")
+            .name("E2E Test: 100 requests per day per IP")
             .enabled(true)
             .scope(LimitScope.PER_IP)
             .keyStrategyId("clientIp")
@@ -224,8 +226,7 @@ class MongoRedisRateLimitIntegrationTest {
     String isolationRuleSetId = "isolation-ruleset-" + RUN_ID;
 
     // Setup: Store rule in MongoDB
-    RateLimitBand band =
-        RateLimitBand.builder(Duration.ofMinutes(1), 5).label("5-per-minute").build();
+    RateLimitBand band = RateLimitBand.builder(Duration.ofDays(1), 5).label("5-per-day").build();
 
     RateLimitRule rule =
         RateLimitRule.builder("isolation-test")

@@ -1,6 +1,7 @@
 package org.fluxgate.core.engine;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.util.Arrays;
@@ -16,6 +17,8 @@ import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.config.RuleMatcher;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.engine.RateLimitEngine.OnMissingRuleSetStrategy;
+import org.fluxgate.core.exception.MissingRateLimitKeyException;
+import org.fluxgate.core.key.KeyResolver;
 import org.fluxgate.core.key.LimitScopeKeyResolver;
 import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.match.CidrSet;
@@ -279,6 +282,26 @@ class RateLimitEngineMatchingTest {
       assertThat(result.getKey().value()).isEqualTo("denied:key:bad");
     }
 
+    @Test
+    @DisplayName("the denied key keeps a long resolved key verbatim behind the denied: prefix")
+    void deniedKey_keepsPrefixForLongKeys() {
+      String value = "c".repeat(256);
+      AccessControl ac = AccessControl.builder().addDeniedKey("custom:" + value).build();
+      RateLimitRuleSet rs = ruleSet("test", ac, scoped("a-custom-rule", LimitScope.CUSTOM));
+
+      RequestContext ctx =
+          RequestContext.builder()
+              .clientIp("1.2.3.4")
+              .attribute("custom", value)
+              .endpoint("/api/x")
+              .method("GET")
+              .build();
+      RateLimitResult result = engine(rs, failingLimiter).check("test", ctx);
+
+      assertThat(result.isAllowed()).isFalse();
+      assertThat(result.getKey().value()).isEqualTo("denied:custom:" + value);
+    }
+
     private RateLimitRule highPriorityIpRule() {
       return RateLimitRule.builder("a-ip-rule")
           .scope(LimitScope.PER_IP)
@@ -367,6 +390,123 @@ class RateLimitEngineMatchingTest {
               .method("GET")
               .build();
       assertThat(engine(rs, failingLimiter).check("test", ctx).isAllowed()).isFalse();
+    }
+  }
+
+  // ===== AccessControl: key resolution =====
+
+  @Nested
+  @DisplayName("AccessControl key resolution")
+  class KeyResolutionTests {
+
+    private RateLimitRuleSet withResolver(AccessControl ac, KeyResolver resolver) {
+      return RateLimitRuleSet.builder("test")
+          .rules(Collections.singletonList(rule("r1", 0, RuleMatcher.matchAll())))
+          .keyResolver(resolver)
+          .accessControl(ac)
+          .build();
+    }
+
+    private final RateLimiter allowingLimiter =
+        (ctx, ruleSet2, permits) -> RateLimitResult.allowedWithoutRule();
+
+    private final RequestContext ctx =
+        RequestContext.builder().clientIp("1.2.3.4").endpoint("/api/x").method("GET").build();
+
+    @Test
+    @DisplayName("IP-only access control does not resolve any key")
+    void ipOnlyAccessControl_skipsKeyResolution() {
+      AccessControl ac =
+          AccessControl.builder()
+              .deniedIps(CidrSet.of(Collections.singletonList("10.0.0.0/8")))
+              .build();
+      AtomicInteger resolves = new AtomicInteger();
+      KeyResolver counting =
+          (c, r) -> {
+            resolves.incrementAndGet();
+            return RateLimitKey.of("ip:", c.getClientIp());
+          };
+
+      assertThat(engine(withResolver(ac, counting), allowingLimiter).check("test", ctx).isAllowed())
+          .isTrue();
+      assertThat(resolves.get()).isZero();
+    }
+
+    @Test
+    @DisplayName("a missing key skips that rule's key during access control")
+    void missingKey_isSkipped() {
+      AccessControl ac = AccessControl.builder().addDeniedKey("user:bad").build();
+      KeyResolver missing =
+          (c, r) -> {
+            throw new MissingRateLimitKeyException(r.getId(), LimitScope.PER_USER);
+          };
+      AtomicInteger limiterCalls = new AtomicInteger();
+      RateLimiter counting =
+          (c, rs2, permits) -> {
+            limiterCalls.incrementAndGet();
+            return RateLimitResult.allowedWithoutRule();
+          };
+
+      assertThat(engine(withResolver(ac, missing), counting).check("test", ctx).isAllowed())
+          .isTrue();
+      assertThat(limiterCalls.get()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("an h:-marked resolved key is reported as denied:<key> without encoding it again")
+    void deniedEncodedKey_isNotEncodedAgain() {
+      RateLimitKey encoded = RateLimitKey.of("a+1");
+      AccessControl ac = AccessControl.builder().addDeniedKey(encoded.value()).build();
+      RateLimiter failing =
+          (c, rs2, permits) -> {
+            throw new AssertionError("limiter must not be called on DENY");
+          };
+
+      RateLimitResult result =
+          engine(withResolver(ac, (c, r) -> encoded), failing).check("test", ctx);
+
+      assertThat(result.isAllowed()).isFalse();
+      assertThat(result.getKey().value()).isEqualTo("denied:" + encoded.value());
+    }
+
+    @Test
+    @DisplayName("any other resolver failure propagates instead of being swallowed")
+    void otherResolverFailure_propagates() {
+      AccessControl ac = AccessControl.builder().addDeniedKey("user:bad").build();
+      KeyResolver broken =
+          (c, r) -> {
+            throw new IllegalStateException("resolver bug");
+          };
+      RateLimiter failing =
+          (c, rs2, permits) -> {
+            throw new AssertionError("limiter must not be called");
+          };
+
+      assertThatThrownBy(() -> engine(withResolver(ac, broken), failing).check("test", ctx))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("resolver bug");
+    }
+
+    @Test
+    @DisplayName("the synthetic fallback key has the resolver's ip: shape")
+    void fallbackKey_matchesResolverShape() {
+      AccessControl ac = AccessControl.builder().addDeniedKey("ip:a b").build();
+      RateLimitRule elsewhere =
+          rule("r1", 0, RuleMatcher.builder().addPathPattern("/other/**").build());
+      RateLimitRuleSet rs = ruleSet("test", ac, elsewhere);
+      RateLimiter failing =
+          (c, rs2, permits) -> {
+            throw new AssertionError("limiter must not be called on DENY");
+          };
+
+      RequestContext odd =
+          RequestContext.builder().clientIp("a b").endpoint("/api/x").method("GET").build();
+      RateLimitResult result = engine(rs, failing).check("test", odd);
+
+      assertThat(result.isAllowed()).isFalse();
+      assertThat(result.getKey().value())
+          .isEqualTo("denied:" + RateLimitKey.of("ip:", "a b").value())
+          .matches("denied:ip:h:a_b:[0-9a-f]{16}");
     }
   }
 

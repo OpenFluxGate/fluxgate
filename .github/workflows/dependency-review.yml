@@ -4,7 +4,8 @@ on:
   pull_request:
     branches: [ "main" ]
 
-# Least-privilege: read-only; no token writes needed for this check.
+# Least-privilege: read-only, plus pull-requests: write for the summary comment. Pull requests from
+# forks get a read-only token, so the comment is skipped there while the check itself still runs.
 permissions:
   contents: read
   pull-requests: write
@@ -22,5 +23,5 @@ jobs:
         with:
           # Fail on high and critical vulnerabilities with known fixes.
           fail-on-severity: high
-          # Post a summary comment on the PR.
-          comment-summary-in-pr: always
+          # Post a summary comment on the PR only when the check fails (keeps green PRs quiet).
+          comment-summary-in-pr: on-failure

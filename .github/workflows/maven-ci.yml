@@ -19,7 +19,7 @@ jobs:
 
     services:
       mongo:
-        image: mongo:7.0
+        image: mongo:7.0.14
         env:
           MONGO_INITDB_ROOT_USERNAME: fluxgate
           MONGO_INITDB_ROOT_PASSWORD: "ci-test-only-fluxgate"
@@ -33,7 +33,7 @@ jobs:
           --health-retries=5
 
       redis:
-        image: redis:7-alpine
+        image: redis:7.2.5-alpine
         ports:
           - 6379:6379
         options: >-
@@ -82,7 +82,7 @@ jobs:
         run: ./mvnw -B install -DskipTests
 
       - name: Run unit + integration tests with coverage
-        run: ./mvnw -B verify -Predis-cluster-it
+        run: ./mvnw -B verify -Predis-cluster-it -Dfluxgate.redis.cluster.require=true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@0f8570b1a125f4937846a11fcfa3bcd548bd8c97 # v4.6.0
@@ -107,7 +107,7 @@ jobs:
 
     services:
       mongo:
-        image: mongo:7.0
+        image: mongo:7.0.14
         env:
           MONGO_INITDB_ROOT_USERNAME: fluxgate
           MONGO_INITDB_ROOT_PASSWORD: "ci-test-only-fluxgate"
@@ -121,7 +121,7 @@ jobs:
           --health-retries=5
 
       redis:
-        image: redis:7-alpine
+        image: redis:7.2.5-alpine
         ports:
           - 6379:6379
         options: >-
@@ -156,24 +156,32 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Set up JDK 11
+      # One setup-java call installs both JDKs (the last listed, 11, becomes the default) and
+      # restores the Maven cache once. A second setup-java call with `cache: maven` would restore
+      # the cache again after the JDK 17 install below and could overwrite the freshly installed
+      # fluxgate-control-support SNAPSHOT with a stale cached copy.
+      - name: Set up JDK 17 and JDK 11
         uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
-          java-version: '11'
+          java-version: |
+            17
+            11
           distribution: temurin
           cache: maven
 
-      - name: Build core modules with Java 11
-        run: |
-          # Build only Java 11 compatible modules
-          ./mvnw -B install -DskipTests \
-            -pl fluxgate-core,fluxgate-mongo-adapter,fluxgate-redis-ratelimiter,fluxgate-spring-boot2-starter \
-            -am
+      # fluxgate-control-support, a test dependency of the Boot 2 starter, is compiled against
+      # Spring Boot 3 (its configuration processor and Spring 6 need Java 17), so JDK 11 cannot
+      # build it. Install it (and the parent POM) with JDK 17 first; everything below then
+      # resolves it from the local repository.
+      - name: Install fluxgate-control-support with Java 17
+        run: JAVA_HOME="$JAVA_HOME_17_X64" ./mvnw -B install -DskipTests -pl fluxgate-control-support -am
 
-      - name: Test Spring Boot 2.x starter with Java 11 (unit + integration)
+      - name: Build and test the Java 11 modules and sample with Java 11 (unit + integration)
         run: |
-          ./mvnw -B verify -Predis-cluster-it \
-            -pl fluxgate-core,fluxgate-mongo-adapter,fluxgate-redis-ratelimiter,fluxgate-spring-boot2-starter
+          # No -am: it would rebuild fluxgate-control-support under JDK 11. The Java 11 sample's
+          # startup test boots it on Spring Boot 2.7 against Testcontainers Redis and MongoDB.
+          ./mvnw -B verify -Predis-cluster-it -Dfluxgate.redis.cluster.require=true \
+            -pl fluxgate-core,fluxgate-mongo-adapter,fluxgate-redis-ratelimiter,fluxgate-spring-boot2-starter,fluxgate-samples,fluxgate-samples/fluxgate-sample-standalone-java11
 
       - name: Upload test results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -191,7 +199,7 @@ jobs:
 
     services:
       mongo:
-        image: mongo:7.0
+        image: mongo:7.0.14
         env:
           MONGO_INITDB_ROOT_USERNAME: fluxgate
           MONGO_INITDB_ROOT_PASSWORD: "ci-test-only-fluxgate"
@@ -205,7 +213,7 @@ jobs:
           --health-retries=5
 
       redis:
-        image: redis:7-alpine
+        image: redis:7.2.5-alpine
         ports:
           - 6379:6379
         options: >-
@@ -254,7 +262,7 @@ jobs:
 
       - name: Test Spring Boot 3.x starter with Java 17 (unit + integration)
         run: |
-          ./mvnw -B verify -Predis-cluster-it \
+          ./mvnw -B verify -Predis-cluster-it -Dfluxgate.redis.cluster.require=true \
             -pl fluxgate-core,fluxgate-mongo-adapter,fluxgate-redis-ratelimiter,fluxgate-spring-boot3-starter
 
       - name: Upload test results

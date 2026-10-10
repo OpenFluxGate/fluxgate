@@ -1,6 +1,8 @@
 package org.fluxgate.spring.autoconfigure;
 
+import java.util.ArrayList;
 import java.util.List;
+import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.engine.RateLimitEngine;
 import org.fluxgate.core.engine.RateLimitEngine.OnMissingRuleSetStrategy;
 import org.fluxgate.core.exception.MissingConfigurationException;
@@ -9,18 +11,23 @@ import org.fluxgate.core.key.KeyResolver;
 import org.fluxgate.core.key.LimitScopeKeyResolver;
 import org.fluxgate.core.key.MissingKeyBehavior;
 import org.fluxgate.core.match.PathPatternMatcher;
+import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.ratelimiter.RateLimiter;
 import org.fluxgate.core.ratelimiter.impl.bucket4j.Bucket4jRateLimiter;
 import org.fluxgate.core.resilience.ResilientExecutor;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
+import org.fluxgate.spring.filter.FluxgateWaitPermits;
+import org.fluxgate.spring.filter.IdentitySource;
+import org.fluxgate.spring.filter.RequestContextFactory;
 import org.fluxgate.spring.handler.EngineBackedRateLimitHandler;
 import org.fluxgate.spring.handler.MissingRuleSetProviderRateLimitHandler;
 import org.fluxgate.spring.handler.ResilientRateLimiter;
-import org.fluxgate.spring.metrics.FluxgateMetrics;
 import org.fluxgate.spring.properties.FluxgateProperties;
 import org.fluxgate.spring.properties.FluxgateProperties.FallbackMode;
+import org.fluxgate.spring.properties.FluxgateProperties.IdentityProperties;
 import org.fluxgate.spring.properties.FluxgateProperties.RateLimitProperties;
 import org.fluxgate.spring.properties.FluxgateProperties.RateLimiterMode;
+import org.fluxgate.spring.properties.FluxgateProperties.RuleProperties;
 import org.fluxgate.spring.properties.FluxgateProperties.RuleSetProperties;
 import org.fluxgate.spring.rule.PropertiesRuleSetProvider;
 import org.fluxgate.spring.rule.SpringAntPathMatcherAdapter;
@@ -31,7 +38,6 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.context.properties.bind.Binder;
@@ -39,7 +45,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Condition;
 import org.springframework.context.annotation.ConditionContext;
 import org.springframework.context.annotation.Conditional;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.core.env.Environment;
 import org.springframework.core.type.AnnotatedTypeMetadata;
@@ -107,6 +112,9 @@ public class FluxgateRateLimiterAutoConfiguration {
 
   /** Name under which the in-memory fallback limiter is registered. */
   public static final String FALLBACK_RATE_LIMITER_BEAN_NAME = "fluxgateFallbackRateLimiter";
+
+  /** Name of the {@link FluxgateWaitPermits} shared by the filter and the aspect. */
+  public static final String WAIT_PERMITS_BEAN_NAME = "fluxgateWaitPermits";
 
   private final FluxgateProperties properties;
 
@@ -227,6 +235,24 @@ public class FluxgateRateLimiterAutoConfiguration {
   }
 
   /**
+   * Creates the permits that bound how many threads may be parked waiting for a refill.
+   *
+   * <p>Item 11: the filter and the aspect each used to create their own, so {@code
+   * fluxgate.ratelimit.wait-for-refill.max-concurrent-waits} was enforced twice and up to twice as
+   * many threads could be parked. Both now inject this one. It is a {@link FluxgateWaitPermits}
+   * rather than a {@code Semaphore} bean, so it never takes part in the application's own
+   * injections by type.
+   *
+   * @return the shared wait permits
+   */
+  @Bean(name = WAIT_PERMITS_BEAN_NAME)
+  @ConditionalOnMissingBean(FluxgateWaitPermits.class)
+  public FluxgateWaitPermits fluxgateWaitPermits() {
+    return new FluxgateWaitPermits(
+        properties.getRatelimit().getWaitForRefill().getMaxConcurrentWaits());
+  }
+
+  /**
    * Creates the default key resolver for deployments that do not use the MongoDB adapter.
    *
    * @return the key resolver
@@ -269,18 +295,57 @@ public class FluxgateRateLimiterAutoConfiguration {
    * {@link RateLimitRuleSetProvider} injection ambiguous.
    *
    * @param keyResolver the key resolver to attach to every rule set
+   * @param metricsRecorderProvider the metrics recorder, resolved on the first lookup
    * @return the properties-backed rule set provider
    */
   @Bean(name = "propertiesRuleSetProvider")
   @ConditionalOnMissingBean(
       name = {"propertiesRuleSetProvider", YamlRuleSetComposer.DELEGATE_BEAN_NAME})
   @Conditional(RuleSetsConfiguredCondition.class)
-  public PropertiesRuleSetProvider propertiesRuleSetProvider(KeyResolver keyResolver) {
+  public PropertiesRuleSetProvider propertiesRuleSetProvider(
+      KeyResolver keyResolver, ObjectProvider<RateLimitMetricsRecorder> metricsRecorderProvider) {
     List<RuleSetProperties> ruleSets = properties.getRatelimit().getRuleSets();
     log.info("Creating PropertiesRuleSetProvider with {} rule set(s) from YAML", ruleSets.size());
-    PropertiesRuleSetProvider provider = new PropertiesRuleSetProvider(ruleSets, keyResolver);
+    PropertiesRuleSetProvider provider =
+        new PropertiesRuleSetProvider(ruleSets, keyResolver, metricsRecorderProvider::getIfUnique);
     logStartupSummary(provider);
+    warnAboutApiKeyRulesWithoutHeaderIdentity(properties);
     return provider;
+  }
+
+  /**
+   * Warns once at startup when YAML rules limit {@code PER_API_KEY} while the identity source never
+   * reads the API key header: such rules then fall back per {@code missing-key-behavior} (by
+   * default to the client IP) instead of limiting per key, which is easy to miss.
+   *
+   * @param properties the FluxGate properties
+   */
+  static void warnAboutApiKeyRulesWithoutHeaderIdentity(FluxgateProperties properties) {
+    IdentityProperties identity = properties.getRatelimit().getIdentity();
+    IdentitySource source = RequestContextFactory.resolveIdentitySource(identity.getSource());
+    if (RequestContextFactory.readsIdentityHeaders(source)) {
+      return;
+    }
+    List<String> apiKeyRules = new ArrayList<>();
+    for (RuleSetProperties ruleSet : properties.getRatelimit().getRuleSets()) {
+      for (RuleProperties rule : ruleSet.getRules()) {
+        if (rule.isEnabled() && rule.getScope() == LimitScope.PER_API_KEY) {
+          apiKeyRules.add(ruleSet.getId() + "/" + rule.getId());
+        }
+      }
+    }
+    if (!apiKeyRules.isEmpty()) {
+      log.warn(
+          "PER_API_KEY rule(s) {} are configured but fluxgate.ratelimit.identity.source={}{} never"
+              + " reads the {} header, so these rules cannot see an API key and apply"
+              + " missing-key-behavior={} instead. Set identity.source=HEADERS or"
+              + " PRINCIPAL_THEN_HEADERS behind an authenticating gateway, or use another scope.",
+          apiKeyRules,
+          source,
+          identity.getSource() == null ? " (default)" : "",
+          identity.getApiKeyHeader(),
+          properties.getRatelimit().getMissingKeyBehavior());
+    }
   }
 
   /**
@@ -294,13 +359,16 @@ public class FluxgateRateLimiterAutoConfiguration {
    *
    * @param properties the FluxGate properties
    * @param keyResolver the key resolver to attach to every YAML rule set
+   * @param metricsRecorder the metrics recorder, resolved on the first lookup
    * @return the post-processor
    */
   @Bean
   @Conditional(RuleSetsConfiguredCondition.class)
   public static BeanPostProcessor fluxgateYamlRuleSetComposer(
-      ObjectProvider<FluxgateProperties> properties, ObjectProvider<KeyResolver> keyResolver) {
-    return new YamlRuleSetComposer(properties, keyResolver);
+      ObjectProvider<FluxgateProperties> properties,
+      ObjectProvider<KeyResolver> keyResolver,
+      ObjectProvider<RateLimitMetricsRecorder> metricsRecorder) {
+    return new YamlRuleSetComposer(properties, keyResolver, metricsRecorder);
   }
 
   /**
@@ -414,66 +482,6 @@ public class FluxgateRateLimiterAutoConfiguration {
     }
     return new MissingRuleSetProviderRateLimitHandler(
         properties.getRatelimit().isAllowWhenLimiterFails());
-  }
-
-  /**
-   * Adapts {@link FluxgateMetrics} onto the limiter failure sink.
-   *
-   * <p>Nested so Micrometer stays an optional dependency: without it on the classpath this
-   * configuration is never processed and {@link ResilientRateLimiter} simply records nothing.
-   */
-  @Configuration(proxyBeanMethods = false)
-  @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
-  @ConditionalOnBean(FluxgateMetrics.class)
-  public static class MetricsFailureRecorderConfiguration {
-
-    /**
-     * Creates the failure recorder backed by Micrometer.
-     *
-     * @param metrics the FluxGate metrics facade
-     * @return the failure recorder
-     */
-    @Bean
-    @ConditionalOnMissingBean(ResilientRateLimiter.FailureRecorder.class)
-    public ResilientRateLimiter.FailureRecorder fluxgateLimiterFailureRecorder(
-        FluxgateMetrics metrics) {
-      return metrics::recordLimiterFailure;
-    }
-  }
-
-  /**
-   * Registers an eviction counter for the in-memory Bucket4j limiter.
-   *
-   * <p>Nested so Micrometer stays optional: the configuration is not processed when {@code
-   * io.micrometer.core.instrument.MeterRegistry} is absent. The counter is named {@code
-   * fluxgate.limiter.bucket_evictions} and bound to {@link Bucket4jRateLimiter#getEvictionCount()},
-   * which increments on every size- or idle-based bucket eviction. An evicted bucket is
-   * re-initialised full on the next request, effectively resetting that key's limit.
-   */
-  @Configuration(proxyBeanMethods = false)
-  @ConditionalOnClass(name = "io.micrometer.core.instrument.MeterRegistry")
-  @ConditionalOnBean({Bucket4jRateLimiter.class, io.micrometer.core.instrument.MeterRegistry.class})
-  public static class BucketEvictionMetricsConfiguration {
-
-    /**
-     * Registers the eviction counter for the given in-memory limiter.
-     *
-     * @param rateLimiter the in-memory limiter whose eviction count is exposed
-     * @param registry the Micrometer registry
-     * @return the registered counter
-     */
-    @Bean
-    public io.micrometer.core.instrument.FunctionCounter bucketEvictionCounter(
-        Bucket4jRateLimiter rateLimiter, io.micrometer.core.instrument.MeterRegistry registry) {
-      return io.micrometer.core.instrument.FunctionCounter.builder(
-              "fluxgate.limiter.bucket_evictions",
-              rateLimiter,
-              Bucket4jRateLimiter::getEvictionCount)
-          .description(
-              "Total number of in-memory token buckets evicted from the cache. "
-                  + "Each eviction resets that key's quota to full.")
-          .register(registry);
-    }
   }
 
   /** Matches unless {@code fluxgate.ratelimit.mode} selects the in-memory limiter. */

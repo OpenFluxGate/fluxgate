@@ -1,9 +1,13 @@
 package org.fluxgate.control.autoconfigure;
 
+import io.lettuce.core.RedisURI;
+import java.util.ArrayList;
+import java.util.List;
 import org.fluxgate.control.aop.RuleChangeAspect;
 import org.fluxgate.control.notify.RedisRuleChangeNotifier;
 import org.fluxgate.control.notify.RuleChangeNotifier;
 import org.fluxgate.control.notify.RuleChangeNotifierMetrics;
+import org.fluxgate.core.util.RedisUris;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -76,8 +80,8 @@ public class ControlSupportAutoConfiguration {
     requireSigningSecret(properties);
 
     log.info(
-        "Creating RedisRuleChangeNotifier: uri={}, channel={}, source={}",
-        redis.getUri(),
+        "Creating RedisRuleChangeNotifier: nodes={}, channel={}, source={}",
+        describeRedisUri(redis.getUri()),
         redis.getChannel(),
         properties.getSource());
 
@@ -87,6 +91,40 @@ public class ControlSupportAutoConfiguration {
         redis.getTimeout(),
         properties.getSource(),
         properties.getSecret());
+  }
+
+  /**
+   * Renders a Redis URI (or comma-separated node list) for logging without its credentials.
+   *
+   * <p>Only scheme, host and port of each node are kept. The URI is parsed rather than masked with
+   * a regex, because a password containing {@code @}, {@code :} or {@code ,} defeats a regex and
+   * leaves its tail in the log; a node that cannot be parsed is not rendered at all.
+   *
+   * @param uri the configured URI, may be null
+   * @return a credential-free description
+   */
+  static String describeRedisUri(String uri) {
+    if (uri == null || uri.trim().isEmpty()) {
+      return "<none>";
+    }
+    List<String> rendered = new ArrayList<>();
+    for (String node : RedisUris.splitNodes(uri)) {
+      try {
+        RedisURI parsed = RedisURI.create(node);
+        if (parsed.getHost() == null) {
+          rendered.add("<redis node>");
+        } else {
+          rendered.add(
+              (parsed.isSsl() ? "rediss://" : "redis://")
+                  + parsed.getHost()
+                  + ":"
+                  + parsed.getPort());
+        }
+      } catch (RuntimeException e) {
+        rendered.add("<unparseable redis uri>");
+      }
+    }
+    return String.join(",", rendered);
   }
 
   /**

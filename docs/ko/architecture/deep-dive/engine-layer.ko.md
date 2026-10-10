@@ -36,6 +36,9 @@ public final class RateLimitEngine {
   /** Prefix of the synthetic key reported when no rule set exists and the strategy is DENY. */
   private static final String MISSING_RULE_SET_KEY_PREFIX = "missing-rule-set:";
 
+
+  // ... DENIED_KEY_PREFIX, IP_KEY_PREFIX
+
   /** Strategy when no rule set is found for a given id. */
   public enum OnMissingRuleSetStrategy {
     /** Throw an IllegalArgumentException when the rule set id is not found. */
@@ -49,8 +52,9 @@ public final class RateLimitEngine {
 
     /**
      * Fail-closed: reject the request without applying any rate limiting. The returned result has
-     * no matched rule, {@code nanosToWaitForRefill = 0} and a synthetic key of the form {@code
-     * missing-rule-set:<id>} so the rejection is traceable in metrics and logs.
+     * no matched rule, {@code nanosToWait = 0} and a synthetic key of the form {@code
+     * missing-rule-set:<id>} so the rejection is traceable in metrics and logs. Only the id is
+     * sanitised, so the prefix survives an id that has to be rewritten.
      */
     DENY
   }
@@ -58,8 +62,16 @@ public final class RateLimitEngine {
   private final RateLimitRuleSetProvider ruleSetProvider;
   private final RateLimiter rateLimiter;
   private final OnMissingRuleSetStrategy onMissingRuleSetStrategy;
+  private final PathPatternMatcher pathMatcher;
 
-  /** Check rate limit with a default of 1 permit. */
+
+  /**
+   * Check rate limit with a default of 1 permit.
+   *
+   * @param ruleSetId the rule set to apply (must not be null)
+   * @param context request-scoped information (must not be null)
+   * @return the rate limit result, never null
+   */
   public RateLimitResult check(String ruleSetId, RequestContext context) {
     return check(ruleSetId, context, 1L);
   }
@@ -70,6 +82,15 @@ public final class RateLimitEngine {
    * <p>Never returns {@code null}: a missing rule set is resolved by {@link
    * OnMissingRuleSetStrategy}, and a {@link RateLimiter} that breaks its contract by returning
    * {@code null} raises an {@link IllegalStateException} instead of leaking the null to callers.
+   *
+   * <p>Access control is evaluated before calling the limiter: {@link AccessControl.Decision#DENY}
+   * returns a rejected result immediately; {@link AccessControl.Decision#ALLOW_BYPASS} returns an
+   * allowed result without consuming any tokens.
+   *
+   * @param ruleSetId the rule set to apply (must not be null)
+   * @param context request-scoped information (must not be null)
+   * @param permits number of permits to consume
+   * @return the rate limit result, never null
    */
   public RateLimitResult check(String ruleSetId, RequestContext context, long permits) {
     Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
@@ -80,7 +101,35 @@ public final class RateLimitEngine {
       return onMissingRuleSet(ruleSetId);
     }
 
-    RateLimitResult result = rateLimiter.tryConsume(context, optionalRuleSet.get(), permits);
+    RateLimitRuleSet ruleSet = optionalRuleSet.get();
+
+    // ===== access control =====
+    AccessControl accessControl = ruleSet.getAccessControl();
+    if (!accessControl.isEmpty()) {
+      List<RateLimitKey> resolvedKeys = new ArrayList<>();
+      RateLimitKey primaryKey = null;
+      // Keys are only compared against the key lists; with IP lists alone there is nothing to
+      // resolve, and resolving would cost a resolver call per matching rule for nothing.
+      if (!accessControl.getAllowedKeys().isEmpty() || !accessControl.getDeniedKeys().isEmpty()) {
+        primaryKey = resolveKeysForAccessControl(context, ruleSet, resolvedKeys);
+      }
+      AccessControl.Decision decision =
+          accessControl.evaluate(context.getClientIp(), primaryKey, resolvedKeys);
+      if (decision == AccessControl.Decision.DENY) {
+        return RateLimitResult.builder(
+                deniedKey(accessControl, context.getClientIp(), resolvedKeys))
+            .allowed(false)
+            .remainingTokens(0L)
+            .nanosToWaitForRefill(0L)
+            .build();
+      }
+      if (decision == AccessControl.Decision.ALLOW_BYPASS) {
+        return RateLimitResult.allowedWithoutRule();
+      }
+    }
+
+    // ===== delegate to limiter =====
+    RateLimitResult result = rateLimiter.tryConsume(context, ruleSet, permits, pathMatcher);
     if (result == null) {
       throw new IllegalStateException(
           "RateLimiter "
@@ -91,13 +140,15 @@ public final class RateLimitEngine {
     return result;
   }
 
+  // ... resolveKeysForAccessControl(), deniedKey()
+
   private RateLimitResult onMissingRuleSet(String ruleSetId) {
     switch (onMissingRuleSetStrategy) {
       case THROW:
         throw new IllegalArgumentException("Unknown ruleSetId: " + ruleSetId);
       case DENY:
         // Fail-closed branch: do not call RateLimiter at all.
-        return RateLimitResult.builder(RateLimitKey.of(MISSING_RULE_SET_KEY_PREFIX + ruleSetId))
+        return RateLimitResult.builder(RateLimitKey.of(MISSING_RULE_SET_KEY_PREFIX, ruleSetId))
             .allowed(false)
             .remainingTokens(0L)
             .nanosToWaitForRefill(0L)
@@ -111,13 +162,24 @@ public final class RateLimitEngine {
 }
 ```
 
+### 리미터 호출 전: 접근 제어와 경로 매처
+
+룰셋이 있으면 리미터를 부르기 전에 룰셋의 `AccessControl`을 평가합니다. `DENY`면 토큰을 건드리지 않고
+`denied:` 접두사의 합성 키로 거부하고, `ALLOW_BYPASS`면 토큰을 소비하지 않고 허용합니다. 키 목록
+(허용·거부 키)이 비어 있으면 키를 해석하지 않으므로, IP 목록만 쓰는 룰셋은 규칙마다 KeyResolver를
+부르는 비용을 치르지 않습니다.
+
+리미터는 인자 4개짜리 `tryConsume(context, ruleSet, permits, pathMatcher)`로 호출됩니다. 엔진에 설정한
+`PathPatternMatcher`(기본값 `SimpleAntPathMatcher.INSTANCE`)가 그대로 넘어가므로, 어떤 규칙이 요청에
+맞는지는 엔진과 리미터가 같은 매처로 판단합니다.
+
 ### OnMissingRuleSetStrategy: 세 갈래
 
 | 전략 | 동작 | 언제 쓰나 |
 |-----|------|----------|
 | `THROW` | `IllegalArgumentException` | 빌더 기본값. 라이브러리를 직접 조립할 때 설정 오류를 즉시 드러냄 |
-| `ALLOW` | Rate Limiting 없이 허용 (fail-open) | 스타터 기본값. Rate Limiting은 부가 기능이라는 입장 |
-| `DENY` | 거부 (fail-closed) | 룰셋 없는 요청이 통과하면 안 되는 배포 |
+| `ALLOW` | Rate Limiting 없이 허용 (fail-open) | `missing-rule-behavior: ALLOW`. Rate Limiting은 부가 기능이라는 입장 |
+| `DENY` | 거부 (fail-closed) | 스타터 기본값(`missing-rule-behavior: DENY`). 룰셋 없는 요청이 통과하면 안 되는 배포 |
 
 `DENY`가 0.4에서 추가된 갈래입니다. 중요한 세부는 **거부 결과에 합성 키가 붙는다**는 점입니다.
 
@@ -152,30 +214,42 @@ Redis 왕복을 유발하지 않는다는 뜻이기도 합니다.
 @ConditionalOnMissingBean(RateLimitEngine.class)
 @ConditionalOnBean({RateLimiter.class, RateLimitRuleSetProvider.class})
 public RateLimitEngine fluxgateRateLimitEngine(
-    RateLimitRuleSetProvider ruleSetProvider, RateLimiter rateLimiter) {
+    RateLimitRuleSetProvider ruleSetProvider,
+    RateLimiter rateLimiter,
+    ObjectProvider<PathPatternMatcher> pathMatcherProvider) {
   OnMissingRuleSetStrategy strategy =
       properties.getRatelimit().isDenyWhenRuleMissing()
           ? OnMissingRuleSetStrategy.DENY
           : OnMissingRuleSetStrategy.ALLOW;
 
+  PathPatternMatcher pathMatcher = pathMatcherProvider.getIfAvailable();
+
   log.info(
-      "Creating RateLimitEngine: limiter={}, ruleSetProvider={}, onMissingRuleSet={}",
+      "Creating RateLimitEngine: limiter={}, ruleSetProvider={}, onMissingRuleSet={},"
+          + " pathMatcher={}",
       rateLimiter.getClass().getSimpleName(),
       ruleSetProvider.getClass().getSimpleName(),
-      strategy);
+      strategy,
+      pathMatcher != null ? pathMatcher.getClass().getSimpleName() : "default");
 
-  return RateLimitEngine.builder()
-      .ruleSetProvider(ruleSetProvider)
-      .rateLimiter(rateLimiter)
-      .onMissingRuleSetStrategy(strategy)
-      .build();
+  RateLimitEngine.Builder builder =
+      RateLimitEngine.builder()
+          .ruleSetProvider(ruleSetProvider)
+          .rateLimiter(rateLimiter)
+          .onMissingRuleSetStrategy(strategy);
+
+  if (pathMatcher != null) {
+    builder.pathMatcher(pathMatcher);
+  }
+
+  return builder.build();
 }
 ```
 
 ```yaml
 fluxgate:
   ratelimit:
-    deny-when-rule-missing: false  # false → ALLOW, true → DENY
+    missing-rule-behavior: DENY  # 기본값 DENY, ALLOW = fail-open (isDenyWhenRuleMissing()가 이 값을 읽음)
 ```
 
 `RateLimitEngine`의 Javadoc이 말하는 대로, 이 결정이 내려지는 곳은 **이 한 군데뿐**입니다.
@@ -311,9 +385,18 @@ public interface RuleCache {
   /**
    * Returns the cached rule set, loading and caching it on a miss.
    *
-   * <p>The default implementation is a plain get/load/put sequence, so concurrent misses for the
-   * same id can each run the loader. Implementations backed by a cache with atomic loading should
-   * override this method to collapse those calls into one and to cache negative results.
+   * <p>The default implementation is a plain get/load/put sequence and is not atomic:
+   *
+   * <ul>
+   *   <li>concurrent misses for the same id can each run the loader;
+   *   <li>an {@link #invalidate(String)} (a rule reload) that lands while the loader is running is
+   *       lost: the value loaded before the reload is put afterwards and served until the next
+   *       invalidation or expiry.
+   * </ul>
+   *
+   * <p>Implementations backed by a cache with atomic loading should override this method to
+   * collapse concurrent loads, to cache negative results, and to drop a load that raced an
+   * invalidation (for example by comparing an invalidation generation before and after loading).
    */
   default Optional<RateLimitRuleSet> getOrLoad(
       String ruleSetId, Function<String, Optional<RateLimitRuleSet>> loader) {
@@ -594,7 +677,7 @@ public class LimitScopeKeyResolver implements KeyResolver {
 
     log.debug("Resolved key for rule {} with scope {}: {}", rule.getId(), scope, mask(keyValue));
 
-    return new RateLimitKey(keyValue);
+    return RateLimitKey.ofSanitized(keyValue);
   }
 
   private String resolveClientIp(RequestContext context, RateLimitRule rule, LimitScope scope) {
@@ -738,7 +821,7 @@ private static RateLimitResult missingKeyResult(
     MissingRateLimitKeyException e, RateLimitRule rule) {
 
   log.debug("Rejecting request because no rate limit key could be resolved: {}", e.getMessage());
-  return RateLimitResult.builder(RateLimitKey.of("missing-key:" + rule.getId()))
+  return RateLimitResult.builder(RateLimitKey.of("missing-key:", rule.getId()))
       .allowed(false)
       .matchedRule(rule)
       .policy(rule.getOnLimitExceedPolicy())
@@ -757,88 +840,111 @@ private static RateLimitResult missingKeyResult(
 ### KeyValueSanitizer
 
 ```java
-// KeyValueSanitizer.java - 실제 코드
+// KeyValueSanitizer.java - 실제 코드 (Javadoc 발췌)
 /**
- * Sanitises raw key values before they become part of a {@link RateLimitKey}.
- *
- * <p>Key values originate from untrusted request data (headers, forwarded IPs, custom attributes).
- * Without sanitisation an attacker can inflate the storage key space, smuggle glob metacharacters
- * into {@code SCAN} patterns, or break key parsing with control characters.
- *
- * <p>Two rules are applied, in order:
+ * <p>The output only ever contains {@code [A-Za-z0-9._:@-]} and is at most {@link #MAX_LENGTH}
+ * characters long. The mapping is <em>injective</em> short of a hash collision, so two identities
+ * cannot share a bucket or an allow/deny entry because sanitising made them look alike:
  *
  * <ul>
- *   <li>Every character outside {@code [A-Za-z0-9._:@-]} is replaced by {@code _}
- *   <li>Values longer than {@link #MAX_LENGTH} characters are replaced by the SHA-256 hex digest of
- *       the restricted value (64 characters, stable across JVMs)
+ *   <li>A value of at most {@link #MAX_LENGTH} allowed characters that does not start with {@code
+ *       h:} is returned unchanged.
+ *   <li>Any other value of at most {@code MAX_LENGTH - 19} characters becomes {@code h:}, the value
+ *       with every disallowed character replaced by {@code _}, {@code :} and the first 16 hex
+ *       digits of the SHA-256 of the original value, e.g. {@code a+1} becomes {@code h:a_1:<16
+ *       hex>}. The 16 hex digits are a SHA-256 digest truncated to 64 bits: two such values only
+ *       collide if they have the same restricted form <em>and</em> the same 64-bit digest prefix.
+ *   <li>Longer values become {@code h:} followed by the full 64-digit SHA-256 hex of the original
+ *       value.
  * </ul>
  *
- * <p>The operation is effectively idempotent: sanitising an already sanitised value returns it
- * unchanged.
+ * <p>The {@code h:} marker is what keeps the mapping injective: an unchanged value never starts
+ * with it, and every rewritten value does. As a consequence sanitising is <em>not</em> idempotent:
+ * sanitising a rewritten value rewrites it again (no injective mapping can be idempotent unless it
+ * is the identity). Sanitise raw values exactly once.
  */
 public final class KeyValueSanitizer {
 
-  /** Maximum key value length; longer values are replaced by their SHA-256 hex digest. */
+  /** Maximum sanitised length; longer or rewritten values are hashed to stay within it. */
   public static final int MAX_LENGTH = 256;
 ```
 
-정규화가 막는 것 세 가지:
+정규화가 막는 것 네 가지:
 
 | 공격 | 정규화 없을 때 | 정규화 후 |
 |-----|--------------|----------|
-| 키 공간 팽창 | 1MB짜리 `X-User-Id` 헤더가 1MB짜리 Redis 키가 됨 | 256자 초과 시 SHA-256 hex 64자로 대체 |
-| SCAN 글로브 밀입 | 키 값의 `*`, `?`, `[`, `]`가 `SCAN MATCH` 패턴을 바꿈 | `_`로 치환 |
-| 키 파싱 붕괴 | 제어문자·개행이 키/로그 구조를 깨뜨림 | `_`로 치환 |
+| 키 공간 팽창 | 1MB짜리 `X-User-Id` 헤더가 1MB짜리 Redis 키가 됨 | 237자를 넘는 비정상 값·256자를 넘는 값은 `h:<64 hex>`(66자)로 대체 |
+| SCAN 글로브 밀입 | 키 값의 `*`, `?`, `[`, `]`가 `SCAN MATCH` 패턴을 바꿈 | `_`로 치환된 `h:<제한된 값>:<16 hex>` |
+| 키 파싱 붕괴 | 제어문자·개행이 키/로그 구조를 깨뜨림 | `_`로 치환된 `h:<제한된 값>:<16 hex>` |
+| 버킷 공유(충돌) | 단순 치환이면 `a+1`과 `a_1`이 같은 버킷 | `h:` 마커와 다이제스트로 구분 (`h:a_1:<16 hex>` ≠ `a_1`) |
 
-SHA-256 다이제스트는 JVM 간 안정적이므로, 같은 긴 값은 어느 노드에서도 같은 버킷으로 갑니다.
-`hashCode()`를 쓰면 이 보장이 깨집니다.
+SHA-256 다이제스트는 JVM 간 안정적이므로, 같은 값은 어느 노드에서도 같은 버킷으로 갑니다.
+`hashCode()`를 쓰면 이 보장이 깨집니다. 짧은 형태의 16자리는 64비트로 자른 다이제스트지만,
+충돌하려면 제한된 값까지 같아야 합니다.
+
+새니타이즈는 **멱등이 아닙니다**. `h:`로 시작하는 값은 다시 인코딩되므로 원본 값을 정확히 한 번만
+새니타이즈해야 합니다. `LimitScopeKeyResolver`는 접두사 뒤의 값만 새니타이즈한 뒤
+`RateLimitKey.ofSanitized`로 키를 만들어, 접두사가 해시 바깥에 남고(`user:h:<64 hex>`) 두 번
+인코딩되지 않습니다. 허용/차단 항목 정규화(`normalizeResolvedKey`)는 이미 인코딩된 형태
+(`user:h:...`)를 그대로 두므로 멱등입니다.
 
 ### RateLimitKey (값 객체)
 
 ```java
-// RateLimitKey.java - 실제 코드
-/**
- * Represents a rate limit key used to identify a specific rate limit bucket.
- *
- * <p>Key values are sanitised on construction by {@link KeyValueSanitizer}: characters outside
- * {@code [A-Za-z0-9._:@-]} become {@code _} and values longer than 256 characters are replaced by
- * their SHA-256 hex digest. Custom {@link KeyResolver} implementations therefore cannot inject
- * storage metacharacters or unbounded key values.
- */
+// RateLimitKey.java - 실제 코드 (발췌)
 public final class RateLimitKey {
+
+  /** Longest prefix accepted by {@link #of(String, String)}. */
+  public static final int MAX_PREFIX_LENGTH = 64;
 
   private final String key;
 
   public RateLimitKey(String key) {
-    this.key = KeyValueSanitizer.sanitize(Objects.requireNonNull(key, "key must not be null"));
+    this(KeyValueSanitizer.sanitize(Objects.requireNonNull(key, "key must not be null")), true);
   }
 
+  /** 이미 새니타이즈된 값(접두사 + 새니타이즈된 값)으로 키를 만듭니다. 패키지 전용. */
+  static RateLimitKey ofSanitized(String sanitizedKey) { ... }
+
+  /** 문자열 전체(접두사 포함)를 새니타이즈합니다. 결과는 최대 256자. */
   public static RateLimitKey of(String key) {
     return new RateLimitKey(key);
   }
 
-  public String key() {
-    return key;
+  /** 접두사는 유지하고 값만 새니타이즈합니다. 값 부분이 최대 256자, 접두사는 그 위에 더해집니다. */
+  public static RateLimitKey of(String prefix, String rawValue) {
+    // prefix: 64자 이하, [A-Za-z0-9._:@-], h:로 시작 불가 — 아니면 IllegalArgumentException
+    return ofSanitized(prefix + KeyValueSanitizer.sanitize(rawValue));
   }
 
-  /** Returns the key value. Alias for {@link #key()}. */
   public String value() {
     return key;
   }
 }
 ```
 
-정규화가 **생성자에서** 일어나는 것이 핵심입니다. 사용자가 작성한 `KeyResolver`가 어떤 값을
-만들어도, `RateLimitKey`가 되는 순간 정규화를 통과합니다. 각 resolver가 스스로 정규화하도록
-맡겼다면 하나만 빠뜨려도 구멍이 됩니다.
+정규화가 **생성 경로에서** 일어나는 것이 핵심입니다. 사용자가 작성한 `KeyResolver`가 어떤 값을
+만들어도, 공개 팩터리로 `RateLimitKey`가 되는 순간 정규화를 통과합니다. 각 resolver가 스스로
+정규화하도록 맡겼다면 하나만 빠뜨려도 구멍이 됩니다. 두 공개 팩터리의 차이:
+
+| 호출 | 결과 |
+|------|------|
+| `RateLimitKey.of("user:", "a+1")` | `user:h:a_1:<16 hex>` — 기본 리졸버와 같은 모양 |
+| `RateLimitKey.of("user:a+1")` | `h:user:a_1:<16 hex>` — 접두사까지 함께 인코딩 |
+
+커스텀 리졸버의 키가 기본 리졸버나 `user:` 허용/차단 항목과 일치해야 한다면 `of(prefix, rawValue)`를
+쓰세요. 엔진이 접근 제어용으로 만드는 합성 폴백 키도 `RateLimitKey.of("ip:", clientIp)`로 같은
+모양입니다.
 
 그래서 `RedisRateLimiter.buildBucketKey`는 `key.value()`를 다시 정규화하지 않습니다.
 
 ```java
 // RedisRateLimiter.java - 실제 코드 주석
-// ruleSetId and ruleId are sanitised so that Redis hash-tag delimiters (:, {, }) and SCAN glob
+// ruleSetId and ruleId are escaped so that Redis hash-tag delimiters (:, {, }) and SCAN glob
 // metacharacters (*, ?, [, ], \) embedded in operator-controlled strings cannot alter the key
-// namespace or the bucket key pattern. key.value() is already sanitised by the core.
+// namespace or the bucket key pattern - reversibly, so two ids can never share a bucket. The
+// band label is escaped too: a label "x:fw" must not land on the FIXED_WINDOW counter of a band
+// labelled "x". key.value() is already sanitised by the core.
 ```
 
 ---

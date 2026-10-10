@@ -3,7 +3,6 @@
 # Ports are published on 127.0.0.1 so the security-disabled Elasticsearch and the open
 # Kibana stay unreachable from the surrounding network. xpack.security.enabled=false is
 # acceptable for a throwaway log sink and for nothing else.
-version: "3.8"
 
 services:
   elasticsearch:

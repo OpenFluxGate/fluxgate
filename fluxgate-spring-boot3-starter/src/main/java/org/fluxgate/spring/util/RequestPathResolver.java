@@ -1,7 +1,8 @@
 package org.fluxgate.spring.util;
 
 import jakarta.servlet.http.HttpServletRequest;
-import java.util.concurrent.atomic.AtomicLong;
+import java.time.Duration;
+import org.fluxgate.core.util.LogThrottle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
@@ -45,19 +46,24 @@ public final class RequestPathResolver {
    */
   public static final String UNRESOLVABLE_PATH = "/__fluxgate_unresolvable__";
 
-  /** Minimum gap between two warnings about unresolvable paths, in nanoseconds. */
-  private static final long WARN_INTERVAL_NANOS = 60_000_000_000L;
+  /** Minimum gap between two warnings about unresolvable paths. */
+  private static final Duration WARN_INTERVAL = Duration.ofMinutes(1);
 
   private static final UrlPathHelper PATH_HELPER = createPathHelper();
 
   /**
-   * Timestamp of the last unresolvable path warning.
+   * Throttle of the unresolvable path warning.
    *
    * <p>Anyone can send a malformed escape sequence, so the warning is rate limited to one per
-   * {@link #WARN_INTERVAL_NANOS} and the per-request detail goes to DEBUG. A log line per request
-   * would otherwise be a denial of service against the log pipeline.
+   * {@link #WARN_INTERVAL} and the per-request detail goes to DEBUG. A log line per request would
+   * otherwise be a denial of service against the log pipeline.
    */
-  private static final AtomicLong lastWarnNanos = new AtomicLong(Long.MIN_VALUE);
+  private static volatile LogThrottle unresolvablePathWarnings = new LogThrottle(WARN_INTERVAL);
+
+  /** Restarts the warning throttle so a test sees the first warning; tests only. */
+  static void resetUnresolvablePathWarnings() {
+    unresolvablePathWarnings = new LogThrottle(WARN_INTERVAL);
+  }
 
   private RequestPathResolver() {
     // Utility class
@@ -120,9 +126,7 @@ public final class RequestPathResolver {
   /** Warns at most once per interval; the per-request detail stays at DEBUG. */
   private static void warnAboutUnresolvablePath(RuntimeException cause) {
     log.debug("Unresolvable request path, rate limiting it as an unmatched path", cause);
-    long now = System.nanoTime();
-    long last = lastWarnNanos.get();
-    if (now - last >= WARN_INTERVAL_NANOS && lastWarnNanos.compareAndSet(last, now)) {
+    if (unresolvablePathWarnings.tryAcquire()) {
       log.warn(
           "Request path could not be decoded ({}); such requests are rate limited as unmatched"
               + " paths. Enable DEBUG on {} for per-request detail.",

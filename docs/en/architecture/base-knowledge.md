@@ -307,38 +307,59 @@ EVALSHA (faster) ← used by FluxGate
 ### 2.5 FluxGate's Token Bucket Lua Script
 
 ```lua
--- token_bucket_consume.lua (simplified)
+-- token_bucket_consume.lua, reduced to ONE TOKEN_BUCKET band (simplified).
+-- The real script takes every band of a rule in one call (KEYS[1..n], one hash tag),
+-- checks all of them before writing any, and also handles SLIDING_WINDOW and FIXED_WINDOW.
+-- ARGV[1] = permits, ARGV[2] = max_bucket_ttl_seconds, then per band:
+-- capacity, window_micros, algorithm_code, buckets_or_zero, window_end_or_zero
 
-local bucket_key = KEYS[1]
-local capacity = tonumber(ARGV[1])
-local window_micros = tonumber(ARGV[2])
-local permits = tonumber(ARGV[3])
+local key            = KEYS[1]
+local permits        = tonumber(ARGV[1])
+local max_ttl        = tonumber(ARGV[2])
+local capacity       = tonumber(ARGV[3])
+local window_micros  = tonumber(ARGV[4])
 
--- use Redis server time (avoids clock drift)
-local time_info = redis.call('TIME')
-local now_micros = time_info[1] * 1000000 + time_info[2]
+-- use Redis server time (avoids clock drift between application nodes)
+local time_info  = redis.call('TIME')
+local now_micros = tonumber(time_info[1]) * 1000000 + tonumber(time_info[2])
+local ttl = math.min(max_ttl, math.max(1, math.ceil(window_micros / 1000000 * 1.1)))
 
--- read the current state
-local data = redis.call('HMGET', bucket_key, 'tokens', 'last_refill_micros')
-local tokens = tonumber(data[1]) or capacity
-local last_refill = tonumber(data[2]) or now_micros
-
--- token refill (integer arithmetic only)
-local elapsed = now_micros - last_refill
-local refill = math.floor((elapsed * capacity) / window_micros)
-tokens = math.min(capacity, tokens + refill)
-
--- try to consume
-if tokens >= permits then
-    tokens = tokens - permits
-    redis.call('HMSET', bucket_key, 'tokens', tokens, 'last_refill_micros', now_micros)
-    redis.call('EXPIRE', bucket_key, 86400)  -- set TTL
-    return {1, tokens, 0}  -- allowed
-else
-    local wait = math.ceil((permits - tokens) * window_micros / capacity)
-    return {0, tokens, wait}  -- rejected
+-- read the current state; a missing bucket starts full
+local data        = redis.call('HMGET', key, 'tokens', 'last_refill_micros')
+local tokens      = tonumber(data[1])
+local last_refill = tonumber(data[2])
+if tokens == nil or last_refill == nil then
+    tokens, last_refill = capacity, now_micros
 end
+
+-- refill whole tokens only; the timestamp advances only by what those tokens cost,
+-- so the sub-token remainder carries over to the next call
+local elapsed = math.min(math.max(0, now_micros - last_refill), window_micros)
+local to_add  = math.floor(elapsed * capacity / window_micros)
+if to_add > 0 then
+    last_refill = last_refill + math.floor(to_add * window_micros / capacity)
+end
+tokens = math.min(capacity, tokens + to_add)
+if tokens >= capacity then last_refill = now_micros end
+
+if tokens < permits then
+    -- rejected: nothing is written, only the TTL of an existing bucket is refreshed
+    redis.call('EXPIRE', key, ttl)
+    local wait = math.ceil((permits - tokens) * window_micros / capacity)
+    return {0, tokens, wait}
+end
+
+tokens = tokens - permits
+redis.call('HMSET', key, 'tokens', string.format('%.0f', tokens),
+                         'last_refill_micros', string.format('%.0f', last_refill))
+redis.call('EXPIRE', key, ttl)   -- min(max-bucket-ttl, max(1, ceil(window × 1.1)))
+return {1, tokens, 0}
 ```
+
+The return value is shortened here; the real script returns eight values (allowed, rejecting band,
+remaining, wait, reset time, limit, binding band, Redis time). See
+[Lua Script Flow](README.md#lua-script-flow) and `fluxgate-redis-ratelimiter/README.md` for the
+full contract.
 
 ---
 

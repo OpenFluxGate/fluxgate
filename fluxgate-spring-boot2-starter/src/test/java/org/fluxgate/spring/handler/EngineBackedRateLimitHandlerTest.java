@@ -1,6 +1,7 @@
 package org.fluxgate.spring.handler;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Duration;
 import java.util.List;
@@ -106,12 +107,22 @@ class EngineBackedRateLimitHandlerTest {
 
   @Test
   void shouldRejectWhenNoRuleSetExistsAndTheStrategyIsDeny() {
-    RateLimitResponse response =
-        handlerOver((ctx, rules, permits) -> RateLimitResult.allowedWithoutRule())
-            .tryConsume(CONTEXT, "unknown");
+    EngineBackedRateLimitHandler handler =
+        handlerOver((ctx, rules, permits) -> RateLimitResult.allowedWithoutRule());
 
-    assertThat(response.isAllowed()).isFalse();
-    assertThat(response.getRetryAfterMillis()).isZero();
+    // Item 10: an unknown rule set under DENY is unconfigured rate limiting (HTTP 503).
+    assertThatThrownBy(() -> handler.tryConsume(CONTEXT, "unknown"))
+        .isInstanceOf(RateLimiterUnavailableException.class);
+  }
+
+  @Test
+  void shouldRecogniseAMissingRuleSetWhoseIdHasToBeRewritten() {
+    EngineBackedRateLimitHandler handler =
+        handlerOver((ctx, rules, permits) -> RateLimitResult.allowedWithoutRule());
+
+    // the synthetic key keeps its missing-rule-set: prefix even for an id with a space
+    assertThatThrownBy(() -> handler.tryConsume(CONTEXT, "orders v2"))
+        .isInstanceOf(RateLimiterUnavailableException.class);
   }
 
   @Test
@@ -147,8 +158,56 @@ class EngineBackedRateLimitHandlerTest {
               throw new InvalidRuleConfigException("permits exceed capacity", "orders-rule");
             });
 
-    // Called twice: the first failure warns, the rest go to DEBUG, and neither leaks the exception.
-    assertThat(handler.tryConsume(CONTEXT, "orders").isAllowed()).isFalse();
-    assertThat(handler.tryConsume(CONTEXT, "orders").isAllowed()).isFalse();
+    // Called twice: the first failure warns, the rest go to DEBUG. Item 10: a broken rule set is
+    // reported as unavailable (HTTP 503), not as an exceeded limit.
+    assertThatThrownBy(() -> handler.tryConsume(CONTEXT, "orders"))
+        .isInstanceOf(RateLimiterUnavailableException.class)
+        .hasCauseInstanceOf(InvalidRuleConfigException.class);
+    assertThatThrownBy(() -> handler.tryConsume(CONTEXT, "orders"))
+        .isInstanceOf(RateLimiterUnavailableException.class);
+  }
+
+  @Test
+  void shouldReportACostAboveTheBandCapacityAsTheCallersError() {
+    // The in-memory limiter's own check, as reached without the resilient wrapper.
+    EngineBackedRateLimitHandler handler =
+        handlerOver(
+            new org.fluxgate.core.ratelimiter.impl.bucket4j.Bucket4jRateLimiter(
+                100L, Duration.ofMinutes(1)));
+
+    assertThatThrownBy(() -> handler.tryConsume(CONTEXT, "orders", 500L))
+        .isInstanceOfSatisfying(
+            PermitsExceedCapacityException.class,
+            e -> {
+              assertThat(e.getPermits()).isEqualTo(500L);
+              assertThat(e.getCapacity()).isEqualTo(100L);
+              assertThat(e.getRuleId()).isEqualTo("orders-rule");
+            })
+        .hasCauseInstanceOf(InvalidRuleConfigException.class);
+  }
+
+  @Test
+  void shouldRethrowACostErrorFromTheResilientWrapperUnchanged() {
+    PermitsExceedCapacityException tooCostly =
+        new PermitsExceedCapacityException(500L, 100L, "orders-rule");
+    EngineBackedRateLimitHandler handler =
+        handlerOver(
+            (ctx, rules, permits) -> {
+              throw tooCostly;
+            });
+
+    assertThatThrownBy(() -> handler.tryConsume(CONTEXT, "orders", 500L)).isSameAs(tooCostly);
+  }
+
+  @Test
+  void shouldKeepOtherInvalidRuleErrorsOfAWeightedRequestAsUnavailable() {
+    EngineBackedRateLimitHandler handler =
+        handlerOver(
+            (ctx, rules, permits) -> {
+              throw new InvalidRuleConfigException("window must be positive", "orders-rule");
+            });
+
+    assertThatThrownBy(() -> handler.tryConsume(CONTEXT, "orders", 5L))
+        .isInstanceOf(RateLimiterUnavailableException.class);
   }
 }

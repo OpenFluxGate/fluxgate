@@ -1,13 +1,15 @@
 package org.fluxgate.redis.store;
 
 import io.lettuce.core.RedisCommandExecutionException;
+import io.lettuce.core.RedisCommandTimeoutException;
+import io.lettuce.core.RedisException;
 import io.lettuce.core.RedisNoScriptException;
 import io.lettuce.core.cluster.SlotHash;
 import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.time.temporal.TemporalAdjusters;
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -16,7 +18,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.fluxgate.core.config.QuotaPeriod;
 import org.fluxgate.core.config.RateLimitAlgorithm;
 import org.fluxgate.core.config.RateLimitBand;
+import org.fluxgate.core.exception.FluxgateTimeoutException;
 import org.fluxgate.core.exception.InvalidRuleConfigException;
+import org.fluxgate.core.exception.RedisConnectionException;
 import org.fluxgate.core.exception.ScriptExecutionException;
 import org.fluxgate.redis.RedisRateLimiter;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
@@ -34,11 +38,15 @@ import org.slf4j.LoggerFactory;
  *   <li>Time is tracked in microseconds, which stay inside Lua's exact double range
  *   <li>All bands of one rule are evaluated in a single script call: either every band is charged
  *       or none is, so a rejected request never drains a band that would have allowed it
- *   <li>Token state is not modified on rejection; only the bucket TTLs are refreshed
+ *   <li>Token state is not modified on rejection. TOKEN_BUCKET and SLIDING_WINDOW bucket TTLs are
+ *       refreshed with {@code EXPIRE}; a FIXED_WINDOW counter keeps its absolute expiry, and only
+ *       one left without a TTL gets a {@code PEXPIREAT} at its window end
  *   <li>Returns the binding band's capacity and reset time, for HTTP rate limit headers
- *   <li>Every bucket TTL is capped at {@link #DEFAULT_MAX_BUCKET_TTL} (or the configured {@code
- *       fluxgate.redis.max-bucket-ttl}), so a long window cannot keep forged identity keys resident
- *       in Redis for weeks
+ *   <li>Every TOKEN_BUCKET and SLIDING_WINDOW bucket TTL is capped at {@link
+ *       #DEFAULT_MAX_BUCKET_TTL} (or the configured {@code fluxgate.redis.max-bucket-ttl}), so a
+ *       long window cannot keep forged identity keys resident in Redis for weeks. FIXED_WINDOW
+ *       counters are exempt: they expire exactly at the end of their window, which the cap must not
+ *       cut short (a monthly quota would otherwise reset weekly)
  *   <li>Each decision reports the Redis time it was taken at, so {@link #refund} can give a
  *       consumption back exactly - the compensation step of cross-rule evaluation
  * </ol>
@@ -63,6 +71,12 @@ public class RedisTokenBucketStore {
   private static final long MICROS_PER_SECOND = 1_000_000L;
   private static final long NANOS_PER_MICRO = 1_000L;
 
+  /** Trailing ARGV value that puts the consume script into check-only mode. */
+  private static final String CHECK_ONLY_FLAG = "1";
+
+  /** Shortest window, and shortest sliding sub-bucket, the Lua script accepts: 1 ms. */
+  private static final long MIN_WINDOW_MICROS = 1_000L;
+
   /**
    * Maximum value of {@code capacity × window_micros} that Lua can represent exactly.
    *
@@ -86,7 +100,22 @@ public class RedisTokenBucketStore {
    */
   public static final Duration DEFAULT_MAX_BUCKET_TTL = Duration.ofDays(7);
 
+  /** Shortest pause between two script reloads; doubled after every failed reload. */
+  private static final long MIN_RELOAD_INTERVAL_NANOS = Duration.ofSeconds(1).toNanos();
+
+  /** Longest pause between two script reloads while they keep failing. */
+  private static final long MAX_RELOAD_INTERVAL_NANOS = Duration.ofMinutes(1).toNanos();
+
   private final AtomicBoolean reloadingLuaScript = new AtomicBoolean(false);
+
+  /** {@code System.nanoTime()} of the last reload attempt; valid once {@link #reloadAttempted}. */
+  private volatile long lastReloadAttemptNanos;
+
+  private volatile boolean reloadAttempted;
+
+  /** Pause required after the last reload attempt before the next one may run. */
+  private volatile long reloadIntervalNanos = MIN_RELOAD_INTERVAL_NANOS;
+
   private final RedisConnectionProvider connectionProvider;
   private final LuaScriptRegistry scripts;
   private final long maxBucketTtlSeconds;
@@ -106,8 +135,8 @@ public class RedisTokenBucketStore {
    * Creates a new RedisTokenBucketStore with a custom bucket TTL cap.
    *
    * @param connectionProvider the Redis connection provider (standalone or cluster)
-   * @param maxBucketTtl upper bound on every bucket TTL, or null for {@link
-   *     #DEFAULT_MAX_BUCKET_TTL}
+   * @param maxBucketTtl upper bound on every TOKEN_BUCKET / SLIDING_WINDOW bucket TTL (FIXED_WINDOW
+   *     counters are exempt), or null for {@link #DEFAULT_MAX_BUCKET_TTL}
    */
   public RedisTokenBucketStore(RedisConnectionProvider connectionProvider, Duration maxBucketTtl) {
     this(connectionProvider, new LuaScriptRegistry(), maxBucketTtl);
@@ -131,8 +160,8 @@ public class RedisTokenBucketStore {
    *
    * @param connectionProvider the Redis connection provider (standalone or cluster)
    * @param scripts the script registry this store should own
-   * @param maxBucketTtl upper bound on every bucket TTL, or null for {@link
-   *     #DEFAULT_MAX_BUCKET_TTL}
+   * @param maxBucketTtl upper bound on every TOKEN_BUCKET / SLIDING_WINDOW bucket TTL (FIXED_WINDOW
+   *     counters are exempt), or null for {@link #DEFAULT_MAX_BUCKET_TTL}
    * @throws IllegalArgumentException if {@code maxBucketTtl} is below one second
    */
   public RedisTokenBucketStore(
@@ -155,9 +184,9 @@ public class RedisTokenBucketStore {
   }
 
   /**
-   * Returns the upper bound applied to every bucket TTL.
+   * Returns the upper bound applied to every TOKEN_BUCKET and SLIDING_WINDOW bucket TTL.
    *
-   * @return the TTL cap passed to the Lua script
+   * @return the TTL cap passed to the Lua script; FIXED_WINDOW counters are not subject to it
    */
   public Duration getMaxBucketTtl() {
     return Duration.ofSeconds(maxBucketTtlSeconds);
@@ -196,10 +225,36 @@ public class RedisTokenBucketStore {
    * @return BucketState describing the binding band: the one that rejected, or the one left with
    *     the fewest tokens
    * @throws InvalidRuleConfigException if {@code permits} exceeds the capacity of any band, which
-   *     no amount of waiting could satisfy
+   *     no amount of waiting could satisfy, or a band's window (or sliding sub-bucket) is shorter
+   *     than 1 ms
    * @throws ScriptExecutionException if the Lua script fails or returns an unexpected result
    */
   public BucketState tryConsume(List<String> bucketKeys, List<RateLimitBand> bands, long permits) {
+    return evaluate(bucketKeys, bands, permits, false);
+  }
+
+  /**
+   * Tells whether {@link #tryConsume(List, List, long)} would admit the request, without consuming
+   * anything.
+   *
+   * <p>The script takes the same decision as for a consumption but writes no token, counter or
+   * sub-bucket (a rejection only refreshes TTLs, as it always does). {@link RedisRateLimiter} uses
+   * it to learn how long rules it did not charge would make a rejected request wait, so the
+   * reported Retry-After is the longest one.
+   *
+   * @param bucketKeys one bucket key per band, in the same order as {@code bands}
+   * @param bands the bands of a single rule (capacity, window)
+   * @param permits number of permits the request would consume
+   * @return the decision a consumption would take; on allow nothing has been consumed
+   * @throws InvalidRuleConfigException as for {@link #tryConsume(List, List, long)}
+   * @throws ScriptExecutionException if the Lua script fails or returns an unexpected result
+   */
+  public BucketState check(List<String> bucketKeys, List<RateLimitBand> bands, long permits) {
+    return evaluate(bucketKeys, bands, permits, true);
+  }
+
+  private BucketState evaluate(
+      List<String> bucketKeys, List<RateLimitBand> bands, long permits, boolean checkOnly) {
     Objects.requireNonNull(bucketKeys, "bucketKeys must not be null");
     Objects.requireNonNull(bands, "bands must not be null");
 
@@ -224,6 +279,7 @@ public class RedisTokenBucketStore {
     // refill formula computes elapsed × capacity / window_micros; if capacity × window_micros
     // exceeds 2^53 the intermediate product loses precision and the refill amount is wrong.
     for (RateLimitBand band : bands) {
+      validateWindow(band);
       if (permits > band.getCapacity()) {
         throw new InvalidRuleConfigException(
             "permits ("
@@ -255,8 +311,13 @@ public class RedisTokenBucketStore {
     // KEYS[1..n] = bucketKeys
     // ARGV[1] = permits, ARGV[2] = max_bucket_ttl_seconds, then 5 values per band:
     //   capacity, window_micros, algorithm_code, buckets_or_zero, window_end_micros_or_zero
+    // and, in check-only mode, a trailing "1"
     String[] keys = bucketKeys.toArray(new String[0]);
     String[] args = scriptArgs(permits, maxBucketTtlSeconds, bands);
+    if (checkOnly) {
+      args = Arrays.copyOf(args, args.length + 1);
+      args[args.length - 1] = CHECK_ONLY_FLAG;
+    }
 
     List<Long> result =
         executeScriptWithFallback(
@@ -282,7 +343,7 @@ public class RedisTokenBucketStore {
     long redisTimeMicros = result.get(7);
 
     if (allowed) {
-      if (log.isDebugEnabled()) {
+      if (log.isDebugEnabled() && !checkOnly) {
         log.debug(
             "Token bucket {}: consumed {} permits, {} remaining on band {}, reset at {}",
             keys[0],
@@ -412,6 +473,32 @@ public class RedisTokenBucketStore {
     return args;
   }
 
+  /**
+   * Refuses windows the Lua script cannot represent: below 1 ms the arithmetic divides by zero or
+   * leaves the exact integer range, and a sliding sub-bucket below 1 ms has the same problem.
+   */
+  private static void validateWindow(RateLimitBand band) {
+    long windowMicros = toMicros(band);
+    if (windowMicros < MIN_WINDOW_MICROS) {
+      throw new InvalidRuleConfigException(
+          "band '"
+              + band.getKeyLabel()
+              + "': window must be at least 1 ms, but was "
+              + band.getWindow());
+    }
+    if (band.getAlgorithm() == RateLimitAlgorithm.SLIDING_WINDOW
+        && windowMicros / band.getSlidingWindowBuckets() < MIN_WINDOW_MICROS) {
+      throw new InvalidRuleConfigException(
+          "SLIDING_WINDOW band '"
+              + band.getKeyLabel()
+              + "': each of the "
+              + band.getSlidingWindowBuckets()
+              + " sub-buckets of "
+              + band.getWindow()
+              + " is shorter than 1 ms; use fewer sub-buckets or a longer window");
+    }
+  }
+
   private static long toMicros(RateLimitBand band) {
     return Math.addExact(
         Math.multiplyExact(band.getWindow().getSeconds(), MICROS_PER_SECOND),
@@ -490,12 +577,17 @@ public class RedisTokenBucketStore {
    *
    * <ol>
    *   <li>Execute using EVAL (slower but works)
-   *   <li>Reload the script into Redis cache for future calls
+   *   <li>Reload the script into Redis cache for future calls - at most once at a time, and not
+   *       again until a pause has passed (one second, doubled after every failed reload up to a
+   *       minute), so a node that keeps answering NOSCRIPT, or a reload that keeps failing, does
+   *       not turn every request into extra SCRIPT LOAD round trips
    * </ol>
    *
    * <p>Errors raised by the script itself (Lua {@code redis.error_reply}) arrive as a Lettuce
-   * {@link RedisCommandExecutionException} and are translated into {@link ScriptExecutionException}
-   * so that callers see a FluxGate exception rather than a driver one.
+   * {@link RedisCommandExecutionException} and are translated into {@link
+   * ScriptExecutionException}. A command timeout becomes a {@link FluxgateTimeoutException}, and
+   * any other driver failure (connection refused or closed, cluster routing) a FluxGate {@link
+   * RedisConnectionException}, so that callers only ever see FluxGate exceptions.
    *
    * @param sha the SHA the script is expected to have in Redis
    * @param script the script body, for the EVAL fallback
@@ -523,14 +615,18 @@ public class RedisTokenBucketStore {
         result = connectionProvider.eval(script, keys, args);
       } catch (RedisCommandExecutionException scriptError) {
         throw scriptFailed(scriptName, scriptError);
+      } catch (RedisException driverError) {
+        throw driverFailed(scriptName, driverError);
       }
 
-      // Fallback 2 - Reload script for future calls (thread-safe with AtomicBoolean)
+      // Fallback 2 - Reload script for future calls (single, throttled)
       reloadScript();
 
       return result;
     } catch (RedisCommandExecutionException e) {
       throw scriptFailed(scriptName, e);
+    } catch (RedisException e) {
+      throw driverFailed(scriptName, e);
     }
   }
 
@@ -541,21 +637,54 @@ public class RedisTokenBucketStore {
   }
 
   /**
-   * Reloads the Lua script into Redis cache.
+   * Translates a Lettuce failure that is not a script error into a FluxGate exception.
    *
-   * <p>This is called after a NOSCRIPT error to restore the script cache (both scripts). Uses
-   * AtomicBoolean to prevent multiple concurrent reload attempts.
+   * <p>The connection is established when the store is created, so any failure here happened while
+   * a command was in flight - even one Lettuce reports as a connection error, because a command it
+   * queued while reconnecting may have reached Redis. It is therefore reported as a {@link
+   * RedisConnectionException.Phase#COMMAND} failure, which the retry policy never retries: retrying
+   * a consumption that Redis did execute would charge the request twice.
+   */
+  private static RuntimeException driverFailed(String operation, RedisException e) {
+    if (e instanceof RedisCommandTimeoutException) {
+      return new FluxgateTimeoutException(
+          "Redis command timed out running " + operation + ": " + e.getMessage(), e);
+    }
+    return new RedisConnectionException(
+        "Redis command failed running " + operation + ": " + e.getMessage(),
+        e,
+        RedisConnectionException.Phase.COMMAND);
+  }
+
+  /**
+   * Reloads the Lua scripts into the Redis script cache after a NOSCRIPT error.
+   *
+   * <p>Only one reload runs at a time, and a new one starts only once the pause since the last
+   * attempt has passed: one second after a successful reload, doubled after each failed one up to a
+   * minute. Until then the EVAL fallback keeps serving requests.
    */
   private void reloadScript() {
+    if (reloadAttempted && System.nanoTime() - lastReloadAttemptNanos < reloadIntervalNanos) {
+      log.debug("Lua script was reloaded recently, not reloading again yet");
+      return;
+    }
     if (!reloadingLuaScript.compareAndSet(false, true)) {
       log.debug("Lua script is already being reloaded, skipping...");
       return;
     }
 
     try {
+      lastReloadAttemptNanos = System.nanoTime();
+      reloadAttempted = true;
       scripts.loadInto(connectionProvider);
+      reloadIntervalNanos = MIN_RELOAD_INTERVAL_NANOS;
     } catch (RuntimeException e) {
-      log.error("Failed to reload Lua script: {}", e.getMessage(), e);
+      reloadIntervalNanos = Math.min(MAX_RELOAD_INTERVAL_NANOS, reloadIntervalNanos * 2);
+      log.error(
+          "Failed to reload Lua script, next attempt in {} ms at the earliest: {}",
+          reloadIntervalNanos / 1_000_000L,
+          e.getMessage(),
+          e);
     } finally {
       reloadingLuaScript.set(false);
     }
@@ -577,8 +706,9 @@ public class RedisTokenBucketStore {
    * RedisRateLimiter#bucketKeyPattern(String)}, so it can only ever match bucket keys - never the
    * rule set definitions under {@code fluxgate:ruleset:*}.
    *
-   * <p>Uses SCAN semantics to avoid blocking Redis on production-sized keyspaces, and UNLINK where
-   * the server supports it so that freeing the keys happens off the event loop.
+   * <p>Uses SCAN semantics to avoid blocking Redis on production-sized keyspaces, unlinks every
+   * SCAN page as it arrives so memory stays bounded by the page size, and uses UNLINK where the
+   * server supports it so that freeing the keys happens off the event loop.
    *
    * @param ruleSetId the rule set ID to match
    * @return the number of buckets deleted
@@ -589,7 +719,7 @@ public class RedisTokenBucketStore {
     String pattern = RedisRateLimiter.bucketKeyPattern(ruleSetId);
     log.debug("Deleting token buckets matching pattern: {}", pattern);
 
-    long deleted = deleteInBatches(connectionProvider.scanKeys(pattern, BUCKET_SCAN_COUNT));
+    long deleted = scanAndUnlink(pattern);
     if (deleted == 0) {
       log.debug("No token buckets found for ruleSetId: {}", ruleSetId);
       return 0;
@@ -606,7 +736,8 @@ public class RedisTokenBucketStore {
    * {@code fluxgate:bucket:*}, which is disjoint from {@code fluxgate:ruleset:*} and {@code
    * fluxgate:rulesets} - a full reset can no longer destroy rule set definitions stored in Redis.
    *
-   * <p>Uses SCAN semantics to avoid blocking Redis on production-sized keyspaces.
+   * <p>Uses SCAN semantics to avoid blocking Redis on production-sized keyspaces, and unlinks every
+   * SCAN page as it arrives.
    *
    * @return the number of buckets deleted
    */
@@ -614,7 +745,7 @@ public class RedisTokenBucketStore {
     String pattern = RedisRateLimiter.BUCKET_KEY_PREFIX + "*";
     log.debug("Deleting all token buckets matching pattern: {}", pattern);
 
-    long deleted = deleteInBatches(connectionProvider.scanKeys(pattern, BUCKET_SCAN_COUNT));
+    long deleted = scanAndUnlink(pattern);
     if (deleted == 0) {
       log.debug("No token buckets found");
       return 0;
@@ -624,17 +755,27 @@ public class RedisTokenBucketStore {
     return deleted;
   }
 
-  private long deleteInBatches(List<String> keys) {
-    if (keys == null || keys.isEmpty()) {
-      return 0;
+  /**
+   * Unlinks the keys matching {@code pattern} page by page as SCAN returns them, so the keys of a
+   * large rule set are never held in memory all at once. Lettuce failures are translated into
+   * FluxGate exceptions as for the scripts (see {@code driverFailed}).
+   */
+  private long scanAndUnlink(String pattern) {
+    long[] deleted = {0L};
+    try {
+      connectionProvider.scanKeys(
+          pattern, BUCKET_SCAN_COUNT, page -> deleted[0] += deleteInBatches(page));
+    } catch (RedisException e) {
+      throw driverFailed("SCAN/UNLINK " + pattern, e);
     }
+    return deleted[0];
+  }
 
-    List<String> all = new ArrayList<>(keys);
+  private long deleteInBatches(List<String> keys) {
     long deleted = 0;
-    for (int start = 0; start < all.size(); start += DELETE_BATCH_SIZE) {
-      int end = Math.min(start + DELETE_BATCH_SIZE, all.size());
-      List<String> batch = all.subList(start, end);
-      deleted += connectionProvider.unlink(batch.toArray(new String[0]));
+    for (int start = 0; start < keys.size(); start += DELETE_BATCH_SIZE) {
+      int end = Math.min(start + DELETE_BATCH_SIZE, keys.size());
+      deleted += connectionProvider.unlink(keys.subList(start, end).toArray(new String[0]));
     }
     return deleted;
   }

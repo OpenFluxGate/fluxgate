@@ -1,6 +1,7 @@
 package org.fluxgate.control.aop;
 
 import java.lang.reflect.Method;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -8,6 +9,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.annotation.AfterReturning;
 import org.aspectj.lang.annotation.Aspect;
@@ -44,11 +46,13 @@ import org.springframework.util.ClassUtils;
  *
  * <p><b>Delivery.</b> A failed publish is retried with bounded exponential backoff and jitter (3
  * attempts, 100ms base) on a small daemon scheduler, and a final failure increments {@link
- * RuleChangeNotifierMetrics#getFailedNotifications()} so it can be alerted on. Redis Pub/Sub is
- * at-most-once and gives the publisher no way to detect a lost message, so <b>data plane instances
- * using the PUBSUB reload strategy should keep a low-frequency polling backstop enabled</b> ({@code
- * fluxgate.reload.pubsub.backstop-polling-interval}, 60s by default): that is what makes a lost
- * notification converge instead of leaving a node on stale rules.
+ * RuleChangeNotifierMetrics#getFailedNotifications()} so it can be alerted on. A publish that no
+ * subscriber received is counted in {@link RuleChangeNotifierMetrics#getNoReceiverNotifications()}
+ * instead of as published, and a retry still pending when the aspect shuts down is counted as
+ * failed. Redis Pub/Sub is at-most-once and gives the publisher no way to detect a lost message, so
+ * <b>data plane instances using the PUBSUB reload strategy should keep a low-frequency polling
+ * backstop enabled</b> ({@code fluxgate.reload.pubsub.backstop-polling-interval}, 60s by default):
+ * that is what makes a lost notification converge instead of leaving a node on stale rules.
  *
  * <p><b>Parameter names.</b> An expression such as {@code "#ruleSetId"} needs the annotated class
  * to be compiled with {@code -parameters}, which the Spring Boot parent POM enables by default;
@@ -166,7 +170,7 @@ public class RuleChangeAspect {
 
     log.debug("Notifying rule change for ruleSetId={} from method {}", ruleSetId, method);
     publishWhenCommitted(
-        "rule change for ruleSetId=" + ruleSetId, () -> notifier.notifyChange(ruleSetId));
+        "rule change for ruleSetId=" + ruleSetId, () -> notifier.publishChange(ruleSetId));
   }
 
   /**
@@ -181,7 +185,7 @@ public class RuleChangeAspect {
   @AfterReturning(pointcut = "@annotation(annotation)", argNames = "joinPoint,annotation")
   public void afterFullReload(JoinPoint joinPoint, NotifyFullReload annotation) {
     log.debug("Notifying full reload from method {}", joinPoint.getSignature().getName());
-    publishWhenCommitted("full reload", notifier::notifyFullReload);
+    publishWhenCommitted("full reload", notifier::publishFullReload);
   }
 
   /**
@@ -190,7 +194,7 @@ public class RuleChangeAspect {
    * @param description human readable description of the notification, for logs
    * @param publisher the publish action
    */
-  private void publishWhenCommitted(String description, Runnable publisher) {
+  private void publishWhenCommitted(String description, LongSupplier publisher) {
     if (TRANSACTION_SUPPORT_PRESENT
         && TransactionDeferral.deferUntilAfterCommit(
             () -> publishWithRetry(description, publisher))) {
@@ -206,15 +210,20 @@ public class RuleChangeAspect {
    * @param description human readable description of the notification, for logs
    * @param publisher the publish action
    */
-  private void publishWithRetry(String description, Runnable publisher) {
+  private void publishWithRetry(String description, LongSupplier publisher) {
     attemptPublish(description, publisher, 1);
   }
 
   /** Runs one publish attempt and schedules the next one on failure. */
-  private void attemptPublish(String description, Runnable publisher, int attempt) {
+  private void attemptPublish(String description, LongSupplier publisher, int attempt) {
     try {
-      publisher.run();
-      metrics.recordPublished();
+      long receivers = publisher.getAsLong();
+      if (receivers == 0) {
+        // Delivered to nobody: a channel mismatch or no running data plane, not a success.
+        metrics.recordNoReceivers();
+      } else {
+        metrics.recordPublished();
+      }
       if (attempt > 1) {
         log.info("Published {} on attempt {}", description, attempt);
       }
@@ -300,9 +309,32 @@ public class RuleChangeAspect {
     return metrics;
   }
 
-  /** Shuts down the retry scheduler. */
+  /**
+   * Shuts down the retry scheduler.
+   *
+   * <p>A retry that has not run yet is dropped and counted as a failed notification - it is a rule
+   * change no data plane will be told about - and an attempt already running is given up to five
+   * seconds to finish.
+   */
   public void shutdown() {
-    retryScheduler.shutdownNow();
+    List<Runnable> dropped = retryScheduler.shutdownNow();
+    if (!dropped.isEmpty()) {
+      for (int i = 0; i < dropped.size(); i++) {
+        metrics.recordFailed();
+      }
+      log.error(
+          "Dropped {} pending rule change notification retr{} on shutdown. The data plane keeps the "
+              + "previous rules until its cache expires or a backstop poll picks the change up.",
+          dropped.size(),
+          dropped.size() == 1 ? "y" : "ies");
+    }
+    try {
+      if (!retryScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+        log.warn("A rule change notification attempt was still running after 5s of shutdown");
+      }
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   /**

@@ -5,7 +5,7 @@ spring:
   application:
     name: fluxgate-sample-redis
 
-# FluxGate Configuration - Data-plane (Redis + Filter)
+# FluxGate Configuration - Data-plane (Redis, RateLimiter API called by the controllers)
 fluxgate:
   mongo:
     enabled: false  # No MongoDB in data-plane
@@ -22,15 +22,17 @@ fluxgate:
     # mode: cluster
   ratelimit:
     enabled: true
-    filter-enabled: false
     default-rule-set-id: api-limits
     include-patterns:
       - /api/**
     exclude-patterns:
       - /actuator/**
       - /health
+    # Honour X-Forwarded-For only when a proxy you control sets it AND is listed in trusted-proxies;
+    # otherwise any caller can forge its own IP bucket.
     client-ip-header: X-Forwarded-For
-    trust-client-ip-header: true
+    trust-client-ip-header: ${FLUXGATE_TRUST_CLIENT_IP_HEADER:false}
+    # trusted-proxies: [10.0.0.0/8]
 
 logging:
   level:

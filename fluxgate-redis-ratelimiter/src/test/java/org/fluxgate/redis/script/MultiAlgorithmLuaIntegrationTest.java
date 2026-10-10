@@ -43,6 +43,7 @@ class MultiAlgorithmLuaIntegrationTest {
   private static final int RESET_TIME_MILLIS = 4;
   private static final int LIMIT = 5;
   private static final int BINDING_BAND = 6;
+  private static final int REDIS_TIME = 7;
 
   // Algorithm codes matching the Lua constants
   private static final int ALG_TOKEN_BUCKET = 1;
@@ -151,15 +152,13 @@ class MultiAlgorithmLuaIntegrationTest {
     @Test
     @DisplayName("Expired sub-buckets are dropped on allow — re-admission after one window")
     void expiredSubBucketsDropped() {
-      // Use a very short window so we can manipulate sub-buckets via direct HSET.
-      // 10 sub-buckets × 1 s window = 100 ms each. We cannot sleep, so we seed the hash
-      // with a sub-bucket index that is guaranteed to be ancient (index 0).
+      // Seed the hash with a sub-bucket that is guaranteed to be ancient (index 0); we cannot
+      // sleep through a window.
       String key = key("sw-drop");
-      // capacity=2, window=10 micros, 2 sub-buckets → sub_dur=5 micros
-      // current_sub is around now_micros / 5 ≈ huge index; index 0 is always expired.
+      // capacity=2, window=2 ms, 2 sub-buckets → sub_dur=1 ms (the smallest allowed)
       redis.hset(key, "0", "2"); // seed an expired sub-bucket
-      // Because index 0 is far in the past (< oldest_valid), the sum is 0, so 2 permits allowed.
-      String[] b = band(2, 10L, ALG_SLIDING_WINDOW, 2, 0);
+      // Index 0 is far in the past, so the sum is 0 and 2 permits are allowed.
+      String[] b = band(2, 2_000L, ALG_SLIDING_WINDOW, 2, 0);
       List<Long> result = consume(2, b, key);
       assertThat(result.get(ALLOWED)).isEqualTo(1L);
       // After pass 2 the expired field should have been deleted.
@@ -173,8 +172,8 @@ class MultiAlgorithmLuaIntegrationTest {
       String key = key("sw-ttl");
       String[] b = band(10, MINUTE_MICROS, ALG_SLIDING_WINDOW, 10, 0);
       consume(1, b, key);
-      // 60 s × 1.1 = 66 s
-      assertThat(redis.ttl(key)).isBetween(64L, 66L);
+      // 60 s × 1.1 = 66 s; leave room for a slow CI box between the write and the read
+      assertThat(redis.ttl(key)).isBetween(60L, 66L);
     }
 
     @Test
@@ -200,12 +199,163 @@ class MultiAlgorithmLuaIntegrationTest {
       List<Long> result = consume(1, b, key);
       assertThat(result.get(ALLOWED)).isEqualTo(1L);
 
-      long now = System.currentTimeMillis();
-      long reset = result.get(RESET_TIME_MILLIS);
-      // reset = end of the current sub-bucket cycle, so it lies in (now + window - sub-bucket,
-      // now + window]: 54-60 s for a 60 s window of 10 sub-buckets, plus slack for test latency
-      // and clock skew between the test JVM and Redis.
-      assertThat(reset).isBetween(now + 53_000L, now + 62_000L);
+      // reset = end of the current sub-bucket cycle, derived from the Redis TIME of the decision:
+      // (floor(now / sub) + buckets) * sub, i.e. within (now + window - sub, now + window].
+      long subMicros = MINUTE_MICROS / 10;
+      long now = result.get(REDIS_TIME);
+      assertThat(result.get(RESET_TIME_MILLIS))
+          .isEqualTo((now / subMicros + 10) * subMicros / 1000L)
+          .isBetween((now + MINUTE_MICROS - subMicros) / 1000L, (now + MINUTE_MICROS) / 1000L);
+    }
+
+    @Test
+    @DisplayName("A burst in one sub-bucket waits until that sub-bucket leaves the window")
+    void burstInOneSubBucketWaitsForTheWholeWindow() {
+      String key = key("sw-burst-wait");
+      int buckets = 10;
+      long sub = HOUR_MICROS / buckets; // 6 min sub-buckets: two calls never straddle a boundary
+      String[] b = band(3, HOUR_MICROS, ALG_SLIDING_WINDOW, buckets, 0);
+      assertThat(consume(3, b, key).get(ALLOWED)).isEqualTo(1L);
+
+      List<Long> rejected = consume(1, b, key);
+      assertThat(rejected.get(ALLOWED)).isZero();
+      long now = rejected.get(REDIS_TIME);
+      long wait = rejected.get(MICROS_TO_WAIT);
+      long chargedIndex = subBucketIndex(redis.hgetall(key).keySet().iterator().next());
+
+      // The three permits only stop counting when their sub-bucket leaves the window.
+      assertThat(wait).isEqualTo((chargedIndex + buckets) * sub - now);
+      assertThat(wait).isGreaterThanOrEqualTo((buckets - 1) * sub);
+      // reset time is never earlier than the moment the retry is allowed
+      assertThat(rejected.get(RESET_TIME_MILLIS)).isGreaterThanOrEqualTo((now + wait) / 1000L);
+    }
+
+    @Test
+    @DisplayName("reset_time_millis rounds a sub-millisecond window end up, never down")
+    void resetTimeRoundsUpToTheMillisecond() {
+      String key = key("sw-reset-ceil");
+      int buckets = 10;
+      // 360 000 001 us sub-buckets: a sub-bucket end is almost never on a whole millisecond
+      long sub = HOUR_MICROS / buckets + 1;
+      String[] b = band(1, sub * buckets, ALG_SLIDING_WINDOW, buckets, 0);
+
+      List<Long> allowed = consume(1, b, key);
+      assertThat(allowed.get(ALLOWED)).isEqualTo(1L);
+      long allowedEnd = (allowed.get(REDIS_TIME) / sub + buckets) * sub;
+      assertThat(allowed.get(RESET_TIME_MILLIS)).isEqualTo(ceilMillis(allowedEnd));
+
+      List<Long> rejected = consume(1, b, key);
+      assertThat(rejected.get(ALLOWED)).isZero();
+      long now = rejected.get(REDIS_TIME);
+      long rejectedEnd = (now / sub + buckets) * sub;
+      assertThat(rejected.get(RESET_TIME_MILLIS)).isEqualTo(ceilMillis(rejectedEnd));
+      // the reported reset is never before the moment the retry is allowed
+      assertThat(rejected.get(RESET_TIME_MILLIS) * 1000L)
+          .isGreaterThanOrEqualTo(now + rejected.get(MICROS_TO_WAIT));
+    }
+
+    @Test
+    @DisplayName("permits > 1: waits for the first sub-bucket that frees enough, not the oldest")
+    void multiPermitWaitsUntilEnoughIsFreed() {
+      String key = key("sw-multi-permit-wait");
+      int buckets = 10;
+      long sub = HOUR_MICROS / buckets;
+      long cur = redisNowMicros() / sub;
+      // capacity 4, full: 1 in cur-5, 2 in cur-3, 1 in cur
+      redis.hset(key, field(cur - 5, sub), "1");
+      redis.hset(key, field(cur - 3, sub), "2");
+      redis.hset(key, field(cur, sub), "1");
+      String[] b = band(4, HOUR_MICROS, ALG_SLIDING_WINDOW, buckets, 0);
+
+      List<Long> rejected = consume(2, b, key);
+      assertThat(rejected.get(ALLOWED)).isZero();
+      long now = rejected.get(REDIS_TIME);
+      assertThat(now / sub).as("seeded and evaluated in the same sub-bucket").isEqualTo(cur);
+      // freeing cur-5 gives back 1 permit (not enough for 2); cur-3 gives back 3
+      assertThat(rejected.get(MICROS_TO_WAIT)).isEqualTo((cur - 3 + buckets) * sub - now);
+
+      // a single permit fits as soon as the oldest sub-bucket leaves
+      List<Long> single = consume(1, b, key);
+      assertThat(single.get(MICROS_TO_WAIT))
+          .isEqualTo((cur - 5 + buckets) * sub - single.get(REDIS_TIME));
+    }
+
+    @Test
+    @DisplayName("R8: fewer sub-buckets later - counts of the old geometry do not reject forever")
+    void changingTheBucketCountDoesNotRejectForever() {
+      String key = key("sw-fewer-buckets");
+      // 3 per minute over 10 sub-buckets of 6 s: fill the window
+      String[] tenBuckets = band(3, MINUTE_MICROS, ALG_SLIDING_WINDOW, 10, 0);
+      for (int i = 0; i < 3; i++) {
+        assertThat(consume(1, tenBuckets, key).get(ALLOWED)).isEqualTo(1L);
+      }
+      assertThat(consume(1, tenBuckets, key).get(ALLOWED)).isZero();
+
+      // Same key (e.g. a custom label), now 2 sub-buckets of 30 s. The 6 s indices are about
+      // five times larger than the 30 s ones, i.e. "in the future" of the new geometry.
+      String[] twoBuckets = band(3, MINUTE_MICROS, ALG_SLIDING_WINDOW, 2, 0);
+      List<Long> result = consume(1, twoBuckets, key);
+
+      assertThat(result.get(ALLOWED)).as("old-geometry counts must not be summed").isEqualTo(1L);
+      assertThat(result.get(MIN_REMAINING)).isEqualTo(2L);
+      // and they were removed, so they cannot come back into range later
+      assertThat(redis.hgetall(key)).hasSize(1).containsValue("1");
+    }
+
+    @Test
+    @DisplayName("R8: a longer window later - counts of the old geometry do not reject forever")
+    void changingTheWindowDoesNotRejectForever() {
+      String key = key("sw-longer-window");
+      String[] oneMinute = band(2, MINUTE_MICROS, ALG_SLIDING_WINDOW, 10, 0);
+      consume(1, oneMinute, key);
+      consume(1, oneMinute, key);
+      assertThat(consume(1, oneMinute, key).get(ALLOWED)).isZero();
+
+      // 10 sub-buckets over an hour: 6 min sub-buckets, indices 60x smaller than before
+      String[] oneHour = band(2, HOUR_MICROS, ALG_SLIDING_WINDOW, 10, 0);
+      assertThat(consume(1, oneHour, key).get(ALLOWED)).isEqualTo(1L);
+      assertThat(consume(1, oneHour, key).get(ALLOWED)).isEqualTo(1L);
+      assertThat(consume(1, oneHour, key).get(ALLOWED)).as("new geometry enforces").isZero();
+    }
+
+    @Test
+    @DisplayName("R8: a sub-bucket after the current one is neither counted nor kept")
+    void futureSubBucketIsIgnoredAndDeleted() {
+      String key = key("sw-future-field");
+      String[] b = band(2, MINUTE_MICROS, ALG_SLIDING_WINDOW, 10, 0);
+      // learn the field name the script writes for the current sub-bucket
+      assertThat(consume(1, b, key).get(ALLOWED)).isEqualTo(1L);
+      String currentField = redis.hgetall(key).keySet().iterator().next();
+      redis.del(key);
+
+      // a full sub-bucket three sub-buckets ahead (a clock that went backwards, a failover)
+      redis.hset(key, futureField(currentField, 3), "2");
+
+      assertThat(consume(1, b, key).get(ALLOWED)).isEqualTo(1L);
+      // only the sub-bucket just charged remains (the current one, or the next if a sub-bucket
+      // boundary passed in between) - never the future one
+      Map<String, String> hash = redis.hgetall(key);
+      assertThat(hash).hasSize(1).containsValue("1");
+      assertThat(hash).doesNotContainKey(futureField(currentField, 3));
+    }
+
+    @Test
+    @DisplayName("A window below 1 ms is refused as an error")
+    void windowBelowOneMillisecond() {
+      String key = key("sw-tiny-window");
+      assertThatThrownBy(() -> consume(1, band(2, 999L, ALG_TOKEN_BUCKET, 0, 0), key))
+          .isInstanceOf(RedisCommandExecutionException.class)
+          .hasMessageContaining("window must be at least 1 ms");
+    }
+
+    @Test
+    @DisplayName("A sliding sub-bucket below 1 ms is refused as an error")
+    void subBucketBelowOneMillisecond() {
+      String key = key("sw-tiny-sub");
+      // 1.5 ms over 2 sub-buckets = 750 µs each
+      assertThatThrownBy(() -> consume(1, band(2, 1_500L, ALG_SLIDING_WINDOW, 2, 0), key))
+          .isInstanceOf(RedisCommandExecutionException.class)
+          .hasMessageContaining("sub-bucket must be at least 1 ms");
     }
 
     @Test
@@ -231,8 +381,8 @@ class MultiAlgorithmLuaIntegrationTest {
     @DisplayName("Admits up to capacity within a window then rejects")
     void admitThenReject() {
       String key = key("fw-admit");
-      // window_end = now + 10 s (in the future so the window does not expire mid-test)
-      long windowEnd = (System.currentTimeMillis() + 10_000L) * 1000L;
+      // window_end = Redis now + 10 s (in the future so the window does not expire mid-test)
+      long windowEnd = redisNowMicros() + 10 * SECOND_MICROS;
       String[] b = band(3, MINUTE_MICROS, ALG_FIXED_WINDOW, 0, windowEnd);
 
       for (int i = 0; i < 3; i++) {
@@ -249,15 +399,16 @@ class MultiAlgorithmLuaIntegrationTest {
     @DisplayName("EXPIREAT is set to the supplied window_end (within 2 seconds of TTL)")
     void expireatIsSet() {
       String key = key("fw-expireat");
-      long windowEndSeconds = (System.currentTimeMillis() / 1000L) + 30L;
-      long windowEndMicros = windowEndSeconds * 1_000_000L;
-      String[] b = band(10, 30 * SECOND_MICROS, ALG_FIXED_WINDOW, 0, windowEndMicros);
+      // a whole-millisecond window end 30 s after Redis now, so PEXPIREAT is exact
+      long windowEndMillis = redisNowMicros() / 1000L + 30_000L;
+      String[] b = band(10, 30 * SECOND_MICROS, ALG_FIXED_WINDOW, 0, windowEndMillis * 1000L);
 
-      consume(1, b, key);
+      List<Long> result = consume(1, b, key);
 
-      // TTL should be approximately 30 s (EXPIREAT at window_end)
-      long ttl = redis.ttl(key);
-      assertThat(ttl).isBetween(28L, 30L);
+      // PEXPIREAT at window_end: at most what was left of the 30 s at the decision (Redis TIME),
+      // and PTTL only shrinks from there
+      long leftAtDecision = windowEndMillis - result.get(REDIS_TIME) / 1000L;
+      assertThat(pttl(key)).isBetween(leftAtDecision - 5_000L, leftAtDecision);
     }
 
     @Test
@@ -322,15 +473,17 @@ class MultiAlgorithmLuaIntegrationTest {
     @DisplayName("A legacy counter without TTL gets one on the reject path")
     void rejectRepairsMissingTtl() {
       String key = key("fw-legacy-no-ttl");
-      String[] b = band(2, 100_000L, ALG_FIXED_WINDOW, 0, 0);
-      // A full counter of the current derived window, but without any TTL.
-      long windowEnd = (redisNowMicros() / 100_000L + 1) * 100_000L;
+      // An explicit window end 30 s ahead (a derived 100 ms window could roll over between the
+      // seeding and the call, and the call would then rightly admit).
+      long windowEnd = redisNowMicros() + 30 * SECOND_MICROS;
+      String[] b = band(2, MINUTE_MICROS, ALG_FIXED_WINDOW, 0, windowEnd);
+      // A full counter of that window, but without any TTL.
       writeCounter(key, 5, windowEnd, -1L);
 
       assertThat(consume(1, b, key).get(ALLOWED)).isZero();
 
-      // -1 means "no TTL" (the bug); 0 or -2 just mean the window ended before PTTL ran.
-      assertThat(pttl(key)).isNotEqualTo(-1L).isLessThanOrEqualTo(101L);
+      // -1 means "no TTL" (the bug); the repaired TTL runs to the window end
+      assertThat(pttl(key)).isNotEqualTo(-1L).isBetween(1L, 30_001L);
     }
 
     @Test
@@ -339,9 +492,9 @@ class MultiAlgorithmLuaIntegrationTest {
       // Simulate rolling over: the first call uses a window_end 1 second from now,
       // the second call uses a different window_end further in the future.
       // Since the first key expires (EXPIREAT), the second call sees count=0.
-      long now = System.currentTimeMillis();
-      long firstWindowEnd = (now + 1_000L) * 1000L; // 1 s from now
-      long secondWindowEnd = (now + 60_000L) * 1000L; // 60 s from now
+      long now = redisNowMicros();
+      long firstWindowEnd = now + 5 * SECOND_MICROS; // 5 s from now (Redis TIME)
+      long secondWindowEnd = now + 60 * SECOND_MICROS; // 60 s from now
 
       String keyFirst = key("fw-rollover-w1");
       String keySecond = key("fw-rollover-w2");
@@ -362,7 +515,7 @@ class MultiAlgorithmLuaIntegrationTest {
     @DisplayName("Rejected request does not increment the counter")
     void rejectDoesNotIncrementCounter() {
       String key = key("fw-reject-nomut");
-      long windowEnd = (System.currentTimeMillis() + 10_000L) * 1000L;
+      long windowEnd = redisNowMicros() + 10 * SECOND_MICROS;
       String[] b = band(2, HOUR_MICROS, ALG_FIXED_WINDOW, 0, windowEnd);
 
       consume(1, b, key);
@@ -396,7 +549,10 @@ class MultiAlgorithmLuaIntegrationTest {
       assertThat(result.get(ALLOWED)).as("new window starts empty").isEqualTo(1L);
       assertThat(result.get(MIN_REMAINING)).isEqualTo(2L);
       assertThat(counter(key)).isEqualTo(1L);
-      assertThat(storedWindowEnd(key)).isEqualTo(previousWindowEnd + MINUTE_MICROS);
+      // the window of the decision's Redis TIME (normally previousWindowEnd + 1 minute; one more
+      // if the minute rolled over between seeding and the call)
+      assertThat(storedWindowEnd(key))
+          .isEqualTo((result.get(REDIS_TIME) / MINUTE_MICROS + 1) * MINUTE_MICROS);
       // the counter now expires with the new window, not one window later
       assertThat(pttl(key)).isBetween(1L, MINUTE_MICROS / 1000L);
     }
@@ -440,8 +596,8 @@ class MultiAlgorithmLuaIntegrationTest {
     @Test
     @DisplayName("reset_time_millis matches the supplied window_end")
     void resetTimeMatchesWindowEnd() {
-      long windowEndMs = System.currentTimeMillis() + 30_000L;
-      long windowEndMicros = windowEndMs * 1000L;
+      long windowEndMicros = redisNowMicros() + 30 * SECOND_MICROS;
+      long windowEndMs = windowEndMicros / 1000L;
       String key = key("fw-reset");
       String[] b = band(5, MINUTE_MICROS, ALG_FIXED_WINDOW, 0, windowEndMicros);
 
@@ -466,7 +622,7 @@ class MultiAlgorithmLuaIntegrationTest {
       String keyTb = key("mix-tb");
       String keyFw = key("mix-fw");
 
-      long windowEnd = (System.currentTimeMillis() + 10_000L) * 1000L;
+      long windowEnd = redisNowMicros() + 10 * SECOND_MICROS;
 
       // TOKEN_BUCKET band: capacity=10, FIXED_WINDOW band: capacity=1
       String[] tbBand = band(10, MINUTE_MICROS, ALG_TOKEN_BUCKET, 0, 0);
@@ -507,6 +663,31 @@ class MultiAlgorithmLuaIntegrationTest {
 
       // TB must still have 9 tokens.
       assertThat(Long.parseLong(redis.hgetall(keyTb).get("tokens"))).isEqualTo(9L);
+    }
+
+    @Test
+    @DisplayName("TB and SW both reject: the SW burst has the longest wait and is reported")
+    void slidingWindowBurstIsTheLongestWait() {
+      String keyTb = key("mix-longest-tb");
+      String keySw = key("mix-longest-sw");
+      int buckets = 10;
+      long sub = HOUR_MICROS / buckets;
+
+      // TB: 1 per 10 min -> waits 10 min once spent. SW: 1 per hour over 6 min sub-buckets ->
+      // the burst only leaves the window after at least 54 min.
+      String[] tbBand = band(1, 10 * MINUTE_MICROS, ALG_TOKEN_BUCKET, 0, 0);
+      String[] swBand = band(1, HOUR_MICROS, ALG_SLIDING_WINDOW, buckets, 0);
+      String[] both = bands(tbBand, swBand);
+      assertThat(consume(1, both, keyTb, keySw).get(ALLOWED)).isEqualTo(1L);
+
+      List<Long> rejected = consume(1, both, keyTb, keySw);
+      assertThat(rejected.get(ALLOWED)).isZero();
+      assertThat(rejected.get(REJECTING_BAND)).isEqualTo(2L);
+      assertThat(rejected.get(BINDING_BAND)).isEqualTo(2L);
+      assertThat(rejected.get(LIMIT)).isEqualTo(1L);
+      assertThat(rejected.get(MICROS_TO_WAIT))
+          .isGreaterThanOrEqualTo((buckets - 1) * sub)
+          .isGreaterThan(10 * MINUTE_MICROS);
     }
 
     @Test
@@ -663,6 +844,29 @@ class MultiAlgorithmLuaIntegrationTest {
     List<Long> result =
         redis.eval("return {redis.call('PTTL', KEYS[1])}", new String[] {key}, new String[0]);
     return result.get(0);
+  }
+
+  /** The field of the sub-bucket {@code ahead} sub-buckets after {@code field}. */
+  private static String futureField(String field, int ahead) {
+    int at = field.indexOf('@');
+    String index = at < 0 ? field : field.substring(0, at);
+    String rest = at < 0 ? "" : field.substring(at);
+    return (Long.parseLong(index) + ahead) + rest;
+  }
+
+  /** The sub-bucket index of a sliding window field {@code "<index>@<sub_dur>"}. */
+  private static long subBucketIndex(String field) {
+    return Long.parseLong(field.substring(0, field.indexOf('@')));
+  }
+
+  /** Epoch micros rounded up to the next whole millisecond. */
+  private static long ceilMillis(long micros) {
+    return (micros + 999L) / 1000L;
+  }
+
+  /** The sliding window field the script writes for sub-bucket {@code index} of {@code sub}. */
+  private static String field(long index, long sub) {
+    return index + "@" + sub;
   }
 
   private static String key(String name) {

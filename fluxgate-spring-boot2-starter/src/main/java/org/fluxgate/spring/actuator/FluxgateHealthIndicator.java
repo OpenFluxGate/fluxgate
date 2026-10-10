@@ -24,9 +24,11 @@ import org.springframework.boot.actuate.health.HealthIndicator;
  *
  * <p>Access via: {@code GET /actuator/health/fluxgate}
  *
- * <p>An unhealthy dependency reports the custom status {@code DEGRADED}, which Spring Boot maps to
- * HTTP 200 by default. Add {@code management.endpoint.health.status.http-mapping.DEGRADED=503} so
- * external monitoring actually sees the degradation.
+ * <p>An unhealthy dependency reports the custom status {@code DEGRADED}. {@link
+ * FluxgateHealthStatusEnvironmentPostProcessor} adds it to the default health status order, so it
+ * reaches {@code /actuator/health} and the readiness group, and maps it to HTTP 503 ({@code
+ * fluxgate.actuator.health.degraded-http-status}), so external monitoring actually sees the
+ * degradation.
  *
  * <p>N-6b: the payload names the status and the exception type, never the failure message or the
  * dependency's {@code host:port}. Those are reconnaissance for whoever can read the endpoint, and

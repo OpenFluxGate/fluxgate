@@ -331,10 +331,10 @@ flowchart TB
 
 | Class | Description |
 |-------|-------------|
-| `RateLimitRule` | Single rate limit rule (id, scope, keyStrategyId, bands, policy, attributes). No path, method or priority |
+| `RateLimitRule` | Single rate limit rule (id, scope, keyStrategyId, bands, policy, attributes, priority, `RuleMatcher`) |
 | `RateLimitBand` | One tier: `(window, capacity)`, with an optional label |
 | `LimitScope` | Key scope (`GLOBAL`, `PER_IP`, `PER_USER`, `PER_API_KEY`, `CUSTOM`) |
-| `RateLimitEngine` | Rule set resolution + delegation to a `RateLimiter` (no rule matching logic) |
+| `RateLimitEngine` | Rule set resolution, access control, delegation to a `RateLimiter` (which evaluates the matching rules) |
 | `RequestContext` | Request metadata (clientIp, userId, apiKey, endpoint, method, headers, attributes) |
 
 #### LimitScope Enum
@@ -363,7 +363,7 @@ flowchart TB
     subgraph Redis["fluxgate-redis-ratelimiter"]
         subgraph Connection["Connection"]
             CF[RedisConnectionFactory]
-            POOL[Connection Pool]
+            POOL[Standalone / Cluster connection]
             CLUSTER[Cluster Support]
         end
 
@@ -375,12 +375,13 @@ flowchart TB
 
         subgraph Script["Lua Scripts"]
             CONSUME[token_bucket_consume.lua]
+            REFUND[token_bucket_refund.lua]
             MULTI[Multi-Band Atomic]
         end
 
         subgraph Config["Configuration"]
             CONF[RedisRateLimiterConfig]
-            LOADER[LuaScriptLoader]
+            LOADER[LuaScriptRegistry]
         end
 
         subgraph Health["Health"]
@@ -393,7 +394,7 @@ flowchart TB
     TBS --> CONSUME
     TBS --> STATE
     CONF --> CF
-    LOADER --> CONSUME
+    LOADER --> CONSUME & REFUND
     HC --> CF
 
     style TBS fill:#ffebee
@@ -405,8 +406,8 @@ flowchart TB
 
 | Feature | Description |
 |---------|-------------|
-| **Lua Script** | Atomic token consumption (prevents race conditions) |
-| **Multi-Band** | Every band of one rule in a single Lua call, all-or-nothing |
+| **Lua Script** | Atomic consumption for `TOKEN_BUCKET`, `SLIDING_WINDOW` and `FIXED_WINDOW` bands (prevents race conditions) |
+| **Multi-Band** | Every band of one rule in a single Lua call, all-or-nothing; every matching rule too when their keys share a slot (always on standalone), otherwise rule by rule with a refund |
 | **Server Time** | Uses Redis server time in microseconds (prevents clock drift) |
 | **Cluster** | Automatic Redis Cluster detection; the `{...}` hash tag pins a rule's bands to one slot |
 | **Scoped deletion** | `SCAN` + `UNLINK` over `fluxgate:bucket:*` only, never `KEYS` |
@@ -415,48 +416,48 @@ flowchart TB
 
 ```lua
 -- token_bucket_consume.lua (simplified; see the module README for the full contract)
--- KEYS[1..n]   one bucket key per band of ONE rule, all in the same hash tag
--- ARGV[1]      permits
--- ARGV[2+3i]   capacity,  ARGV[3+3i] window_micros,  ARGV[4+3i] reserved ("0")
+-- KEYS[1..n]   one bucket key per band, all in one hash slot (a rule's bands share a hash tag)
+-- ARGV[1]      permits,   ARGV[2] max_bucket_ttl_seconds
+-- per band i:  capacity, window_micros, algorithm_code, buckets_or_zero, window_end_or_zero
+--              at ARGV[2 + 5(i-1) + 1 .. 5]; an optional trailing "1" means check-only
 
-local time_info = redis.call('TIME')
+local time_info  = redis.call('TIME')
 local now_micros = tonumber(time_info[1]) * 1000000 + tonumber(time_info[2])
 
--- Pass 1: refill and check EVERY band before writing anything
+-- Pass 1: read and check EVERY band, writing nothing. A rejecting band does not stop the
+-- loop: reject() keeps the rejection with the longest wait (TOKEN_BUCKET shown).
 for i = 1, band_count do
-    local bucket_data = redis.call('HMGET', KEYS[i], 'tokens', 'last_refill_micros')
-    local current_tokens = tonumber(bucket_data[1])
-    local last_refill_micros = tonumber(bucket_data[2])
-    if current_tokens == nil or last_refill_micros == nil then
-        current_tokens = capacity          -- missing, or a 0.3.x bucket: start full
-        last_refill_micros = now_micros
+    local data        = redis.call('HMGET', KEYS[i], 'tokens', 'last_refill_micros')
+    local cur_tokens  = tonumber(data[1])
+    local last_refill = tonumber(data[2])
+    if cur_tokens == nil or last_refill == nil then
+        cur_tokens  = capacity               -- missing, or a 0.3.x bucket: start full
+        last_refill = now_micros
     end
-
-    local elapsed_micros = math.min(math.max(0, now_micros - last_refill_micros), window_micros)
-    local tokens_to_add = math.floor(elapsed_micros * capacity / window_micros)
-    local refilled = math.min(capacity, current_tokens + tokens_to_add)
-
+    local elapsed  = math.min(math.max(0, now_micros - last_refill), win_micros)
+    local to_add   = math.floor(elapsed * capacity / win_micros)
+    local refilled = math.min(capacity, cur_tokens + to_add)
     if refilled < permits then
-        -- Rejected: write no state. Only refresh TTLs (EXPIRE is a no-op on a missing key),
-        -- so a band that would have allowed the request keeps its tokens.
-        for j = 1, band_count do
-            redis.call('EXPIRE', KEYS[j], ttl_seconds(windows[j]))
-        end
-        return {0, i, refilled, micros_to_wait, reset_time_millis, capacity, i}
+        reject(i, refilled, wait, reset_millis)
     end
 end
 
--- Pass 2: every band can serve the request, so consume from all of them
+if rejection ~= nil then
+    refresh_ttls()      -- EXPIRE the TOKEN_BUCKET / SLIDING_WINDOW keys only (no-op if missing)
+    return rejection    -- {0, band, remaining, wait, reset, limit, band, now_micros}
+end
+
+-- Pass 2: every band can serve the request, so write all of them
 for i = 1, band_count do
     redis.call('HMSET', KEYS[i],
-        'tokens', string.format('%.0f', remaining),
-        'last_refill_micros', string.format('%.0f', refill_micros[i]))
-    redis.call('EXPIRE', KEYS[i], ttl_seconds(windows[i]))   -- max(1, ceil(window * 1.1)), no cap
+        'tokens',             string.format('%.0f', remaining),
+        'last_refill_micros', string.format('%.0f', tb_refills[i]))
+    redis.call('EXPIRE', KEYS[i], ttl_for_window(win_micros))  -- min(cap, max(1, ceil(window * 1.1)))
 end
 
 -- reset_time is computed AFTER consumption, so the caller learns when the bucket is
 -- really full again rather than when it would have been without this request.
-return {1, 0, tokens[binding], 0, reset_time_millis, binding_capacity, binding}
+return {1, 0, binding_remaining, 0, reset_millis, binding_capacity, binding, now_micros}
 ```
 
 Time is in **microseconds**, not nanoseconds: Redis runs Lua 5.1, where every number is a double with
@@ -483,12 +484,12 @@ flowchart TB
         end
 
         subgraph Conversion["Conversion"]
-            CONV[DocumentConverter]
+            CONV["RateLimitRuleMongoConverter / RateLimitRuleConverter"]
             ATTR[Custom Attributes]
         end
 
         subgraph Health["Health"]
-            HC[MongoHealthChecker]
+            HC[MongoHealthCheckerImpl]
         end
     end
 
@@ -513,27 +514,53 @@ flowchart TB
   "keyStrategyId": null,
   "onLimitExceedPolicy": "REJECT_REQUEST",
   "bands": [
-    { "label": "per-second", "capacity": 100, "windowSeconds": 1 },
-    { "label": "per-minute", "capacity": 1000, "windowSeconds": 60 }
+    { "label": "per-second", "capacity": 100, "windowSeconds": 1, "algorithm": "TOKEN_BUCKET" },
+    { "label": "per-minute", "capacity": 1000, "windowSeconds": 60, "algorithm": "TOKEN_BUCKET" }
   ],
   "enabled": true,
   "attributes": {
     "tenant": "enterprise",
     "tier": "premium"
-  }
+  },
+  "priority": 10,
+  "methods": ["GET", "POST"],
+  "pathPatterns": ["/api/**"],
+  "excludePathPatterns": ["/api/health"],
+  "allowedIps": ["192.168.0.0/16"],
+  "deniedIps": ["10.0.0.0/8"],
+  "allowedKeys": ["user:admin"],
+  "deniedKeys": ["user:blocked"],
+  "aclUpdatedAt": { "$date": "2026-10-10T00:00:00Z" }
 }
 ```
 
-There is no `path`, `method`, `priority` or `compositeKeyFields` field: a rule has a scope and bands,
-and every enabled rule of a rule set is evaluated.
+A rule is identified by `(ruleSetId, id)`. The 0.4 matcher fields (`priority`, `methods`,
+`pathPatterns`, `excludePathPatterns`, `headerEquals`, `headerPresent`) select which requests a rule
+applies to; empty matcher fields are omitted and match everything, so every enabled rule whose
+matchers accept the request is evaluated, highest `priority` first. There is no
+`compositeKeyFields` field.
+
+The access-control lists (`allowedIps`, `deniedIps`, `allowedKeys`, `deniedKeys`) belong to the rule
+set, not to the domain `RateLimitRule`: every rule document of the rule set carries a copy, and
+`findAccessControlByRuleSetId` merges the copies (deny lists by union, allow lists by intersection).
+`aclUpdatedAt` marks a copy written by the repository, so a copy whose lists were all cleared still
+takes part in the merge. Only its presence matters: `saveAccessControl` and `moveRule` write the
+server time, the insert of a new rule writes the client time (`$currentDate` cannot be used in
+`$setOnInsert`).
 
 #### Indexes
 
 ```javascript
-// Created automatically by fluxgate.mongo.ddl-auto=create
-db.rate_limit_rules.createIndex({ "ruleSetId": 1 })
-db.rate_limit_rules.createIndex({ "ruleSetId": 1, "id": 1 }, { unique: true })
+// Created by MongoRateLimitRuleRepository#ensureIndexes() when fluxgate.mongo.ddl-auto=create
+db.rate_limit_rules.createIndex({ "ruleSetId": 1, "id": 1 }, { unique: true, name: "ruleSetId_1_id_1_unique" })
+db.rate_limit_rules.createIndex({ "id": 1 }, { name: "id_1" })
 ```
+
+Index creation failures are fatal: duplicate `(ruleSetId, id)` pairs or a conflicting index fail
+startup with an `IllegalStateException` that lists the duplicates. With `ddl-auto=validate` startup
+fails when the unique `{ruleSetId: 1, id: 1}` index is missing, or when the only one is `sparse`,
+partial (`partialFilterExpression`) or has a collation other than `simple` — such an index does not
+enforce uniqueness for every rule and is rejected by name.
 
 ---
 
@@ -686,8 +713,8 @@ sequenceDiagram
         R->>K: resolve(context, rule)
         K-->>R: RateLimitKey
         R->>S: tryConsume(bucketKeys, bands, permits)
-        S->>L: EVALSHA (atomic per rule)
-        L-->>S: 7 integers
+        S->>L: EVALSHA (atomic per call)
+        L-->>S: 8 integers
         S-->>R: BucketState
     end
     R-->>E: RateLimitResult

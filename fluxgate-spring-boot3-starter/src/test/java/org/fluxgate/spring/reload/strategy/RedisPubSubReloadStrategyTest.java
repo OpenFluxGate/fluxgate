@@ -39,7 +39,7 @@ class RedisPubSubReloadStrategyTest {
         "{\"ruleSetId\":\"\"}",
         "{\"ruleSetId\":null}",
         "{\"fullReload\":false}",
-        "{\"version\":2,\"fullReload\":true}",
+        "{\"version\":3,\"fullReload\":true}",
         "{\"version\":99,\"ruleSetId\":\"orders\"}",
         "{\"unrelated\":\"payload from another app\"}"
       })

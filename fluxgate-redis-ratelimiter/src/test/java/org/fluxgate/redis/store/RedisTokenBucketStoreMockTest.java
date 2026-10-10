@@ -6,13 +6,19 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import io.lettuce.core.RedisCommandExecutionException;
+import io.lettuce.core.RedisCommandTimeoutException;
+import io.lettuce.core.RedisException;
 import io.lettuce.core.RedisNoScriptException;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import org.fluxgate.core.config.RateLimitBand;
+import org.fluxgate.core.exception.FluxgateTimeoutException;
 import org.fluxgate.core.exception.InvalidRuleConfigException;
+import org.fluxgate.core.exception.RedisConnectionException.Phase;
 import org.fluxgate.core.exception.ScriptExecutionException;
+import org.fluxgate.core.resilience.DefaultRetryExecutor;
+import org.fluxgate.core.resilience.RetryConfig;
 import org.fluxgate.redis.RedisRateLimiter;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.fluxgate.redis.connection.RedisConnectionProvider.RedisMode;
@@ -351,6 +357,35 @@ class RedisTokenBucketStoreMockTest {
   }
 
   @Test
+  @DisplayName("A window below 1 ms is refused before Redis is called")
+  void shouldRejectAWindowBelowOneMillisecond() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofNanos(999_999), 10).build();
+
+    assertThatThrownBy(() -> store.tryConsume("key", band, 1))
+        .isInstanceOf(InvalidRuleConfigException.class)
+        .hasMessageContaining("at least 1 ms");
+    verify(connectionProvider, never())
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+  }
+
+  @Test
+  @DisplayName("A sliding sub-bucket below 1 ms is refused before Redis is called")
+  void shouldRejectASlidingSubBucketBelowOneMillisecond() {
+    // 10 ms over 20 sub-buckets = 500 µs each
+    RateLimitBand band =
+        RateLimitBand.builder(Duration.ofMillis(10), 10)
+            .algorithm(org.fluxgate.core.config.RateLimitAlgorithm.SLIDING_WINDOW)
+            .slidingWindowBuckets(20)
+            .build();
+
+    assertThatThrownBy(() -> store.tryConsume("key", band, 1))
+        .isInstanceOf(InvalidRuleConfigException.class)
+        .hasMessageContaining("sub-bucket");
+    verify(connectionProvider, never())
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+  }
+
+  @Test
   void shouldDefaultTheBucketTtlCapToSevenDays() {
     assertThat(store.getMaxBucketTtl()).isEqualTo(Duration.ofDays(7));
   }
@@ -400,6 +435,28 @@ class RedisTokenBucketStoreMockTest {
   }
 
   @Test
+  @DisplayName("check() runs the consume script in check-only mode (trailing ARGV flag)")
+  void checkShouldPassTheCheckOnlyFlag() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
+    doReturn(rejectedReply(0L, 2_000_000L, System.currentTimeMillis(), 100L, 1L))
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+
+    BucketState state = store.check(List.of("my-bucket-key"), List.of(band), 1);
+
+    assertThat(state.consumed()).isFalse();
+    assertThat(state.nanosToWaitForRefill()).isEqualTo(2_000_000_000L);
+    verify(connectionProvider)
+        .evalsha(
+            eq("test-sha-123"),
+            eq(new String[] {"my-bucket-key"}),
+            eq(
+                new String[] {
+                  "1", DEFAULT_TTL_ARG, "100", String.valueOf(MINUTE_MICROS), "1", "0", "0", "1"
+                }));
+  }
+
+  @Test
   void shouldReturnCorrectMode() {
     // given
     when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
@@ -422,7 +479,7 @@ class RedisTokenBucketStoreMockTest {
         Arrays.asList(
             "fluxgate:bucket:{test-rule:per-ip:ip:127.0.0.1}:10-per-1s",
             "fluxgate:bucket:{test-rule:per-user:user:u1}:10-per-1s");
-    when(connectionProvider.scanKeys(pattern, 1000L)).thenReturn(keys);
+    scanPages(pattern, keys);
     when(connectionProvider.unlink(keys.toArray(new String[0]))).thenReturn(2L);
 
     // when
@@ -431,7 +488,6 @@ class RedisTokenBucketStoreMockTest {
     // then
     assertThat(deleted).isEqualTo(2L);
     assertThat(pattern).isEqualTo("fluxgate:bucket:{test-rule:*");
-    verify(connectionProvider).scanKeys(pattern, 1000L);
     verify(connectionProvider, never()).keys(anyString());
     verify(connectionProvider, never()).del(any(String[].class));
   }
@@ -442,7 +498,7 @@ class RedisTokenBucketStoreMockTest {
     // given
     List<String> keys =
         Arrays.asList("fluxgate:bucket:{rule-a:r:ip:1}:b", "fluxgate:bucket:{rule-b:r:ip:2}:b");
-    when(connectionProvider.scanKeys("fluxgate:bucket:*", 1000L)).thenReturn(keys);
+    scanPages("fluxgate:bucket:*", keys);
     when(connectionProvider.unlink(keys.toArray(new String[0]))).thenReturn(2L);
 
     // when
@@ -450,8 +506,49 @@ class RedisTokenBucketStoreMockTest {
 
     // then
     assertThat(deleted).isEqualTo(2L);
-    verify(connectionProvider).scanKeys("fluxgate:bucket:*", 1000L);
+    verify(connectionProvider).scanKeys(eq("fluxgate:bucket:*"), eq(1000L), any());
     verify(connectionProvider, never()).keys(anyString());
+  }
+
+  @Test
+  @DisplayName("Reset unlinks page by page instead of collecting the whole keyspace first")
+  void shouldUnlinkEachScanPageAsItArrives() {
+    List<String> first = Arrays.asList("fluxgate:bucket:{a:r:k}:1", "fluxgate:bucket:{a:r:k}:2");
+    List<String> second = Arrays.asList("fluxgate:bucket:{a:r:k}:3");
+    List<String> unlinkedBeforeSecondPage = new java.util.ArrayList<>();
+    doAnswer(
+            invocation -> {
+              java.util.function.Consumer<List<String>> consumer = invocation.getArgument(2);
+              consumer.accept(first);
+              // the first page must already be gone when the second one is read
+              verify(connectionProvider).unlink(first.toArray(new String[0]));
+              unlinkedBeforeSecondPage.addAll(first);
+              consumer.accept(second);
+              return null;
+            })
+        .when(connectionProvider)
+        .scanKeys(eq("fluxgate:bucket:*"), eq(1000L), any());
+    when(connectionProvider.unlink(any(String[].class)))
+        .thenAnswer(invocation -> (long) invocation.getArguments().length);
+
+    long deleted = store.deleteAllBuckets();
+
+    assertThat(deleted).isEqualTo(3L);
+    assertThat(unlinkedBeforeSecondPage).containsExactlyElementsOf(first);
+    verify(connectionProvider).unlink(second.toArray(new String[0]));
+    verify(connectionProvider, never()).scanKeys(anyString(), anyLong());
+  }
+
+  /** Stubs the paged SCAN to deliver {@code keys} as one page. */
+  private void scanPages(String pattern, List<String> keys) {
+    doAnswer(
+            invocation -> {
+              java.util.function.Consumer<List<String>> consumer = invocation.getArgument(2);
+              consumer.accept(keys);
+              return null;
+            })
+        .when(connectionProvider)
+        .scanKeys(eq(pattern), eq(1000L), any());
   }
 
   @Test
@@ -561,5 +658,210 @@ class RedisTokenBucketStoreMockTest {
     // then - EVAL fallback still served the request
     assertThat(result.consumed()).isTrue();
     assertThat(result.remainingTokens()).isEqualTo(99);
+  }
+
+  // ===== Lettuce failures surface as FluxGate exceptions =====
+
+  @Test
+  @DisplayName("A Lettuce command timeout becomes a FluxgateTimeoutException")
+  void shouldWrapACommandTimeout() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
+    RedisCommandTimeoutException timeout =
+        new RedisCommandTimeoutException("Command timed out after 5 second(s)");
+    doThrow(timeout)
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+
+    assertThatThrownBy(() -> store.tryConsume("key", band, 1))
+        .isInstanceOf(FluxgateTimeoutException.class)
+        .hasMessageContaining("token_bucket_consume.lua")
+        .hasCause(timeout);
+  }
+
+  @Test
+  @DisplayName("A Lettuce connection failure becomes a FluxGate RedisConnectionException")
+  void shouldWrapAConnectionFailure() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
+    io.lettuce.core.RedisConnectionException refused =
+        new io.lettuce.core.RedisConnectionException("Unable to connect to localhost:6379");
+    doThrow(refused)
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+
+    assertThatThrownBy(() -> store.tryConsume("key", band, 1))
+        .isInstanceOf(org.fluxgate.core.exception.RedisConnectionException.class)
+        .hasCause(refused);
+  }
+
+  @Test
+  @DisplayName("Any other Lettuce failure (e.g. a closed connection) is wrapped as well")
+  void shouldWrapOtherLettuceFailures() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
+    RedisException closed = new RedisException("Connection closed");
+    doThrow(closed)
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+
+    assertThatThrownBy(() -> store.tryConsume("key", band, 1))
+        .isInstanceOf(org.fluxgate.core.exception.RedisConnectionException.class)
+        .hasCause(closed);
+  }
+
+  @Test
+  @DisplayName("A timeout of the EVAL fallback is wrapped too")
+  void shouldWrapATimeoutOfTheEvalFallback() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
+    doThrow(new RedisNoScriptException("NOSCRIPT No matching script"))
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+    doThrow(new RedisCommandTimeoutException("Command timed out"))
+        .when(connectionProvider)
+        .eval(anyString(), any(String[].class), any(String[].class));
+
+    assertThatThrownBy(() -> store.tryConsume("key", band, 1))
+        .isInstanceOf(FluxgateTimeoutException.class);
+  }
+
+  @Test
+  @DisplayName("A refund timeout is wrapped too")
+  void shouldWrapARefundTimeout() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
+    doThrow(new RedisCommandTimeoutException("Command timed out"))
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+
+    assertThatThrownBy(() -> store.refund(List.of("key"), List.of(band), 1, REDIS_TIME))
+        .isInstanceOf(FluxgateTimeoutException.class)
+        .hasMessageContaining("token_bucket_refund.lua");
+  }
+
+  // ===== Command-phase failures are never retried =====
+
+  @Test
+  @DisplayName("A failure while consuming is a COMMAND-phase failure and is not retried")
+  void consumeFailureIsCommandPhaseAndNotRetried() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
+    doThrow(new io.lettuce.core.RedisConnectionException("Connection reset by peer"))
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+    DefaultRetryExecutor retry =
+        new DefaultRetryExecutor(
+            RetryConfig.builder().maxAttempts(3).initialBackoff(Duration.ofMillis(1)).build());
+
+    assertThatThrownBy(() -> retry.execute(() -> store.tryConsume("key", band, 1)))
+        .isInstanceOfSatisfying(
+            org.fluxgate.core.exception.RedisConnectionException.class,
+            e -> {
+              assertThat(e.getPhase()).isEqualTo(Phase.COMMAND);
+              assertThat(e.isRetryable()).isFalse();
+            });
+    verify(connectionProvider, times(1))
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+  }
+
+  @Test
+  @DisplayName("Failures while checking or refunding are COMMAND-phase failures")
+  void checkAndRefundFailuresAreCommandPhase() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
+    doThrow(new RedisException("Connection closed"))
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+
+    assertThatThrownBy(() -> store.check(List.of("key"), List.of(band), 1))
+        .isInstanceOfSatisfying(
+            org.fluxgate.core.exception.RedisConnectionException.class,
+            e -> assertThat(e.getPhase()).isEqualTo(Phase.COMMAND));
+    assertThatThrownBy(() -> store.refund(List.of("key"), List.of(band), 1, REDIS_TIME))
+        .isInstanceOfSatisfying(
+            org.fluxgate.core.exception.RedisConnectionException.class,
+            e -> assertThat(e.getPhase()).isEqualTo(Phase.COMMAND));
+  }
+
+  @Test
+  @DisplayName("A failure of the EVAL fallback is a COMMAND-phase failure")
+  void evalFallbackFailureIsCommandPhase() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
+    doThrow(new RedisNoScriptException("NOSCRIPT No matching script"))
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+    doThrow(new RedisException("Connection closed"))
+        .when(connectionProvider)
+        .eval(anyString(), any(String[].class), any(String[].class));
+
+    assertThatThrownBy(() -> store.tryConsume("key", band, 1))
+        .isInstanceOfSatisfying(
+            org.fluxgate.core.exception.RedisConnectionException.class,
+            e -> assertThat(e.getPhase()).isEqualTo(Phase.COMMAND));
+  }
+
+  @Test
+  @DisplayName("A Lettuce failure while scanning for a reset is wrapped as a COMMAND failure")
+  void scanFailureIsWrappedAsCommandPhase() {
+    RedisException closed = new RedisException("Connection closed");
+    doThrow(closed).when(connectionProvider).scanKeys(anyString(), anyLong(), any());
+
+    assertThatThrownBy(() -> store.deleteAllBuckets())
+        .isInstanceOfSatisfying(
+            org.fluxgate.core.exception.RedisConnectionException.class,
+            e -> assertThat(e.getPhase()).isEqualTo(Phase.COMMAND))
+        .hasCause(closed);
+    assertThatThrownBy(() -> store.deleteBucketsByRuleSetId("rs"))
+        .isInstanceOf(org.fluxgate.core.exception.RedisConnectionException.class);
+  }
+
+  @Test
+  @DisplayName("A timeout while unlinking during a reset becomes a FluxgateTimeoutException")
+  void unlinkTimeoutDuringResetIsWrapped() {
+    scanPages("fluxgate:bucket:*", Arrays.asList("fluxgate:bucket:{a:r:k}:1"));
+    doThrow(new RedisCommandTimeoutException("Command timed out"))
+        .when(connectionProvider)
+        .unlink(any(String[].class));
+
+    assertThatThrownBy(() -> store.deleteAllBuckets()).isInstanceOf(FluxgateTimeoutException.class);
+  }
+
+  // ===== NOSCRIPT recovery does not hammer Redis =====
+
+  @Test
+  @DisplayName("A failing script reload is not retried on every NOSCRIPT (backoff)")
+  void shouldBackOffAfterAFailedReload() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
+    doThrow(new RedisNoScriptException("NOSCRIPT No matching script"))
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+    doReturn(allowedReply(99L, System.currentTimeMillis(), 100L, 1L))
+        .when(connectionProvider)
+        .eval(anyString(), any(String[].class), any(String[].class));
+    doThrow(new RuntimeException("SCRIPT LOAD failed"))
+        .when(connectionProvider)
+        .scriptLoad(anyString());
+
+    for (int i = 0; i < 5; i++) {
+      assertThat(store.tryConsume("key", band, 1).consumed()).isTrue();
+    }
+
+    // 2 uploads by the constructor, then a single reload attempt (failing on its first script)
+    verify(connectionProvider, times(3)).scriptLoad(anyString());
+    verify(connectionProvider, times(5))
+        .eval(anyString(), any(String[].class), any(String[].class));
+  }
+
+  @Test
+  @DisplayName("A burst of NOSCRIPT replies triggers a single reload")
+  void shouldReloadOnceForABurstOfNoscript() {
+    RateLimitBand band = RateLimitBand.builder(Duration.ofSeconds(60), 100).label("test").build();
+    doThrow(new RedisNoScriptException("NOSCRIPT No matching script"))
+        .when(connectionProvider)
+        .evalsha(anyString(), any(String[].class), any(String[].class));
+    doReturn(allowedReply(99L, System.currentTimeMillis(), 100L, 1L))
+        .when(connectionProvider)
+        .eval(anyString(), any(String[].class), any(String[].class));
+
+    for (int i = 0; i < 5; i++) {
+      store.tryConsume("key", band, 1);
+    }
+
+    // 2 uploads by the constructor, 2 by the one reload
+    verify(connectionProvider, times(4)).scriptLoad(anyString());
   }
 }

@@ -19,6 +19,11 @@ import java.util.function.Supplier;
  * <p>An exhausted retry chain is a failure of the guarded operation, so it is propagated to the
  * circuit breaker rather than being converted into a fallback value here. Only the circuit breaker
  * decides when to fall back, which is what lets it count failures and eventually open.
+ *
+ * <p>An {@link IgnoredCallException} is never retried. With the built-in circuit breakers ({@link
+ * DefaultCircuitBreaker}, {@link NoOpCircuitBreaker}) it is not recorded either and is rethrown
+ * unchanged from both {@code execute} and {@code executeWithFallback}: the fallback is not used for
+ * it.
  */
 public class ResilientExecutor {
 

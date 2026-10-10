@@ -26,9 +26,10 @@ import org.springframework.web.bind.annotation.*;
  *
  * <ul>
  *   <li>POST /api/admin/rules/standalone - Create rule for /api/test (10 req/min)
- *   <li>POST /api/admin/rules/multi-filter - Create 2 rules for /api/test/multi-filter (5 req/sec +
- *       20 req/min)
- *   <li>POST /api/admin/rules/all - Create all rules at once
+ *   <li>POST /api/admin/rules/multi-filter - Create 2 rules for /api/test/multi-filter (10 req/min
+ *       + 20 req/min)
+ *   <li>POST /api/admin/rules/composite - Create 1 rule for /api/test/composite (10 req/min per
+ *       IP+User)
  *   <li>GET /api/admin/rules/{ruleSetId} - Get rules for a specific rule set
  * </ul>
  */
@@ -177,7 +178,8 @@ public class AdminController {
    * <p>Creates a rule with CUSTOM scope and keyStrategyId="ipUser". The RequestContextCustomizer
    * builds the composite key by combining IP and User ID: "192.168.1.100:user-123"
    *
-   * <p>If X-User-Id header is not provided, falls back to IP only.
+   * <p>If X-User-Id header is not provided, falls back to IP only. The header is honoured only with
+   * identity.source=HEADERS (demo only).
    */
   @PostMapping("/rules/composite")
   @Operation(
@@ -186,7 +188,7 @@ public class AdminController {
           "Creates a rate limit rule for /api/test/composite endpoint with composite key (IP+User). "
               + "Limit: 10 requests per minute per IP+User combination. "
               + "RuleSet: composite-key-rules. "
-              + "Use X-User-Id header to provide user identifier.")
+              + "Use X-User-Id header to provide user identifier (requires identity.source=HEADERS, demo only).")
   public ResponseEntity<Map<String, Object>> createCompositeKeyRule() {
     log.info("Creating composite key rule for /api/test/composite");
 
@@ -213,7 +215,10 @@ public class AdminController {
     response.put("endpoint", "/api/test/composite");
     response.put("limit", "10 requests per minute per IP+User");
     response.put("keyStrategy", "ipUser (composite of IP and User ID)");
-    response.put("usage", "curl -H 'X-User-Id: user-123' http://localhost:8085/api/test/composite");
+    response.put(
+        "usage",
+        "curl -H 'X-User-Id: user-123' http://localhost:8085/api/test/composite"
+            + " (requires identity.source=HEADERS, demo only)");
     response.put("createdAt", Instant.now().toString());
 
     return ResponseEntity.ok(response);

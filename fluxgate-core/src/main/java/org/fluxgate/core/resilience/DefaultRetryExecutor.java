@@ -57,6 +57,16 @@ public class DefaultRetryExecutor implements RetryExecutor {
       } catch (Exception e) {
         lastException = e;
 
+        // checked first: a non-retryable failure (such as an IgnoredCallException) is rethrown
+        // as is, even on the last attempt, and is not reported as an exhausted retry chain
+        if (!config.shouldRetry(e)) {
+          log.debug(
+              "Operation '{}' failed with non-retryable exception: {}",
+              operationName,
+              e.getClass().getSimpleName());
+          throw e;
+        }
+
         if (attempt >= maxAttempts) {
           log.error(
               "Operation '{}' failed after {} attempts. Last error: {}",
@@ -64,14 +74,6 @@ public class DefaultRetryExecutor implements RetryExecutor {
               maxAttempts,
               e.getMessage());
           break;
-        }
-
-        if (!config.shouldRetry(e)) {
-          log.debug(
-              "Operation '{}' failed with non-retryable exception: {}",
-              operationName,
-              e.getClass().getSimpleName());
-          throw e;
         }
 
         Duration backoff = config.calculateBackoff(attempt);

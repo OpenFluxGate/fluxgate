@@ -3,6 +3,7 @@ package org.fluxgate.core.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Collections;
+import java.util.Locale;
 import java.util.Set;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.match.SimpleAntPathMatcher;
@@ -166,5 +167,53 @@ class RuleMatcherTest {
     assertThat(m.matches(ok, PATH_MATCHER)).isTrue();
     assertThat(m.matches(wrongMethod, PATH_MATCHER)).isFalse();
     assertThat(m.matches(missingHeader, PATH_MATCHER)).isFalse();
+  }
+
+  // ===== case-insensitivity and locale independence =====
+
+  @Nested
+  @DisplayName("Header name case and default locale")
+  class CaseAndLocaleTests {
+
+    @Test
+    @DisplayName("header conditions match regardless of the request header name's case")
+    void headerNameCaseInsensitive() {
+      RuleMatcher m =
+          RuleMatcher.builder().headerEquals("X-Tier", "premium").headerPresent("X-Api").build();
+      RequestContext mixed =
+          RequestContext.builder().header("X-Tier", "premium").header("X-API", "1").build();
+      RequestContext upper =
+          RequestContext.builder().header("X-TIER", "premium").header("x-api", "1").build();
+
+      assertThat(m.matches(mixed, PATH_MATCHER)).isTrue();
+      assertThat(m.matches(upper, PATH_MATCHER)).isTrue();
+    }
+
+    @Test
+    @DisplayName("method and header normalisation ignores a Turkish default locale")
+    void turkishDefaultLocale() {
+      Locale previous = Locale.getDefault();
+      Locale.setDefault(new Locale("tr", "TR"));
+      try {
+        RuleMatcher m =
+            RuleMatcher.builder()
+                .methods(Set.of("options"))
+                .headerEquals("X-TIER", "premium")
+                .headerPresent("X-ID")
+                .build();
+        RequestContext context =
+            RequestContext.builder()
+                .method("options")
+                .header("x-tier", "premium")
+                .header("x-id", "1")
+                .build();
+
+        assertThat(m.getMethods()).containsExactly("OPTIONS");
+        assertThat(m.getHeaderEquals()).containsKey("x-tier");
+        assertThat(m.matches(context, PATH_MATCHER)).isTrue();
+      } finally {
+        Locale.setDefault(previous);
+      }
+    }
   }
 }

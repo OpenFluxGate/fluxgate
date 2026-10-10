@@ -12,7 +12,7 @@ body:
     id: fluxgate-version
     attributes:
       label: FluxGate version
-      placeholder: "0.3.7"
+      placeholder: "0.4.0"
     validations:
       required: true
 

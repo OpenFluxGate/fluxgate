@@ -9,6 +9,7 @@ import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoCursor;
 import com.mongodb.client.model.UpdateOptions;
 import com.mongodb.client.result.DeleteResult;
+import com.mongodb.client.result.UpdateResult;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
@@ -99,31 +100,25 @@ class MongoRateLimitRuleRepositoryTest {
     @Test
     @DisplayName("should return empty when rule not found")
     void findById_shouldReturnEmptyWhenRuleNotFound() {
-      // given
       when(collection.find(any(Bson.class))).thenReturn(findIterable);
       when(findIterable.first()).thenReturn(null);
 
-      // when
-      Optional<RateLimitRule> result = repository.findById("nonexistent");
+      Optional<RateLimitRule> result = repository.findById("test-ruleset", "nonexistent");
 
-      // then
       assertTrue(result.isEmpty());
     }
 
     @Test
     @DisplayName("should return rule when found")
     void findById_shouldReturnRuleWhenFound() {
-      // given
       RateLimitRuleDocument ruleDoc = createTestRuleDocument("rule-1", "test-ruleset");
       Document bsonDoc = RateLimitRuleMongoConverter.toBson(ruleDoc);
 
       when(collection.find(any(Bson.class))).thenReturn(findIterable);
       when(findIterable.first()).thenReturn(bsonDoc);
 
-      // when
-      Optional<RateLimitRule> result = repository.findById("rule-1");
+      Optional<RateLimitRule> result = repository.findById("test-ruleset", "rule-1");
 
-      // then
       assertTrue(result.isPresent());
       assertEquals("rule-1", result.get().getId());
     }
@@ -133,28 +128,98 @@ class MongoRateLimitRuleRepositoryTest {
   @DisplayName("save Tests")
   class SaveTests {
 
+    private RateLimitRule testRule() {
+      return RateLimitRule.builder("rule-1")
+          .name("Test Rule")
+          .scope(LimitScope.PER_IP)
+          .keyStrategyId("ip")
+          .ruleSetId("test-ruleset")
+          .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100).build())
+          .build();
+    }
+
     @Test
-    @DisplayName("should save rule to collection")
-    void save_shouldSaveRuleToCollection() {
-      // given
-      RateLimitRule rule =
-          RateLimitRule.builder("rule-1")
-              .name("Test Rule")
-              .scope(LimitScope.PER_IP)
-              .keyStrategyId("ip")
-              .ruleSetId("test-ruleset")
-              .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100).build())
-              .build();
+    @DisplayName("an existing rule is updated in place without reading the access control")
+    void save_existingRule_updatesWithoutReadingAccessControl() {
+      when(collection.updateOne(any(Bson.class), any(Bson.class)))
+          .thenReturn(UpdateResult.acknowledged(1L, 1L, null));
+
+      repository.save(testRule());
+
+      org.mockito.ArgumentCaptor<Bson> filter = org.mockito.ArgumentCaptor.forClass(Bson.class);
+      verify(collection).updateOne(filter.capture(), any(Bson.class));
+      String rendered = filter.getValue().toBsonDocument().toJson();
+      assertTrue(rendered.contains("\"ruleSetId\": \"test-ruleset\""), rendered);
+      assertTrue(rendered.contains("\"id\": \"rule-1\""), rendered);
+      verify(collection, never()).find(any(Bson.class));
+      verify(collection, never())
+          .updateOne(any(Bson.class), any(Bson.class), any(UpdateOptions.class));
+    }
+
+    @Test
+    @DisplayName("a new rule is upserted with the access-control marker on insert")
+    void save_newRule_upsertsWithMarker() {
+      when(collection.updateOne(any(Bson.class), any(Bson.class)))
+          .thenReturn(UpdateResult.acknowledged(0L, 0L, null));
       when(collection.find(any(Bson.class))).thenReturn(findIterable);
-      when(findIterable.limit(1)).thenReturn(findIterable);
       when(findIterable.projection(any(Bson.class))).thenReturn(findIterable);
-      when(findIterable.first()).thenReturn(null);
+      when(findIterable.iterator()).thenReturn(mongoCursor);
+      when(mongoCursor.hasNext()).thenReturn(false);
 
-      // when
-      repository.save(rule);
+      repository.save(testRule());
 
-      // then
-      verify(collection).updateOne(any(Bson.class), any(Bson.class), any(UpdateOptions.class));
+      org.mockito.ArgumentCaptor<Bson> update = org.mockito.ArgumentCaptor.forClass(Bson.class);
+      verify(collection).updateOne(any(Bson.class), update.capture(), any(UpdateOptions.class));
+      Document setOnInsert = ((Document) update.getValue()).get("$setOnInsert", Document.class);
+      assertTrue(setOnInsert.containsKey(MongoRateLimitRuleRepository.ACCESS_CONTROL_MARKER));
+    }
+  }
+
+  @Nested
+  @DisplayName("access-control merge Tests")
+  class MergeTests {
+
+    private Document copy(String field, String... values) {
+      return new Document(field, List.of(values));
+    }
+
+    @Test
+    @DisplayName("counts distinct copies correctly when the merge changes an earlier copy's lists")
+    void merge_countsDistinctCopies() {
+      MongoRateLimitRuleRepository.MergedAccessControl merged =
+          MongoRateLimitRuleRepository.MergedAccessControl.of(
+              List.of(copy("deniedKeys", "a"), copy("deniedKeys", "b"), copy("deniedKeys", "a")));
+
+      assertEquals(3, merged.documents);
+      assertEquals(2, merged.distinctCopies);
+      assertEquals(List.of("a", "b"), merged.lists.get("deniedKeys"));
+    }
+
+    @Test
+    @DisplayName("allow lists intersect, a copy without the list (marker only) counts as empty")
+    void merge_missingAllowListCountsAsEmpty() {
+      MongoRateLimitRuleRepository.MergedAccessControl merged =
+          MongoRateLimitRuleRepository.MergedAccessControl.of(
+              List.of(
+                  copy("allowedKeys", "a", "b"),
+                  copy("allowedKeys", "b"),
+                  new Document(MongoRateLimitRuleRepository.ACCESS_CONTROL_MARKER, "t")));
+
+      assertFalse(merged.lists.containsKey("allowedKeys"));
+      assertEquals(List.of("allowedKeys"), merged.disjointAllowFields);
+      assertEquals(3, merged.distinctCopies);
+    }
+
+    @Test
+    @DisplayName("identical copies are one distinct copy")
+    void merge_identicalCopies() {
+      MongoRateLimitRuleRepository.MergedAccessControl merged =
+          MongoRateLimitRuleRepository.MergedAccessControl.of(
+              List.of(copy("allowedKeys", "a"), copy("allowedKeys", "a")));
+
+      assertEquals(1, merged.distinctCopies);
+      assertEquals(List.of("a"), merged.lists.get("allowedKeys"));
+      assertTrue(merged.disjointAllowFields.isEmpty());
     }
   }
 
@@ -165,29 +230,19 @@ class MongoRateLimitRuleRepositoryTest {
     @Test
     @DisplayName("should return true when rule deleted")
     void deleteById_shouldReturnTrueWhenRuleDeleted() {
-      // given
       when(collection.deleteOne(any(Bson.class))).thenReturn(deleteResult);
       when(deleteResult.getDeletedCount()).thenReturn(1L);
 
-      // when
-      boolean result = repository.deleteById("rule-1");
-
-      // then
-      assertTrue(result);
+      assertTrue(repository.deleteById("test-ruleset", "rule-1"));
     }
 
     @Test
     @DisplayName("should return false when rule not found")
     void deleteById_shouldReturnFalseWhenRuleNotFound() {
-      // given
       when(collection.deleteOne(any(Bson.class))).thenReturn(deleteResult);
       when(deleteResult.getDeletedCount()).thenReturn(0L);
 
-      // when
-      boolean result = repository.deleteById("nonexistent");
-
-      // then
-      assertFalse(result);
+      assertFalse(repository.deleteById("test-ruleset", "nonexistent"));
     }
   }
 

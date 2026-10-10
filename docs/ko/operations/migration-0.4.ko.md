@@ -20,6 +20,12 @@ FluxGate 0.3.x에서 올라올 때 무엇이 바뀌는지를, 실제로 부딪�
 동작합니다. 15절에 항목별로, 0.3 동작을 되돌리는 프로퍼티와 함께
 정리했습니다.
 
+최종 0.4 라인에는 이미 의존하고 있을 수 있는 동작을 바꾸는 두 번째 하드닝이 더해졌습니다. Rate
+Limit을 사용할 수 없을 때 429 대신 **503**을 응답하고, MongoDB는 기동 전에 고유 룰 인덱스가 필요하며,
+룰 변경 메시지는 스키마 버전 2로 올라가고, 잘못된 설정은 기동을 실패시키며, 키 형식은 단사(injective)
+이스케이프를 씁니다. 16절에서 항목마다 무엇이 바뀌는지, 누가 영향을 받는지, 무엇을 해야 하는지
+설명합니다.
+
 ## 1. 모든 쿼터가 한 번 초기화됩니다
 
 버킷 키와 버킷 해시 레이아웃이 모두 바뀝니다:
@@ -27,7 +33,7 @@ FluxGate 0.3.x에서 올라올 때 무엇이 바뀌는지를, 실제로 부딪�
 | | 0.3.x | 0.4 |
 |---|---|---|
 | 키 | `fluxgate:{ruleSetId}:{ruleId}:{keyValue}:{bandLabel\|default}` | `fluxgate:bucket:{<ruleSetId>:<ruleId>:<keyValue>}:<bandKeyLabel>` |
-| 키 값 | `192.168.1.100` | `ip:192.168.1.100` (스코프 접두사, 새니타이즈) |
+| 키 값 | `192.168.1.100` | `ip:192.168.1.100` (스코프 접두사, 새니타이즈 — 16.3절 참고) |
 | 해시 필드 | `tokens`, `last_refill_nanos` | `tokens`, `last_refill_micros` |
 
 세 가지 변경이지만 초기화는 **한 번**입니다. 첫 기동 시 모든 호출자가 가득 찬 버킷을 받습니다.
@@ -37,12 +43,23 @@ FluxGate 0.3.x에서 올라올 때 무엇이 바뀌는지를, 실제로 부딪�
 **할 일:**
 
 - 일시적 버스트가 문제라면 트래픽이 적은 시간대에 배포하세요.
-- 옛 키는 읽히지 않고 자신의 TTL로 소멸합니다. 메모리를 더 빨리 회수하려면:
+- 옛 키는 읽히지 않고 자신의 TTL로 소멸합니다. 메모리를 더 빨리 회수하려면 0.3 키 목록을 먼저
+  만들고, 목록을 확인한 뒤에만 지우세요. `grep`은 0.4가 여전히 쓰는 키 계열을 모두 남깁니다. 버킷
+  (`fluxgate:bucket:*`, FIXED_WINDOW 카운터 포함)과 deprecated된 Redis 규칙 저장소
+  (`fluxgate:ruleset:*`와 그 인덱스 `fluxgate:rulesets`)입니다.
   ```bash
-  redis-cli --scan --pattern 'fluxgate:*' | grep -v '^fluxgate:bucket:' | xargs -r redis-cli unlink
+  # 1. 드라이 런: 지울 키를 파일로 써서 검토합니다.
+  redis-cli --scan --pattern 'fluxgate:*' \
+    | grep -v -e '^fluxgate:bucket:' -e '^fluxgate:ruleset:' -e '^fluxgate:rulesets$' \
+    > fluxgate-0.3-keys.txt
+  wc -l fluxgate-0.3-keys.txt && head fluxgate-0.3-keys.txt
+
+  # 2. 검토한 키만 지웁니다(NUL 구분이라 키 값의 공백·따옴표도 안전합니다).
+  tr '\n' '\0' < fluxgate-0.3-keys.txt | xargs -0 -r -n 100 redis-cli unlink
   ```
-  실행 전에 출력을 확인하세요 — deprecated된 Redis 규칙 저장소를 아직 쓴다면
-  `fluxgate:ruleset:*`를 지우면 안 됩니다.
+  두 `redis-cli` 호출 모두에 평소 쓰는 접속 옵션(`-h`, `-p`, `--user`, `--pass`, `--tls`)을 붙이세요.
+  Redis Cluster에서는 두 단계를 각 프라이머리 노드에 대해 실행하고 2단계에 `-n 1`을 쓰세요. 여러
+  슬롯에 걸친 다중 키 `UNLINK`는 `CROSSSLOT`으로 실패합니다.
 - **FIXED_WINDOW 카운터**(0.4 신규)는 `<버킷 키>:fw` 아래의 해시 `{count, window_end_micros}`
   입니다. FIXED_WINDOW 대역으로 0.4 사전 릴리스 빌드를 운영했다면, 접미사 없는 키의 옛 문자열
   카운터는 더 이상 읽히지 않고 각자 자기 윈도 끝에 만료되므로 그 윈도의 카운트가 한 번 다시
@@ -116,6 +133,8 @@ fluxgate:
     response:
       content-type: application/json
       body-template: '{"error":"Too Many Requests","retryAfter":{retryAfterSeconds}}'
+      # 템플릿은 503에도 쓰이므로, 클라이언트가 둘을 구분한다면 503 본문을 따로 지정
+      unavailable-body-template: '{"error":"Service Unavailable","retryAfter":{retryAfterSeconds}}'
 ```
 
 또는 본문을 완전히 가져가기:
@@ -207,7 +226,7 @@ fluxgate:
 ```
 
 Redis가 죽어 있는 동안에는 `fluxgate.ratelimit.failure-behavior`가 요청의 운명을 결정합니다 —
-`DENY`(기본)는 429, `ALLOW`는 무제한 통과입니다. 이제 보통 더 나은 세 번째 선택지가 있습니다:
+`DENY`(기본)는 **503**(16.2절 참고), `ALLOW`는 무제한 통과입니다. 이제 보통 더 나은 세 번째 선택지가 있습니다:
 
 ```yaml
 fluxgate:
@@ -255,20 +274,29 @@ fluxgate:
 | `fluxgate.ratelimit.filter-order`가 `Integer`, 기본 미설정 | 프로퍼티를 직접 읽는다면 `null` 처리 |
 | `RateLimitResult.allowedWithoutRule()`이 `remainingTokens = -1` 보고 | `-1`은 "알 수 없음"이므로 헤더를 생략하고, `-1`을 출력하지 마세요 |
 | 거부 결과가 **실제** 남은 토큰을 담음 | 거부 시 `0`을 단정한 코드 수정 |
+| `ClientIpExtractor.extract(request)`와 `extract(request, header, trustHeader)`가 `@Deprecated` (Breaking 24) | 4개 인자의 `extract(request, header, trustHeader, TrustedProxies)`로 이전하세요. 인자 하나짜리는 `X-Forwarded-For`를 무조건 신뢰하고, 신뢰 프록시 목록이 없는 3개 인자 형태는 클라이언트가 위조할 수 있는 홉을 취합니다 |
+| `Phase` 없는 `RedisConnectionException` 생성자는 `UNKNOWN`이며 재시도하지 **않음** (Breaking 33) | 예외를 던지면서 재시도를 기대하는 코드는 `Phase.CONNECT`를 전달하세요 (16.7절) |
+| `RateLimitRuleSet.Builder.build()`가 id가 같은 두 규칙을 `InvalidRuleConfigException`으로 거부 (Breaking 32) | 한 룰 세트 안의 규칙마다 고유한 id를 부여 |
+| `MongoRateLimitRuleRepository.findById(id)`, `existsById(id)`, `deleteById(id)`가 `@Deprecated`. 여러 룰 세트에 존재하는 id에 `findById(id)`·`deleteById(id)`는 `IllegalStateException`을 던지고 `existsById(id)`는 `true`를 반환 (Breaking 28) | `(ruleSetId, id)` 오버로드를 쓰고, 규칙 이동에는 `moveRule(id, from, to)` 사용 (16.1절) |
+| `ResilientRateLimiter`, `EngineBackedRateLimitHandler`, `MissingRuleSetProviderRateLimitHandler`가 거부 결과를 반환하는 대신 `RateLimiterUnavailableException`을 던짐 (Breaking 36) | 이 클래스를 호출하는 코드는 예외를 처리 (16.2절) |
 
 바인딩 호환을 위해 남겨둔 deprecated + 무동작 항목: `fluxgate.ratelimit.filter-enabled`,
 `fluxgate.resilience.circuit-breaker.fallback`, `@RateLimit(maxConcurrentWaits = …)`,
 `FluxgateConstants.Metrics.REQUESTS_TOTAL`, `LuaScripts`, `LuaScriptLoader`, `RedisRuleSetStore`,
 `RuleSetData`, `org.fluxgate.redis.connection.RedisConnectionException`.
 
-`@RateLimit(maxConcurrentWaits = …)`는 대기 세마포어가 애스펙트 전역이 되었으므로 무시됩니다.
+`@RateLimit(maxConcurrentWaits = …)`는 대기 허가가 필터와 애스펙트가 함께 쓰는 `FluxgateWaitPermits` 빈 하나가 되었으므로 무시됩니다.
 `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits`를 쓰세요(기본값이 100 → 50으로 낮아졌습니다).
 
 ## 12. 요청하지 않았지만 알아야 하는 동작 변경
 
-- **24시간을 넘는 윈도가 전체 길이만큼 적용됩니다.** 옛 TTL 상한은 7일 쿼터를 24시간마다
-  초기화해 실질적으로 용량의 7배를 허용했습니다. 긴 윈도를 설정하고 깨진 동작에 맞춰 용량을 조정해
-  두었다면 다시 조정하세요.
+- **고정 24시간 버킷 TTL 상한이 없어지고 `fluxgate.redis.max-bucket-ttl`(기본값 `7d`)이 대신합니다.**
+  옛 상한은 7일 쿼터를 24시간마다 초기화해 실질적으로 용량의 7배를 허용했습니다. FIXED_WINDOW
+  카운터는 이제 윈도 끝에 만료되며(`PEXPIREAT`) 상한에서 제외됩니다. TOKEN_BUCKET과 SLIDING_WINDOW의
+  TTL은 `max-bucket-ttl`로 제한됩니다. 그보다 오래 유휴 상태인 버킷은 만료되어 가득 찬 상태로 다시
+  시작하므로, 상한보다 긴 윈도는 유휴 호출자에게 실질적으로 짧아지며 리미터는 그런 규칙마다 WARN을
+  한 번 남깁니다. 더 긴 윈도가 필요하면 `max-bucket-ttl`을 올리세요. 긴 윈도의 용량을 옛 동작에 맞춰
+  조정해 두었다면 다시 조정하세요.
 - **라벨 없는 두 대역이 더는 충돌하지 않습니다.** 라벨이 없는 대역은
   `<capacity>-per-<windowSeconds>s`로 키를 만들므로, 두 대역 중 하나만 적용되던 규칙이 이제 둘 다
   적용합니다. 1초 미만 윈도는 `-per-<millis>ms`를 씁니다.
@@ -285,30 +313,57 @@ fluxgate:
   `RequestContext.getHeaders()`는 비어 있습니다. `Authorization`, `Cookie`, `Set-Cookie`,
   `Proxy-Authorization`, `X-API-Key`는 절대 복사되지 않습니다.
 - **파싱할 수 없는 Pub/Sub 리로드 메시지는 무시**되며 전체 리로드로 취급되지 않습니다. 메시지는
-  `version: 1`을 담고, `AUTO` / `PUBSUB`는 항상 60초 폴링 백스톱을 함께 돌립니다.
+  `version: 2`와 nonce를 담고(16.4절), `AUTO` / `PUBSUB`는 항상 60초 폴링 백스톱을 함께 돌립니다.
 - **MongoDB 실패가 FluxGate 예외로 전파**되며 "규칙 없음"처럼 보이지 않습니다. 연결 실패가
   `missing-rule-behavior`에 따라 전면 통과나 전면 거부로 바뀌던 문제가 사라졌습니다.
-- **HTTP 요청이 없는 `@RateLimit` 메서드가 동작**하며, 거부 시
-  `RateLimitExceededException`을 던집니다(`throwOnReject = true`면 항상).
 - **`@RateLimit(maxWaitTimeMs)`가 `wait-for-refill.max-wait-time-ms`를 넘을 수 없습니다.** 실제 대기
   한도는 둘 중 작은 값입니다. WAIT_FOR_REFILL은 필터와 Aspect 모두에서 여전히 요청 스레드를
   차단합니다. Servlet `ASYNC` 재디스패치는 FluxGate 뒤에 등록된 필터를 건너뛰므로 FluxGate는 비동기로
   대기하지 않습니다. 429와 `Retry-After`, 클라이언트 백오프를 권장하며, 논블로킹 대기는 WebFlux
   스택의 영역입니다.
+- **HTTP 요청이 없는 `@RateLimit` 메서드가 동작**하며, 거부 시
+  `RateLimitExceededException`을 던집니다(`throwOnReject = true`면 항상).
+- **룰 변경 알림은 트랜잭션 커밋 후에 발행됩니다** (Breaking 23). `@Transactional` 경계 안의
+  `@NotifyRuleChange` / `@NotifyFullReload`는 `afterCommit`에서 발행하며, **롤백되면 아예 발행하지
+  않습니다.** "메서드가 반환되자마자 발행된다"고 가정한 테스트나 운영 스크립트는 수정해야 합니다.
+  호출 직후가 아니라 커밋 이후에 단정하세요. 발행 실패는 별도 데몬 스레드에서 세 번 재시도하므로,
+  Redis의 일시적 문제가 업무 트랜잭션을 실패시키지 않습니다.
 
 ## 13. 헬스와 운영
 
-로드밸런서가 헬스를 검사한다면 커스텀 `DEGRADED` 상태를 매핑하세요. Spring Boot는 기본적으로
-HTTP 200으로 매핑합니다:
+커스텀 `DEGRADED` 상태는 이제 **기본적으로 HTTP 503**을 응답합니다. FluxGate가
+`management.endpoint.health.status.http-mapping` 기본값을 최저 우선순위 프로퍼티 소스로 추가합니다.
+Spring Boot 자체 기본값인 `down=503`, `out-of-service=503`과 함께
+`degraded=<fluxgate.actuator.health.degraded-http-status>`(기본 `503`)입니다:
 
 ```yaml
-management:
-  endpoint:
+fluxgate:
+  actuator:
     health:
-      status:
-        http-mapping:
-          DEGRADED: 503
+      degraded-http-status: 503   # 0(또는 음수)이면 DEGRADED 매핑을 추가하지 않음. 이 경우 Boot는 200 응답
 ```
+
+직접 매핑하지 않은 상태만 추가되므로, 사용자의 `http-mapping` 항목이나 `HttpCodeStatusMapper` 빈이 항상
+우선합니다. 직접 쓴 `DEGRADED: 503` 매핑은 이제 필요 없으며, 이전 0.4 빌드처럼 `DOWN`을
+HTTP 200으로 만들지도 않습니다(비어 있지 않은 매핑은 Spring Boot가 자체 `DOWN`, `OUT_OF_SERVICE` 기본값을
+버리게 만드는데, 이제 FluxGate가 직접 매핑하지 않은 상태에 대해 이를 채워 줍니다).
+`degraded-http-status: 0`으로 두거나 헬스 인디케이터를 끄면 FluxGate는 매핑을 추가하지 않고 Spring Boot의
+규칙이 다시 적용되므로, 직접 쓴 매핑에 `DOWN: 503`을 포함하세요.
+
+이제 이 상태는 **집계된** 헬스에도 반영됩니다. Spring Boot의 기본
+`management.endpoint.health.status.order`에는 `DEGRADED`가 없고, 집계기는 모르는 상태를 버리기 때문에
+`/actuator/health/fluxgate`가 `DEGRADED`여도 `/actuator/health`와 `readiness` 그룹은 `UP`(HTTP 200)을
+보고했습니다. FluxGate는 같은 최저 우선순위 기본값으로
+`management.endpoint.health.status.order=down,out-of-service,degraded,up,unknown`을 추가하며, 자체 순서가
+없는 그룹은 이를 물려받습니다. 따라서 FluxGate가 degraded이면 루트 엔드포인트와 `fluxgate`를 포함한
+readiness 그룹도 **503**을 응답합니다. 엔드포인트나 그룹에 직접 지정한 순서는 그대로 두며, 거기에
+`degraded`가 없으면 기동 시 WARN으로 알려 줍니다. `degraded-http-status: 0`은 순서는 유지합니다
+(`DEGRADED`로 집계되지만 200 응답). `fluxgate.actuator.health.enabled=false`면 둘 다 추가하지 않습니다.
+
+`PING`에는 응답하지만 `cluster_state`가 `ok`가 아니거나, 실패한 슬롯이 있거나, 노드 목록을 읽을 수 없는
+Redis Cluster는 `DOWN`으로 보고합니다. 헬스 체크는 부수 효과로 지연 Redis 연결을 만들지 않으며,
+`fluxgate.actuator.health.include-endpoint-details=true`가 아니면 응답에 `host:port`와 실패 메시지가
+들어가지 않습니다.
 
 헬스 인디케이터는 `filter-enabled` 프로퍼티가 아니라 실제 필터·애스펙트 빈을 탐지하므로, 필터가
 돌고 있는데 `filterEnabled: false`로 보고하던 문제가 해결되었습니다.
@@ -414,6 +469,239 @@ fluxgate:
 `fluxgate.reload.pubsub.allow-unsigned=true`와 `fluxgate.control.allow-unsigned=true`로 인증 없는
 채널을 되살릴 수 있으며, 기동 시 WARN을 남기고 시크릿이 설정되면 무시됩니다.
 
+## 16. 최종 0.4 라인의 하드닝 변경
+
+이 변경들은 초기 0.4 빌드와 0.3.x가 잘못 처리하던 동작을 엄격하게 만듭니다. MongoDB 룰을 쓰거나,
+Pub/Sub 리로드를 쓰거나, 429와 503을 다르게 취급하거나, FluxGate 컴포넌트를 직접 생성한다면 특히
+중요합니다. 번호는 CHANGELOG의 *Breaking / Migration* 목록 항목입니다.
+
+### 16.1 MongoDB: 고유 룰 인덱스와 룰 식별 (Breaking 28, 29)
+
+**무엇이 바뀌나.** 규칙은 `(ruleSetId, id)`로 식별되며, 컬렉션에는 정확히 그 키에 대한 고유 인덱스가
+필요합니다. 규칙 `r1`을 룰 세트 B에 저장하면 룰 세트 A에서 이동되던 동작이 사라졌습니다. 이제 두 번째
+문서가 삽입되며, 이동은 `moveRule(id, fromRuleSetId, toRuleSetId)`로 명시합니다. `findById(id)`,
+`existsById(id)`, `deleteById(id)`는 `@Deprecated`입니다. id가 여러 룰 세트에 있으면 `findById(id)`와
+`deleteById(id)`는 `IllegalStateException`을 던지고, 예/아니오 질의인 `existsById(id)`는 `true`를
+반환합니다. 룰 세트에 문서가 하나도 없을 때 `saveAccessControl`은 예외를
+던집니다.
+
+**누가 영향을 받나.** `fluxgate.mongo.enabled=true`인 모든 사용자입니다. 기본값
+`ddl-auto=validate`가 기동 시 인덱스를 확인하기 때문입니다:
+
+| `fluxgate.mongo.ddl-auto` | 동작 |
+|---------------------------|------|
+| `validate` (기본) | `{ruleSetId: 1, id: 1}` 고유 인덱스가 없으면 기동 실패. 인덱스 이름은 상관없지만 `sparse` 인덱스, `partialFilterExpression`, `simple` 외의 콜레이션은 모든 규칙의 고유성을 보장하지 않으므로 거부됨. 메시지에 `createIndex` 명령과 `ddl-auto=create` 안내가 담김 |
+| `create` | 컬렉션을 만들고 `MongoRateLimitRuleRepository#ensureIndexes()`를 호출해 `ruleSetId_1_id_1_unique`(고유)와 `id_1`을 생성. 중복 `(ruleSetId, id)` 쌍이나 충돌하는 인덱스가 있으면 해당 쌍을 나열한 `IllegalStateException`으로 기동 실패 — 예전에는 경고만 남기고 모호한 룰 세트를 서빙했음 |
+
+**무엇을 해야 하나.** 기존 배포를 업그레이드하기 전에 룰 컬렉션(`fluxgate.mongo.rule-collection`을
+바꾸지 않았다면 `rate_limit_rules`)에 인덱스를 만드세요:
+
+```javascript
+db.rate_limit_rules.createIndex(
+  { ruleSetId: 1, id: 1 },
+  { unique: true, name: "ruleSetId_1_id_1_unique" }
+)
+```
+
+명령이 중복 키 오류로 실패하면 두 문서가 같은 `(ruleSetId, id)` 쌍을 갖고 있다는 뜻입니다. 목록을 뽑아
+여분을 삭제하거나 이름을 바꾼 뒤 다시 실행하세요:
+
+```javascript
+db.rate_limit_rules.aggregate([
+  { $group: { _id: { ruleSetId: "$ruleSetId", id: "$id" }, n: { $sum: 1 } } },
+  { $match: { n: { $gt: 1 } } }
+])
+```
+
+또는 인스턴스 하나를 `fluxgate.mongo.ddl-auto=create`로 한 번 기동한 뒤 `validate`로 되돌려도 됩니다.
+standalone 샘플의 기본값은 `validate`이며, `create`를 쓰는 `fluxgate-sample-mongo`가 먼저 만든
+컬렉션에는 인덱스가 이미 있습니다. 코드에서는 `(ruleSetId, id)` 오버로드로 옮기고, "다른 룰 세트에
+저장해서 이동"하던 부분은 `moveRule`로 바꾸세요.
+
+조치가 필요 없지만 새 로그 줄을 설명하는 Mongo 변경이 둘 더 있습니다. BSON 숫자는 관대하게(`int`,
+`long`, `double`) 읽고 알 수 없는 enum 값은 거부합니다. 형식이 잘못된 룰 문서는 룰 세트 전체를
+실패시키지 않고 WARN과 함께 건너뛰며 집계합니다. 룰 문서의 접근 제어를 쓸 때마다(`saveAccessControl`,
+새 규칙, `moveRule`) `aclUpdatedAt` 필드가 추가되며 0.3.x는 이 필드를 무시합니다. `saveAccessControl`이
+중간에 끊겨 접근 제어 사본이 서로 달라지면 닫힌 쪽으로 병합하고(거부 목록은 합집합, 허용 목록은 교집합,
+없는 목록은 빈 목록, WARN 기록), `aclUpdatedAt`도 목록도 없는 문서(예: 0.3.x가 넣은 규칙)는 병합에서
+제외합니다. Rate Limit 이벤트는 이제 제한된 큐(10000건)에서
+데몬 스레드가 기록하므로 느린 MongoDB가 요청을 막지 않으며, 큐가 가득 차면 이벤트를 버립니다.
+이벤트의 헤더·속성 이름은 `.`과 `$`를 `_`로 바꾸는 대신 되돌릴 수 있게 이스케이프합니다(`.`은 `%2E`,
+`$`는 `%24`, NUL은 `%00`, `%`는 `%25`, 빈 이름은 `%`). 그런 필드를 조회할 때는 이스케이프된 이름을 씁니다.
+
+### 16.2 Rate Limit을 사용할 수 없을 때 429 대신 503 (Breaking 36)
+
+**무엇이 바뀌나.** 429는 이제 한 가지 의미만 갖습니다. 한도를 초과했다는 뜻입니다.
+
+| 상황 | 상태 |
+|------|------|
+| 한도 초과 | 429, `Retry-After` |
+| `failure-behavior=DENY`에서 리미터 실패 (Redis 다운, 재시도 소진, 서킷 오픈) | **503**. `Retry-After`는 대기 시간을 알 때만, 예를 들어 서킷 브레이커가 열려 있는 동안 |
+| `missing-rule-behavior=DENY`에서 룰 세트나 provider 없음 | **503** |
+| `failure-behavior=ALLOW` / `missing-rule-behavior=ALLOW` | 요청 통과. 단, 만들 수 없는 룰 세트는 제외 |
+| 만들 수 없는 룰 세트(`InvalidRuleConfigException`), `failure-behavior` 값과 **무관** | **503**. 0.4 이전에는 `failure-behavior=ALLOW`가 이런 요청을 통과시켰지만, 이제는 리미터 실패에만 적용됨 |
+| 장애 중 `fallback.mode=IN_MEMORY` | 인스턴스별 제한, 초과 시 429 |
+| (`max-cost` 적용 후의) `cost-header` 값이 일치하는 밴드의 용량보다 큼 | `Retry-After` 없는 **429**. problem 문서에 비용과 용량이 담김. 클라이언트 오류이므로 서킷 브레이커에 집계되지 않고 폴백이나 `failure-behavior`로 처리되지도 않음 |
+
+**누가 영향을 받나.** 429에서만 재시도하거나 경보하는 클라이언트와 게이트웨이, 4xx를 클라이언트
+오류로 집계하는 대시보드, 그리고 `ResilientRateLimiter`, `EngineBackedRateLimitHandler`,
+`MissingRuleSetProviderRateLimitHandler`를 직접 호출하는 코드입니다. 이 클래스들은 거부 결과를 반환하던
+자리에서 `RateLimiterUnavailableException`을 던집니다. 이제 장애가 5xx로 보이며, 모니터링이 기대하는
+모습입니다.
+
+**무엇을 해야 하나.** 클라이언트가 503을 백오프와 함께 재시도하게 하고, "Rate Limiter 다운" 경보를
+5xx로 옮기며, 429 처리는 실제 스로틀링용으로 남겨두세요. 커스텀 `RateLimitResponseWriter`는 기본
+`writeUnavailable(request, response, retryAfterMillis)`를 상속하며, 503 본문을 바꾸려면 이를
+오버라이드하거나 `response.unavailable-body-template`을 설정하세요. 과도한 비용에 대해서는
+`writeCostExceeded(request, response, permits, capacity)`도 상속합니다. HTTP 핸들러 밖에서 호출된
+`@RateLimit` 메서드는 `RateLimitExceededException`을 받고, `isServiceUnavailable()`로 두 경우를
+구분합니다. 서블릿 애플리케이션에서는 FluxGate의 기본 예외 핸들러가 이를 429 또는 503으로 응답합니다(16.6절).
+
+과도한 요청 비용은 예전에는 리미터 실패로 취급되었습니다. 복원력 리미터 안에서 잘못된 룰 오류가 나므로,
+큰 `cost-header` 값을 보내는 클라이언트 하나가 모두를 위한 서킷 브레이커를 열 수 있었습니다.
+`failure-behavior=DENY`에서는 모든 요청이 503, `ALLOW`에서는 제한이 아예 꺼졌습니다. 이제 그런 비용은
+브레이커에 닿기 전에 429로 거부됩니다. 거부 대신 잘라내기를 원한다면 `max-cost`를 헤더가 적용되는 룰의
+가장 작은 밴드 용량 이하로 두세요. Aspect의 `@RateLimit(permits)`는 코드에 고정된 값이므로 용량보다 크면
+설정 오류이며 503으로 응답합니다.
+
+### 16.3 키 형식은 단사(injective)입니다 (Breaking 30, 31)
+
+**무엇이 바뀌나.** 서로 다른 두 신원이 하나의 버킷이나 하나의 허용/거부 항목에 들어가는 일이 없어집니다.
+
+| 입력 | 0.4 키 값 |
+|------|-----------|
+| 사용자 id `alice` (`[A-Za-z0-9._:@-]`만 포함) | `user:alice` (변경 없음) |
+| 사용자 id `a+1` | `user:h:a_1:<16 hex>` — 마커, 제한된 값, 원본 SHA-256의 앞 16자리 16진수 |
+| 재작성이 필요하면서 237자를 넘는 값, 또는 256자를 넘는 모든 값 | `user:h:<64 hex>` — 스코프 접두사는 해시 바깥에 유지 |
+
+Redis 버킷 키 세그먼트는 `_`로 치환하는 대신 퍼센트 이스케이프합니다. `ruleSetId`나 `ruleId`의 `:` `{` `}`
+`*` `?` `[` `]` `\`, 공백 문자, `%`는 `%XX`(UTF-8)가 되고, 대역 라벨의 `:`와 `%`도 마찬가지입니다.
+그래서 `a:b`, `a_b`, `a b`는 서로 다른 버킷을 얻고, 라벨이 `x:fw`인 대역이 라벨 `x`인 대역의
+`FIXED_WINDOW` 카운터에 쓰는 일도 없어집니다.
+
+**누가 영향을 받나.** 키 값에 `[A-Za-z0-9._:@-]` 밖의 문자가 있거나 256자를 넘은 호출자, 그리고
+이스케이프 대상 문자를 쓰는 룰 세트·규칙·대역 라벨뿐입니다. 해당 버킷은 가득 찬 상태로 한 번 다시
+시작합니다(0.3.x에서 올라온다면 1절의 초기화에 더해서). 새니타이즈는 더 이상 멱등이 아니므로 값을
+두 번 새니타이즈하지 마세요.
+
+**무엇을 해야 하나.** 키를 만들거나 스캔하는 외부 도구를 수정하세요(`RedisRateLimiter.BUCKET_KEY_PREFIX`와
+`bucketKeyPattern(ruleSetId)` 사용). 설정된 `allowed-keys` / `denied-keys`는 같은 규칙으로 정규화되고
+바뀐 항목마다 WARN이 남으므로, `user:a+1` 같은 거부 항목도 해당 호출자에 계속 일치합니다. 이미 인코딩된
+형태의 항목(로그에서 복사한 `user:h:a_1:<16 hex>`)은 그대로 유지됩니다. `ip:`, `user:`, `key:`,
+`custom:`만 인식되므로, `tenant:` 같은 커스텀 접두사에서 값이 다시 쓰이는 항목은 인코딩된 형태
+(`tenant:h:a_1:<16 hex>`)로 써야 합니다. 접두사가 붙은 키를 만드는 커스텀
+`KeyResolver`는 기본 리졸버처럼 값만 새니타이즈하는 `RateLimitKey.of(prefix, rawValue)`를 쓰세요.
+`RateLimitKey.of(key)`는 문자열 전체를 새니타이즈합니다. id가 같은 두
+규칙을 가진 룰 세트는 `InvalidRuleConfigException`으로 거부되며(버킷과 메트릭을 공유했기 때문),
+`AccessControl` 동등성에 IP 목록이 포함되므로 허용·거부 IP만 바뀐 리로드도 반영됩니다.
+
+### 16.4 Pub/Sub 룰 변경 메시지: 스키마 버전 2와 60초 윈도 (Breaking 34, 35)
+
+**무엇이 바뀌나.** 룰 변경 메시지는 `version: 2`와 무작위 `nonce`를 담습니다. 서명은 **채널**과 nonce를
+묶는 길이 접두 정규 형식을 대상으로 합니다. 구독자는 수락한 nonce를 리플레이 윈도 동안 기억하고,
+재전송된 메시지, 다른 채널용으로 서명된 메시지, nonce 없는 버전 2 메시지를 무시합니다. 버전 1과
+서명 없는 메시지는 이전 규칙을 유지합니다. `fluxgate.reload.pubsub.max-message-age`의 기본값은 이제
+`60s`입니다(프로퍼티는 `5m`, 전략 클래스는 `60s`였습니다).
+
+**누가 영향을 받나.** `fluxgate-control-support`(또는 `RuleChangeMessage` 기반 발행자)로 Pub/Sub 리로드를
+쓰는 모든 사용자입니다.
+
+**무엇을 해야 하나 — 이 순서로 롤아웃하세요:**
+
+1. **데이터 플레인**(구독자) 인스턴스를 먼저 모두 업그레이드합니다. 버전 1과 2를 모두 이해합니다.
+2. 그다음 **컨트롤 플레인**(발행자)을 업그레이드하면 버전 2 전송이 시작됩니다.
+3. 양쪽에 같은 시크릿을 씁니다(15절). 시크릿은 양쪽에서 앞뒤 공백이 제거되고 공백뿐이면 "없음"으로
+   취급되며, 32바이트보다 짧으면 WARN으로 보고됩니다.
+
+반대 순서도 파괴적이지는 않지만 느립니다. 버전 1만 아는 데이터 플레인은 버전 2 메시지를 알 수 없는
+스키마 버전으로 버리므로, 룰 변경은 폴링 백스톱(`backstop-polling-interval`, 60초)을 기다립니다.
+윈도는 발행자와 구독자 사이의 시계 비교입니다. 시계를 몇 초 이내로 맞추거나, 예전 허용 폭을 유지하려면
+`max-message-age: 5m`을 명시하세요. 윈도는 시크릿이 설정된 경우에만 적용됩니다. 한쪽에서 채널을
+바꿨다면 `fluxgate.control.redis.channel`과 `fluxgate.reload.pubsub.channel`을 같은 값으로 맞추세요.
+다른 채널용으로 서명된 메시지는 무시됩니다.
+
+롤아웃 중에는 아직 업그레이드하지 않은 발행자의 서명된 버전 1 메시지도 받아들입니다
+(`fluxgate.reload.pubsub.accept-legacy-signed`, 기본값 `true`). 처음 받아들일 때 WARN을 한 번 남깁니다.
+버전 1은 채널도 nonce도 묶지 않으므로, 모든 컨트롤 플레인이 버전 2를 발행하게 되면
+`fluxgate.reload.pubsub.accept-legacy-signed=false`로 설정해 데이터 플레인이 버전 1 메시지를 무시하게 하세요.
+
+메시지는 또한 Lettuce 이벤트 루프 밖의 단일 `fluxgate-pubsub-listener` 스레드에서 도착 순서대로
+처리됩니다. 대기는 최대 10000건이며, 넘치면 이후 메시지를 WARN과 함께 버리고 변경은 백스톱 폴링이
+반영합니다.
+
+### 16.5 잘못된 설정은 기동을 실패시킵니다 (Breaking 38)
+
+`FluxgateProperties`는 바인딩 중 스스로 검증하므로 Bean Validation 구현체가 필요 없고, YAML 룰 세트는
+기동 시점에 즉시 만들어집니다. 예전에는 받아들여진 뒤 런타임에 오동작하던 설정들입니다:
+
+| 설정 | 규칙 |
+|------|------|
+| `redis.timeout-ms`, `redis.max-bucket-ttl` | 양수여야 함 |
+| `ratelimit.fallback.max-buckets`, `fallback.expire-after-access` | 양수여야 함 |
+| `ratelimit.wait-for-refill.max-wait-time-ms` | 음수 불가. `max-concurrent-waits`는 양수여야 함 |
+| `reload.cache.ttl`, `cache.max-size`, `polling.interval`, `pubsub.retry-interval`, `pubsub.max-message-age` | 양수여야 함 |
+| `reload.cache.negative-ttl`, `polling.initial-delay`, `pubsub.backstop-polling-interval` | 0 허용("비활성"), 음수 불가 |
+| YAML 대역 `zone-id` | 알 수 없는 id는 실패 (조용히 UTC로 폴백해 모든 달력 경계가 어긋났음) |
+| YAML 규칙 `id`, 룰 세트 `id` | 한 룰 세트 안에서 규칙 id 중복, 룰 세트 id 중복, id 누락은 실패 |
+| YAML 대역 `window`, `capacity` | 누락, 0, 음수는 실패 |
+
+메시지에는 프로퍼티 이름이 들어갑니다. 예: `fluxgate.redis.timeout-ms must be > 0 (got 0)`. 테스트
+환경에서 한 번 기동해 문제 설정을 찾으세요. 활성화된 `PER_API_KEY` YAML 규칙이 있는데
+`identity.source`가 API 키 헤더를 전혀 읽지 않는 경우에도 WARN이 남습니다(그 규칙은 아무에게도 적용되지
+않습니다). 스키마는 [YAML 룰 세트 가이드](../guides/yaml-rule-sets.ko.md)를 참고하세요.
+
+### 16.6 직접 만든 컴포넌트와 프레임워크 배선 (Breaking 32, 37, 39, 40)
+
+- **레거시 생성자가 기본적으로 안전합니다 (37).** `new FluxgateRateLimitFilter(handler, ruleSetId,
+  include, exclude)`와 7·8개 인자 형태, `new RateLimitAspect(handler, customizer)`는 `X-Forwarded-For`를
+  신뢰하고 fail-open이었습니다. 이제 전달 헤더를 무시하고 fail-closed입니다(리미터 실패는 503,
+  16.2절). 예전 동작이 필요하면 `clientIpHeader`, `trustClientIpHeader`, `failOpenOnError`를 받는
+  생성자를 쓰세요.
+- **MVC 핸들러가 아닌 곳의 `@RateLimit`은 예외를 던집니다 (39).** 가로챈 메서드가 Spring MVC 핸들러
+  (`@RequestMapping` 또는 단축 애너테이션, 구현한 인터페이스 쪽도 포함)이고 반환 타입이 프리미티브가
+  아닐 때만 429를 씁니다. 서비스 메서드, 스케줄 작업, 메시지 리스너는 `RateLimitExceededException`을
+  받습니다. 예전에는 현재 응답에 429를 쓰고 기대하지 않던 호출자에게 `null`을 반환했으며, 프리미티브
+  반환형에서는 `AopInvocationException`으로 실패했습니다. 서블릿 애플리케이션에서는 Aspect가 활성일 때
+  등록되는 `@RestControllerAdvice`인 `RateLimitExceededExceptionHandler`가 이 예외를 설정된
+  `RateLimitResponseWriter`로 **429**와 `Retry-After`, `isServiceUnavailable()`이 true면 **503**으로
+  응답합니다(예전에는 HTTP 500이 되었습니다). 이 advice의 순서는
+  `RateLimitExceededExceptionHandler.ORDER`(`Ordered.HIGHEST_PRECEDENCE + 1000`)이므로, 직접 만든
+  advice에 순서 없이 둔 catch-all `@ExceptionHandler(Exception.class)`가 거부를 500으로 바꾸지 않습니다.
+  자체 형식을 쓰려면 이보다 먼저 오는 advice(`@Order(RateLimitExceededExceptionHandler.ORDER - 1)`,
+  순서 없는 advice는 이 예외를 받지 못합니다)에서 처리하거나, `RateLimitExceededExceptionHandler` 빈을
+  정의하거나, 예외를 잡으세요.
+- **FluxGate의 MongoDB 클라이언트는 `MongoClient` 빈이 아닙니다 (40).** `FluxgateMongoClientHolder`에
+  들어 있고 자동 구성은 Spring Boot의 `MongoAutoConfiguration` 뒤에 실행됩니다. 예전에는 Spring Data
+  MongoDB가 애플리케이션 데이터를 FluxGate 클러스터에 쓰거나, `MongoClient` 주입이 모호해져 Boot 3
+  컨텍스트가 실패할 수 있었습니다. FluxGate의 클라이언트를 주입했다면 `FluxgateMongoClientHolder`나
+  `fluxgateMongoDatabase`를 주입하세요. 이름을 `fluxgateMongoClient`로 지은 `MongoClient` 빈은 계속
+  FluxGate가 사용하며 닫지 않습니다.
+- **중복 규칙 id와 `AccessControl` (32)** — 16.3절 참고.
+- **전달 헤더 (동작 변경).** `trust-client-ip-header=true`이면 모든 헤더 줄을 읽고 홉을 오른쪽부터
+  따라갑니다. `ip:port`, `[v6]`, `[v6]:port`는 주소로 줄이며, IP 리터럴이 아닌 홉은 사용하지 않고
+  원격 주소로 폴백합니다.
+- **대기.** 필터와 Aspect가 하나의 대기 허가(`Semaphore` 빈이 아닌 `FluxgateWaitPermits`)를 공유하므로
+  `max-concurrent-waits`가 둘을 함께 제한합니다. `wait-for-refill.enabled=false`를 명시하면 `@RateLimit(waitForRefill = true)`의 대기도
+  멈춥니다.
+
+### 16.7 Redis 연결 실패는 단계(phase)를 갖습니다 (Breaking 33)
+
+`org.fluxgate.core.exception.RedisConnectionException`에는 `Phase`가 있고, 재시도 정책은 첫 번째만
+재시도합니다:
+
+| Phase | 시점 | 재시도 |
+|-------|------|--------|
+| `CONNECT` | 명령을 보내기 전, standalone 또는 클러스터 연결을 맺는 중 | 예 (`fluxgate.resilience.retry.*`) |
+| `COMMAND` | `EVALSHA` / `EVAL` 실행 중(소비, 확인, 환불)이나 리셋이 키를 스캔·UNLINK하는 중의 Lettuce 실패 | 아니오 — Redis가 이미 명령을 실행했을 수 있고, 소비를 재시도하면 한 요청이 두 번 차감될 수 있음 |
+| `UNKNOWN` | Phase 없는 생성자 | 아니오 |
+
+타임아웃은 `FluxgateTimeoutException`으로 보고되며 `retry.retry-on-timeout`이 제어합니다. 실제로
+Redis 장애는 `CONNECT`에 해당해 재시도되고, 요청 도중 끊긴 연결은 한 번만 시도한 뒤
+`failure-behavior=DENY`에서 503이 됩니다(16.2절). 커스텀 저장소나 래퍼에서
+`RedisConnectionException`을 던지면서 재시도를 원한다면 `Phase.CONNECT`를 받는 생성자를 쓰세요. 리셋
+실패는 예전에는 Lettuce 예외가 그대로 노출되었지만, 이제 `RedisConnectionException(COMMAND)` 또는
+`FluxgateTimeoutException`입니다.
+
 ## 업그레이드 체크리스트
 
 - [ ] 일회성 쿼터 초기화를 계획하고 트래픽이 적은 시간대 선택
@@ -425,11 +713,18 @@ fluxgate:
 - [ ] `result` 태그 없이 `fluxgate_requests_total`을 쓰는 대시보드 수정
 - [ ] Redis 연결만 하던 핸들러 삭제
 - [ ] Redis 장애 시 `failure-behavior`와 `fallback.mode=IN_MEMORY` 중 선택
-- [ ] `management.endpoint.health.status.http-mapping.DEGRADED=503` 추가
+- [ ] 로드밸런서와 Kubernetes의 `/actuator/health`, `/actuator/health/readiness` 프로브가 `DEGRADED`를 의도대로 처리하는지 확인. 이제 이 경로에서도 집계되며 기본 503을 응답합니다 (13절)
 - [ ] CI를 `./mvnw test`에서 `./mvnw verify`로 전환
 - [ ] 11절의 예외·제거 메서드 변경에 맞춰 재컴파일
 - [ ] 신뢰할 수 있는 프록시가 신원 헤더를 제공한다면 `identity.source=HEADERS` 또는 `PRINCIPAL_THEN_HEADERS` 설정 (15절)
 - [ ] Pub/Sub 리로드를 쓴다면 데이터·컨트롤 플레인에 같은 `fluxgate.reload.pubsub.secret` / `fluxgate.control.secret` 설정 (15절)
+- [ ] `ddl-auto=validate`로 기동하기 전에 MongoDB 고유 인덱스 `{ruleSetId: 1, id: 1}` 생성 (16.1절)
+- [ ] 클라이언트·게이트웨이·경보에서 503을 "Rate Limit 사용 불가"로 취급. 429는 이제 "한도 초과"만 뜻함 (16.2절)
+- [ ] 키 형태에 의존하는 도구와 `allowed-keys` / `denied-keys` 항목 수정 (16.3절)
+- [ ] Pub/Sub 리로드는 데이터 플레인을 컨트롤 플레인보다 먼저 업그레이드하고 `max-message-age` 결정 (16.4절)
+- [ ] 스테이징에서 한 번 기동해 이제 검증에 실패하는 설정 찾기 (16.5절)
+- [ ] 직접 만든 필터·Aspect, 서비스의 `@RateLimit`, `MongoClient` 주입 점검 (16.6절)
+- [ ] `RedisConnectionException`을 던지며 재시도를 기대하는 사용자 코드는 `Phase.CONNECT` 전달 (16.7절)
 
 ---
 
@@ -438,4 +733,5 @@ fluxgate:
 - [CHANGELOG](../../../CHANGELOG.md) - Breaking 절이 포함된 전체 목록
 - [보안 정책](../../../SECURITY.md) - 보안 기본값과 신원 헤더 주의사항
 - [Key Resolver](../customization/key-resolver.ko.md) - 키 형태 변경이 쿼터를 초기화하는 이유
+- [YAML 룰 세트 가이드](../guides/yaml-rule-sets.ko.md) - `fluxgate.ratelimit.rule-sets` 스키마
 - [문서 색인](../../README.ko.md)

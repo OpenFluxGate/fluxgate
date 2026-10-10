@@ -141,7 +141,10 @@ public final class BucketState {
     return nanosToWaitForRefill;
   }
 
-  /** Unix timestamp in milliseconds when bucket will be full again. */
+  /**
+   * Unix timestamp in milliseconds at which the binding band resets: TOKEN_BUCKET - full again;
+   * SLIDING_WINDOW - everything counted now has left the window; FIXED_WINDOW - the window end.
+   */
   public long resetTimeMillis() {
     return resetTimeMillis;
   }

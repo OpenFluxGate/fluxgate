@@ -181,6 +181,25 @@ class FluxgateReloadAutoConfigurationTest {
                     (RedisPubSubReloadStrategy) context.getBean(RuleReloadStrategy.class);
                 assertThat(strategy.isVerifyingSignatures()).isTrue();
                 assertThat(strategy.getMaxMessageAge()).isEqualTo(Duration.ofSeconds(30));
+                assertThat(strategy.isAcceptingLegacySigned()).isTrue();
+              });
+    }
+
+    @Test
+    void shouldPassAcceptLegacySignedToThePubSubStrategy() {
+      contextRunner
+          .withPropertyValues(
+              "fluxgate.redis.enabled=true",
+              "fluxgate.redis.uri=redis://localhost:1",
+              "fluxgate.redis.timeout-ms=200",
+              "fluxgate.reload.pubsub.backstop-polling-interval=0s",
+              "fluxgate.reload.pubsub.secret=unit-test-only-secret",
+              "fluxgate.reload.pubsub.accept-legacy-signed=false")
+          .run(
+              context -> {
+                RedisPubSubReloadStrategy strategy =
+                    (RedisPubSubReloadStrategy) context.getBean(RuleReloadStrategy.class);
+                assertThat(strategy.isAcceptingLegacySigned()).isFalse();
               });
     }
 
@@ -251,7 +270,7 @@ class FluxgateReloadAutoConfigurationTest {
                 RedisPubSubReloadStrategy strategy =
                     (RedisPubSubReloadStrategy) context.getBean(RuleReloadStrategy.class);
                 assertThat(strategy.isVerifyingSignatures()).isFalse();
-                assertThat(strategy.getMaxMessageAge()).isEqualTo(Duration.ofMinutes(5));
+                assertThat(strategy.getMaxMessageAge()).isEqualTo(Duration.ofSeconds(60));
               });
       assertThat(output).contains("WARN").contains("fluxgate.reload.pubsub.allow-unsigned=true");
     }

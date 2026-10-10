@@ -1,13 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- NOTICE -->
 <!--
-    File logging requires a pre-created log directory
-    Log files are written relative to the application root (user.dir).
-    Logback does not create missing directories automatically.
-
-    If the log directory does not exist at startup, file-based logging will be silently skipped.
-
-    Please ensure the log directory is created before running the application.
+    Log files are written relative to the working directory (user.dir); Logback creates the
+    missing log directory at startup. The JSON appenders need net.logstash.logback:
+    logstash-logback-encoder, declared in this module's pom.xml. See ELK_LOGGING_NOTICE.md.
 -->
 
 <configuration>

@@ -13,6 +13,18 @@ updates:
       - java
     commit-message:
       prefix: "build(deps)"
+    ignore:
+      # Majors of the Spring line are a deliberate project decision (new starter, new Java
+      # baseline), not a routine bump: the Boot 2 starter must stay on Spring Boot 2.7 / Java 11
+      # and the Boot 3 starter on 3.x. Minor and patch updates still arrive.
+      - dependency-name: "org.springframework*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "org.springframework.boot:*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "javax.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "jakarta.*"
+        update-types: ["version-update:semver-major"]
     groups:
       # One PR per family keeps the review load down without hiding a single risky bump.
       spring:
@@ -29,6 +41,36 @@ updates:
           - "org.apache.maven.plugins:*"
           - "com.diffplug.spotless:*"
           - "org.jacoco:*"
+
+  # Java 11 / Spring Boot 2.7 starter: no major-version proposals at all, they would raise the
+  # baseline. Minor and patch updates (security fixes) still arrive.
+  - package-ecosystem: maven
+    directory: "/fluxgate-spring-boot2-starter"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - java
+    commit-message:
+      prefix: "build(deps)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # Local development compose files (docker/*.yml): keeps the pinned service images current.
+  - package-ecosystem: docker-compose
+    directory: "/docker"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: "build(deps)"
 
   # Workflow actions: keeps checkout/setup-java and the third-party actions current.
   - package-ecosystem: github-actions

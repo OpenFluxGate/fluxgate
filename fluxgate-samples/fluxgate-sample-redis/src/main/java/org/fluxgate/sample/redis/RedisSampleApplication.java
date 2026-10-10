@@ -6,8 +6,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 /**
  * FluxGate Redis Sample Application (Data-plane).
  *
- * <p>This sample demonstrates: - Redis-based rate limiting - HTTP Filter for rate limit enforcement
- * - Config-based rule definition (no MongoDB)
+ * <p>This sample demonstrates Redis-based rate limiting with the raw {@code RateLimiter} API: the
+ * controllers call {@code tryConsume()} themselves (no FluxGate servlet filter), and rule sets are
+ * registered at runtime through {@code /admin/rules} (no MongoDB).
  *
  * <p>Prerequisites: - Redis running at localhost:6379
  *

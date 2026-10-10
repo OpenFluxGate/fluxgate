@@ -57,6 +57,7 @@ flowchart TB
         subgraph Redis["Redis"]
             TBS[RedisTokenBucketStore]
             LUA[token_bucket_consume.lua]
+            REFUND[token_bucket_refund.lua]
         end
         subgraph MongoDB["MongoDB"]
             MPROV[MongoRuleSetProvider]
@@ -90,7 +91,7 @@ flowchart TB
     RRL --> KEY
     B4J --> KEY
     RRL --> TBS
-    TBS --> LUA
+    TBS --> LUA & REFUND
     REPO --> COLL
     COMP --> POLL & PUBSUB
     POLL --> CACHE
@@ -120,60 +121,81 @@ HTTP 요청을 가로채고 Rate Limiting을 적용하는 진입점입니다.
 ```
 
 ```java
-// FluxgateRateLimitFilter.java (핵심 부분)
+// FluxgateRateLimitFilter.java - 실제 코드 (doFilterInternal, 필드는 요약)
 public class FluxgateRateLimitFilter extends OncePerRequestFilter {
 
-    private final FluxgateRateLimitHandler handler;
-    private final RequestContextCustomizer customizer;
-    private final FluxgateProperties properties;
+  // 주요 협력자 (생성자 주입)
+  private final FluxgateRateLimitHandler handler;     // → HI
+  private final RequestContextFactory contextFactory; // → CTX (커스터마이저 적용 포함)
+  private final RateLimitHeaderWriter headerWriter;
+  private final RateLimitResponseWriter responseWriter;
+  // ...
 
-    @Override
-    protected void doFilterInternal(
-            HttpServletRequest request,
-            HttpServletResponse response,
-            FilterChain filterChain) throws ServletException, IOException {
 
-        String path = request.getRequestURI();
+  @Override
+  protected void doFilterInternal(
+      HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+      throws ServletException, IOException {
 
-        // 1️⃣ 제외 패턴 체크 (예: /health, /actuator/*)
-        if (shouldExclude(path)) {
-            filterChain.doFilter(request, response);
-            return;
-        }
+    // M28/H-4: preserve MDC entries put in place by filters that ran before this one.
+    Map<String, String> previousMdc = MDC.getCopyOfContextMap();
+    long startTimeMs = System.currentTimeMillis();
 
-        // 2️⃣ RequestContext 빌드 ← 이 부분이 CTX로 향하는 화살표
-        RequestContext context = buildRequestContext(request);
+    try {
+      String path = RequestPathResolver.resolve(request);
+      populateRequestMdc(request, path);
 
-        // 3️⃣ Handler 호출 ← 이 부분이 HI로 향하는 화살표
-        RateLimitResponse result = handler.tryConsume(context, ruleSetId);
+      if (shouldExclude(path)) {
+        log.debug("Path excluded from rate limiting: {}", path);
+        filterChain.doFilter(request, response);
+        return;
+      }
 
-        // 4️⃣ 결과에 따른 응답 처리
-        if (result.isAllowed()) {
-            addRateLimitHeaders(response, result);
-            filterChain.doFilter(request, response);  // 허용 → 다음 필터로
+      if (!shouldInclude(path)) {
+        log.debug("Path not included in rate limiting: {}", path);
+        filterChain.doFilter(request, response);
+        return;
+      }
+
+      if (!StringUtils.hasText(ruleSetId)) {
+        if (denyWhenRuleMissing) {
+          logMissingRuleSetId("rejecting request");
+          rejectUnavailable(
+              request, response, RateLimiterUnavailableException.UNKNOWN_RETRY_AFTER, startTimeMs);
         } else {
-            handleRejection(response, result);        // 거부 → 429 응답
+          logMissingRuleSetId("skipping rate limiting");
+          filterChain.doFilter(request, response);
         }
+        return;
+      }
+
+      RequestContext context = contextFactory.create(request, path);
+      putIdentityMdc(context.getUserId(), context.getApiKey());
+      Decision decision = decide(context, resolvePermits(request));
+
+      // C2/C-1: the chain runs exactly once, outside the rate limiter's try/catch, so an exception
+      // thrown by the application propagates instead of triggering a replay.
+      if (decision.unavailable) {
+        rejectUnavailable(request, response, decision.retryAfterMillis, startTimeMs);
+        recordDuration(path, request.getMethod(), startTimeMs);
+      } else if (decision.costExceeded != null) {
+        rejectCostExceeded(request, response, decision.costExceeded, startTimeMs);
+        recordDuration(path, request.getMethod(), startTimeMs);
+      } else if (decision.allowed) {
+        headerWriter.write(response, decision.result);
+        filterChain.doFilter(request, response);
+        MDC.put(MdcKeys.STATUS_CODE, String.valueOf(response.getStatus()));
+        MDC.put(MdcKeys.DURATION_MS, String.valueOf(System.currentTimeMillis() - startTimeMs));
+        log.debug("Request completed");
+        recordDuration(path, request.getMethod(), startTimeMs);
+      } else {
+        reject(request, response, decision.result, startTimeMs);
+        recordDuration(path, request.getMethod(), startTimeMs);
+      }
+    } finally {
+      restoreMdc(previousMdc);
     }
-
-    // 📌 RequestContext 빌드 메서드
-    private RequestContext buildRequestContext(HttpServletRequest request) {
-        // 기본 컨텍스트 빌더 생성
-        RequestContext.Builder builder = RequestContext.builder()
-                .path(request.getRequestURI())
-                .method(request.getMethod())
-                .clientIp(extractClientIp(request))
-                .userId(extractUserId(request))
-                .apiKey(extractApiKey(request))
-                .ruleSetId(properties.getRatelimit().getDefaultRuleSetId());
-
-        // 3️⃣ 커스터마이저 적용 ← CUST로 향하는 화살표
-        if (customizer != null) {
-            builder = customizer.customize(builder, request);
-        }
-
-        return builder.build();
-    }
+  }
 }
 ```
 
@@ -183,19 +205,24 @@ public class FluxgateRateLimitFilter extends OncePerRequestFilter {
 HTTP 요청
     ↓
 FluxgateRateLimitFilter.doFilterInternal()
-    ↓
-buildRequestContext()  ──────────────────────┐
+    ↓  (제외/포함 경로, ruleSetId 미설정 처리)
+contextFactory.create(request, path)  ───────┐
     │                                         │
     ├─→ RequestContext.builder()              │ REQ_CTX
-    │       .path("/api/users")               │
+    │       .clientIp(...)  ← ClientIpExtractor (trusted-proxies)
+    │       .userId(...) / .apiKey(...)  ← IdentitySource (principal / header)
+    │       .endpoint("/api/users")           │
     │       .method("GET")                    │
-    │       .clientIp("192.168.1.1")          │
     │                                         │
-    └─→ customizer.customize(builder, request) ← CUST
+    └─→ contextCustomizer.customize(builder, request) ← CUST
             │
             ├─→ 헤더에서 X-Tenant-Id 추출
             ├─→ Cloudflare IP 재정의
             └─→ 커스텀 속성 추가
+    ↓
+decide(context, permits) → handler.tryConsume(...)
+    ↓
+allowed → 헤더 + 체인 / rejected·costExceeded → 429 / unavailable → 503
 ```
 
 ---
@@ -210,45 +237,86 @@ buildRequestContext()  ───────────────────
 ```
 
 ```java
-// RequestContext.java
-public class RequestContext {
+// RequestContext.java - 구조 요약 (접근자는 한 줄로 줄이고 Javadoc은 생략)
+public final class RequestContext {
 
-    private final String path;           // 요청 경로: /api/users/123
-    private final String method;         // HTTP 메서드: GET, POST, ...
-    private final String clientIp;       // 클라이언트 IP
-    private final String userId;         // 사용자 ID (선택)
-    private final String apiKey;         // API 키 (선택)
-    private final String ruleSetId;      // 적용할 규칙 세트 ID
-    private final Map<String, Object> attributes;  // 커스텀 속성
+    private final String clientIp;    // 클라이언트 IP
+    private final String userId;      // 사용자 ID (선택)
+    private final String apiKey;      // API 키 (선택)
+    private final String endpoint;    // 요청 경로: /api/users/123
+    private final String method;      // HTTP 메서드: GET, POST, ...
 
-    // Builder 패턴
+    /** HTTP 요청 헤더 (예: User-Agent, Referer, X-Request-Id) */
+    private final Map<String, String> headers;
+
+    /** 사용자 정의 속성 */
+    private final Map<String, Object> attributes;
+
+    private RequestContext(Builder builder) {
+        this.clientIp = builder.clientIp;
+        this.userId = builder.userId;
+        this.apiKey = builder.apiKey;
+        this.endpoint = builder.endpoint;
+        this.method = builder.method;
+        Map<String, String> headerCopy = newHeaderMap();
+        headerCopy.putAll(builder.headers);
+        this.headers = Collections.unmodifiableMap(headerCopy);
+        this.attributes = Collections.unmodifiableMap(new HashMap<>(builder.attributes));
+    }
+
+    /** Header names are case-insensitive; {@code CASE_INSENSITIVE_ORDER} is locale-independent. */
+    private static Map<String, String> newHeaderMap() {
+        return new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+    }
+
     public static Builder builder() {
         return new Builder();
     }
 
-    public static class Builder {
-        private String path;
-        private String method;
+    public static final class Builder {
         private String clientIp;
         private String userId;
         private String apiKey;
-        private String ruleSetId;
-        private Map<String, Object> attributes = new HashMap<>();
+        private String endpoint;
+        private String method;
+        private final Map<String, String> headers = newHeaderMap();
+        private final Map<String, Object> attributes = new HashMap<>();
 
-        public Builder path(String path) {
-            this.path = path;
-            return this;
-        }
+        public Builder clientIp(String clientIp) { this.clientIp = clientIp; return this; }
+        public Builder userId(String userId) { this.userId = userId; return this; }
+        public Builder apiKey(String apiKey) { this.apiKey = apiKey; return this; }
+        public Builder endpoint(String endpoint) { this.endpoint = endpoint; return this; }
+        public Builder method(String method) { this.method = method; return this; }
 
-        public Builder clientIp(String clientIp) {
-            this.clientIp = clientIp;
-            return this;
-        }
+        public Builder header(String name, String value) { ... }
+        public Builder headers(Map<String, String> headers) { ... }
 
+        // Adds a custom attribute.
         public Builder attribute(String key, Object value) {
             this.attributes.put(key, value);
             return this;
         }
+
+        // Adds multiple custom attributes at once.
+        public Builder attributes(Map<String, Object> attributes) {
+            if (attributes != null) {
+                this.attributes.putAll(attributes);
+            }
+            return this;
+        }
+
+        // =========================================================================
+        // Getters - for use in RequestContextCustomizer
+        // =========================================================================
+
+        public String getClientIp() { return clientIp; }
+        public String getUserId() { return userId; }
+        public String getApiKey() { return apiKey; }
+        public String getEndpoint() { return endpoint; }
+        public String getMethod() { return method; }
+        public Map<String, String> getHeaders() { return headers; }
+        public String getHeader(String name) { ... }
+        public Object getAttribute(String key) { ... }
 
         public RequestContext build() {
             return new RequestContext(this);
@@ -559,9 +627,17 @@ public class EngineBackedRateLimitHandler implements FluxgateRateLimitHandler {
 
   private static final Logger log = LoggerFactory.getLogger(EngineBackedRateLimitHandler.class);
 
+  /** Key prefix {@code RateLimitEngine} uses for an unknown rule set under DENY. */
+  private static final String MISSING_RULE_SET_PREFIX = "missing-rule-set:";
+
   private final RateLimitEngine engine;
   private final Set<String> warnedRuleSetIds = ConcurrentHashMap.newKeySet();
 
+  /**
+   * Creates a handler delegating to the given engine.
+   *
+   * @param engine the engine that resolves rule sets and consumes permits
+   */
   public EngineBackedRateLimitHandler(RateLimitEngine engine) {
     this.engine = Objects.requireNonNull(engine, "engine must not be null");
     log.info("EngineBackedRateLimitHandler initialized");
@@ -574,25 +650,47 @@ public class EngineBackedRateLimitHandler implements FluxgateRateLimitHandler {
 
   @Override
   public RateLimitResponse tryConsume(RequestContext context, String ruleSetId, long permits) {
+    RateLimitResult result;
     try {
-      // 1️⃣ Engine 호출 → 2️⃣ RateLimitResult를 RateLimitResponse로 변환
-      return RateLimitResponse.from(engine.check(ruleSetId, context, permits));
+      result = engine.check(ruleSetId, context, permits);
     } catch (MissingRateLimitKeyException e) {
       logConfigurationProblem(
           ruleSetId, "no rate limit key could be resolved, rejecting the request", e);
       return RateLimitResponse.rejected(0L);
     } catch (InvalidRuleConfigException e) {
+      // A request cost no band can hold is the client's error (HTTP 429), not a broken rule set.
+      PermitsExceedCapacityException tooCostly = PermitsExceedCapacityException.from(e, permits);
+      if (tooCostly != null) {
+        log.debug("Rule set '{}': {}", ruleSetId, tooCostly.getMessage());
+        throw tooCostly;
+      }
       logConfigurationProblem(ruleSetId, "the rule configuration is invalid", e);
-      return RateLimitResponse.rejected(0L);
+      throw new RateLimiterUnavailableException(
+          "Rule set '" + ruleSetId + "' has an invalid configuration",
+          RateLimiterUnavailableException.UNKNOWN_RETRY_AFTER,
+          e);
     }
+    if (!result.isAllowed() && isMissingRuleSet(result)) {
+      logConfigurationProblem(
+          ruleSetId, "no such rule set (missing-rule-behavior=DENY), rejecting the request", null);
+      throw new RateLimiterUnavailableException("Rule set '" + ruleSetId + "' is not configured");
+    }
+    return RateLimitResponse.from(result);
   }
 
-  /** 설정 오류는 처음 한 번만 WARN, 이후에는 DEBUG로 남깁니다(핫 패스 로그 폭주 방지). */
+  /** The engine reports an unknown rule set under DENY with this synthetic key. */
+  private static boolean isMissingRuleSet(RateLimitResult result) {
+    RateLimitKey key = result.getKey();
+    return key != null && key.value() != null && key.value().startsWith(MISSING_RULE_SET_PREFIX);
+  }
+
+  /** Logs a configuration problem at WARN the first time it is seen, then at DEBUG. */
   private void logConfigurationProblem(String ruleSetId, String what, RuntimeException e) {
+    String detail = e != null ? e.getMessage() : "";
     if (warnedRuleSetIds.add(ruleSetId)) {
-      log.warn("Rule set '{}': {}: {}", ruleSetId, what, e.getMessage());
+      log.warn("Rule set '{}': {}: {}", ruleSetId, what, detail);
     } else {
-      log.debug("Rule set '{}': {}: {}", ruleSetId, what, e.getMessage());
+      log.debug("Rule set '{}': {}: {}", ruleSetId, what, detail);
     }
   }
 }
@@ -602,10 +700,11 @@ public class EngineBackedRateLimitHandler implements FluxgateRateLimitHandler {
 
 - **메트릭을 기록하지 않습니다.** 메트릭은 `RateLimitRuleSet.getMetricsRecorder()`(코어)와
   `MicrometerMetricsRecorder`(스타터)가 담당합니다. 핸들러는 변환과 예외 처리만 합니다.
-- **설정 오류를 거부로 바꿉니다.** `missing-key-behavior=REJECT`에서 스코프 값이 없을 때
-  (`MissingRateLimitKeyException`), 그리고 규칙을 만들 수 없을 때(`InvalidRuleConfigException`)
-  예외를 위로 전파하지 않고 대기 시간 0의 거부 응답을 반환합니다. 필터가 500을 내는 대신 429가
-  나갑니다.
+- **오류의 주인에 따라 응답을 나눕니다.** `missing-key-behavior=REJECT`에서 스코프 값이 없으면
+  (`MissingRateLimitKeyException`) 대기 시간 0의 거부(429)를 반환합니다. 요청 비용이 어떤 대역의
+  용량보다 크면 `PermitsExceedCapacityException`(클라이언트 오류, 429)을 던집니다. 그 밖에 규칙을 만들 수
+  없거나(`InvalidRuleConfigException`) `missing-rule-behavior=DENY`에서 룰셋이 없으면 한도 초과가 아니라
+  설정 문제이므로 `RateLimiterUnavailableException`을 던지고, 필터와 애스펙트가 503으로 답합니다.
 
 ---
 
@@ -620,7 +719,7 @@ FluxGate는 HTTP 핸들러를 기본 제공하지 **않습니다**. 샘플이 �
 ```
 
 ```java
-// HttpRateLimitHandler.java (샘플)
+// HttpRateLimitHandler.java (샘플 요약 - 로그 생략, if/else를 삼항식으로 줄임)
 @Component
 public class HttpRateLimitHandler implements FluxgateRateLimitHandler {
 
@@ -698,7 +797,7 @@ public class ClientApplication { }
 | `retryAfterMillis` | 재시도까지 남은 밀리초 | 알 수 없음 |
 | `onLimitExceedPolicy` | 초과 시 정책 (`REJECT_REQUEST` / `WAIT_FOR_REFILL`) | — |
 | `limit` | 결정을 만든 대역의 용량 | 알 수 없음 → 헤더 생략 |
-| `resetTimeMillis` | 버킷이 다시 가득 차는 epoch 밀리초 | 알 수 없음 → 헤더 생략 |
+| `resetTimeMillis` | 결정을 만든 대역의 리셋 epoch 밀리초 (TOKEN_BUCKET은 다시 가득 찰 때, SLIDING_WINDOW는 세어진 요청이 모두 윈도를 떠날 때, FIXED_WINDOW는 윈도 끝) | 알 수 없음 → 헤더 생략 |
 | `windowSeconds` | `limit`이 속한 윈도 길이 (`RateLimit-Policy`용) | 알 수 없음 → 헤더 생략 |
 | `bandLabel` | 결정을 만든 대역의 키 라벨 | — |
 
@@ -715,11 +814,12 @@ busy loop가 생깁니다. 헤더 계산은 `RateLimitHeaderWriter`가 한 번 �
 
 ## 4. Engine Layer: 룰셋 해석과 키 해석
 
-> **주의.** FluxGate에는 경로/메서드/우선순위 기반 **규칙 매칭이 없습니다.** `RateLimitRule`에는
-> `path`, `method`, `priority` 필드가 존재하지 않고 `RateLimitEngine`에도 매칭 로직이 없습니다.
-> 엔진이 하는 일은 룰셋 ID로 룰셋을 찾아 `RateLimiter`에 넘기는 것뿐이며, 룰셋 안의 **모든 활성
-> 규칙**이 평가됩니다. 요청 표면별로 제한을 나누려면 `include-patterns`가 서로 다른 필터를 여러 개
-> 등록하거나 `default-rule-set-id`를 애플리케이션별로 지정하세요.
+> **참고.** 0.4부터 규칙마다 `RuleMatcher`(`methods`, `pathPatterns`, `excludePathPatterns`,
+> `headerEquals`, `headerPresent`)와 `priority`가 있습니다. 엔진은 룰셋 ID로 룰셋을 찾은 뒤
+> `RateLimitRuleSet#getMatchingRules`로 매처가 요청을 받아들이는 **활성 규칙만** 골라 우선순위
+> 내림차순(같으면 id 오름차순)으로 `RateLimiter`에 넘깁니다. 매처가 비어 있는 규칙은 모든 요청에
+> 일치하므로, 매처를 쓰지 않는 0.3.x 룰셋은 예전처럼 모든 활성 규칙이 평가됩니다. 아래 코드는 룰셋 조회
+> 흐름의 요지이며, 매칭은 `getMatchingRules`가 담당합니다.
 
 ### 4.1 RateLimitEngine
 
@@ -729,7 +829,7 @@ busy loop가 생깁니다. 헤더 계산은 `RateLimitHeaderWriter`가 한 번 �
 ```
 
 ```java
-// RateLimitEngine.java
+// RateLimitEngine.java (요지 - 접근 제어 분기는 축약)
 public final class RateLimitEngine {
 
   private static final String MISSING_RULE_SET_KEY_PREFIX = "missing-rule-set:";
@@ -744,6 +844,7 @@ public final class RateLimitEngine {
   private final RateLimitRuleSetProvider ruleSetProvider;  // ← PROV
   private final RateLimiter rateLimiter;                   // ← RL
   private final OnMissingRuleSetStrategy onMissingRuleSetStrategy;
+  private final PathPatternMatcher pathMatcher;            // 기본값 SimpleAntPathMatcher.INSTANCE
 
   public RateLimitResult check(String ruleSetId, RequestContext context) {
     return check(ruleSetId, context, 1L);
@@ -753,15 +854,25 @@ public final class RateLimitEngine {
     Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
     Objects.requireNonNull(context, "context must not be null");
 
-    // 1️⃣ 룰셋 조회 (ID로만. 매칭 로직 없음) ← PROV
+    // 1️⃣ 룰셋 조회 (ID로) ← PROV
     Optional<RateLimitRuleSet> optionalRuleSet = ruleSetProvider.findById(ruleSetId);
     if (!optionalRuleSet.isPresent()) {
       return onMissingRuleSet(ruleSetId);
     }
+    RateLimitRuleSet ruleSet = optionalRuleSet.get();
 
-    // 2️⃣ 토큰 소비를 RateLimiter에 위임 ← RL
-    //    키 해석은 RateLimiter가 ruleSet.getKeyResolver()로 규칙마다 수행합니다.
-    RateLimitResult result = rateLimiter.tryConsume(context, optionalRuleSet.get(), permits);
+    RateLimitRuleSet ruleSet = optionalRuleSet.get();
+
+    // 2️⃣ 접근 제어: DENY면 denied: 합성 키로 거부, ALLOW_BYPASS면 토큰 소비 없이 허용
+    AccessControl accessControl = ruleSet.getAccessControl();
+    if (!accessControl.isEmpty()) {
+      // ... 키 목록이 있을 때만 키를 해석해 evaluate(clientIp, primaryKey, resolvedKeys)
+    }
+
+    // 3️⃣ 토큰 소비를 RateLimiter에 위임 ← RL
+    //    키 해석은 RateLimiter가 ruleSet.getKeyResolver()로 규칙마다 수행하고,
+    //    적용 규칙은 엔진의 pathMatcher로 고릅니다(getMatchingRules).
+    RateLimitResult result = rateLimiter.tryConsume(context, ruleSet, permits, pathMatcher);
     if (result == null) {
       // 계약 위반은 호출자에게 null을 흘리지 않고 여기서 터뜨립니다.
       throw new IllegalStateException(
@@ -777,7 +888,7 @@ public final class RateLimitEngine {
         throw new IllegalArgumentException("Unknown ruleSetId: " + ruleSetId);
       case DENY:
         // fail-closed 분기: RateLimiter를 아예 호출하지 않습니다.
-        return RateLimitResult.builder(RateLimitKey.of(MISSING_RULE_SET_KEY_PREFIX + ruleSetId))
+        return RateLimitResult.builder(RateLimitKey.of(MISSING_RULE_SET_KEY_PREFIX, ruleSetId))
             .allowed(false)
             .remainingTokens(0L)
             .nanosToWaitForRefill(0L)
@@ -972,7 +1083,8 @@ public class LimitScopeKeyResolver implements KeyResolver {
     // API 키·사용자 ID는 평문으로 로그에 남기지 않습니다(앞 4자 + ***).
     log.debug("Resolved key for rule {} with scope {}: {}", rule.getId(), scope, mask(keyValue));
 
-    return new RateLimitKey(keyValue);
+    // 값 부분은 이미 새니타이즈됐으므로 다시 인코딩하지 않고 그대로 키로 만듭니다.
+    return RateLimitKey.ofSanitized(keyValue);
   }
 
   private String resolveUserId(RequestContext context, RateLimitRule rule, LimitScope scope) {
@@ -993,14 +1105,20 @@ public class LimitScopeKeyResolver implements KeyResolver {
 `10.0.0.5`인 익명 요청이 같은 버킷을 공유합니다. 폴백 키도 `user:` 대신 `ip:`를 쓰는 이유가 같습니다
 — 키는 값의 **실제 출처**를 나타냅니다.
 
-**새니타이즈** (`KeyValueSanitizer`):
+**새니타이즈** (`KeyValueSanitizer`) — 스코프 접두사 뒤의 **값 부분**에만 적용되는 단사 인코딩:
 
-| 규칙 | 동작 |
+| 원본 값 | 결과 |
+|---------|------|
+| `[A-Za-z0-9._:@-]`로만 된 256자 이하, `h:`로 시작하지 않음 | 그대로 (`user:alice`) |
+| 그 밖의 237자 이하 값 | `h:<제한된 값>:<16 hex>` — 허용되지 않는 문자는 `_`, 끝에 원본 SHA-256 앞 16자리(64비트로 자른 다이제스트). `a+1` → `user:h:a_1:<16 hex>` |
+| 더 긴 값 | `h:<64 hex>` (원본 SHA-256 전체). 접두사는 해시 바깥에 남습니다: `user:h:<64 hex>` |
+
+| 성질 | 내용 |
 |------|------|
-| 허용 문자 | `[A-Za-z0-9._:@-]` 외의 문자는 `_`로 치환 |
-| 길이 | 256자를 넘으면 값 전체를 SHA-256 16진 해시로 대체 |
-| 멱등성 | 이미 새니타이즈된 값을 다시 넣어도 결과가 같습니다 |
-| 적용 지점 | `LimitScopeKeyResolver`와 `RateLimitKey` 생성자 양쪽 (커스텀 리졸버 방어) |
+| 단사성 | 서로 다른 원본 값은 같은 키가 되지 않습니다. `a+1`과 `a_1`이 버킷을 공유하지 않습니다 |
+| 멱등성 없음 | `h:`로 시작하는 값은 다시 인코딩됩니다. 원본 값을 정확히 한 번만 새니타이즈합니다 |
+| 적용 지점 | `LimitScopeKeyResolver`(값만 새니타이즈 후 `RateLimitKey.ofSanitized`), `RateLimitKey.of(prefix, rawValue)`(접두사 유지), `RateLimitKey.of(full)`(문자열 전체) |
+| 허용/차단 항목 | 같은 방식으로 정규화하되, 이미 인코딩된 형태(`user:h:...`)는 그대로 둡니다 |
 
 **해석된 키 값:**
 
@@ -1045,6 +1163,11 @@ fluxgate:bucket:{api-limits:per-ip-rule:ip:192.168.1.100}:100-per-60s
 // RateLimiter.java
 public interface RateLimiter {
 
+  // 기본 1토큰 소비
+  default RateLimitResult tryConsume(RequestContext context, RateLimitRuleSet ruleSet) {
+    return tryConsume(context, ruleSet, 1L);
+  }
+
   /**
    * 토큰 소비를 시도합니다.
    *
@@ -1055,9 +1178,15 @@ public interface RateLimiter {
    */
   RateLimitResult tryConsume(RequestContext context, RateLimitRuleSet ruleSet, long permits);
 
-  // 기본 1토큰 소비
-  default RateLimitResult tryConsume(RequestContext context, RateLimitRuleSet ruleSet) {
-    return tryConsume(context, ruleSet, 1);
+  // 0.4.0: 엔진의 PathPatternMatcher로 적용 규칙(getMatchingRules)을 거르는 오버로드.
+  // 기본 구현은 매처를 무시하고 3인자 형태로 위임합니다. RedisRateLimiter·Bucket4jRateLimiter와
+  // 스타터의 데코레이터는 이 메서드를 재정의해 매처를 그대로 씁니다.
+  default RateLimitResult tryConsume(
+      RequestContext context,
+      RateLimitRuleSet ruleSet,
+      long permits,
+      PathPatternMatcher pathMatcher) {
+    return tryConsume(context, ruleSet, permits);
   }
 }
 ```
@@ -1079,39 +1208,29 @@ Bucket4j를 사용하는 인메모리 구현입니다. `fluxgate.ratelimit.mode=
 public class Bucket4jRateLimiter implements RateLimiter {
 
   public static final long DEFAULT_MAXIMUM_SIZE = 100_000L;
+  // 최소 유휴 만료. 가장 긴 대역 윈도우가 더 길면 그 윈도우만큼 유휴여야 축출됩니다.
   public static final Duration DEFAULT_EXPIRE_AFTER_ACCESS = Duration.ofHours(1);
 
-  // 무제한 ConcurrentHashMap이 아니라 상한·유휴 만료가 있는 Caffeine 캐시입니다(OOM 방지).
-  // 버킷 하나의 단위는 (ruleSetId, ruleId, 키 값, 대역 키 라벨) — Redis 레이아웃과 동일합니다.
-  private final Cache<BucketKey, Bucket> buckets;
+  // 무제한 ConcurrentHashMap이 아니라 상한·버킷별 유휴 만료가 있는 Caffeine 캐시입니다(OOM 방지).
+  // 버킷 하나의 단위는 (ruleSetId, ruleId, 대역 정의, 키 값) — 규칙의 모든 대역이 한 버킷의
+  // Bucket4j bandwidth로 들어가므로 한 규칙의 대역들은 원자적으로 평가됩니다.
+  private final Cache<BucketKey, BucketEntry> buckets;
 
   @Override
   public RateLimitResult tryConsume(
-      RequestContext context, RateLimitRuleSet ruleSet, long permits) {
+      RequestContext context, RateLimitRuleSet ruleSet, long permits, PathPatternMatcher matcher) {
 
-    List<RateLimitRule> rules = ruleSet.getRules();
-    // 규칙 매칭은 없습니다. 활성화된 모든 규칙이 평가됩니다.
+    // 경로·메서드·헤더가 매칭된 활성 규칙만 평가합니다.
+    List<RateLimitRule> rules = ruleSet.getMatchingRules(context, matcher);
 
-    List<Candidate> candidates;
-    try {
-      // 규칙마다 ruleSet.getKeyResolver().resolve(context, rule)로 키를 얻고,
-      // 대역마다 버킷을 확보합니다.
-      candidates = collectCandidates(context, ruleSet, rules, permits);
-    } catch (MissingRateLimitKeyException e) {
-      // missing-key-behavior=REJECT에서 스코프 값이 없을 때. 합성 키로 거부 결과를 만듭니다.
-      return record(context, ruleSet, missingKeyResult(e));
-    }
-
-    if (candidates.isEmpty()) {
-      // 모든 규칙이 비활성: 강제할 것이 없습니다.
-      return record(context, ruleSet, RateLimitResult.allowedWithoutRule());
-    }
-
-    // 2단계 소비:
-    //   1단계 estimateAbilityToConsume - 모든 규칙의 모든 대역을 먼저 확인
-    //   2단계 tryConsumeAndReturnRemaining - 전부 통과했을 때만 실제 차감,
-    //         두 단계 사이에 다른 스레드가 버킷을 비웠다면 addTokens로 환불
-    // 덕분에 거부된 요청이 허용했을 대역의 토큰을 소모하지 않습니다.
+    // 1) 규칙마다 permits ≤ 대역 용량을 검증하고 키를 해석합니다. 아직 토큰은 건드리지 않습니다.
+    //    MissingRateLimitKeyException(REJECT)은 missing-key:<ruleId> 거부 결과가 됩니다.
+    // 2) 관련 버킷을 생성 일련번호 순서로 모두 잠급니다(교착 없음).
+    // 3) 잠근 뒤 캐시를 다시 확인해, 그 사이 축출·reset된 버킷이면 조회부터 다시 합니다.
+    // 4) consumeAll: 모든 버킷에 estimateAbilityToConsume으로 먼저 묻고, 전부 가능할 때만
+    //    tryConsumeAndReturnRemaining으로 차감합니다. 잠금 아래이므로 사이에 끼어들 수 없고,
+    //    그래도 차감이 실패하면 이미 차감한 규칙에 addTokens로 환불합니다.
+    // 5) 메트릭 레코더는 잠금을 모두 푼 뒤에 호출합니다.
     ...
   }
 
@@ -1129,7 +1248,7 @@ Redis 구현과 **결과 의미가 동일**합니다.
 | 항목 | 값 |
 |------|-----|
 | `limit` | 결정을 만든(binding) 대역의 용량 |
-| `resetTimeMillis` | 허용: 해당 버킷이 다시 가득 차는 시각 / 거부: `now + nanosToWaitForRefill` |
+| `resetTimeMillis` | 허용·거부 모두 binding 대역의 리셋 시각 (TOKEN_BUCKET은 다시 가득 찰 때, SLIDING_WINDOW는 세어진 요청이 모두 윈도를 떠날 때, FIXED_WINDOW는 윈도 끝) |
 | `remainingTokens` | 거부 시에도 **실제** 남은 토큰 (하드코딩된 0이 아닙니다) |
 | `bandLabel` | `RateLimitBand.getKeyLabel()` |
 | `policy` | `rule.getOnLimitExceedPolicy()` |
@@ -1145,7 +1264,8 @@ Redis 구현과 **결과 의미가 동일**합니다.
 
 ### 6.1 RedisTokenBucketStore
 
-Lettuce(Jedis가 아닙니다) 기반이며, 한 규칙의 **모든 대역을 한 번의 Lua 호출**로 처리합니다.
+Lettuce(Jedis가 아닙니다) 기반이며, 한 번의 Lua 호출로 **넘겨받은 모든 대역**을 처리합니다. 넘겨받는
+대역은 한 규칙의 대역이거나, `RedisRateLimiter`가 한 슬롯에 모인 여러 규칙의 대역을 이어 붙인 것입니다.
 
 ```
 📁 fluxgate-redis-ratelimiter/src/main/java/org/fluxgate/redis/store/
@@ -1157,8 +1277,9 @@ Lettuce(Jedis가 아닙니다) 기반이며, 한 규칙의 **모든 대역을 �
 public class RedisTokenBucketStore {
 
   private static final String SCRIPT_NAME = "token_bucket_consume.lua";
-  private static final int RESULT_SIZE = 7;
+  private static final int RESULT_SIZE = 8;
   private static final long NANOS_PER_MICRO = 1_000L;
+  public static final Duration DEFAULT_MAX_BUCKET_TTL = Duration.ofDays(7);
 
   private final RedisConnectionProvider connectionProvider;
   private final LuaScriptRegistry scripts;  // 스토어별 스크립트 본문 + SHA (프로세스 전역 static 아님)
@@ -1166,42 +1287,48 @@ public class RedisTokenBucketStore {
   /** 단일 대역 편의 메서드. 다중 대역 형태에 위임합니다. */
   public BucketState tryConsume(String bucketKey, RateLimitBand band, long permits) { ... }
 
-  /** 한 규칙의 모든 대역. bucketKeys.size() == bands.size() 여야 합니다. */
+  /** 대역마다 키 하나. 모두 서비스할 수 있을 때만 전부 차감합니다. */
   public BucketState tryConsume(List<String> bucketKeys, List<RateLimitBand> bands, long permits) {
+    return evaluate(bucketKeys, bands, permits, false);
+  }
 
-    // Redis를 건드리기 전에 실패시킵니다. permits보다 용량이 작은 대역은 영원히 서비스할 수
-    // 없으므로, 대기 시간을 돌려주면 클라이언트가 무한 재시도에 빠집니다.
-    for (RateLimitBand band : bands) {
-      if (permits > band.getCapacity()) {
-        throw new InvalidRuleConfigException(
-            "permits (" + permits + ") exceed the capacity of band '"
-                + band.getKeyLabel() + "' (" + band.getCapacity() + ")");
-      }
-    }
+  /** 같은 결정을 하되 아무것도 차감하지 않습니다(check-only). 차감하지 않은 규칙의 대기 시간용. */
+  public BucketState check(List<String> bucketKeys, List<RateLimitBand> bands, long permits) {
+    return evaluate(bucketKeys, bands, permits, true);
+  }
 
+  /** 앞서 차감한 규칙에 permits를 돌려줍니다(token_bucket_refund.lua). 대역별로 돌려준 양을 반환. */
+  public List<Long> refund(
+      List<String> bucketKeys, List<RateLimitBand> bands, long permits, long consumedAtMicros) { ... }
+
+  /** 키들이 한 번의 스크립트 호출에 들어갈 수 있는지 (단독 Redis: 항상, 클러스터: 한 슬롯). */
+  public boolean canEvaluateAtomically(Collection<String> bucketKeys) { ... }
+
+  private BucketState evaluate(
+      List<String> bucketKeys, List<RateLimitBand> bands, long permits, boolean checkOnly) {
+    // Redis를 건드리기 전에 실패시킵니다: permits보다 용량이 작은 대역(영원히 서비스할 수 없음),
+    // 1 ms 미만 윈도·서브 버킷, capacity × window_micros > 2^53인 TOKEN_BUCKET 대역
+    //   → InvalidRuleConfigException
+    ...
     // KEYS[1..n] = bucketKeys
-    // ARGV[1] = permits, 이후 대역마다 capacity / window_micros / reserved
+    // ARGV[1] = permits, ARGV[2] = max_bucket_ttl_seconds, 이후 대역마다 5개:
+    //   capacity, window_micros, algorithm_code, buckets_or_zero, window_end_micros_or_zero
+    // check-only면 마지막에 "1"
     String[] keys = bucketKeys.toArray(new String[0]);
-    String[] args = new String[1 + 3 * bands.size()];
-    args[0] = String.valueOf(permits);
-    for (int i = 0; i < bands.size(); i++) {
-      RateLimitBand band = bands.get(i);
-      args[1 + 3 * i] = String.valueOf(band.getCapacity());
-      args[2 + 3 * i] = String.valueOf(toMicros(band));
-      args[3 + 3 * i] = "0";
-    }
-
+    String[] args = scriptArgs(permits, maxBucketTtlSeconds, bands);
+    ...
     // EVALSHA → NOSCRIPT면 EVAL + 스크립트 재적재
-    List<Long> result = executeScriptWithFallback(keys, args);
+    List<Long> result = executeScriptWithFallback(...);
 
     // [allowed, rejecting_band_index, min_remaining, micros_to_wait,
-    //  reset_time_millis, limit, binding_band_index]
+    //  reset_time_millis, limit, binding_band_index, redis_time_micros]
     boolean allowed = result.get(0) == 1L;
     long remainingTokens = result.get(2);
     long nanosToWait = result.get(3) * NANOS_PER_MICRO;   // 마이크로초 → 나노초
     long resetTimeMillis = result.get(4);
     long limit = result.get(5);
     int bandIndex = (int) (result.get(6) - 1L);           // 1-based → 0-based
+    long redisTimeMicros = result.get(7);                 // 환불 스크립트에 넘길 결정 시각
     ...
   }
 
@@ -1232,88 +1359,119 @@ fluxgate:bucket:{api-limits:per-ip-rule:ip:192.168.1.100}:100-per-60s
 
 ```
 📁 fluxgate-redis-ratelimiter/src/main/resources/lua/
-└── token_bucket_consume.lua
+├── token_bucket_consume.lua   소비(또는 check-only)
+└── token_bucket_refund.lua    규칙 간 보상용 환불. 모든 대역을 먼저 검증한 뒤에만 기록
 ```
 
 **계약:**
 
 ```
-KEYS[1..n]    한 규칙의 대역마다 하나의 버킷 키. 모두 같은 해시 태그 안에 있어야 합니다
-ARGV[1]       permits
-ARGV[2 + 3i]  대역 i+1의 capacity
-ARGV[3 + 3i]  대역 i+1의 window_micros
-ARGV[4 + 3i]  예약. "0"을 넘깁니다
+KEYS[1..n]    대역마다 하나의 버킷 키. 모두 같은 클러스터 슬롯에 있어야 합니다(한 규칙은 해시 태그로 보장)
+ARGV[1]             permits
+ARGV[2]             max_bucket_ttl_seconds (TOKEN_BUCKET / SLIDING_WINDOW TTL 상한)
+대역 i마다 base = 2 + 5 * (i - 1):
+ARGV[base + 1]      capacity
+ARGV[base + 2]      window_micros (1 ms 미만 거부)
+ARGV[base + 3]      알고리즘 코드: 1 TOKEN_BUCKET, 2 SLIDING_WINDOW, 3 FIXED_WINDOW
+ARGV[base + 4]      SLIDING_WINDOW 서브 버킷 수, 그 외 0
+ARGV[base + 5]      달력 FIXED_WINDOW 윈도 끝(epoch 마이크로초), 그 외 0
+ARGV[3 + 5 * n]     (선택) "1" = check-only, 아무것도 쓰지 않음
 
-반환: 7개 정수
+반환: 8개 정수
   [1] allowed                 모든 대역이 허용하면 1
-  [2] rejecting_band_index    거부한 첫 대역의 1-based 인덱스 (허용 시 0)
-  [3] min_remaining           허용: 소비 후 binding 대역의 토큰 / 거부: 거부 대역의 토큰
-  [4] micros_to_wait          거부 대역이 요청을 서비스할 수 있을 때까지 (허용 시 0)
-  [5] reset_time_millis       binding 대역 버킷이 가득 차는 epoch 밀리초 (허용 시 소비 **후** 계산)
+  [2] rejecting_band_index    거부한 대역 중 대기 시간이 가장 긴 대역의 1-based 인덱스 (허용 시 0)
+  [3] min_remaining           허용: 소비 후 binding 대역의 잔량 / 거부: 거부 대역의 잔량
+  [4] micros_to_wait          거부한 모든 대역 중 가장 긴 대기 시간 (허용 시 0)
+  [5] reset_time_millis       binding 대역이 리셋되는 epoch 밀리초 (허용 시 소비 **후** 계산).
+                              TOKEN_BUCKET: 가득 찰 시각 / SLIDING_WINDOW: 지금 세어진 요청이 모두
+                              윈도를 떠나는 시각(ms 올림) / FIXED_WINDOW: 윈도 끝
   [6] limit                   binding 대역의 capacity
   [7] binding_band_index      binding 대역의 1-based 인덱스
+  [8] now_micros              결정 시점의 Redis TIME. 환불 스크립트가 사용
 
-오류: 'permits exceed capacity', 'permits must be positive', 'capacity must be positive',
-      'window must be positive', 'expected N arguments for M band(s)',
-      'at least one bucket key is required'
+오류: 'at least one bucket key is required', 'expected N arguments for M band(s)',
+      'permits must be positive', 'max bucket ttl must be >= 1 second',
+      'capacity must be positive', 'window must be positive', 'window must be at least 1 ms',
+      'sliding window sub-bucket must be at least 1 ms', 'permits exceed capacity',
+      'buckets must be >= 2 for SLIDING_WINDOW', 'unknown algorithm code: N'
 
-해시 필드: 'tokens', 'last_refill_micros'  (둘 다 string.format('%.0f', v)로 기록)
-TTL: max(1, ceil(window_seconds * 1.1))  — 상한 없음
+해시 필드: TOKEN_BUCKET  'tokens', 'last_refill_micros'
+          SLIDING_WINDOW '<서브 버킷 인덱스>@<서브 버킷 길이 micros>' → count
+          FIXED_WINDOW   'count', 'window_end_micros'  (키 끝에 ':fw')
+          (모두 string.format('%.0f', v)로 기록)
+TTL: TOKEN_BUCKET·SLIDING_WINDOW  min(max_bucket_ttl, max(1, ceil(window_seconds * 1.1)))
+     FIXED_WINDOW                 PEXPIREAT 윈도 끝 (상한 적용 안 함)
 ```
 
+`max_bucket_ttl`은 `fluxgate.redis.max-bucket-ttl`(기본 7일, `RedisTokenBucketStore.DEFAULT_MAX_BUCKET_TTL`)
+입니다. 위조 가능한 신원 키가 Redis를 몇 주씩 점유하지 못하게 하는 상한이며, 윈도가 상한보다 길면
+버킷이 일찍 만료되어 윈도가 실효적으로 짧아지므로 `RedisRateLimiter`가 규칙마다 한 번 경고합니다.
+
 ```lua
--- token_bucket_consume.lua (요지)
+-- token_bucket_consume.lua (요지, TOKEN_BUCKET 분기 중심)
 
 -- 모든 노드가 같은 시계를 쓰도록 Redis TIME을 마이크로초로 사용합니다.
-local time_info = redis.call('TIME')
+local time_info  = redis.call('TIME')
 local now_micros = tonumber(time_info[1]) * 1000000 + tonumber(time_info[2])
 
--- TTL: 윈도 + 10% 여유, 최소 1초, 상한 없음(7일 윈도는 7일 버킷을 유지).
-local function ttl_seconds(window_micros)
-    return math.max(1, math.ceil(window_micros / 1000000 * 1.1))
+-- TTL in whole seconds, capped at max_ttl_seconds (for TOKEN_BUCKET and SLIDING_WINDOW).
+local function ttl_for_window(win_micros)
+    return math.min(max_ttl_seconds, math.max(1, math.ceil(win_micros / 1000000 * 1.1)))
 end
 
--- ── 1단계: 모든 대역을 리필하고 전부 서비스 가능한지 확인 ──────────────────
-for i = 1, band_count do
-    local bucket_data = redis.call('HMGET', KEYS[i], 'tokens', 'last_refill_micros')
-    local current_tokens = tonumber(bucket_data[1])
-    local last_refill_micros = tonumber(bucket_data[2])
-
-    -- 버킷이 없거나 0.3.x 버킷('last_refill_micros'가 없음)이면 가득 찬 상태로 시작합니다.
-    if current_tokens == nil or last_refill_micros == nil then
-        current_tokens = capacity
-        last_refill_micros = now_micros
+-- 거부한 대역 중 대기가 가장 긴 것의 반환 배열을 기억합니다.
+local rejection = nil
+local function reject(i, remaining, wait, reset_millis)
+    if rejection == nil or wait > rejection[4] then
+        rejection = {0, i, remaining, wait, reset_millis, capacities[i], i, now_micros}
     end
+end
 
-    -- max: 시계가 뒤로 간 경우 / min: 한 윈도로 클램프 (elapsed * capacity를 정확한 double 범위에 유지)
-    local elapsed_micros = math.min(math.max(0, now_micros - last_refill_micros), window_micros)
-
-    -- 온전한 토큰만 적립하고, 타임스탬프는 그 토큰들이 소요한 시간만큼만 전진시킵니다.
-    -- 그래서 1토큰 미만의 잔여분이 다음 호출로 이월됩니다(이전 구현은 버려서 상시 과소 허용).
-    local tokens_to_add = math.floor(elapsed_micros * capacity / window_micros)
-    ...
-
-    if refilled < permits then
-        -- 거부: 어떤 대역도 기록하지 않습니다. 허용했을 대역은 토큰을 그대로 유지합니다.
-        -- 존재하는 버킷의 TTL만 갱신합니다(EXPIRE는 없는 키에는 no-op).
-        for j = 1, band_count do
-            redis.call('EXPIRE', KEYS[j], ttl_seconds(windows[j]))
+-- ── Pass 1: 모든 대역을 읽고 확인만 합니다 (쓰지 않음) ─────────────────────
+for i = 1, band_count do
+    if alg == ALG_TOKEN_BUCKET then
+        local data        = redis.call('HMGET', KEYS[i], 'tokens', 'last_refill_micros')
+        local cur_tokens  = tonumber(data[1])
+        local last_refill = tonumber(data[2])
+        -- 버킷이 없거나 0.3.x 버킷('last_refill_micros'가 없음)이면 가득 찬 상태로 시작합니다.
+        if cur_tokens == nil or last_refill == nil then
+            cur_tokens  = capacity
+            last_refill = now_micros
         end
-        return {0, i, refilled, micros_to_wait, reset_time_millis, capacity, i}
+        -- max: 시계가 뒤로 간 경우 / min: 한 윈도로 클램프
+        local elapsed = math.min(math.max(0, now_micros - last_refill), win_micros)
+        -- 온전한 토큰만 적립하고 타임스탬프는 그 토큰들이 소요한 시간만큼만 전진 → 잔여분 이월
+        local to_add = math.floor(elapsed * capacity / win_micros)
+        ...
+        if refilled < permits then
+            reject(i, refilled, wait, reset_millis)   -- 즉시 반환하지 않고 다음 대역 확인
+        end
+    elseif alg == ALG_SLIDING_WINDOW then ...         -- HGETALL, 현재 기하의 서브 버킷만 합산
+    elseif alg == ALG_FIXED_WINDOW then ...           -- HMGET count, window_end_micros
     end
 end
 
--- ── 2단계: 전부 가능하므로 모든 대역에서 차감 ─────────────────────────────
+if rejection ~= nil then
+    refresh_ttls()        -- TOKEN_BUCKET·SLIDING_WINDOW 키만 EXPIRE (없는 키에는 no-op)
+    return rejection      -- 대기가 가장 긴 거부
+end
+if check_only then
+    return {1, 0, binding_remaining, 0, 0, capacities[binding], binding, now_micros}
+end
+
+-- ── Pass 2: 전부 가능하므로 모든 대역에 기록 ─────────────────────────────
 for i = 1, band_count do
-    redis.call('HMSET', KEYS[i],
-        'tokens', string.format('%.0f', remaining),
-        'last_refill_micros', string.format('%.0f', refill_micros[i]))
-    redis.call('EXPIRE', KEYS[i], ttl_seconds(windows[i]))
+    if alg == ALG_TOKEN_BUCKET then
+        redis.call('HMSET', KEYS[i],
+            'tokens',             string.format('%.0f', remaining),
+            'last_refill_micros', string.format('%.0f', tb_refills[i]))
+        redis.call('EXPIRE', KEYS[i], ttl_for_window(win_micros))
+    elseif ... end      -- SLIDING_WINDOW: HDEL + HINCRBY + EXPIRE / FIXED_WINDOW: HSET + PEXPIREAT
 end
 
 -- 리셋 시각은 소비 **후**에 계산합니다. 이 요청이 없었다면의 시각이 아니라
 -- 실제로 다시 가득 차는 시각을 알려주기 위해서입니다.
-return {1, 0, tokens[binding], 0, reset_time_millis, binding_capacity, binding}
+return {1, 0, binding_remaining, 0, reset_millis, binding_capacity, binding, now_micros}
 ```
 
 **정밀도 주의.** Redis의 Lua 5.1에는 정수 타입이 없고 모든 수는 IEEE-754 double입니다(정확한 정수
@@ -1332,14 +1490,14 @@ return {1, 0, tokens[binding], 0, reset_time_millis, binding_capacity, binding}
 │  Client A ──┐                                                │
 │             │     ┌─────────────────────────────────┐        │
 │  Client B ──┼────→│  Redis Lua Script (EVALSHA)     │        │
-│             │     │  - 한 규칙의 모든 대역을 2패스로 │        │
+│             │     │  - 넘겨받은 모든 대역을 2패스로  │        │
 │  Client C ──┘     │  - 전부 또는 전무로 차감         │        │
 │                   │  - Redis 서버 시간 사용          │        │
 │                   └─────────────────────────────────┘        │
 │                                                              │
 │  장점:                                                        │
 │  1. Race Condition 방지 (동시 요청 처리)                       │
-│  2. 네트워크 왕복 최소화 (규칙당 한 번의 호출)                  │
+│  2. 네트워크 왕복 최소화 (요청당 한 번의 호출, 슬롯이 갈리면 규칙당)│
 │  3. Clock Drift 방지 (Redis 서버 시간 사용)                    │
 │                                                              │
 │  한계:                                                        │
@@ -1364,40 +1522,78 @@ return {1, 0, tokens[binding], 0, reset_time_millis, binding_capacity, binding}
 
 ```java
 // MongoRateLimitRuleRepository.java (요지)
-public class MongoRateLimitRuleRepository implements RateLimitRuleRepository {
+public class MongoRateLimitRuleRepository
+    implements RateLimitRuleRepository, RuleSetAccessControlSource {
+
+  public static final String UNIQUE_RULE_INDEX = "ruleSetId_1_id_1_unique";
+  public static final String ID_INDEX = "id_1";
+  public static final String ACCESS_CONTROL_MARKER = "aclUpdatedAt";
 
   private final MongoCollection<Document> collection;  // ← COLL
 
   public MongoRateLimitRuleRepository(MongoCollection<Document> collection) { ... }
 
+  public void ensureIndexes() { ... }  // 실패 시 IllegalStateException
+
   @Override
   public List<RateLimitRule> findByRuleSetId(String ruleSetId) {
-    List<RateLimitRule> rules = new ArrayList<>();
+    List<RateLimitRule> result = new ArrayList<>();
     for (Document doc : collection.find(Filters.eq("ruleSetId", ruleSetId))) {
-      rules.add(toRule(doc));
+      RateLimitRule rule = toDomainOrSkip(doc);  // 변환 실패 문서는 WARN 후 건너뜀
+      if (rule != null) {
+        result.add(rule);
+      }
     }
-    return rules;
+    return result;
   }
 
-  @Override
-  public Optional<RateLimitRule> findById(String id) { ... }   // Filters.eq("id", id)
+  public long getSkippedDocumentCount() { ... }  // 건너뛴 손상 문서 수
+
+  public Optional<RateLimitRule> findById(String ruleSetId, String id) { ... }  // (ruleSetId, id)
 
   @Override
-  public void save(RateLimitRule rule) { ... }                 // replaceOne + upsert
+  public void save(RateLimitRule rule) { ... }  // updateOne $set/$unset, 없으면 upsert + $setOnInsert
 
-  @Override
-  public boolean deleteById(String id) { ... }
+  public boolean moveRule(String id, String fromRuleSetId, String toRuleSetId) { ... }
+
+  public boolean deleteById(String ruleSetId, String id) { ... }
 
   @Override
   public List<RateLimitRule> findAll() { ... }
 
+  @Override
   public int deleteByRuleSetId(String ruleSetId) { ... }
+
+  @Override
+  public AccessControl findAccessControlByRuleSetId(String ruleSetId) { ... }  // 사본 병합
+
+  public void saveAccessControl(String ruleSetId, List<String> allowedIps, List<String> deniedIps,
+      Set<String> allowedKeys, Set<String> deniedKeys) { ... }
+
+  // id만 받는 findById(String) / deleteById(String)는 @Deprecated:
+  // 여러 규칙 세트에 같은 id가 있으면 IllegalStateException
 }
 ```
 
-문서 필드는 `RateLimitRule`의 실제 필드와 1:1로 대응합니다. `path`, `method`, `priority` **필드는
-없습니다** — 규칙은 스코프와 대역을 갖고 경로 패턴은 갖지 않기 때문입니다. 정렬도 하지 않습니다:
-룰셋 안의 모든 활성 규칙이 평가되므로 우선순위 개념이 필요하지 않습니다.
+규칙은 `(ruleSetId, id)` 쌍으로 식별됩니다. 같은 규칙 id가 여러 규칙 세트에 있을 수 있으며, 규칙을
+다른 규칙 세트로 옮기는 것은 명시적인 `moveRule`입니다. `save()`는 먼저 `updateOne`으로 규칙 필드를
+`$set`하고 비운 선택 필드를 `$unset`합니다. 일치하는 문서가 없을 때만 upsert하며, 이때 규칙 세트의 병합된
+접근 제어를 `$setOnInsert`로 복사합니다. 처음 저장이 동시에 일어나 유니크 인덱스에서 `E11000`이 나면 같은
+upsert를 한 번 더 시도합니다(상대 문서를 갱신하고, 그 사이 삭제됐다면 자기 문서를 넣음).
+
+문서 필드는 `RateLimitRule`의 필드에 대응하며, 0.4 매처 필드(`priority`, `methods`, `pathPatterns`,
+`excludePathPatterns`, `headerEquals`, `headerPresent`)도 포함합니다. 접근 제어 목록(`allowedIps`,
+`deniedIps`, `allowedKeys`, `deniedKeys`)은 같은 문서에 저장되지만 도메인 `RateLimitRule`에는 들어가지
+않습니다. 규칙 세트 단위 값이며 `findAccessControlByRuleSetId`로 읽습니다.
+
+접근 제어 쓰기(`saveAccessControl`, 새 규칙 삽입, `moveRule`)는 마커 필드 `aclUpdatedAt`도 기록합니다.
+마커는 존재 여부만 의미가 있습니다. `saveAccessControl`과 `moveRule`은 서버 시각(`$currentDate`)을, 새 규칙
+삽입은 클라이언트 시각을 씁니다(`$setOnInsert`에서는 `$currentDate`를 쓸 수 없음). 읽을 때는 마커나
+비어 있지 않은 목록을 가진 문서를 모두 사본으로 보고 병합합니다. 거부 목록은 합집합, 허용 목록은
+교집합이고 목록이 없는 사본은 빈 목록으로 칩니다. 마커도 목록도 없는 문서(0.3.x나 수동으로 쓴 문서)는
+무시합니다. 사본이 어긋나면(중간에 끊긴 `saveAccessControl`, 또는 새 규칙 삽입과 경합) 병합은 닫힌 쪽으로
+실패하고 WARN을 남기며, 다음 `saveAccessControl`이 모든 사본을 다시 씁니다. 자세한 내용은
+[storage-layer.ko.md](ko/architecture/deep-dive/storage-layer.ko.md#mongodb-규칙-저장소의-접근-제어-복사)를 보세요.
 
 규칙을 룰셋으로 조립하고 `KeyResolver`를 붙이는 것은
 `org.fluxgate.adapter.mongo.rule.MongoRuleSetProvider`이며, 이것이 코어의
@@ -1412,8 +1608,12 @@ public class MongoRateLimitRuleRepository implements RateLimitRuleRepository {
 마지막 줄이 중요합니다. 이전 구현은 연결 실패도 "규칙 없음"으로 보이게 만들어,
 `missing-rule-behavior`에 따라 전면 통과 또는 전면 거부가 조용히 일어났습니다.
 
-`fluxgate.mongo.ddl-auto=create`는 컬렉션과 함께 `{ruleSetId: 1}` 인덱스, 유니크
-`{ruleSetId: 1, id: 1}` 인덱스를 만듭니다(인덱스 생성 실패는 WARN, 치명적이지 않음).
+`fluxgate.mongo.ddl-auto=create`는 컬렉션을 만들고 `MongoRateLimitRuleRepository#ensureIndexes()`를
+호출합니다. 이 메서드는 `{ruleSetId: 1, id: 1}` 유니크 인덱스(`ruleSetId_1_id_1_unique`)와
+`{id: 1}` 인덱스(`id_1`)를 만듭니다. 인덱스 생성 실패는 치명적입니다. `(ruleSetId, id)` 중복이나 충돌하는
+인덱스가 있으면 `IllegalStateException`으로 시작이 실패하며, 중복 쌍은 메시지에 나열됩니다.
+`ddl-auto=validate`는 유니크 인덱스가 없으면(또는 partial·sparse·`simple`이 아닌 collation이라 모든 규칙의
+유일성을 보장하지 못하면) 시작을 실패시킵니다.
 
 ---
 
@@ -1469,15 +1669,34 @@ public class PollingReloadStrategy extends AbstractReloadStrategy {
   /** 룰셋 ID → 마지막으로 관측한 버전 해시. */
   private final Map<String, Integer> versionMap = new ConcurrentHashMap<>();
 
-  private void checkForUpdates() {
-    for (String ruleSetId : cache.getCachedRuleSetIds()) {
-      provider.findById(ruleSetId).ifPresent(ruleSet -> {
-        int version = computeVersion(ruleSet);
-        Integer previous = versionMap.put(ruleSetId, version);
-        if (previous != null && previous != version) {
-          triggerReload(ruleSetId);   // → 리스너를 순서대로 호출
+  // pollForChanges(): 캐시에 있는 룰셋 ID마다 checkForChange()를 호출합니다.
+  private void checkForChange(String ruleSetId) {
+    try {
+      Optional<RateLimitRuleSet> currentOpt = provider.findById(ruleSetId);
+      if (currentOpt.isEmpty()) {
+        // Rule set was deleted
+        Integer previousVersion = versionMap.remove(ruleSetId);
+        if (previousVersion != null) {
+          log.info("Rule set deleted: {}", ruleSetId);
+          notifyListeners(RuleReloadEvent.forRuleSet(ruleSetId, ReloadSource.POLLING));
         }
-      });
+        return;
+      }
+
+      RateLimitRuleSet current = currentOpt.get();
+      int currentVersion = computeVersion(current);
+      Integer previousVersion = versionMap.get(ruleSetId);
+
+      if (previousVersion == null) {
+        // First time seeing this rule set
+        versionMap.put(ruleSetId, currentVersion);
+      } else if (!previousVersion.equals(currentVersion)) {
+        // Rule set changed → 리스너를 순서대로 호출
+        versionMap.put(ruleSetId, currentVersion);
+        notifyListeners(RuleReloadEvent.forRuleSet(ruleSetId, ReloadSource.POLLING));
+      }
+    } catch (Exception e) {
+      log.warn("Error checking rule set for changes: {}", ruleSetId, e);
     }
   }
 
@@ -1486,7 +1705,7 @@ public class PollingReloadStrategy extends AbstractReloadStrategy {
    * 이제 안정적입니다. RateLimitRuleSet.equals를 쓰면 안 됩니다 - keyResolver와
    * metricsRecorder(보통 매번 새로 만들어지는 람다)까지 비교하므로 매 주기 변경으로 보입니다.
    */
-  private static int computeVersion(RateLimitRuleSet ruleSet) {
+  private int computeVersion(RateLimitRuleSet ruleSet) {
     return Objects.hash(ruleSet.getId(), ruleSet.getDescription(), ruleSet.getRules());
   }
 }
@@ -1516,8 +1735,14 @@ public class RedisPubSubReloadStrategy extends AbstractReloadStrategy {
   /** 전체 리로드를 의도한 유일한 페이로드. */
   public static final String FULL_RELOAD_MESSAGE = "*";
 
-  /** 메시지 스키마 버전. 없으면 1로 읽습니다(구 퍼블리셔 호환). */
-  public static final int MESSAGE_SCHEMA_VERSION = 1;
+  /** 최신 메시지 스키마 버전(nonce와 채널을 서명에 묶음). */
+  public static final int MESSAGE_SCHEMA_VERSION = 2;
+
+  /** version이 없거나 1인 메시지(nonce·채널 바인딩 없음). accept-legacy-signed로 허용 여부 결정. */
+  public static final int LEGACY_MESSAGE_SCHEMA_VERSION = 1;
+
+  /** 서명 메시지의 재전송 허용 창. */
+  public static final Duration DEFAULT_MAX_MESSAGE_AGE = Duration.ofSeconds(60);
 
   private final String channel;    // 기본값: FluxgateConstants.Channels.RULE_RELOAD = "fluxgate:rule-reload"
 
@@ -1526,35 +1751,53 @@ public class RedisPubSubReloadStrategy extends AbstractReloadStrategy {
   private final AtomicReference<Object> redisClientRef = new AtomicReference<>();
   private final AtomicReference<StatefulRedisPubSubConnection<String, String>> connectionRef = ...;
 
+  /** 비밀(secret)이 설정되면 서명 메시지만 받습니다. 버전 1과 2의 서명을 각각 검증합니다. */
+  private final String secret;
+
+  /** 재전송 캐시: 버전 2는 nonce, 버전 1은 서명 → 창이 끝나는 시각. */
+  private final ConcurrentHashMap<String, Long> seenMessages = new ConcurrentHashMap<>();
+
   /**
-   * 비어 있거나, JSON이 아니거나, JSON 객체가 아니거나, version이 알 수 없는 메시지는
+   * 비어 있거나, JSON이 아니거나, JSON 객체가 아니거나, version이 1·2가 아닌 메시지는
    * WARN을 남기고 **무시**합니다(Optional.empty). 예전에는 파싱 실패를 전체 리로드로
    * 매핑했기 때문에, 잘못된 메시지 한 건이 전체 키스페이스를 비웠습니다(H18).
+   * secret이 있으면 평문 "*"·"ruleSetId" 형태와 서명 없는 JSON도 무시합니다.
    */
-  private Optional<RuleReloadEvent> parseMessage(String message) { ... }
+  Optional<RuleReloadEvent> parseMessage(String message) { ... }
 }
 ```
 
 메시지 형태:
 
 ```json
-{"version": 1, "ruleSetId": "api-limits"}
+{"version": 2, "ruleSetId": "api-limits", "fullReload": false,
+ "timestamp": 1760000000000, "source": "control-plane", "nonce": "...", "signature": "..."}
 ```
 
 ```
-"*"        전체 리로드 (의도된 것)
-그 외      WARN 후 무시
+JSON (서명)      secret이 있으면 이 형태만 받음. 버전 2는 HmacSigner.canonicalRuleChangeV2로
+                 채널과 nonce까지 서명에 묶고, 버전 1은 accept-legacy-signed=true일 때만 받음
+"*"              전체 리로드 (secret이 없을 때만)
+"ruleSetId"      그 룰셋만 리로드 (secret이 없을 때만)
+그 외            WARN 후 무시
 ```
+
+서명 메시지는 `timestamp`가 `max-message-age`(기본 60초) 안이어야 하고, 같은 창 안에서 다시 오면
+(버전 2는 같은 nonce, 버전 1은 같은 서명) 재전송으로 보고 무시합니다.
 
 프로퍼티: `fluxgate.reload.pubsub.channel`, `.retry-on-failure`(기본 `true`),
-`.retry-interval`(기본 `5s`), `.backstop-polling-interval`(기본 `60s`).
+`.retry-interval`(기본 `5s`), `.backstop-polling-interval`(기본 `60s`), `.secret`,
+`.max-message-age`(기본 `60s`), `.accept-legacy-signed`(기본 `true`), `.allow-unsigned`(기본 `false`).
+`secret`이 없으면 `AUTO`는 폴링으로 대체하고 명시적 `PUBSUB`는 기동에 실패합니다. `allow-unsigned=true`일
+때만 서명 없는 채널을 엽니다.
 
 **CompositeReloadStrategy**: `AUTO`와 `PUBSUB`는 실제로 Pub/Sub 뒤에 폴링 백스톱을 함께 돌리는
 `CompositeReloadStrategy`로 배선됩니다. 메시지가 유실되어도 늦어도 백스톱 주기 안에 자기 치유되며,
 `backstop-polling-interval=0`으로 끌 수 있습니다.
 
-> **보안 주의.** 리로드 채널은 컨트롤 플레인 채널입니다. `PUBLISH` 권한은 규칙 쓰기 권한과 같습니다.
-> FluxGate는 퍼블리셔를 인증하지 않으므로 Redis AUTH/TLS/ACL로 보호해야 합니다.
+> **보안 주의.** 리로드 채널은 컨트롤 플레인 채널입니다. `secret`을 설정하면 FluxGate가 HMAC-SHA256
+> 서명으로 퍼블리셔를 인증하지만, 서명 없는 채널(`allow-unsigned=true`)에서는 `PUBLISH` 권한이 곧
+> 규칙 쓰기 권한입니다. 어느 쪽이든 Redis AUTH/TLS/ACL로 채널을 보호하세요.
 > [SECURITY.md](../SECURITY.md)를 참고하세요.
 
 ---
@@ -1590,15 +1833,24 @@ public class RedisBucketResetHandler implements BucketResetHandler, RuleReloadLi
 
   @Override
   public void resetBuckets(String ruleSetId) {
+    Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
+    RedisTokenBucketStore store = resolveStore("ruleSetId " + ruleSetId);  // 실패 시 WARN, null
+    if (store == null) {
+      return;
+    }
     // SCAN + UNLINK, 패턴은 RedisRateLimiter.bucketKeyPattern(ruleSetId).
     // glob 메타문자(* ? [ ] \)는 이스케이프되므로 ruleSetId가 "*"여도 안전합니다.
-    tokenBucketStoreSupplier.get().deleteBucketsByRuleSetId(ruleSetId);
+    long deleted = store.deleteBucketsByRuleSetId(ruleSetId);
   }
 
   @Override
   public void resetAllBuckets() {
+    RedisTokenBucketStore store = resolveStore("all rule sets");
+    if (store == null) {
+      return;
+    }
     // 패턴은 "fluxgate:bucket:*"만. fluxgate:ruleset:* / fluxgate:rulesets는 건드리지 않습니다.
-    tokenBucketStoreSupplier.get().deleteAllBuckets();
+    long deleted = store.deleteAllBuckets();
   }
 
   @Override
@@ -1680,19 +1932,21 @@ HTTP 요청 ("/api/users/123")
      ▼
 ┌────────────────────────────────────────────────────────────────┐
 │ 5. RedisRateLimiter  (또는 Bucket4jRateLimiter)                  │
-│    - 활성 규칙마다 ruleSet.getKeyResolver().resolve(context, rule)│
-│    - 규칙의 모든 대역 버킷 키를 한 번의 Lua 호출로 전달             │
-│    - 첫 거부 규칙에서 즉시 중단 (fail fast)                       │
+│    - 매칭 규칙(getMatchingRules)마다 키 해석, 차감 전에 전부      │
+│    - 키가 한 슬롯에 모이면(단독 Redis는 항상) 모든 규칙을 한 번의   │
+│      Lua 호출로, 아니면 규칙마다 호출 + 거부 시 앞선 규칙 환불       │
+│    - 거부 시 대기가 가장 긴 대역·규칙을 보고                       │
 └────────────────────────────────────────────────────────────────┘
      │
      ▼
 ┌────────────────────────────────────────────────────────────────┐
 │ 6. RedisTokenBucketStore + token_bucket_consume.lua             │
 │    - EVALSHA (NOSCRIPT면 EVAL + 재적재)                          │
-│    - 1패스: 모든 대역 리필 + 검사                                 │
-│    - 2패스: 전부 통과했을 때만 전부 차감, 아니면 아무것도 쓰지 않음  │
-│    - 반환 7개 정수: allowed, rejecting_band, min_remaining,       │
-│      micros_to_wait, reset_time_millis, limit, binding_band      │
+│    - 1패스: 모든 대역 읽기 + 검사 (거부해도 끝까지, 쓰지 않음)     │
+│    - 2패스: 전부 통과했을 때만 전부 차감, 아니면 TTL만 갱신         │
+│    - 반환 8개 정수: allowed, rejecting_band, min_remaining,       │
+│      micros_to_wait, reset_time_millis, limit, binding_band,     │
+│      now_micros                                                  │
 └────────────────────────────────────────────────────────────────┘
      │
      ▼

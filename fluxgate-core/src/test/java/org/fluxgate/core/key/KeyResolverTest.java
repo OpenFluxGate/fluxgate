@@ -422,8 +422,33 @@ class KeyResolverTest {
       // when
       RateLimitKey key = resolver.resolve(context, createRule("ip-rule", LimitScope.PER_IP));
 
-      // then
-      assertEquals("ip:10.0.0.1______", key.value());
+      // then - the replacement is marked and carries a digest, so it cannot collide
+      assertTrue(key.value().matches("ip:h:10\\.0\\.0\\.1______:[0-9a-f]{16}"), key.value());
+    }
+
+    @Test
+    @DisplayName("values differing only in replaced characters should resolve to distinct keys")
+    void resolve_replacedCharactersShouldNotCollide() {
+      RateLimitRule rule = createRule("user-rule", LimitScope.PER_USER);
+
+      RateLimitKey plus = resolver.resolve(RequestContext.builder().userId("a+1").build(), rule);
+      RateLimitKey underscore =
+          resolver.resolve(RequestContext.builder().userId("a_1").build(), rule);
+
+      assertEquals("user:a_1", underscore.value());
+      assertNotEquals(plus, underscore);
+    }
+
+    @Test
+    @DisplayName("the length limit should apply to the value only, never hashing away the prefix")
+    void resolve_lengthLimitShouldApplyToTheValueOnly() {
+      // 252 characters: within the value limit, but over it once "user:" is prepended
+      String userId = repeat("u", 252);
+      RequestContext context = RequestContext.builder().userId(userId).build();
+
+      RateLimitKey key = resolver.resolve(context, createRule("user-rule", LimitScope.PER_USER));
+
+      assertEquals("user:" + userId, key.value());
     }
 
     @Test
@@ -437,9 +462,7 @@ class KeyResolverTest {
       RateLimitKey key = resolver.resolve(context, createRule("user-rule", LimitScope.PER_USER));
 
       // then
-      assertTrue(key.value().startsWith("user:"));
-      assertEquals("user:".length() + 64, key.value().length());
-      assertTrue(key.value().substring("user:".length()).matches("[0-9a-f]{64}"));
+      assertTrue(key.value().matches("user:h:[0-9a-f]{64}"), key.value());
     }
 
     private String repeat(String value, int times) {

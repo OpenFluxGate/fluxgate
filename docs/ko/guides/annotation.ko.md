@@ -32,7 +32,8 @@ public class MyApplication {
 
 `@EnableFluxgateAspect`는 `FluxgateAopAutoConfiguration`을 임포트하며, `RateLimitAspect` 빈을
 등록합니다. Aspect는 `@RateLimit`이 붙은 모든 메서드를 가로채어 메서드 실행 전에 설정된 규칙을
-적용합니다.
+적용합니다. 서블릿 애플리케이션에서는 `FluxgateAopExceptionHandlerAutoConfiguration` 자동 구성이
+`RateLimitExceededExceptionHandler`도 등록하며, 던져진 거부에 429 또는 503으로 응답합니다.
 
 같은 클래스에 `@EnableFluxgateFilter`와 `@EnableFluxgateAspect`를 함께 사용하면 일괄 HTTP 필터와
 메서드별 오버라이드를 조합할 수 있습니다.
@@ -109,8 +110,8 @@ public Response submit(@RequestParam String userId) { ... }
 
 ### `maxConcurrentWaits` (int, 기본값 `100`) — deprecated
 
-**0.4.0 이후 무시됩니다.** 대기 세마포어가 Aspect 범위로 이전되었기 때문입니다(호출별 세마포어는
-아무것도 제한하지 않았습니다). 대신 `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits`를
+**0.4.0 이후 무시됩니다.** 호출별 세마포어는 아무것도 제한하지 않았으므로, 대기 허가는 이제 HTTP 필터와
+Aspect가 함께 쓰는 애플리케이션 전역 `FluxgateWaitPermits` 빈 하나입니다. 대신 `fluxgate.ratelimit.wait-for-refill.max-concurrent-waits`를
 설정하세요.
 
 ---
@@ -201,8 +202,10 @@ public Data getData() { ... }
 ```java
 // Advice — 429를 애플리케이션 자체 형식으로 렌더링
 import org.fluxgate.spring.aop.RateLimitExceededException;
+import org.fluxgate.spring.aop.RateLimitExceededExceptionHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -210,6 +213,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import java.util.Map;
 
 @RestControllerAdvice
+@Order(RateLimitExceededExceptionHandler.ORDER - 1) // before the starter's default advice
 public class RateLimitExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(RateLimitExceptionHandler.class);
@@ -230,6 +234,11 @@ public class RateLimitExceptionHandler {
     }
 }
 ```
+
+서블릿 애플리케이션에서는 스타터가 자체 advice인 `RateLimitExceededExceptionHandler`로 이미 이 예외에
+응답합니다. 순서는 `RateLimitExceededExceptionHandler.ORDER`(`Ordered.HIGHEST_PRECEDENCE + 1000`)여서
+catch-all `@ExceptionHandler(Exception.class)`가 거부를 500으로 바꾸지 못합니다. 직접 만든 advice는
+위 예처럼 이보다 먼저 오도록 순서를 지정해야 하며, 순서 없는 advice는 이 예외를 받지 못합니다.
 
 `RateLimitExceededException`이 제공하는 정보:
 - `getRetryAfterMillis()` — 다음 요청이 성공할 때까지 기다려야 할 밀리초

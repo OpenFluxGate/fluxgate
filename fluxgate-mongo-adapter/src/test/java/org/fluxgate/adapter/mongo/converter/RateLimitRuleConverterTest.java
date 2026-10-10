@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.Duration;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import org.bson.Document;
@@ -20,6 +21,8 @@ import org.fluxgate.core.config.RuleMatcher;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Unit tests for {@link RateLimitRuleConverter}.
@@ -147,6 +150,15 @@ class RateLimitRuleConverterTest {
 
       // then
       assertEquals("default", document.getLabel());
+    }
+
+    @Test
+    @DisplayName(
+        "toDocument (band) normalises the default ZoneOffset.UTC zone to \"UTC\", not \"Z\"")
+    void toDocument_normalisesUtcZone() {
+      RateLimitBand band = RateLimitBand.builder(Duration.ofMinutes(1), 100).build();
+
+      assertEquals("UTC", RateLimitRuleConverter.toDocument(band).getZoneId());
     }
   }
 
@@ -350,15 +362,66 @@ class RateLimitRuleConverterTest {
     }
 
     @Test
-    @DisplayName("unknown algorithm and zone id fall back to TOKEN_BUCKET and UTC")
-    void unknownAlgorithmAndZone_fallBackToDefaults() {
+    @DisplayName("an unknown algorithm is rejected, never silently enforced as TOKEN_BUCKET")
+    void unknownAlgorithm_isRejected() {
       RateLimitBandDocument doc =
-          new RateLimitBandDocument(60, 5, "x", "NO_SUCH_ALGORITHM", null, "Not/AZone", 0);
+          new RateLimitBandDocument(60, 5, "x", "NO_SUCH_ALGORITHM", null, "UTC", 0);
 
-      RateLimitBand band = RateLimitRuleConverter.toDomain(doc);
+      InvalidRuleDocumentException e =
+          assertThrows(
+              InvalidRuleDocumentException.class, () -> RateLimitRuleConverter.toDomain(doc));
+      assertTrue(e.getMessage().contains("NO_SUCH_ALGORITHM"));
+    }
+
+    @Test
+    @DisplayName("an invalid zone id is rejected, never silently replaced by UTC")
+    void invalidZone_isRejected() {
+      RateLimitBandDocument doc =
+          new RateLimitBandDocument(60, 5, "x", "TOKEN_BUCKET", null, "Not/AZone", 0);
+
+      assertThrows(InvalidRuleDocumentException.class, () -> RateLimitRuleConverter.toDomain(doc));
+    }
+
+    @Test
+    @DisplayName("an unknown quota period is rejected like an unknown algorithm")
+    void unknownQuotaPeriod_isRejected() {
+      RateLimitBandDocument doc =
+          new RateLimitBandDocument(60, 5, "x", "FIXED_WINDOW", "FORTNIGHT", "UTC", 0);
+
+      assertThrows(InvalidRuleDocumentException.class, () -> RateLimitRuleConverter.toDomain(doc));
+    }
+
+    @Test
+    @DisplayName("absent algorithm and zone id still default to the 0.3.x TOKEN_BUCKET and UTC")
+    void absentAlgorithmAndZone_defaultTo03x() {
+      RateLimitBand band = RateLimitRuleConverter.toDomain(new RateLimitBandDocument(60, 5, "x"));
 
       assertEquals(RateLimitAlgorithm.TOKEN_BUCKET, band.getAlgorithm());
-      assertEquals(java.time.ZoneOffset.UTC, band.getZoneId());
+      assertEquals(java.time.ZoneOffset.UTC, band.getZoneId().normalized());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"Z", "UTC", "Etc/UTC", "+00:00"})
+    @DisplayName("every UTC spelling reads back as the ZoneOffset.UTC default")
+    void utcSpellings_readAsZoneOffsetUtc(String zone) {
+      RateLimitBand band =
+          RateLimitRuleConverter.toDomain(
+              new RateLimitBandDocument(60, 5, "x", "TOKEN_BUCKET", null, zone, 0));
+
+      assertSame(ZoneOffset.UTC, band.getZoneId());
+    }
+
+    @Test
+    @DisplayName("a default band survives toDocument -> toDomain unchanged")
+    void defaultBand_roundTripsThroughDocument() {
+      RateLimitBand band =
+          RateLimitBand.builder(Duration.ofMinutes(1), 100).label("per-minute").build();
+
+      RateLimitBand restored =
+          RateLimitRuleConverter.toDomain(RateLimitRuleConverter.toDocument(band));
+
+      assertEquals(band, restored);
+      assertSame(ZoneOffset.UTC, restored.getZoneId());
     }
 
     @Test

@@ -17,10 +17,13 @@ import org.fluxgate.core.handler.RateLimitResponse;
  *
  * <ul>
  *   <li>legacy {@code X-RateLimit-Limit} / {@code X-RateLimit-Remaining} / {@code
- *       X-RateLimit-Reset} (epoch seconds), plus {@code Retry-After} on rejection
+ *       X-RateLimit-Reset} (epoch seconds)
  *   <li>IETF style {@code RateLimit-Limit} / {@code RateLimit-Remaining} / {@code RateLimit-Reset}
  *       (delta seconds) and {@code RateLimit-Policy}
  * </ul>
+ *
+ * <p>{@code Retry-After} is written on every rejection regardless of either switch (and of {@code
+ * fluxgate.ratelimit.include-headers}): it is the one header a client needs to back off correctly.
  *
  * <p>A value that the rate limiter reported as unknown ({@code -1}) is omitted rather than written
  * as a misleading number.

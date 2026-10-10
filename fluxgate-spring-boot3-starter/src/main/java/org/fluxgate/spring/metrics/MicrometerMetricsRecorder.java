@@ -9,11 +9,9 @@ import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.regex.Pattern;
 import org.fluxgate.core.context.RequestContext;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
@@ -56,24 +54,12 @@ public class MicrometerMetricsRecorder
   private static final Logger log = LoggerFactory.getLogger(MicrometerMetricsRecorder.class);
 
   /** Placeholder substituted for high cardinality path segments. */
-  static final String ID_PLACEHOLDER = "{id}";
+  static final String ID_PLACEHOLDER = EndpointTags.ID_PLACEHOLDER;
 
   /** Endpoint tag value every endpoint past the cardinality cap collapses into. */
-  static final String OTHER_ENDPOINT = "other";
-
-  private static final Pattern NUMERIC_SEGMENT = Pattern.compile("\\d+");
-  private static final Pattern UUID_SEGMENT =
-      Pattern.compile(
-          "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
-  private static final Pattern HEX24_SEGMENT = Pattern.compile("[0-9a-fA-F]{24}");
-  private static final Pattern UNSAFE_TAG_CHARS = Pattern.compile("[^a-zA-Z0-9_/.{}-]");
-
-  /** Upper bound on a tag value, so a long URI cannot blow up the registry's memory. */
-  private static final int MAX_TAG_LENGTH = 200;
+  static final String OTHER_ENDPOINT = EndpointTags.OTHER_ENDPOINT;
 
   private final MeterRegistry registry;
-  private final boolean includeEndpoint;
-  private final boolean normalizeEndpoints;
   private final int maxEndpointTags;
 
   /**
@@ -86,14 +72,15 @@ public class MicrometerMetricsRecorder
   private final ConcurrentMap<Tags, AtomicLong> remainingTokenGauges = new ConcurrentHashMap<>();
 
   /**
-   * Endpoint tag values already handed to the registry.
+   * The endpoint tag policy and its budget of distinct values.
    *
    * <p>N-13: {@code maxEndpointTags} used to bound the gauges only, so counters and timers grew one
    * series per distinct path. Endpoint normalization collapses ids but not invented names, so
    * {@code /api/aaa}, {@code /api/aab} and so on multiplied the registry and the Prometheus scrape
-   * without limit. Every meter now goes through {@link #boundedEndpoint(String)}.
+   * without limit. Every meter now goes through {@link #boundedEndpoint(String)}, and {@link
+   * FluxgateMetrics} shares the budget through {@link #endpointTag(String)}.
    */
-  private final Set<String> knownEndpoints = ConcurrentHashMap.newKeySet();
+  private final EndpointTags endpointTags;
 
   /**
    * Creates a recorder with default metric settings.
@@ -119,9 +106,8 @@ public class MicrometerMetricsRecorder
       boolean normalizeEndpoints,
       int maxEndpointTags) {
     this.registry = Objects.requireNonNull(registry, "registry must not be null");
-    this.includeEndpoint = includeEndpoint;
-    this.normalizeEndpoints = normalizeEndpoints;
-    this.maxEndpointTags = maxEndpointTags > 0 ? maxEndpointTags : Integer.MAX_VALUE;
+    this.endpointTags = new EndpointTags(includeEndpoint, normalizeEndpoints, maxEndpointTags);
+    this.maxEndpointTags = endpointTags.getMaxEndpointTags();
     log.info(
         "MicrometerMetricsRecorder initialized (includeEndpoint={}, endpointNormalization={},"
             + " maxEndpointTags={})",
@@ -189,8 +175,9 @@ public class MicrometerMetricsRecorder
 
   private Tags baseTags(String ruleSetId, String endpoint, String method, String result) {
     Tags tags = Tags.of(Metrics.TAG_RULE_SET, sanitize(ruleSetId));
-    if (includeEndpoint) {
-      tags = tags.and(Metrics.TAG_ENDPOINT, boundedEndpoint(endpoint));
+    String endpointTag = endpointTags.tag(endpoint);
+    if (endpointTag != null) {
+      tags = tags.and(Metrics.TAG_ENDPOINT, endpointTag);
     }
     if (method != null) {
       tags = tags.and(Metrics.TAG_METHOD, sanitize(method));
@@ -202,60 +189,33 @@ public class MicrometerMetricsRecorder
   }
 
   /**
-   * Normalizes and sanitizes an endpoint, then keeps the set of distinct values bounded.
+   * The {@code endpoint} tag value this recorder uses for a request path - normalized, sanitized
+   * and counted against the shared tag budget, so {@code other} once the budget is spent - or null
+   * when {@code fluxgate.metrics.include-endpoint=false}.
    *
-   * <p>The cap is shared by every meter, so one attacker-invented path costs one series in total
-   * rather than one per meter name. Everything past the cap becomes {@link #OTHER_ENDPOINT}, which
-   * keeps the metric usable instead of silently dropping the measurement.
+   * <p>{@link FluxgateMetrics} tags {@code fluxgate.limiter.failures} through this method, so the
+   * failure counter and the request meters agree on every endpoint value.
+   *
+   * @param endpoint the request path, may be null
+   * @return the tag value, or null when endpoints are not tagged
+   * @since 0.4.0
    */
+  public String endpointTag(String endpoint) {
+    return endpointTags.tag(endpoint);
+  }
+
+  /** Normalizes and sanitizes an endpoint, then keeps the set of distinct values bounded. */
   String boundedEndpoint(String endpoint) {
-    String normalized = sanitize(normalizeEndpoint(endpoint));
-    if (knownEndpoints.contains(normalized)) {
-      return normalized;
-    }
-    if (knownEndpoints.size() >= maxEndpointTags) {
-      return OTHER_ENDPOINT;
-    }
-    knownEndpoints.add(normalized);
-    return normalized;
+    return endpointTags.bounded(endpoint);
   }
 
-  /**
-   * Replaces high cardinality path segments with {@code {id}}.
-   *
-   * <p>C6/H-11: the endpoint arrives as the raw request path, so {@code /api/users/12345/orders}
-   * would create one meter per user id. Normalizing collapses those to one series.
-   */
+  /** Replaces high cardinality path segments with {@code {id}} when normalization is on. */
   String normalizeEndpoint(String endpoint) {
-    if (!normalizeEndpoints || endpoint == null || endpoint.isEmpty()) {
-      return endpoint;
-    }
-    String[] segments = endpoint.split("/", -1);
-    boolean changed = false;
-    for (int i = 0; i < segments.length; i++) {
-      if (isHighCardinality(segments[i])) {
-        segments[i] = ID_PLACEHOLDER;
-        changed = true;
-      }
-    }
-    return changed ? String.join("/", segments) : endpoint;
-  }
-
-  private static boolean isHighCardinality(String segment) {
-    if (segment.isEmpty()) {
-      return false;
-    }
-    return NUMERIC_SEGMENT.matcher(segment).matches()
-        || UUID_SEGMENT.matcher(segment).matches()
-        || HEX24_SEGMENT.matcher(segment).matches();
+    return endpointTags.normalize(endpoint);
   }
 
   private static String sanitize(String value) {
-    if (value == null || value.isEmpty()) {
-      return "unknown";
-    }
-    String bounded = value.length() > MAX_TAG_LENGTH ? value.substring(0, MAX_TAG_LENGTH) : value;
-    return UNSAFE_TAG_CHARS.matcher(bounded).replaceAll("_");
+    return EndpointTags.sanitize(value);
   }
 
   private static String getRuleSetId(RateLimitResult result) {
