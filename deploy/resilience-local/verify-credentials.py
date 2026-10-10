@@ -1152,10 +1152,10 @@ class Proof:
         pvcs = {claim: self.get("pvc/" + claim) for claim in claims}
         node_id = self.redis(pod, ["CLUSTER", "MYID"], password)
         sentinel = "/data/.credential-restart-" + secrets.token_hex(8)
-        content = secrets.token_bytes(32)
         self.cold_sentinels.append((pod, sentinel))
-        self.kube("exec", "-i", pod, "--", "sh", "-c", 'cat > "$1"', "sentinel", sentinel, data=content)
-        require(self.kube("exec", pod, "--", "cat", sentinel).stdout == content, "restart data sentinel unreadable")
+        self.kube("exec", pod, "--", "sh", "-c", 'head -c 32 /dev/urandom > "$1"', "sentinel", sentinel)
+        content = self.kube("exec", pod, "--", "cat", sentinel).stdout
+        require(len(content) == 32, "restart data sentinel must contain exactly 32 bytes")
         started = time.monotonic()
         self.kube("delete", "pod/" + pod, "--wait=true")
         for _ in range(300):
