@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "performed_unix_ms": 1791613759354,
+  "performed_unix_ms": 1791626671023,
   "remote_lts_commit": "7ee6a86101afe5ed5a9d6efb992e470430af046a",
-  "integration_source_commit": "b57418fb3612f71203cab6ccd62b5eea94b98091",
+  "integration_source_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
   "merge_tree_exit_code": 0,
-  "merge_tree": "1b0a6b7fb5df143d7b7d05449083935c580c1b91",
+  "merge_tree": "09573bddec4669789b68f59591f942b603669499",
   "conflict_count": 0,
   "both_ancestries_preserved": {
     "lts": true,
@@ -45,5 +45,10 @@
   "actual_target_lts_merge_performed": false,
   "push_performed": false,
   "overall_runtime_approval": false,
-  "boundary": "Read-only merge-tree simulation against the freshly checked remote LTS reference; later remote updates require a new check. Original main retains three unrelated dirty entries."
+  "boundary": "Read-only merge-tree simulation against the freshly checked remote LTS reference; later remote updates require a new check. Original main retains three unrelated dirty entries.",
+  "historical_check": {
+    "performed_unix_ms": 1791613759354,
+    "integration_source_commit": "b57418fb3612f71203cab6ccd62b5eea94b98091",
+    "merge_tree": "1b0a6b7fb5df143d7b7d05449083935c580c1b91"
+  }
 }

@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "scenario": "one_bounded_scheduler_diagnostic",
+  "diagnostic_only": true,
+  "overall_acceptance": false,
+  "score_95_approved": false,
+  "causal_claim": false,
+  "source_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
+  "source_sha256": "ea1fe97c1238e3cd5c110fd7ea8809e67d1a79b4b9f28ec1997929a767aa6a34",
+  "helper_sha256": "aab598b444573b0ceae87c9d641667dd35977eb6eaea1cfcdea0918ce7aac58e",
+  "program_source_sha256": "ace7b9e5edc0644aceed7f169a32cf5e1fa4eb66388b1902970d08edbb7857a3",
+  "parent_actual_exit": 0,
+  "parent_progress": {
+    "sha256": "64e7fb7a2a4e15e7aa511d42177927fd100d91d671a33127aca023f4878b7d3e",
+    "bytes": 1352
+  },
+  "predeclared_identity": {
+    "sha256": "64499412fb65c69e14acad47bb92e4509dba8b6a6323792c8d166fa5c8ce4fd0",
+    "bytes": 4091
+  },
+  "terminal": {
+    "actual_child_exit": 0,
+    "valid": true,
+    "witness": {
+      "sha256": "ec9e42b0472cb3b1513926e3447b20cd372406af020a46f4e04aba6559a55ab1",
+      "bytes": 7572
+    },
+    "log": {
+      "sha256": "8aab395c409969f5968dfc97aba443abc9747cf3304f3b5c967e074c2a0c0144",
+      "bytes": 71
+    }
+  },
+  "raw": {
+    "sha256": "f6f5ab8c9ab055d080b03ac708b1807d6ca3e1b78318a4098d80a5da152dcec7",
+    "bytes": 1252472
+  },
+  "sampler_raw": {
+    "sha256": "72a09fd99c10c1b1b4e3cee2d818273fa8b8f2831d9903df95704e701b801fce",
+    "bytes": 3366081
+  },
+  "offline_tests": {
+    "tests": 13,
+    "passed": true,
+    "root_log": {
+      "sha256": "a5d3dc15402b7977bbac40f61ce0b2bb51c4f0aa8a2810b0cdbc774382259a1c",
+      "bytes": 98
+    },
+    "original_walltime_assumption_failure_retained": true,
+    "prior_timing_assumption_failure": {
+      "root_failed_log": {
+        "sha256": "b6b3fdc2d58ed5f97e1e22dbd962cf128e413af50cebd917fad96d32856aa384",
+        "bytes": 716
+      },
+      "original_test_source": {
+        "sha256": "b481302525f54ffdb68c669448c1ac58c612a4708e9abeab25b5b01686e8a870",
+        "bytes": 12804
+      },
+      "reason": "READY does not promise child receives CPU before fixed wall sleep ends.",
+      "correction": "Deterministic clock/select timeline plus real READY/EOF terminal smoke; helper unchanged."
+    }
+  },
+  "traffic": {
+    "scheduled": 1803,
+    "executed": 1803,
+    "exact_body_200": 1803,
+    "omitted_schedules": 0,
+    "omissions": [],
+    "duration_seconds": 180.30520874797367,
+    "interval_ms": 100,
+    "max_inflight": 24,
+    "pending": 0,
+    "drain_and_cleanup_verified": true
+  },
+  "observations": {
+    "valid_bounded_observation": true,
+    "main_trace_records": 23446,
+    "timer_records": 1804,
+    "timer_omitted_schedules": 0,
+    "observer_records": 361,
+    "observer_max_read_wall_ms": 1.189625,
+    "observer_error_records": 0,
+    "overflow_or_child_terminal_error": false,
+    "same_guest_monotonic_anchor": true,
+    "host_rollout_guest_absolute_alignment": "unknown",
+    "omission_cases": []
+  },
+  "rollout": {
+    "planned_at_seconds": 45,
+    "host_trigger_elapsed_seconds": 45.001193000003695,
+    "host_terminal_elapsed_seconds": 79.02237283415161,
+    "credentials_rotated": false,
+    "full_protocol_suite": false
+  },
+  "final_state": {
+    "passed": true,
+    "checks": 19,
+    "read_only": true,
+    "raw": {
+      "sha256": "c0e99102707630c4c9c538a682a8a375a7f103653ff62914649001f67b79bb7a",
+      "bytes": 13589
+    },
+    "terminal": {
+      "actual_child_exit": 0,
+      "valid": true,
+      "witness": {
+        "sha256": "47548796bfa5667f6c56ffcc35c69ac51f7600786e4490cefc6296046c2c35e4",
+        "bytes": 7557
+      },
+      "log": {
+        "sha256": "c0e99102707630c4c9c538a682a8a375a7f103653ff62914649001f67b79bb7a",
+        "bytes": 13589
+      }
+    }
+  },
+  "limits": [
+    "Instrumentation and observers may affect timing.",
+    "Missing, zero, overflowed or erroneous observations are inconclusive.",
+    "Observer brackets and PSI are aggregate correlations, not cause attribution.",
+    "No reproduced omission does not erase earlier full credential failures.",
+    "One diagnostic only; no blind full retry or service/host CPU causality claim."
+  ],
+  "interpretation": "inconclusive_no_omission_reproduced"
+}

@@ -11,50 +11,28 @@
   "current_state_passed": true,
   "credential_protocol_passed_in_rejected_run": true,
   "credential_rotation_availability_accepted": false,
-  "fresh_full_credential_progress_run_performed": false,
-  "failed_healthy_control": {
-    "scheduled": 1803,
-    "exact_200_responses": 1802,
-    "omissions": 1,
-    "pending": 0,
-    "cleanup_verified": true,
-    "terminal_exit": 1,
-    "private_harness_error_after_observation": true
-  },
+  "fresh_full_credential_progress_run_performed": true,
   "identities": {
     "core_build_commit": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
-    "core_commit": "b57418fb3612f71203cab6ccd62b5eea94b98091",
-    "core_validation_tree": "1b0a6b7fb5df143d7b7d05449083935c580c1b91",
+    "core_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
+    "core_validation_tree": "09573bddec4669789b68f59591f942b603669499",
     "studio_commit": "0966efbcbef5c9f2f680146450ae3bc3daef91cf",
     "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
     "studio_jar_sha256": "de3ed6b1e0a7046a18464b0d3e8102aacf7c463dbb1b39bcc0d820bd7895bb77",
     "source_continuity_paths": [
       "deploy/resilience-local/tests/test_cold_restart_sentinel.py",
+      "deploy/resilience-local/tests/test_sampler_blocking_workers.py",
       "deploy/resilience-local/tests/test_sampler_positive_marker.py",
       "deploy/resilience-local/tests/test_sampler_progress.py",
       "deploy/resilience-local/verify-credentials.py"
     ],
-    "core_build_tree": "58288a739e89a7854f316ad4d9c6fca21ac55f53"
+    "core_build_tree": "58288a739e89a7854f316ad4d9c6fca21ac55f53",
+    "boundary": "Latest executed verifier source/tree; Java build source unchanged. Review publication only changes documentation."
   },
   "retained_ledger_sha256": "11d926938c306e9ea57258f4f455bb6e459d3b09679684d4c7f9c1699c871827",
   "retained_ledger_boundary": "Frozen after original terminal review, not raw digests collected during original execution.",
   "selected_profile_stage_index_sha256": "b5b35f0f0b43388c5a64aa8c59ecd25f45644f570f5c888cbcd77d149949ecfb",
   "proofs": [
-    {
-      "file": "ha-window-diagnostic.json",
-      "sha256": "5b0cd2800d8277b4ec97f748dd13ac47fa342b75301e229b3102c2535cd8a99a",
-      "bytes": 1603
-    },
-    {
-      "file": "ha.json",
-      "sha256": "f2c80803eba84e2256784f08511fcfdae3c534a33748aa7e772a6af9ca2d41fd",
-      "bytes": 7279
-    },
-    {
-      "file": "load.json",
-      "sha256": "70e473ab421bdeb6d18a48c6d6be64415e02bd4d832c6002a449b0cd1a70bea5",
-      "bytes": 10090
-    },
     {
       "file": "combined-mongo.json",
       "sha256": "1ee4a52ada9ea7fc11d6d629a98657028e264eeabda116085ecf6ea5e7214a43",
@@ -66,24 +44,19 @@
       "bytes": 4350
     },
     {
-      "file": "network.json",
-      "sha256": "b905c4a00a11e5d48ae6d93ad8da06fd0cb57931035bf2c896019bbdcc5627e0",
-      "bytes": 1782
-    },
-    {
       "file": "final-state.json",
       "sha256": "20a4fca867a1c3b7000d79f71c965dcc8daf74fe7f838a992182de9a4295cab9",
       "bytes": 2191
     },
     {
-      "file": "tests.json",
-      "sha256": "ad441b29c0f3b789fd7566556e8c71981a2f201c9519765f0b6434fa5c0f3b85",
-      "bytes": 4974
+      "file": "ha-window-diagnostic.json",
+      "sha256": "5b0cd2800d8277b4ec97f748dd13ac47fa342b75301e229b3102c2535cd8a99a",
+      "bytes": 1603
     },
     {
-      "file": "merge-check.json",
-      "sha256": "d7786a52c3f592eb60fc5cf7b4fed8b0c6730d069bdf84f946dd8f8220830147",
-      "bytes": 1556
+      "file": "ha.json",
+      "sha256": "f2c80803eba84e2256784f08511fcfdae3c534a33748aa7e772a6af9ca2d41fd",
+      "bytes": 7279
     },
     {
       "file": "healthy-control.json",
@@ -91,14 +64,34 @@
       "bytes": 2482
     },
     {
+      "file": "load.json",
+      "sha256": "70e473ab421bdeb6d18a48c6d6be64415e02bd4d832c6002a449b0cd1a70bea5",
+      "bytes": 10090
+    },
+    {
+      "file": "maintenance.json",
+      "sha256": "7d1a5ebd9c75d88c703eb868f33c151a3d0c1fa0d6e9420e784a5094d3914292",
+      "bytes": 7041
+    },
+    {
+      "file": "merge-check.json",
+      "sha256": "04d3551bd379ced73c92dedf784ef828a2a7d59870e30855952fea417066c177",
+      "bytes": 1763
+    },
+    {
+      "file": "network.json",
+      "sha256": "b905c4a00a11e5d48ae6d93ad8da06fd0cb57931035bf2c896019bbdcc5627e0",
+      "bytes": 1782
+    },
+    {
+      "file": "node-allocation.json",
+      "sha256": "7ac5ecc1803b054e2aef75a2c29cb3e3d2c35d2d6dc1aec786be0ac17506b0ea",
+      "bytes": 6045
+    },
+    {
       "file": "rejected-credentials.json",
       "sha256": "3dadcf9bb9161e26081991a6b0ac84e583cbcd00e7ffd4b2b72468eac0bfee89",
       "bytes": 4475
-    },
-    {
-      "file": "sampler-controls.json",
-      "sha256": "b29431dc014afbfb31cd419ffdee6ba15169eb60d201111d5cae5e0ae2830917",
-      "bytes": 18562
     },
     {
       "file": "sampler-causal.json",
@@ -106,16 +99,189 @@
       "bytes": 8105
     },
     {
-      "file": "maintenance.json",
-      "sha256": "7d1a5ebd9c75d88c703eb868f33c151a3d0c1fa0d6e9420e784a5094d3914292",
-      "bytes": 7041
+      "file": "sampler-controls.json",
+      "sha256": "b29431dc014afbfb31cd419ffdee6ba15169eb60d201111d5cae5e0ae2830917",
+      "bytes": 18562
+    },
+    {
+      "file": "scheduling-diagnostic.json",
+      "sha256": "14430bbe9cf3e31a885db1f2c127c93c8266a98e6a1c16471c8c8d7bb484433e",
+      "bytes": 4119
+    },
+    {
+      "file": "tests.json",
+      "sha256": "f7aa593c67e16dcc1741e8b3b3dbac6f18be2d5625e988837c546a047d857fc4",
+      "bytes": 6245
+    },
+    {
+      "file": "worker-sampler.json",
+      "sha256": "5a32553eac317350a277c451bc934f499545e0d4ca462c21c2fa74b0e2a51e6f",
+      "bytes": 4532
     }
   ],
-  "blocking_gate": "Fresh uninstrumented180s healthy100ms arrivals: zero omissions/errors/pending, exact200, reporter/worker drain and cleanup, valid terminal0. Only then fresh full credential rotation plus network/final-state acceptance.",
+  "blocking_gate": "Fresh full credential rotation zero-omission availability not established: default and313 allocation each omitted6 schedules. One bounded diagnostic did not reproduce the disturbance. Stop speculative patches/blind retries; require an evidence-backed isolation or cause measurement before another full attempt.",
   "limitations": [
     "One physical Docker Desktop host, not host/AZ failure qualification.",
     "Echo backend only; Java/Go/Rust application executions not all tested.",
     "Explicit Mongo index maintenance was not zero downtime.",
     "Async AOF, telemetry loss bounds, cross-slot compensation, supported runtime/CVE/least-privilege/storeTLS/off-host backup/soak still require production qualification."
-  ]
+  ],
+  "historical_failed_healthy_control": {
+    "scheduled": 1803,
+    "exact_200_responses": 1802,
+    "omissions": 1,
+    "pending": 0,
+    "cleanup_verified": true,
+    "terminal_exit": 1,
+    "private_harness_error_after_observation": true
+  },
+  "rejected_full_credential_attempts": 5,
+  "latest_default_healthy_control": {
+    "scenario": "blocking-workers-default-healthy-control",
+    "instrumented": false,
+    "passed": true,
+    "credential_acceptance": false,
+    "scheduled": 1803,
+    "exact_body_200": 1803,
+    "omitted_schedules": 0,
+    "duration_seconds": 180.30467587406747,
+    "interval_ms": 100,
+    "max_inflight": 24,
+    "pending": 0,
+    "drain_complete": true,
+    "cleanup_verified": true,
+    "raw": {
+      "sha256": "a830968301355b11850453ddee45f261003e86497387d052e6fc045ca4b4cb3e",
+      "bytes": 646829
+    },
+    "terminal": {
+      "actual_exit": 0,
+      "witness_valid": true,
+      "source_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
+      "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+      "log": {
+        "sha256": "97d48e7d9ff94d4cde0d69ce2d01010a7baedfb61359745b4dc1d057d992420f",
+        "bytes": 840
+      },
+      "witness": {
+        "sha256": "8748d36f8f6a2c3af0462b1fb3ad232daddd62e31a1519cb9efdabe86f5afc58",
+        "bytes": 7567
+      }
+    },
+    "boundary": "Healthy control only; subsequent full credentials failed under the same default allocation."
+  },
+  "latest_default_credentials": {
+    "attempt": "credentials-workers",
+    "accepted": false,
+    "complete": true,
+    "protocol_passed": true,
+    "availability_passed": false,
+    "scheduled": 3833,
+    "exact_body_200": 3827,
+    "omitted_schedules": 6,
+    "phase_observations": [
+      {
+        "phase": "mtls",
+        "scheduled": 1999,
+        "executed": 1997,
+        "exact_body_200": 1997,
+        "omitted_schedules": 2,
+        "omissions": [
+          {
+            "first_sequence": 1211,
+            "count": 1,
+            "reason": "lateness"
+          },
+          {
+            "first_sequence": 1213,
+            "count": 1,
+            "reason": "lateness"
+          }
+        ],
+        "pending": 0,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 201.81663893163204,
+        "max_service_latency_ms": 323.4045000281185
+      },
+      {
+        "phase": "api-key",
+        "scheduled": 1164,
+        "executed": 1162,
+        "exact_body_200": 1162,
+        "omitted_schedules": 2,
+        "omissions": [
+          {
+            "first_sequence": 310,
+            "count": 1,
+            "reason": "lateness"
+          },
+          {
+            "first_sequence": 312,
+            "count": 1,
+            "reason": "lateness"
+          }
+        ],
+        "pending": 0,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 196.6884310822934,
+        "max_service_latency_ms": 1020.2994579449296
+      },
+      {
+        "phase": "stores",
+        "scheduled": 670,
+        "executed": 668,
+        "exact_body_200": 668,
+        "omitted_schedules": 2,
+        "omissions": [
+          {
+            "first_sequence": 246,
+            "count": 2,
+            "reason": "lateness"
+          }
+        ],
+        "pending": 0,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 116.25446891412139,
+        "max_service_latency_ms": 523.311167024076
+      }
+    ],
+    "raw": {
+      "sha256": "d77623e764dc3055f3ef30cdd7af49a3e8e72ebdbf2bbdea43d0f0f792a5de1c",
+      "bytes": 1657893
+    },
+    "terminal": {
+      "actual_exit": 1,
+      "witness_valid": true,
+      "source_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
+      "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+      "log": {
+        "sha256": "5cbcc916814e398c35d58f55acf1611dd5ac22157cb044bd84880ea27be48786",
+        "bytes": 215
+      },
+      "witness": {
+        "sha256": "92acf95da3e41b0a71c3de878a6c7f3fb32ea07da009cab406973fb14c9e9ec0",
+        "bytes": 7640
+      }
+    },
+    "boundary": "Fourth default-allocation rejection; protocols passed, scheduled arrivals missed. Actual successful requests do not compensate omitted arrivals."
+  },
+  "latest_allocation_credentials": {
+    "protocol_passed": true,
+    "complete": true,
+    "availability_passed": false,
+    "scheduled": 3832,
+    "exact_body_200": 3826,
+    "omissions": 6,
+    "configuration_restored": true,
+    "network_skipped": true
+  },
+  "current_state_evidence": "scheduling-diagnostic.json",
+  "one_scheduling_diagnostic": {
+    "attempts": 1,
+    "instrumented": true,
+    "omissions": 0,
+    "interpretation": "inconclusive_no_omission_reproduced",
+    "causal_claim": false,
+    "substitutes_for_full_credentials": false
+  }
 }

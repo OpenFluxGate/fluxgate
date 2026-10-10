@@ -6,12 +6,13 @@
   "score_95_approved": false,
   "java_build_source_commit": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
   "java_build_tree": "58288a739e89a7854f316ad4d9c6fca21ac55f53",
-  "verifier_source_commit": "b57418fb3612f71203cab6ccd62b5eea94b98091",
+  "verifier_source_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
   "studio_source_commit": "0966efbcbef5c9f2f680146450ae3bc3daef91cf",
   "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
   "studio_jar_sha256": "de3ed6b1e0a7046a18464b0d3e8102aacf7c463dbb1b39bcc0d820bd7895bb77",
   "source_continuity_paths": [
     "deploy/resilience-local/tests/test_cold_restart_sentinel.py",
+    "deploy/resilience-local/tests/test_sampler_blocking_workers.py",
     "deploy/resilience-local/tests/test_sampler_positive_marker.py",
     "deploy/resilience-local/tests/test_sampler_progress.py",
     "deploy/resilience-local/verify-credentials.py"
@@ -124,13 +125,13 @@
     "vitest"
   ],
   "verifier_unit_tests": {
-    "tests": 56,
+    "tests": 60,
     "failures": 0,
     "errors": 0,
     "skipped": 0
   },
   "verifier_self_test_passed": true,
-  "verifier_source_sha256": "f4dc99be9997dc68f058a5e0152e75490b477d7037d8d4f52e440fe2cf59d187",
+  "verifier_source_sha256": "ea1fe97c1238e3cd5c110fd7ea8809e67d1a79b4b9f28ec1997929a767aa6a34",
   "test_logs_sha256": {
     "core_install": "9ebf8e6cde6160f16d3e786168e550bf7633715699626adf86f782a0379095c4",
     "studio": {
@@ -141,7 +142,7 @@
       "fluxgate-lts-studio-scoped-ui-test.log": "2ffc0587d3e2390d1ae3f07d0352be898ba78ffceb720d02261d7289b79b31d9",
       "fluxgate-lts-studio-scoped-ui-typecheck.log": "bd24ca5189f67c22871d8006824985a61658153a29dad11ec109fb4d0a299ba1"
     },
-    "verifier_unit": "aad16240dc26fdd71ee84afd7a10493085d562a84a68e7749de4d01fec5fd8e6",
+    "verifier_unit": "3bdfa6b4df8b6563070e9fea36c927a9f862f911d8fff0e7d33e7ce0d91241af",
     "verifier_self_test": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0"
   },
   "xml_report_counts": {
@@ -152,8 +153,33 @@
     "core": "19bdf8834365ca7b967f0a5db2fe52f0f93fe42349f335a9ff7eb29a249c37bc",
     "studio": "dbd4f612a1ccd6cac21ff20dec1e963d53b82f561679cc737a63f41a74b3691b"
   },
-  "private_test_record_sha256": "94b693005fe49718078d7c2e809091d2f6b2483c5574522140833dde88c44c2f",
   "historical_marker_test_count": 51,
   "historical_marker_evidence_labelled": true,
-  "boundary": "Retained Java executions at their own build commits; XML and packaged JAR hashes freshly unchanged. Verifier56 and selftest were freshly executed; UI13 separate. Build/test success is not runtime availability acceptance."
+  "boundary": "Retained Java executions at their actual build commits and unchanged packaged artifacts. Fresh f90 verifier60 and selftest; UI13 separate. Historical51/56 executions retained separately. Build/test success is not runtime availability acceptance.",
+  "historical_verifier_test_record": {
+    "verifier_source_commit": "b57418fb3612f71203cab6ccd62b5eea94b98091",
+    "verifier_source_sha256": "f4dc99be9997dc68f058a5e0152e75490b477d7037d8d4f52e440fe2cf59d187",
+    "verifier_unit_tests": {
+      "tests": 56,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "verifier_self_test_passed": true,
+    "private_test_record_sha256": "94b693005fe49718078d7c2e809091d2f6b2483c5574522140833dde88c44c2f",
+    "unit_log_sha256": "aad16240dc26fdd71ee84afd7a10493085d562a84a68e7749de4d01fec5fd8e6",
+    "self_test_log_sha256": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0"
+  },
+  "worker_evidence_record_sha256": "5a32553eac317350a277c451bc934f499545e0d4ca462c21c2fa74b0e2a51e6f",
+  "private_diagnostic_tests": {
+    "tests": 13,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "source_sha256": "aab598b444573b0ceae87c9d641667dd35977eb6eaea1cfcdea0918ce7aac58e",
+    "test_sha256": "27ff98dff689f5f3ca15ef066f0ef385ef4cf9f6320262d35c455ec04084e96c",
+    "root_log_sha256": "a5d3dc15402b7977bbac40f61ce0b2bb51c4f0aa8a2810b0cdbc774382259a1c",
+    "old_timing_assumption_failure_preserved": true,
+    "boundary": "Offline diagnostic tests only; not application or runtime acceptance."
+  }
 }

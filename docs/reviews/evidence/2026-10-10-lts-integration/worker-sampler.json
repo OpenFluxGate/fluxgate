@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "source_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
+  "source_sha256": "ea1fe97c1238e3cd5c110fd7ea8809e67d1a79b4b9f28ec1997929a767aa6a34",
+  "default_healthy": {
+    "scenario": "blocking-workers-default-healthy-control",
+    "instrumented": false,
+    "passed": true,
+    "credential_acceptance": false,
+    "scheduled": 1803,
+    "exact_body_200": 1803,
+    "omitted_schedules": 0,
+    "duration_seconds": 180.30467587406747,
+    "interval_ms": 100,
+    "max_inflight": 24,
+    "pending": 0,
+    "drain_complete": true,
+    "cleanup_verified": true,
+    "raw": {
+      "sha256": "a830968301355b11850453ddee45f261003e86497387d052e6fc045ca4b4cb3e",
+      "bytes": 646829
+    },
+    "terminal": {
+      "actual_exit": 0,
+      "witness_valid": true,
+      "source_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
+      "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+      "log": {
+        "sha256": "97d48e7d9ff94d4cde0d69ce2d01010a7baedfb61359745b4dc1d057d992420f",
+        "bytes": 840
+      },
+      "witness": {
+        "sha256": "8748d36f8f6a2c3af0462b1fb3ad232daddd62e31a1519cb9efdabe86f5afc58",
+        "bytes": 7567
+      }
+    },
+    "boundary": "Healthy control only; subsequent full credentials failed under the same default allocation."
+  },
+  "fourth_rejected_credentials": {
+    "attempt": "credentials-workers",
+    "accepted": false,
+    "complete": true,
+    "protocol_passed": true,
+    "availability_passed": false,
+    "scheduled": 3833,
+    "exact_body_200": 3827,
+    "omitted_schedules": 6,
+    "phase_observations": [
+      {
+        "phase": "mtls",
+        "scheduled": 1999,
+        "executed": 1997,
+        "exact_body_200": 1997,
+        "omitted_schedules": 2,
+        "omissions": [
+          {
+            "first_sequence": 1211,
+            "count": 1,
+            "reason": "lateness"
+          },
+          {
+            "first_sequence": 1213,
+            "count": 1,
+            "reason": "lateness"
+          }
+        ],
+        "pending": 0,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 201.81663893163204,
+        "max_service_latency_ms": 323.4045000281185
+      },
+      {
+        "phase": "api-key",
+        "scheduled": 1164,
+        "executed": 1162,
+        "exact_body_200": 1162,
+        "omitted_schedules": 2,
+        "omissions": [
+          {
+            "first_sequence": 310,
+            "count": 1,
+            "reason": "lateness"
+          },
+          {
+            "first_sequence": 312,
+            "count": 1,
+            "reason": "lateness"
+          }
+        ],
+        "pending": 0,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 196.6884310822934,
+        "max_service_latency_ms": 1020.2994579449296
+      },
+      {
+        "phase": "stores",
+        "scheduled": 670,
+        "executed": 668,
+        "exact_body_200": 668,
+        "omitted_schedules": 2,
+        "omissions": [
+          {
+            "first_sequence": 246,
+            "count": 2,
+            "reason": "lateness"
+          }
+        ],
+        "pending": 0,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 116.25446891412139,
+        "max_service_latency_ms": 523.311167024076
+      }
+    ],
+    "raw": {
+      "sha256": "d77623e764dc3055f3ef30cdd7af49a3e8e72ebdbf2bbdea43d0f0f792a5de1c",
+      "bytes": 1657893
+    },
+    "terminal": {
+      "actual_exit": 1,
+      "witness_valid": true,
+      "source_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
+      "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+      "log": {
+        "sha256": "5cbcc916814e398c35d58f55acf1611dd5ac22157cb044bd84880ea27be48786",
+        "bytes": 215
+      },
+      "witness": {
+        "sha256": "92acf95da3e41b0a71c3de878a6c7f3fb32ea07da009cab406973fb14c9e9ec0",
+        "bytes": 7640
+      }
+    },
+    "boundary": "Fourth default-allocation rejection; protocols passed, scheduled arrivals missed. Actual successful requests do not compensate omitted arrivals."
+  },
+  "verifier_tests": {
+    "tests": 60,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "unit_log": {
+      "sha256": "3bdfa6b4df8b6563070e9fea36c927a9f862f911d8fff0e7d33e7ce0d91241af",
+      "bytes": 160
+    },
+    "self_test_log": {
+      "sha256": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0",
+      "bytes": 165
+    }
+  },
+  "blocking_worker_review": "APPROVE",
+  "overall_acceptance": false,
+  "score_95_approved": false
+}
