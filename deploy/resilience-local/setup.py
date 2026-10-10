@@ -411,9 +411,10 @@ const conn=new Mongo('mongodb://admin:'+encodeURIComponent(password)+'@127.0.0.1
     secret('fluxgate-envoy-client-tls', {'tls.crt': tls / 'client.crt', 'tls.key': tls / 'client.key'})
     apply({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'fluxgate-authz-server-ca', 'namespace': NS},
            'data': {'ca.crt': (tls / 'server-ca.crt').read_text()}})
-    configuration = {'server': {'port': 8443, 'ssl': {'enabled': True, 'certificate': '/tls/tls.crt',
+    configuration = {'server': {'port': 8443, 'shutdown': 'graceful', 'ssl': {'enabled': True, 'certificate': '/tls/tls.crt',
         'certificate-private-key': '/tls/tls.key', 'trust-certificate': '/tls/client-ca.crt', 'client-auth': 'need'}},
-        'spring': {'config': {'import': 'optional:configtree:/credentials/stores/,file:/credentials/api/application-credentials.yml'}},
+        'spring': {'config': {'import': 'optional:configtree:/credentials/stores/,file:/credentials/api/application-credentials.yml'},
+                   'lifecycle': {'timeout-per-shutdown-phase': '20s'}},
         'fluxgate': {'envoy': {'allow-insecure': False, 'health-port': 8081, 'published-policies': True,
         'gateway-certificate-subjects': ['CN=fluxgate-resilience-gateway'], 'trusted-proxies': ['10.245.0.0/16'],
         'header-allowlist': ['host', 'content-type'], 'bootstrap-file': '/bootstrap/policy.json',

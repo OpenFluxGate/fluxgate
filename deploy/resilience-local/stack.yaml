@@ -24,8 +24,13 @@ spec:
             - labelSelector: {matchLabels: {app: fluxgate-authz}}
               topologyKey: kubernetes.io/hostname
       securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001}
+      terminationGracePeriodSeconds: 45
       containers:
         - name: authz
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 10
           image: fluxgate-envoy-extauth:enterprise
           imagePullPolicy: Never
           env:

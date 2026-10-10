@@ -1,6 +1,9 @@
 server:
   port: 8080
+  shutdown: graceful
 spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
   application:
     name: fluxgate-envoy-extauth
 fluxgate:
