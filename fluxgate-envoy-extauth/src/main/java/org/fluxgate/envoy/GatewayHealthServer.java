@@ -10,6 +10,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.InitializingBean;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /**
@@ -21,10 +23,27 @@ import org.springframework.stereotype.Component;
 public final class GatewayHealthServer implements InitializingBean, DisposableBean {
   private final EnvoyProperties properties;
   private final AuthzDecisionService service;
+  private final java.util.function.Supplier<MongoTelemetryDispatcher> telemetry;
   private HttpServer server;
   private ThreadPoolExecutor executor;
 
   public GatewayHealthServer(EnvoyProperties properties, AuthzDecisionService service) {
+    this(properties, service, () -> null);
+  }
+
+  @Autowired
+  public GatewayHealthServer(
+      EnvoyProperties properties,
+      AuthzDecisionService service,
+      ObjectProvider<MongoTelemetryDispatcher> telemetry) {
+    this(properties, service, telemetry::getIfAvailable);
+  }
+
+  private GatewayHealthServer(
+      EnvoyProperties properties,
+      AuthzDecisionService service,
+      java.util.function.Supplier<MongoTelemetryDispatcher> telemetry) {
+    this.telemetry = telemetry;
     this.properties = properties;
     this.service = service;
   }
@@ -69,6 +88,13 @@ public final class GatewayHealthServer implements InitializingBean, DisposableBe
       } else if ("/diagnostics".equals(exchange.getRequestURI().getPath())) {
         status = 200;
         body = service.diagnostics().json().getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+      } else if ("/telemetry".equals(exchange.getRequestURI().getPath())) {
+        status = 200;
+        MongoTelemetryDispatcher writer = telemetry.get();
+        body =
+            (writer == null ? "{\"enabled\":0}" : writer.diagnosticsJson())
+                .getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");
       } else if ("/healthz".equals(exchange.getRequestURI().getPath())) {
         status = 200;

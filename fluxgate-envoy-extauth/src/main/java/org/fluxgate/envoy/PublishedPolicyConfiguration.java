@@ -1,5 +1,6 @@
 package org.fluxgate.envoy;
 
+import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoDatabase;
 import org.fluxgate.adapter.mongo.policy.MongoPolicyRepository;
 import org.fluxgate.adapter.mongo.policy.PublishedMongoRuleSetProvider;
@@ -18,6 +19,13 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnProperty(name = "fluxgate.envoy.published-policies", havingValue = "true")
 public class PublishedPolicyConfiguration {
   @Bean
+  public MongoTelemetryDispatcher mongoTelemetryDispatcher(
+      @Qualifier("fluxgateMongoClient") MongoClient client) {
+    // Dependency keeps the Mongo client alive until writer lifecycle drain has completed.
+    return new MongoTelemetryDispatcher();
+  }
+
+  @Bean
   @ConditionalOnMissingBean(MongoPolicyRepository.class)
   public MongoPolicyRepository mongoPolicyRepository(
       @Qualifier("fluxgateMongoDatabase") MongoDatabase database,
@@ -30,7 +38,9 @@ public class PublishedPolicyConfiguration {
   public PublishedMongoRuleSetProvider publishedRuleSetProvider(
       MongoPolicyRepository repository,
       KeyResolver keyResolver,
-      ObjectProvider<RateLimitMetricsRecorder> metrics) {
-    return new PublishedMongoRuleSetProvider(repository, keyResolver, metrics::getIfAvailable);
+      ObjectProvider<RateLimitMetricsRecorder> metrics,
+      MongoTelemetryDispatcher dispatcher) {
+    return new PublishedMongoRuleSetProvider(
+        repository, keyResolver, () -> dispatcher.adapt(metrics.getIfAvailable()));
   }
 }

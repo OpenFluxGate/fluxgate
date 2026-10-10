@@ -28,13 +28,49 @@ class GatewayHealthServerTest {
     var server = new GatewayHealthServer(properties, service);
     try {
       int port = server.startServer(0);
-      var http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(2)).build();
+      var http =
+          HttpClient.newBuilder()
+              .version(HttpClient.Version.HTTP_1_1)
+              .connectTimeout(java.time.Duration.ofSeconds(2))
+              .build();
       assertThat(status(http, port, "/healthz")).isEqualTo(200);
+      var telemetry =
+          http.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/telemetry"))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertThat(telemetry.statusCode()).isEqualTo(200);
+      assertThat(telemetry.body()).isEqualTo("{\"enabled\":0}");
       assertThat(status(http, port, "/readyz")).isEqualTo(503);
       when(service.isReady("policy")).thenReturn(true);
       assertThat(status(http, port, "/readyz")).isEqualTo(200);
       assertThat(status(http, port, "/authz/api/items")).isEqualTo(404);
       assertThat(status(http, port, "/healthz-extra")).isEqualTo(404);
+      var writer = new MongoTelemetryDispatcher();
+      org.springframework.beans.factory.ObjectProvider<MongoTelemetryDispatcher> provider =
+          mock(org.springframework.beans.factory.ObjectProvider.class);
+      when(provider.getIfAvailable()).thenReturn(writer);
+      var enabled = new GatewayHealthServer(properties, service, provider);
+      try {
+        int enabledPort = enabled.startServer(0);
+        var response =
+            http.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + enabledPort + "/telemetry"))
+                    .GET()
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).isEqualTo(writer.diagnosticsJson());
+        var parsed = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response.body());
+        parsed
+            .fields()
+            .forEachRemaining(entry -> assertThat(entry.getValue().isIntegralNumber()).isTrue());
+        assertThat(parsed.get("enabled").asInt()).isEqualTo(1);
+      } finally {
+        enabled.destroy();
+        writer.stop();
+      }
     } finally {
       server.destroy();
     }
