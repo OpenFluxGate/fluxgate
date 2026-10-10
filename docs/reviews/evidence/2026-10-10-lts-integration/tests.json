@@ -181,5 +181,42 @@
     "root_log_sha256": "a5d3dc15402b7977bbac40f61ce0b2bb51c4f0aa8a2810b0cdbc774382259a1c",
     "old_timing_assumption_failure_preserved": true,
     "boundary": "Offline diagnostic tests only; not application or runtime acceptance."
+  },
+  "current_restored_verifier": {
+    "tests": 60,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "source_commit": "7c43f2312b3833de106ec52c730a1919039107a3",
+    "source_sha256": "ea1fe97c1238e3cd5c110fd7ea8809e67d1a79b4b9f28ec1997929a767aa6a34",
+    "log": {
+      "sha256": "cce7cd4a9ec3fc0f98e495a94e134d31eae8b0e5730e099016d6c60140152ddf",
+      "bytes": 10699
+    },
+    "self_test_passed": true,
+    "self_test_log": {
+      "sha256": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0",
+      "bytes": 165
+    },
+    "boundary": "Fresh current restored sampler suite; experimental 80-test result is separate."
+  },
+  "experimental_process_sampler": {
+    "tests": 80,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "source_commit": "87df806925bd8027477693c8e61c1b5839e3fe81",
+    "source_sha256": "f0fc3300fba14a778ea2519d899630947693c519e5cd338f5828542531e481b1",
+    "log": {
+      "sha256": "c0dc96c3c68ab28c12ad692e2fd2c675e8f4630196d48e55a97d9be10cf61bb3",
+      "bytes": 14071
+    },
+    "self_test_passed": true,
+    "self_test_log": {
+      "sha256": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0",
+      "bytes": 165
+    },
+    "accepted_implementation": false,
+    "boundary": "Historical experimental source; removed from the current implementation after strict live rejection."
   }
 }

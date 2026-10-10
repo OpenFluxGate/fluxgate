@@ -64,5 +64,51 @@
     "authz_jars_exact_verified": 2,
     "default_context_preserved": true,
     "boundary": "Sequential read-only restored-state snapshot, not uninterrupted rotation or overall acceptance."
+  },
+  "post_process_comparison": {
+    "passed": true,
+    "actual_exit": 0,
+    "witness_valid": true,
+    "check_count": 19,
+    "source_commit": "87df806925bd8027477693c8e61c1b5839e3fe81",
+    "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+    "log": {
+      "sha256": "8887eea4f482817172c98f7794af3c333e5ec77e479b64002bd49f50ceec6283",
+      "bytes": 13589
+    },
+    "witness": {
+      "sha256": "2f92b5563f045b8807107c421023ba44621064fee7b6c64e193fae3aafbdbf28",
+      "bytes": 8087
+    },
+    "boundary": "Separate later read-only state check; does not reclassify the original failed state check or credential availability."
+  },
+  "original_process_comparison_state_failed": {
+    "actual_exit": 1,
+    "witness_valid": true,
+    "passed": false,
+    "completed_checks": 14,
+    "failure_stage": "redis-topology",
+    "raw_sha256": "11de9aa1a47550f1e963a4b95f495d743192c3203e855d87902d78e29b46743f",
+    "witness_sha256": "57516b71b9834d48db14470094cc0ed9cd71686868898aa4423d12a1df774371"
+  },
+  "subsequent_baseline": {
+    "actual_exit": 0,
+    "witness_valid": true,
+    "phase": "baseline",
+    "phase_complete": true,
+    "complete": false,
+    "role_changing_commands_performed": false,
+    "replica_repairs": 0,
+    "policy_exact_preserved": true,
+    "ha_counter_exact_preserved": true,
+    "raw": {
+      "sha256": "9dd5b5146b4a05ea3a39b4cda8050708df3947ac53847a6c857440ff4778eefd",
+      "bytes": 33639
+    },
+    "witness": {
+      "sha256": "964a3d18302dbe982d424fce17830f5593a8b53643b059a91a5d16941b36da2f",
+      "bytes": 8170
+    },
+    "boundary": "Guarded baseline observed normal roles without FAILOVER or REPLICATE. It does not establish the cause of the earlier topology assertion or a new full HA run."
   }
 }

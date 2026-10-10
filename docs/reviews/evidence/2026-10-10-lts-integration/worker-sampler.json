@@ -147,5 +147,153 @@
   },
   "blocking_worker_review": "APPROVE",
   "overall_acceptance": false,
-  "score_95_approved": false
+  "score_95_approved": false,
+  "rejected_process_isolation": {
+    "schema": 1,
+    "experiment": "one_owned_http_process",
+    "accepted": false,
+    "uninstrumented": true,
+    "attempt_budget": 1,
+    "source_commit": "87df806925bd8027477693c8e61c1b5839e3fe81",
+    "source_tree": "be31bf2a31b54d69f5c49237a14eadd6104f0423",
+    "source_sha256": "f0fc3300fba14a778ea2519d899630947693c519e5cd338f5828542531e481b1",
+    "java_build_source_commit": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
+    "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+    "studio_build_source_commit": "0966efbcbef5c9f2f680146450ae3bc3daef91cf",
+    "studio_run_commit": "3017925132dadf8d095d9b726625e88495fd97d2",
+    "protocol_passed": true,
+    "full_protocol_complete": true,
+    "rotation_availability_passed": false,
+    "credential_actual_exit": 1,
+    "witness_valid": true,
+    "wrapper_error_count": 0,
+    "phases": [
+      {
+        "phase": "mtls",
+        "scheduled": 2028,
+        "executed": 2027,
+        "exact_body_200": 2027,
+        "omitted_schedules": 1,
+        "omissions": [
+          {
+            "first_sequence": 1876,
+            "count": 1,
+            "reason": "lateness"
+          }
+        ],
+        "pending": 0,
+        "peak_inflight": 9,
+        "max_inflight": 24,
+        "drain_complete": true,
+        "progress_writer_drained": true,
+        "progress_writer_failures": 0,
+        "worker_failures": 0,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 55.269375909119844,
+        "max_service_latency_ms": 1623.7995841074735,
+        "http_child_terminal": true
+      },
+      {
+        "phase": "api-key",
+        "scheduled": 1164,
+        "executed": 1164,
+        "exact_body_200": 1164,
+        "omitted_schedules": 0,
+        "omissions": [],
+        "pending": 0,
+        "peak_inflight": 4,
+        "max_inflight": 24,
+        "drain_complete": true,
+        "progress_writer_drained": true,
+        "progress_writer_failures": 0,
+        "worker_failures": 0,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 20.2376670204103,
+        "max_service_latency_ms": 497.92850110679865,
+        "http_child_terminal": true
+      },
+      {
+        "phase": "stores",
+        "scheduled": 669,
+        "executed": 669,
+        "exact_body_200": 669,
+        "omitted_schedules": 0,
+        "omissions": [],
+        "pending": 0,
+        "peak_inflight": 5,
+        "max_inflight": 24,
+        "drain_complete": true,
+        "progress_writer_drained": true,
+        "progress_writer_failures": 0,
+        "worker_failures": 0,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 119.08094398677349,
+        "max_service_latency_ms": 440.11437497101724,
+        "http_child_terminal": true
+      }
+    ],
+    "scheduled_total": 3861,
+    "exact_200_total": 3860,
+    "omitted_total": 1,
+    "raw_sha256": "719e66e4cedaa8452a6ca65593926d7542dce1297813adc9d01348150979cd29",
+    "witness_sha256": "c0ae2000d4b0305c6d19548355ae98a715f63f652c6b6e2dabd62dd21e7a63aa",
+    "log_sha256": "251c1fa364d8a658663f8f097f0d18a1fd8c4c22736494b80551faec59d7c372",
+    "parent_chain_complete": false,
+    "parent_actual_exit": 1,
+    "parent_final_state": {
+      "actual_exit": 1,
+      "witness_valid": true,
+      "passed": false,
+      "completed_checks": 14,
+      "failure_stage": "redis-topology",
+      "raw_sha256": "11de9aa1a47550f1e963a4b95f495d743192c3203e855d87902d78e29b46743f",
+      "witness_sha256": "57516b71b9834d48db14470094cc0ed9cd71686868898aa4423d12a1df774371"
+    },
+    "predicates_unchanged": {
+      "interval_ms": 100,
+      "max_inflight": 24,
+      "omission_limit": 0,
+      "fresh_connection_timeout_seconds": 2,
+      "no_catchup": true
+    },
+    "interpretation": "Process isolation did not meet the original zero-omission availability condition. All executed requests returned the exact backend body with HTTP200; an unsent arrival does not establish service availability at its deadline. This experiment does not establish a GIL or VM cause.",
+    "implementation_decision": "Revert unproven added sampler complexity after owned cleanup; retain experiment source, tests and failures in history.",
+    "later_baseline": {
+      "actual_exit": 0,
+      "witness_valid": true,
+      "phase": "baseline",
+      "phase_complete": true,
+      "complete": false,
+      "role_changing_commands_performed": false,
+      "replica_repairs": 0,
+      "policy_exact_preserved": true,
+      "ha_counter_exact_preserved": true,
+      "raw": {
+        "sha256": "9dd5b5146b4a05ea3a39b4cda8050708df3947ac53847a6c857440ff4778eefd",
+        "bytes": 33639
+      },
+      "witness": {
+        "sha256": "964a3d18302dbe982d424fce17830f5593a8b53643b059a91a5d16941b36da2f",
+        "bytes": 8170
+      },
+      "boundary": "Guarded baseline observed normal roles without FAILOVER or REPLICATE. It does not establish the cause of the earlier topology assertion or a new full HA run."
+    },
+    "later_restored_state": {
+      "passed": true,
+      "actual_exit": 0,
+      "witness_valid": true,
+      "check_count": 19,
+      "source_commit": "87df806925bd8027477693c8e61c1b5839e3fe81",
+      "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+      "log": {
+        "sha256": "8887eea4f482817172c98f7794af3c333e5ec77e479b64002bd49f50ceec6283",
+        "bytes": 13589
+      },
+      "witness": {
+        "sha256": "2f92b5563f045b8807107c421023ba44621064fee7b6c64e193fae3aafbdbf28",
+        "bytes": 8087
+      },
+      "boundary": "Separate later read-only state check; does not reclassify the original failed state check or credential availability."
+    }
+  }
 }

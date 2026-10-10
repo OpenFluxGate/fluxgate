@@ -27,7 +27,12 @@
       "deploy/resilience-local/verify-credentials.py"
     ],
     "core_build_tree": "58288a739e89a7854f316ad4d9c6fca21ac55f53",
-    "boundary": "Latest executed verifier source/tree; Java build source unchanged. Review publication only changes documentation."
+    "boundary": "Historical executed/build identities remain unchanged; current restored validation and rejected process comparison have separate provenance. Java sources and JARs were not rebuilt or relabeled.",
+    "current_validated_checkout_commit": "7c43f2312b3833de106ec52c730a1919039107a3",
+    "current_validated_checkout_tree": "0f04e26e4fab0428b9fdbe069fc87e656ff5e49a",
+    "latest_full_experiment_verifier_commit": "87df806925bd8027477693c8e61c1b5839e3fe81",
+    "latest_full_experiment_verifier_tree": "be31bf2a31b54d69f5c49237a14eadd6104f0423",
+    "studio_readme_checkout_commit": "3017925132dadf8d095d9b726625e88495fd97d2"
   },
   "retained_ledger_sha256": "11d926938c306e9ea57258f4f455bb6e459d3b09679684d4c7f9c1699c871827",
   "retained_ledger_boundary": "Frozen after original terminal review, not raw digests collected during original execution.",
@@ -45,8 +50,8 @@
     },
     {
       "file": "final-state.json",
-      "sha256": "20a4fca867a1c3b7000d79f71c965dcc8daf74fe7f838a992182de9a4295cab9",
-      "bytes": 2191
+      "sha256": "450afa735ceaa9e318a4e04d53414c173eacf308a4e8fba99917102a9837d101",
+      "bytes": 3971
     },
     {
       "file": "ha-window-diagnostic.json",
@@ -105,21 +110,21 @@
     },
     {
       "file": "scheduling-diagnostic.json",
-      "sha256": "14430bbe9cf3e31a885db1f2c127c93c8266a98e6a1c16471c8c8d7bb484433e",
-      "bytes": 4119
+      "sha256": "67fe765efb27c2caf7d2748e913c09cf053395135d9f1632d39e33f2b56b0321",
+      "bytes": 8310
     },
     {
       "file": "tests.json",
-      "sha256": "f7aa593c67e16dcc1741e8b3b3dbac6f18be2d5625e988837c546a047d857fc4",
-      "bytes": 6245
+      "sha256": "e8e3bfd8df258ba095b2111d748a9e4c03c4ccb6d9970a3163b7e7702717d944",
+      "bytes": 7604
     },
     {
       "file": "worker-sampler.json",
-      "sha256": "5a32553eac317350a277c451bc934f499545e0d4ca462c21c2fa74b0e2a51e6f",
-      "bytes": 4532
+      "sha256": "2f181acdb35b4cd199b5787be0a89767f0b55615f2aa1d08c6cc1231db9b16fe",
+      "bytes": 10222
     }
   ],
-  "blocking_gate": "Fresh full credential rotation zero-omission availability not established: default and313 allocation each omitted6 schedules. One bounded diagnostic did not reproduce the disturbance. Stop speculative patches/blind retries; require an evidence-backed isolation or cause measurement before another full attempt.",
+  "blocking_gate": "Strict credential rotation availability remains HOLD: the instrumented full diagnostic and one uninstrumented process-isolation experiment each omitted one scheduled arrival. The latter original state checker also failed its Redis topology assertion; a separate guarded baseline required no role-changing commands, then a later read-only state checker passed19. These later checks do not erase either failure. Process isolation was reverted; no relaxed criteria or blind full retries.",
   "limitations": [
     "One physical Docker Desktop host, not host/AZ failure qualification.",
     "Echo backend only; Java/Go/Rust application executions not all tested.",
@@ -275,7 +280,7 @@
     "configuration_restored": true,
     "network_skipped": true
   },
-  "current_state_evidence": "scheduling-diagnostic.json",
+  "current_state_evidence": "final-state.json",
   "one_scheduling_diagnostic": {
     "attempts": 1,
     "instrumented": true,
@@ -283,5 +288,71 @@
     "interpretation": "inconclusive_no_omission_reproduced",
     "causal_claim": false,
     "substitutes_for_full_credentials": false
+  },
+  "repository_layout_cleanup": {
+    "separate_git_repositories": [
+      "fluxgate",
+      "fluxgate-studio"
+    ],
+    "extra_maven_modules_added": 0,
+    "retired_session_worktrees": 12,
+    "branch_references_retained": 12,
+    "ignored_files_archived": 7846,
+    "archive_outside_product_git_repositories": true,
+    "archive_private": true,
+    "retirement_result_sha256": "83f215334bda0decaea595ae4dd7062c3f06aa3f994911f565b10a2bf3a4096b",
+    "ancestry_claimed": false,
+    "exact_historical_aliases_consolidated": 1,
+    "retained_ha_evidence": "docs/reviews/evidence/2026-10-10-resilience/ha-before-graceful.json",
+    "retained_ha_evidence_sha256": "4ddfdd21c8ec5d7bba4dd42acbcc98a03e2085c4db97aa93fd0784e819ffa5e3",
+    "intentional_separations_preserved": [
+      "core and Studio repositories",
+      "Boot2 and Boot3 targets",
+      "EN and KO documents",
+      "different fixture contracts",
+      "rejected runtime evidence"
+    ],
+    "python_caches_excluded_from_git": true,
+    "unproven_sampler_complexity_reverted": true
+  },
+  "latest_full_process_comparison": {
+    "evidence": "worker-sampler.json",
+    "accepted": false,
+    "scheduled": 3861,
+    "exact_body_200": 3860,
+    "omitted_schedules": 1,
+    "protocol_passed": true,
+    "full_protocol_complete": true,
+    "actual_exit": 1,
+    "original_state_check_actual_exit": 1,
+    "later_restored_state_check_actual_exit": 0,
+    "later_restored_state_checks": 19,
+    "implementation_retained": false
+  },
+  "latest_instrumented_full_protocol_diagnostic": {
+    "evidence": "scheduling-diagnostic.json",
+    "scheduled": 3851,
+    "exact_body_200": 3850,
+    "omitted_schedules": 1,
+    "actual_exit": 1,
+    "acceptance_substitute": false
+  },
+  "current_verifier_tests": {
+    "tests": 60,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "source_commit": "7c43f2312b3833de106ec52c730a1919039107a3",
+    "source_sha256": "ea1fe97c1238e3cd5c110fd7ea8809e67d1a79b4b9f28ec1997929a767aa6a34",
+    "log": {
+      "sha256": "cce7cd4a9ec3fc0f98e495a94e134d31eae8b0e5730e099016d6c60140152ddf",
+      "bytes": 10699
+    },
+    "self_test_passed": true,
+    "self_test_log": {
+      "sha256": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0",
+      "bytes": 165
+    },
+    "boundary": "Fresh current restored sampler suite; experimental 80-test result is separate."
   }
 }

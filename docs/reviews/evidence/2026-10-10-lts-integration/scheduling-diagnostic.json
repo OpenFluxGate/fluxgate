@@ -119,5 +119,115 @@
     "No reproduced omission does not erase earlier full credential failures.",
     "One diagnostic only; no blind full retry or service/host CPU causality claim."
   ],
-  "interpretation": "inconclusive_no_omission_reproduced"
+  "interpretation": "inconclusive_no_omission_reproduced",
+  "instrumented_full_protocol_followup": {
+    "schema": 1,
+    "diagnostic_only": true,
+    "acceptance_substitute": false,
+    "protocol_passed": true,
+    "full_protocol_complete": true,
+    "rotation_availability_passed": false,
+    "original_exit_code": 1,
+    "chain_collection_exit_code": 0,
+    "phases": [
+      {
+        "phase": "mtls",
+        "scheduled": 2012,
+        "executed": 2012,
+        "exact_200": 2012,
+        "omitted_schedules": 0,
+        "pending": 0,
+        "drain_complete": true,
+        "worker_failures": 0,
+        "progress_writer_failures": 0,
+        "progress_writer_drained": true,
+        "telemetry_complete": true,
+        "sidecar_sha256": "d92f107c4ab50b8612e0e321a447ff207496087edb235c53c366db44bbe70a33",
+        "original_sampler_raw_sha256": "4fff2a8ba337ddbcb7bc1ee9e0f519f4013bb91170e045c4917efd1793c696dd",
+        "cleanup": {
+          "pod_absent": true,
+          "networkpolicy_absent": true,
+          "ownership_checked": true
+        }
+      },
+      {
+        "phase": "api-key",
+        "scheduled": 1161,
+        "executed": 1160,
+        "exact_200": 1160,
+        "omitted_schedules": 1,
+        "pending": 0,
+        "drain_complete": true,
+        "worker_failures": 0,
+        "progress_writer_failures": 0,
+        "progress_writer_drained": true,
+        "telemetry_complete": true,
+        "sidecar_sha256": "bdf2870c7b4ebad48d868a43335558dbde86e4866579dc25c617000d1cf1a208",
+        "original_sampler_raw_sha256": "a9b0d2063375e457fdf60f580d7cc4ed0ebb9721aa5f0fc4e23b3a0a146105a1",
+        "cleanup": {
+          "pod_absent": true,
+          "networkpolicy_absent": true,
+          "ownership_checked": true
+        }
+      },
+      {
+        "phase": "stores",
+        "scheduled": 678,
+        "executed": 678,
+        "exact_200": 678,
+        "omitted_schedules": 0,
+        "pending": 0,
+        "drain_complete": true,
+        "worker_failures": 0,
+        "progress_writer_failures": 0,
+        "progress_writer_drained": true,
+        "telemetry_complete": true,
+        "sidecar_sha256": "31ac1349561e0eac2905973a4b5f3b2638c15371e3a1a6b34d617c8f42021693",
+        "original_sampler_raw_sha256": "0d0a50948876f138cdf8b31dd85a70b260ab440f850af67d5ce6103bfa182e0d",
+        "cleanup": {
+          "pod_absent": true,
+          "networkpolicy_absent": true,
+          "ownership_checked": true
+        }
+      }
+    ],
+    "scheduled_total": 3851,
+    "exact_200_total": 3850,
+    "omitted_total": 1,
+    "event": {
+      "first_sequence": 646,
+      "count": 1,
+      "sleep_wait_wall_ns": 166049584,
+      "sleep_wait_thread_cpu_ns": 2278542,
+      "sleep_deadline_overrun_ns": 134467530,
+      "wake_to_judgment_wall_ns": 142583,
+      "condition_wait_wall_ns": 4042,
+      "post_sleep_stop_wall_ns": 90292,
+      "inside_condition_stop_wall_ns": 11875
+    },
+    "independent_timer_neighbor_omissions": 0,
+    "causal_classification": "unknown",
+    "interpretation": [
+      "Failure is unsent scheduled traffic; observed dispatched responses were all exact200.",
+      "The event largely occurs before wake-to-judgment; condition and stop-file checks do not explain this event.",
+      "Separate timer has process/workload and wait primitive differences: select.select versus time.sleep; neither GIL nor VM causation is established.",
+      "The observed runnable-wait increase is195840082ns across the adjacent observer window, not wholly attributable to the missing arrival; quota counters do not increase there."
+    ],
+    "raw_sha256": "d2c81f583421eb1c720adf8cff745ccc04752cca8bde53b4ec826555af8614ae",
+    "diagnostic_manifest_sha256": "548a24b7f401f81918f036692bb7a58530b8da69cff2abdbcd041482f54b8812",
+    "parent_progress_sha256": "4891d089fae4224c33df5045622490d6fa50ee4b1d799349de1003fa90ff08ea",
+    "final_state": {
+      "actual_exit": 0,
+      "passed": true,
+      "check_count": 19,
+      "sha256": "c69166d4b9a2284aceaf5ecd4637bec536f95c1376eabb383908e2558e91dce0"
+    },
+    "configuration_unchanged": {
+      "passed": true,
+      "node_count": 3,
+      "effective_weight": 100,
+      "daemon_cpu_shares": 0
+    },
+    "source_commit": "c3f7fded23eb52d0c4c4ace14bf9336a1236825e"
+  }
 }

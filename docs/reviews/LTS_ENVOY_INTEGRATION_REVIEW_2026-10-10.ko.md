@@ -23,7 +23,7 @@ Envoy가 허용 판정을 받은 뒤 실제 요청을 서비스 Pod로 전달한
 
 Java 빌드 소스는 `d4c4d88367343498df949cc8e07fbb2443fd20d0`, 배포 authz JAR SHA-256은 `b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce`다. Studio 소스는 `0966efbcbef5c9f2f680146450ae3bc3daef91cf`, JAR은 `de3ed6b1e0a7046a18464b0d3e8102aacf7c463dbb1b39bcc0d820bd7895bb77`다.
 
-마지막으로 실행한 verifier commit은 `f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c`, 실행 tree는 `09573bddec4669789b68f59591f942b603669499`이다. Java 빌드 소스 D4와 누적 Python/test 파일 5개 및 과거 리뷰 파일 17개가 다르며 Java 재빌드를 의미하지 않는다. 앞선 HA/load/combined 증거는 실제 당시 verifier provenance를 유지한다. retained ledger는 terminal 검토 후 raw/witness/log digest를 고정했으며 실행 당시 기록한 digest로 소급 표현하지 않는다.
+앞선 worker·CPU 배분 검증에 사용한 verifier commit은 `f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c`, 실행 tree는 `09573bddec4669789b68f59591f942b603669499`이다. Java 빌드 소스 D4와 누적 Python/test 파일 5개 및 과거 리뷰 파일 17개가 다르며 Java 재빌드를 의미하지 않는다. 앞선 HA/load/combined 증거는 실제 당시 verifier provenance를 유지한다. retained ledger는 terminal 검토 후 raw/witness/log digest를 고정했으며 실행 당시 기록한 digest로 소급 표현하지 않는다.
 
 ## 통합 계약
 
@@ -74,6 +74,18 @@ f90 worker 수정은 idle queue의 100 ms polling을 blocking 대기와 제한�
 최근 정제 Redis 로그는 해당 control 중 새 promotion을 입증하지 않는다. 앞선 healthy 0/1/8 role 상태의 시작 시점은 미상이다. root는 guard를 적용한 명시적 operator role restoration으로 home 0/1/2를 복원했고 authz UID 변경 없이 정확한 policy pointer·counter·storage identity를 보존했다. 유효 witness와 baseline-only PASS는 수동 복원의 증거이며 자동 balancing, 새 전체 HA PASS, 이 수동 복원 자체는 final-state 승인이 아니다. 이후 별도 읽기 전용 상태 검사는 통과했다.
 
 
+### 최신 작업공간 정리와 거절된 후속 실험
+
+GitHub 배포 단위는 core와 Studio 두 저장소다. 두 저장소의 영문·한글 README에 책임 범위를 명시했다. 작업용 worktree 12개는 일반 `git worktree remove`로 정리했으며 브랜치 이력을 유지했다. 무시된 로컬 자료 7,846개는 두 제품 저장소 밖의 비공개 archive에 원본 해시·목록을 검증해 보존했다. Boot 2·3 대상, 언어별 문서, 서로 다른 fixture와 실패 증거는 유지한다. 바이트가 동일한 과거 HA alias 하나는 설명적인 기존 파일로 통합했다. 모듈은 추가하지 않았고 Python 캐시는 Git에서 제외했다.
+
+추가 instrumentation 전체 진단은 verifier `c3f7fd`에서 예정 요청 3,851건, 정확한 backend body의 200 응답 3,850건과 API-key 단계 lateness omission 1건을 기록했다. credential child는 exit 1이며 수집·후속 상태 확인의 성공과 구분한다. sleep overrun과 인접 구간 runnable 대기 관측은 GIL이나 VM 원인을 확정하지 않는다. 기존 [scheduling-diagnostic.json](evidence/2026-10-10-lts-integration/scheduling-diagnostic.json)에 기존 진단과 함께 보존했다.
+
+한 번의 instrumentation 없는 HTTP 프로세스 분리 실험은 verifier `87df806`에서 모든 credential protocol을 완료했지만 예정 요청 3,861건 중 mTLS 단계 1건을 놓쳤다. 실제 3,860건은 모두 정확한 body의 200이었다. API key 1,164건과 store 669건은 누락 0이며 pending·worker/writer 실패 0, drain·owned cleanup도 완료했다. 기존 100 ms·최대 24개·누락 0·fresh connection/2초·정확한 body 기준을 변경하지 않았다. credential child는 유효 witness와 exit 1이며 [worker-sampler.json](evidence/2026-10-10-lts-integration/worker-sampler.json)에 기록했다. 프로세스 분리는 가용성 해결이나 GIL 원인을 입증하지 못했다.
+
+해당 실험의 최초 상태 검사는 Redis topology 조건에서 exit 1로 종료됐고 14개 check까지만 완료했다. 별도의 guarded baseline은 역할 변경 명령 없이 정상 배치를 확인하고 정책·HA counter 보존을 검사했다(`complete:false`). 이후 독립 읽기 전용 상태 검사 19개는 exit 0·유효 witness로 통과했다. 최초 실패와 이후 상태 통과를 [final-state.json](evidence/2026-10-10-lts-integration/final-state.json)에 함께 남겼으며 최초 실패의 정확한 원인을 확정하지 않는다.
+
+입증되지 않은 sampler 복잡성은 되돌렸다. 현재 검증 source `7c43f23`의 sampler·기존 테스트와 실행 mode는 `c3f7fd`와 동일하며 실험용 test helper 2개도 제거했다. 후보 source와 80개 통과 테스트는 실험 이력으로 남긴다. 현재 코드의 fresh verifier 테스트 60개와 self-test는 다시 통과했다. Java 3,365개·Studio UI 13개의 기존 빌드 증거를 새 빌드로 바꾸지 않는다. **저장소 정리는 완료했지만 credential 가용성과 전체 95점 승인은 여전히 HOLD다.**
+
 ### 보존한 증거
 
 각 증거의 실제 실행 commit, JAR, terminal exit와 SHA-256을 [acceptance.json](evidence/2026-10-10-lts-integration/acceptance.json)에 기록했다. 오래된 성공 실행을 새 verifier의 실행으로 바꾸지 않았다. 실패한 credential 다섯 건, 과거 정상 경로의 누락, 실제 `NOREPLICAS` 503 및 private harness 오류도 보존했다. 95점 이상은 승인하지 않았으며 필수 게이트 실패를 다른 항목의 점수로 상쇄하지 않는다.
@@ -82,4 +94,4 @@ f90 worker 수정은 idle queue의 100 ms polling을 blocking 대기와 제한�
 
 ## 범위와 남은 한계
 
-검증 범위는 하나의 Docker Desktop VM에 있는 kind node 3개와 echo backend를 사용하는 소유 fixture다. 독립 host/AZ 장애·off-host 복구·프로덕션 storage/network·장기 soak·전체 dependency/CVE·지원 runtime 운영은 증명하지 않는다. store TLS/ACL hardening과 프로덕션 backup/restore는 별도 게이트다. 과거 점수는 전이하지 않는다. 기본·CPU 배분 healthy control은 통과했지만 이후 전체 credential 실행은 omission 0 가용성 조건에 실패했다. 사전 정의한 제한된 진단 한 번에서도 누락은 재현되지 않았고 원인도 확정하지 못했다. 추가 추측성 수정이나 성공할 때까지의 전체 재시도는 정당화되지 않는다. 최종 local 승인과 별도 점수는 HOLD다.
+검증 범위는 하나의 Docker Desktop VM에 있는 kind node 3개와 echo backend를 사용하는 소유 fixture다. 독립 host/AZ 장애·off-host 복구·프로덕션 storage/network·장기 soak·전체 dependency/CVE·지원 runtime 운영은 증명하지 않는다. store TLS/ACL hardening과 프로덕션 backup/restore는 별도 게이트다. 과거 점수는 전이하지 않는다. 기본·CPU 배분 healthy control은 통과했지만 이후 전체 credential 실행은 omission 0 가용성 조건에 실패했다. 앞선 제한된 healthy 진단은 누락을 재현하지 못했다. 이후 instrumentation 전체 진단과 instrumentation 없는 프로세스 분리 실험은 각각 누락 1건을 기록했으며 스케줄링의 정확한 원인을 확정하지 못했다. 입증되지 않은 프로세스 분리는 되돌렸다. 다음 작업은 제한된 원인 분리 진단이 필요하며 추측성 수정이나 성공할 때까지의 전체 재시도는 정당화되지 않는다. 최종 local 승인과 별도 점수는 HOLD다.
