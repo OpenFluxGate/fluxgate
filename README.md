@@ -105,6 +105,8 @@ delegates to `RateLimitEngine`, which resolves the rule set and calls a `RateLim
 | **fluxgate-envoy-extauth** | Envoy Gateway external authorization service using the existing engine and MongoDB/Redis adapters |
 | **fluxgate-samples** | Sample applications demonstrating various use cases |
 
+This repository owns the rate limiting engine, MongoDB/Redis adapters, Spring Boot starters and the optional `fluxgate-envoy-extauth` service. The starters and adapters are application libraries; the testkit, benchmarks and samples support development. These Maven modules do not each require a separate service deployment. The separate [FluxGate Studio repository](https://github.com/openfluxgate/fluxgate-studio) owns the admin API and web UI. Local Git worktrees are development checkouts, not additional modules or release contents.
+
 ## Quick Start
 
 Two paths: **Path A** needs nothing but Java and Maven — it runs an in-memory limiter that

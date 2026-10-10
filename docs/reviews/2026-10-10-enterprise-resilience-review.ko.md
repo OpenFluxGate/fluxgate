@@ -67,6 +67,10 @@ Envoy는 MongoDB·Redis에 직접 연결하지 않는다. 판정 서비스가 �
 
 ## 실패 이력과 공개 증거
 
+이력 파일 `ha.json`은 [ha-before-graceful.json](evidence/2026-10-10-resilience/ha-before-graceful.json)과 바이트가 동일한 중복 파일이어서 후자로 통합했다. SHA-256은 `4ddfdd21c8ec5d7bba4dd42acbcc98a03e2085c4db97aa93fd0784e819ffa5e3`이며 기존 검증 이력의 보존이다. 새 HA 실행이나 승인 결과를 뜻하지 않는다.
+
+
+
 실패 실행은 성공으로 덮어쓰지 않는다. 이전 Mongo dense recovery deadline 초과, 정상 부하 28건 503·p95 576ms, 초기 교체 가용성 실패 및 sequential credential generator의 실제 omission을 별도 보존한다. 동기 Mongo 통계 대기 진단과 수정 전후의 실제 회귀도 보존한다. 구현 수정 없는 반복 성공을 위해 원래 기준·장애 구간·warmup·counter를 완화하지 않았다.
 
 최신 공개 증거 파일은 허용한 상태·수치·UID·해시만 포함한다. payload·bucket key·API key·비밀번호·URI·JWT·PEM·임의 오류 메시지와 원본 로그는 Git 밖 private 디렉터리에 둔다. 실제 current/retired 비밀값·인코딩 변형의 정확 일치 검사에서 공개 파일 노출 0건을 확인했다. 이 검사는 알려진 보존 비밀값에 대한 검사이며 포괄적인 비밀 탐지나 CVE 검사와 다르다. dropped schema 항목 중 합격에 중요한 정보는 실제 원본으로 검토하고 안전한 supplement를 붙인다. 존재하지 않는 PVC 후속 map이나 아홉 Redis 멤버의 별도 canonical dump를 수집했다고 주장하지 않는다. source assertion과 별도 captured observation을 구분한다.

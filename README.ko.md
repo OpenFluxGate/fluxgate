@@ -106,6 +106,8 @@
 | **fluxgate-envoy-extauth** | 기존 엔진과 MongoDB·Redis 어댑터를 사용하는 Envoy Gateway 외부 판정 서비스 |
 | **fluxgate-samples** | 다양한 사용 사례를 보여주는 샘플 애플리케이션 |
 
+이 저장소는 Rate Limiting 엔진, MongoDB·Redis 어댑터, Spring Boot 스타터와 선택적으로 배포하는 `fluxgate-envoy-extauth` 서비스를 담당합니다. 스타터·어댑터는 애플리케이션 라이브러리이며 testkit·벤치마크·샘플은 개발을 지원합니다. Maven 모듈을 각각 별도 서비스로 배포할 필요는 없습니다. 별도 [FluxGate Studio 저장소](https://github.com/openfluxgate/fluxgate-studio)가 관리 API와 웹 UI를 담당합니다. 로컬 Git worktree는 개발용 checkout이며 추가 모듈이나 릴리스 구성물이 아닙니다.
+
 ## 빠른 시작
 
 두 가지 경로로 시작할 수 있습니다. **경로 A**는 Java와 Maven만 있으면 됩니다 — 인프라 없이

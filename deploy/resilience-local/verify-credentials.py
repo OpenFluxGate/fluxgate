@@ -13,6 +13,8 @@ import http.client
 import http.server
 import inspect
 import json
+import math
+import select
 import os
 import queue
 import re
@@ -184,216 +186,372 @@ def validate_restart_identity(before, after, originals, current):
                 pvc["spec"]["volumeName"] == original["spec"]["volumeName"], "cold restart replaced PVC/PV identity")
 
 
+CHILD_SOURCE=r'''import http.client,json,queue,sys,threading,time
+config=json.loads(sys.stdin.buffer.readline())
+jobs=queue.Queue(maxsize=24)
+output_lock=threading.Lock()
+def emit(value):
+    with output_lock:
+        print(json.dumps(value,separators=(',',':')),flush=True)
+def worker():
+    while True:
+        job=jobs.get()
+        if job is None:
+            jobs.task_done();return
+        index,origin,start=job['index'],job['origin'],job['start']
+        began=time.monotonic()
+        sample={'sequence':index,'scheduled_elapsed_seconds':index*.1,
+            'elapsed_seconds':began-start,'dispatch_lag_ms':max(0,began-origin)*1000,
+            'status':None,'body_valid':False}
+        connection=None
+        try:
+            connection=http.client.HTTPConnection(config['service'],config['port'],timeout=2)
+            connection.request('GET',config['path'],headers={'Host':config['host'],
+                'x-api-key':config['api_key'],'Connection':'close'})
+            response=connection.getresponse();body=response.read();expected=config['body'].encode()
+            sample.update(status=response.status,body_valid=body in (expected,expected+b'\n'))
+        except BaseException as error:
+            sample.update(status=None,body_valid=False,error=type(error).__name__)
+        finally:
+            if connection is not None:
+                try:connection.close()
+                except BaseException as error:sample.update(status=None,body_valid=False,error=type(error).__name__)
+            completed=time.monotonic()
+            sample.update(latency_ms=max(0,completed-origin)*1000,service_latency_ms=(completed-began)*1000,
+                completed_elapsed_seconds=completed-start)
+            try:emit({'kind':'sample','sample':sample})
+            finally:jobs.task_done()
+workers=[threading.Thread(target=worker,daemon=True) for _ in range(24)]
+for thread in workers:thread.start()
+emit({'kind':'ready'})
+try:
+    for line in sys.stdin.buffer:
+        job=json.loads(line)
+        if type(job.get('index')) is not int or job['index']<0:raise ValueError('invalid_index')
+        jobs.put_nowait(job)
+except BaseException as error:
+    emit({'kind':'failure','error':type(error).__name__})
+finally:
+    for _ in workers:jobs.put(None)
+    jobs.join()
+    for thread in workers:thread.join()
+    emit({'kind':'done'})
+'''
+
+
+def child_start(config):
+    """All initialization before scheduler anchor; exact small stdin frames only."""
+    if sys.platform=='darwin' and sys.version_info<(3,10):
+        raise RuntimeError('unsupported_process_clock')
+    process=subprocess.Popen([sys.executable,'-c',CHILD_SOURCE],stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0,start_new_session=True)
+    try:
+        frame=(json.dumps(config,separators=(',',':'))+'\n').encode()
+        if len(frame)>4096:raise ValueError('config_frame_bound')
+        if os.write(process.stdin.fileno(),frame)!=len(frame):raise ValueError('config_frame_partial')
+        deadline=time.monotonic()+2;ready=b''
+        while not ready.endswith(b'\n') and len(ready)<128:
+            remaining=deadline-time.monotonic()
+            if remaining<=0 or not select.select([process.stdout],[],[],remaining)[0]:break
+            value=os.read(process.stdout.fileno(),1)
+            if not value:break
+            ready+=value
+        if json.loads(ready)!={'kind':'ready'}:raise ValueError('child_readiness')
+        os.set_blocking(process.stdin.fileno(),False)
+        return process
+    except BaseException:
+        child_cleanup(process)
+        raise RuntimeError('child_start_failed') from None
+
+
+def child_cleanup(process):
+    """Terminate/reap only the owned HTTP process; never a fault or kubectl handle."""
+    if process.poll() is None:process.kill()
+    while True:
+        try:
+            process.wait()
+            break
+        except KeyboardInterrupt:
+            continue
+    terminal=process.returncode is not None
+    for stream in (process.stdin,process.stdout,process.stderr):
+        if stream is not None:
+            try:stream.close()
+            except OSError:pass
+    return terminal
+
+
+def admission(process,index,start):
+    frame=(json.dumps({'index':index,'origin':start+index*.1,'start':start},separators=(',',':'))+'\n').encode()
+    if len(frame)>128:raise ValueError('admission_frame_bound')
+    # <=24 outstanding frames => <=3072 bytes. Nonblocking write never waits for child.
+    # Each frame is below POSIX minimum PIPE_BUF; partial write is a fatal IPC error.
+    if os.write(process.stdin.fileno(),frame)!=len(frame):raise RuntimeError('admission_partial')
+
+
+def startup_failure():
+    now=time.monotonic_ns()
+    return {'started_utc_ns':time.time_ns(),'started_monotonic_ns':now,
+        'stopped_utc_ns':time.time_ns(),'stopped_monotonic_ns':now,'interval_ms':100,
+        'scheduled':0,'omitted_schedules':0,'omissions':[],'samples':[],'pending':0,'pending_sequences':[],
+        'peak_inflight':0,'max_inflight':24,'worker_failures':1,'duration_seconds':0,
+        'partial':False,'complete':True,'progress_writer_failures':0,'progress_writer_drained':True,
+        'drain_complete':False,'http_child_ready':False,'http_child_terminal':True,
+        'execution_model':'candidate_one_http_process_24_threads'}
+
+
+def completion(sample,pending,start):
+    keys={'sequence','scheduled_elapsed_seconds','elapsed_seconds','dispatch_lag_ms','status',
+          'body_valid','latency_ms','service_latency_ms','completed_elapsed_seconds'}
+    if not isinstance(sample,dict) or set(sample) not in (keys,keys|{'error'}):raise ValueError('completion_shape')
+    index=sample['sequence'];status=sample['status']
+    if type(index) is not int or index not in pending:raise ValueError('completion_index')
+    if status is not None and (type(status) is not int or not 100<=status<=599):raise ValueError('completion_status')
+    if type(sample['body_valid']) is not bool:raise ValueError('completion_body')
+    errors={'TimeoutError','ConnectionRefusedError','ConnectionResetError','RemoteDisconnected','OSError',
+            'BrokenPipeError','IncompleteRead','BadStatusLine','HTTPException','gaierror','ValueError'}
+    if 'error' in sample and (type(sample['error']) is not str or sample['error'] not in errors):raise ValueError('completion_error')
+    if status is None and ('error' not in sample or sample['body_valid']):raise ValueError('completion_error')
+    if status is not None and 'error' in sample:raise ValueError('completion_error')
+    for key in keys-{'sequence','status','body_valid'}:
+        value=sample[key]
+        if type(value) not in (int,float) or not math.isfinite(value) or value<0:raise ValueError('completion_number')
+    scheduled=index*.1;began=sample['elapsed_seconds'];ended=sample['completed_elapsed_seconds']
+    if began+1e-6<scheduled or ended<began or ended>time.monotonic()-start+.001:raise ValueError('completion_order')
+    for value,expected in ((sample['scheduled_elapsed_seconds'],scheduled),
+        (sample['dispatch_lag_ms'],max(0,began-scheduled)*1000),
+        (sample['latency_ms'],max(0,ended-scheduled)*1000),
+        (sample['service_latency_ms'],(ended-began)*1000)):
+        if abs(value-expected)>.001:raise ValueError('completion_origin')
+    return index
+
+
 def sampler_worker(config, stop_path):
     """Fixed 100ms arrivals, bounded concurrent fresh sockets, and explicit omissions."""
-    start = time.monotonic()
-    anchor = {"started_utc_ns": time.time_ns(), "started_monotonic_ns": time.monotonic_ns()}
-    sequence, omitted, peak, worker_failures = 0, 0, 0, 0
-    samples, omissions, pending = [], [], set()
-    condition = threading.Condition()
-    slots = threading.BoundedSemaphore(24)
-    jobs = queue.Queue(maxsize=24)
-    shutdown = threading.Event()
-    positive_claimed = False
-    status_counts = {}
-    progress_failures = 0
-    progress_mailbox = queue.Queue(maxsize=1)
-    progress_stop, progress_cancel = threading.Event(), threading.Event()
-    publication_lock = threading.Lock()
-    progress_path = Path(config.get("progress_path", "/tmp/sampler-progress.json"))
+    try:
+        process=child_start(config)
+    except Exception:
+        return startup_failure()
+    try:
+        start = time.monotonic()
+        anchor = {"started_utc_ns": time.time_ns(), "started_monotonic_ns": time.monotonic_ns()}
+        sequence, omitted, peak, worker_failures = 0, 0, 0, 0
+        samples, omissions, pending = [], [], set()
+        condition = threading.Condition()
+        slots = threading.BoundedSemaphore(24)
+        shutdown = threading.Event()
+        positive_claimed = False
+        status_counts = {}
+        progress_failures = 0
+        progress_mailbox = queue.Queue(maxsize=1)
+        progress_stop, progress_cancel = threading.Event(), threading.Event()
+        publication_lock = threading.Lock()
+        progress_path = Path(config.get("progress_path", "/tmp/sampler-progress.json"))
 
-    def snapshot():  # Caller holds condition: pending and completed cannot disappear between reads.
-        return {**anchor, "interval_ms": 100, "scheduled": sequence,
-            "omitted_schedules": omitted, "omissions": list(omissions),
-            "samples": sorted(samples, key=lambda sample: sample["sequence"]),
-            "pending": len(pending), "pending_sequences": sorted(pending),
-            "peak_inflight": peak, "max_inflight": 24, "worker_failures": worker_failures,
-            "duration_seconds": time.monotonic() - start,
-            "latency_basis": "scheduled arrival including worker dispatch; service latency separate",
-            "transport": "in-cluster Gateway Service; fresh connection per sample"}
+        def snapshot():  # Caller holds condition: pending and completed cannot disappear between reads.
+            return {**anchor, "interval_ms": 100, "scheduled": sequence,
+                "omitted_schedules": omitted, "omissions": list(omissions),
+                "samples": sorted(samples, key=lambda sample: sample["sequence"]),
+                "pending": len(pending), "pending_sequences": sorted(pending),
+                "peak_inflight": peak, "max_inflight": 24, "worker_failures": worker_failures,
+                "duration_seconds": time.monotonic() - start,
+                "latency_basis": "scheduled arrival including worker dispatch; service latency separate",
+                "transport": "in-cluster Gateway Service; fresh connection per sample"}
 
-    def publish(contents, final=False):
-        # Write outside both scheduler and publication locks; only rename is serialized.
-        temporary = progress_path.with_name(progress_path.name + (".final" if final else ".partial"))
-        try:
-            private_write(temporary, contents)
-            with publication_lock:
-                if final or not progress_cancel.is_set():
-                    os.replace(temporary, progress_path)
-        finally:
-            temporary.unlink(missing_ok=True)
-
-    def progress():  # Caller holds condition; fixed-size state, never full sample history.
-        if progress_stop.is_set():
-            return
-        partial = {"progress_schema": 1, "partial": True, "complete": False,
-            "interval_ms": 100, "scheduled": sequence, "completed": len(samples),
-            "pending": len(pending), "pending_sequences": sorted(pending),
-            "omitted_schedules": omitted, "status_counts": dict(status_counts),
-            "worker_failures": worker_failures, "progress_writer_failures": progress_failures,
-            "captured_utc_ns": time.time_ns(), "captured_monotonic_ns": time.monotonic_ns()}
-        try:
-            progress_mailbox.put_nowait(partial)
-        except queue.Full:
+        def publish(contents, final=False):
+            # Write outside both scheduler and publication locks; only rename is serialized.
+            temporary = progress_path.with_name(progress_path.name + (".final" if final else ".partial"))
             try:
-                progress_mailbox.get_nowait()
-            except queue.Empty:
-                pass
-            progress_mailbox.put_nowait(partial)
-
-    def report_progress():
-        nonlocal progress_failures
-        while not progress_stop.is_set() or not progress_mailbox.empty():
-            try:
-                partial = progress_mailbox.get(timeout=.1)
-            except queue.Empty:
-                continue
-            try:
-                publish(json.dumps(partial))
-            except Exception:
-                with condition:
-                    progress_failures += 1
-
-    reporter = threading.Thread(target=report_progress, daemon=True)
-    reporter.start()
-
-    def worker():
-        nonlocal worker_failures, positive_claimed
-        while not shutdown.is_set():
-            index = jobs.get()
-            if index is None or shutdown.is_set():
-                jobs.task_done()
-                return  # An unexecuted numeric arrival remains explicit pending evidence.
-            origin = start + index * .1
-            began = time.monotonic()
-            sample = {"sequence": index, "scheduled_elapsed_seconds": index * .1,
-                "elapsed_seconds": began - start, "dispatch_lag_ms": max(0, began - origin) * 1000,
-                "status": None, "body_valid": False}
-            connection = None
-            try:
-                connection = http.client.HTTPConnection(config["service"], config["port"], timeout=2)
-                connection.request("GET", config["path"], headers={"Host": config["host"],
-                    "x-api-key": config["api_key"], "Connection": "close"})
-                response = connection.getresponse()
-                body = response.read()
-                expected = config["body"].encode()
-                sample.update(status=response.status, body_valid=body in (expected, expected + b"\n"))
-            except BaseException as error:
-                sample.update(status=None, body_valid=False, error=type(error).__name__)
+                private_write(temporary, contents)
+                with publication_lock:
+                    if final or not progress_cancel.is_set():
+                        os.replace(temporary, progress_path)
             finally:
-                if connection is not None:
-                    try:
-                        connection.close()
-                    except BaseException as error:
-                        sample.update(status=None, body_valid=False, error=type(error).__name__)
-                completed = time.monotonic()
-                sample.update(latency_ms=max(0, completed - origin) * 1000,
-                    service_latency_ms=(completed - began) * 1000,
-                    completed_elapsed_seconds=completed - start)
-                with condition:
-                    publish_positive = (sample["status"] == 200 and sample["body_valid"]
-                                        and not shutdown.is_set() and not positive_claimed)
-                    if publish_positive:
-                        positive_claimed = True
+                temporary.unlink(missing_ok=True)
+
+        def progress():  # Caller holds condition; fixed-size state, never full sample history.
+            if progress_stop.is_set():
+                return
+            partial = {"progress_schema": 1, "partial": True, "complete": False,
+                "interval_ms": 100, "scheduled": sequence, "completed": len(samples),
+                "pending": len(pending), "pending_sequences": sorted(pending),
+                "omitted_schedules": omitted, "status_counts": dict(status_counts),
+                "worker_failures": worker_failures, "progress_writer_failures": progress_failures,
+                "captured_utc_ns": time.time_ns(), "captured_monotonic_ns": time.monotonic_ns()}
+            try:
+                progress_mailbox.put_nowait(partial)
+            except queue.Full:
                 try:
-                    # One claimed marker write must not block the scheduler's condition.
-                    if publish_positive:
-                        private_write(config.get("positive_path", "/tmp/sampler-positive"), "yes")
+                    progress_mailbox.get_nowait()
+                except queue.Empty:
+                    pass
+                progress_mailbox.put_nowait(partial)
+
+        def report_progress():
+            nonlocal progress_failures
+            while not progress_stop.is_set() or not progress_mailbox.empty():
+                try:
+                    partial = progress_mailbox.get(timeout=.1)
+                except queue.Empty:
+                    continue
+                try:
+                    publish(json.dumps(partial))
                 except Exception:
                     with condition:
-                        worker_failures += 1
-                finally:
-                    with condition:
-                        # Publish completion only after marker I/O; snapshots stay disjoint.
-                        samples.append(sample)
-                        pending.remove(index)
-                        status = sample["status"]
-                        label = ("ERROR" if status is None else str(status) if status in (200, 403, 429)
-                                 else "5xx" if 500 <= status <= 599 else "OTHER")
-                        status_counts[label] = status_counts.get(label, 0) + 1
-                        try:
-                            if len(samples) == 1 and not shutdown.is_set():
-                                progress()
-                        except Exception:
-                            worker_failures += 1  # No exception text or credential data in evidence.
-                        finally:
-                            slots.release()
-                            jobs.task_done()
-                            condition.notify_all()
+                        progress_failures += 1
 
-    workers = [threading.Thread(target=worker, daemon=True) for _ in range(24)]
-    for thread in workers:
-        thread.start()
-    try:
-        while not Path(stop_path).exists():
-            deadline = start + sequence * .1
-            time.sleep(max(0, deadline - time.monotonic()))
-            if Path(stop_path).exists():
-                break
+        reporter = threading.Thread(target=report_progress, daemon=True)
+        reporter.start()
+
+        child_done=False
+        ipc_failed=False
+        marker_thread=None
+        receiving=set()
+        def finish(sample):
+            nonlocal worker_failures
             with condition:
+                samples.append(sample);pending.remove(sample['sequence']);receiving.discard(sample['sequence'])
+                status=sample['status']
+                label=('ERROR' if status is None else str(status) if status in (200,403,429)
+                    else '5xx' if 500<=status<=599 else 'OTHER')
+                status_counts[label]=status_counts.get(label,0)+1
+                try:
+                    if len(samples)==1 and not shutdown.is_set():progress()
+                except Exception:worker_failures+=1
+                finally:slots.release();condition.notify_all()
+        def marker(sample):
+            nonlocal worker_failures
+            try:private_write(config.get('positive_path','/tmp/sampler-positive'),'yes')
+            except Exception:
+                with condition:worker_failures+=1
+            finally:finish(sample)
+        def collect():
+            nonlocal worker_failures, positive_claimed, child_done, ipc_failed, marker_thread
+            try:
+                while True:
+                    line=process.stdout.readline(2049)
+                    if not line:break
+                    if len(line)>2048 or not line.endswith(b'\n'):raise ValueError('completion_frame_bound')
+                    message=json.loads(line)
+                    if message=={'kind':'done'}:
+                        if process.stdout.readline(2049):raise ValueError('child_trailing_frame')
+                        child_done=True
+                        break
+                    if not isinstance(message,dict) or set(message)!={'kind','sample'} or message['kind']!='sample':
+                        raise ValueError('child_failure')
+                    sample=message['sample']
+                    with condition:
+                        index=completion(sample,pending,start)
+                        if index in receiving:raise ValueError('completion_duplicate')
+                        receiving.add(index)
+                        publish_positive=(sample['status']==200 and sample['body_valid']
+                            and not shutdown.is_set() and not positive_claimed)
+                        if publish_positive:positive_claimed=True
+                    if publish_positive:
+                        marker_thread=threading.Thread(target=marker,args=(sample,),daemon=True)
+                        marker_thread.start()
+                    else:finish(sample)
+                if not child_done:raise ValueError('child_unexpected_eof')
+            except BaseException:
+                with condition:
+                    worker_failures+=1;ipc_failed=True;condition.notify_all()
+        collector=threading.Thread(target=collect,daemon=True)
+        collector.start()
+        try:
+            while not Path(stop_path).exists():
+                deadline = start + sequence * .1
+                time.sleep(max(0, deadline - time.monotonic()))
                 if Path(stop_path).exists():
                     break
-                lag = time.monotonic() - deadline
-                if lag >= .1:
-                    missed = int(lag / .1)
-                    omissions.append({"first_sequence": sequence, "count": missed, "reason": "lateness"})
-                    omitted += missed
-                    sequence += missed
-                index = sequence
-                sequence += 1
-                if not slots.acquire(blocking=False):
-                    omitted += 1
-                    omissions.append({"first_sequence": index, "count": 1, "reason": "capacity"})
-                else:
-                    pending.add(index)
-                    peak = max(peak, len(pending))
-                    jobs.put_nowait(index)
-                if sequence == 1 or sequence % 10 == 1:
-                    progress()
-    finally:
-        # Stop halts arrivals; drain all submitted work. A stuck worker remains explicit pending,
-        # and the parent rejects the incomplete report rather than losing accepted schedules.
-        drain_deadline = time.monotonic() + 5
+                with condition:
+                    if Path(stop_path).exists():
+                        break
+                    lag = time.monotonic() - deadline
+                    if lag >= .1:
+                        missed = int(lag / .1)
+                        omissions.append({"first_sequence": sequence, "count": missed, "reason": "lateness"})
+                        omitted += missed
+                        sequence += missed
+                    index = sequence
+                    sequence += 1
+                    if not slots.acquire(blocking=False):
+                        omitted += 1
+                        omissions.append({"first_sequence": index, "count": 1, "reason": "capacity"})
+                    else:
+                        pending.add(index)
+                        peak = max(peak, len(pending))
+                        try:admission(process,index,start)
+                        except Exception:
+                            worker_failures+=1;ipc_failed=True
+                            # Retain accepted index as pending; failure cannot disappear from accounting.
+                    if sequence == 1 or sequence % 10 == 1:
+                        progress()
+        finally:
+            # Stop halts arrivals; drain all submitted work. A stuck worker remains explicit pending,
+            # and the parent rejects the incomplete report rather than losing accepted schedules.
+            if process.stdin is not None:
+                try:process.stdin.close()
+                except OSError:
+                    with condition:worker_failures+=1;ipc_failed=True
+                process.stdin=None
+            drain_deadline = time.monotonic() + 5
+            with condition:
+                while pending and time.monotonic() < drain_deadline:
+                    condition.wait(timeout=max(0, drain_deadline - time.monotonic()))
+            shutdown.set()
+            join_deadline=time.monotonic()+1
+            try:process.wait(timeout=max(0,join_deadline-time.monotonic()))
+            except subprocess.TimeoutExpired:
+                with condition:worker_failures+=1;ipc_failed=True
+            collector.join(timeout=max(0,join_deadline-time.monotonic()))
+            if collector.is_alive():
+                with condition:worker_failures+=1;ipc_failed=True
+            if marker_thread is not None:marker_thread.join(timeout=max(0,join_deadline-time.monotonic()))
+            child_terminal=child_cleanup(process)
+            collector.join(timeout=.1)
+        progress_stop.set()
+        reporter.join(timeout=1)
+        # Cancellation + the rename lock fence even a reporter stalled in file I/O.
+        progress_cancel.set()
+        with publication_lock:
+            reporter_drained = not reporter.is_alive()
         with condition:
-            while pending and time.monotonic() < drain_deadline:
-                condition.wait(timeout=max(0, drain_deadline - time.monotonic()))
-        shutdown.set()
-        # Wake every idle worker without blocking on a saturated queue. Queued arrivals
-        # already wake workers; they remain pending if the bounded drain expired.
-        for _ in workers:
-            try:
-                jobs.put_nowait(None)
-            except queue.Full:
-                break
-        join_deadline = time.monotonic() + 1
-        for thread in workers:
-            thread.join(timeout=max(0, join_deadline - time.monotonic()))
-    progress_stop.set()
-    reporter.join(timeout=1)
-    # Cancellation + the rename lock fence even a reporter stalled in file I/O.
-    progress_cancel.set()
-    with publication_lock:
-        reporter_drained = not reporter.is_alive()
-    with condition:
-        report = snapshot()
-        report.update(partial=False, complete=True, stopped_utc_ns=time.time_ns(),
-            stopped_monotonic_ns=time.monotonic_ns(), progress_writer_failures=progress_failures,
-            progress_writer_drained=reporter_drained,
-            drain_complete=not pending and not any(thread.is_alive() for thread in workers))
-    try:
-        publish(json.dumps(report), final=True)
-    except Exception:
-        report["progress_writer_failures"] += 1
-    return report
+            report = snapshot()
+            report.update(partial=False, complete=True, stopped_utc_ns=time.time_ns(),
+                stopped_monotonic_ns=time.monotonic_ns(), progress_writer_failures=progress_failures,
+                progress_writer_drained=reporter_drained,
+                drain_complete=not pending and not collector.is_alive() and (marker_thread is None or not marker_thread.is_alive())
+                    and child_done and not ipc_failed
+                    and child_terminal and process.returncode==0,
+                http_child_ready=True,http_child_terminal=child_terminal,
+                execution_model="candidate_one_http_process_24_threads")
+        try:
+            publish(json.dumps(report), final=True)
+        except Exception:
+            report["progress_writer_failures"] += 1
+        return report
+    finally:
+        # Every post-start exit, including setup/KeyboardInterrupt, reaps owned child.
+        if 'progress_cancel' in locals():progress_cancel.set()
+        if 'progress_stop' in locals():progress_stop.set()
+        child_cleanup(process)
+        if 'publication_lock' in locals():
+            with publication_lock:pass
+        for name in ('reporter','collector'):
+            thread=locals().get(name)
+            if thread is not None and thread.ident is not None:thread.join(timeout=.1)
 
 
-def sampler_program(stop_path="/tmp/sampler-stop", started_path="/tmp/sampler-started"):
-    """Only the stdlib worker and private writer belong in the nonsecret exec argument."""
-    return ("import http.client,json,os,queue,sys,threading,time\nfrom pathlib import Path\n\n"
-            + inspect.getsource(private_write) + "\n" + inspect.getsource(sampler_worker)
-            + "\nconfig = json.loads(sys.stdin.readline())\n"
-            + "private_write(" + repr(str(started_path)) + ", 'yes')\n"
-            + "print(json.dumps(sampler_worker(config, " + repr(str(stop_path)) + ")), flush=True)\n")
+def sampler_program(stop_path="/tmp/sampler-stop",started_path="/tmp/sampler-started"):
+    helpers=(child_start,child_cleanup,private_write,admission,startup_failure,completion,sampler_worker)
+    program="import json,math,os,queue,select,subprocess,sys,threading,time\nfrom pathlib import Path\n"
+    program+="CHILD_SOURCE="+repr(CHILD_SOURCE)+"\n\n"
+    program+="\n\n".join(inspect.getsource(helper) for helper in helpers)
+    program+="\nconfig = json.loads(sys.stdin.readline())\n"
+    program+="private_write("+repr(str(started_path))+",'yes')\n"
+    program+="print(json.dumps(sampler_worker(config,"+repr(str(stop_path))+")),flush=True)\n"
+    compile(program,"<process-sampler-candidate>","exec")
+    return program
 
 
 def validate_sampler_partial(report):
@@ -2400,194 +2558,164 @@ def sampler_parallel_self_test():
 
 
 
-def sampler_contention_self_test():
+def sampler_offline_accounting(scenario):
+    """Exercise actual child IPC with synthetic parent deadlines; no cluster commands."""
     from types import SimpleNamespace
-    for stop_during_lock in (False, True):
-        namespace = {}
-        exec(sampler_program().rsplit("\nconfig = ", 1)[0], namespace)
-        clock = SimpleNamespace(now=0.0)
-        holding, attempting, release = threading.Event(), threading.Event(), threading.Event()
-        result, connections = {}, []
-        with tempfile.TemporaryDirectory(prefix="sampler-contention-unit-") as directory:
-            stop = Path(directory) / "stop"
-            class ContendedCondition(threading.Condition):
-                def __enter__(self):
-                    name = threading.current_thread().name
-                    if name == "sampler-scheduler-test":
-                        self.scheduler_entries = getattr(self, "scheduler_entries", 0) + 1
-                        if self.scheduler_entries == 2:
-                            attempting.set()  # Observe the actual blocked scheduler acquisition.
-                    acquired = super().__enter__()
-                    if name.endswith("(worker)") and not holding.is_set():
-                        holding.set()  # Explicit contention; progress I/O no longer owns this lock.
-                        require(release.wait(2), "contention lock was not released")
-                    return acquired
-            namespace["threading"] = SimpleNamespace(Condition=ContendedCondition,
-                BoundedSemaphore=threading.BoundedSemaphore, Event=threading.Event,
-                Thread=threading.Thread, Lock=threading.Lock)
-            def sleep(seconds):
-                if seconds > 0:
-                    require(holding.wait(2), "worker did not hold the real scheduler lock")
-                    clock.now += seconds
-                time.sleep(.001)
-            namespace["time"] = SimpleNamespace(monotonic=lambda: clock.now,
-                monotonic_ns=lambda: int(clock.now * 1e9), time_ns=lambda: int(clock.now * 1e9), sleep=sleep)
-            def write(path, value):
-                private_write(path, value)
-            namespace["private_write"] = write
-            class Connection:
-                def __init__(self, *args, **kwargs):
-                    connections.append(self)
-                    self.number = len(connections)
-                def request(self, *args, **kwargs):
-                    pass
-                def getresponse(self):
-                    return SimpleNamespace(status=200, read=lambda: b"marker\n")
-                def close(self):
-                    if self.number == 2:
-                        private_write(stop, "stop")
-            namespace["http"] = SimpleNamespace(client=SimpleNamespace(HTTPConnection=Connection))
-            configuration = {"service": "offline", "port": 80, "path": "/load", "host": "offline",
-                "api_key": "offline-private-key", "body": "marker",
-                "positive_path": str(Path(directory) / "positive"),
-                "progress_path": str(Path(directory) / "progress")}
-            def run():
-                try:
-                    result["report"] = namespace["sampler_worker"](configuration, str(stop))
-                except BaseException as error:
-                    result["error"] = error
-            runner = threading.Thread(target=run, name="sampler-scheduler-test")
-            runner.start()
-            try:
-                require(attempting.wait(2), "scheduler did not contend on the worker lock")
-                clock.now = .35  # Deadline .1 is overdue by .25 while lock acquisition blocks.
-                if stop_during_lock:
-                    private_write(stop, "stop")
-                release.set()
-                runner.join(3)
-                require(not runner.is_alive() and "error" not in result, "contended sampler failed to drain")
-                report = result["report"]
-                if stop_during_lock:
-                    require(report["scheduled"] == 1 and len(connections) == 1 and
-                            [s["sequence"] for s in report["samples"]] == [0],
-                            "stop during scheduler lock admitted an extra arrival/socket")
-                else:
-                    require(report["scheduled"] == 4 and report["omitted_schedules"] == 2 and
-                            [s["sequence"] for s in report["samples"]] == [0, 3] and
-                            report["omissions"] == [{"first_sequence": 1, "count": 2, "reason": "lateness"}],
-                            "scheduler used stale pre-lock lag and hid overdue arrivals")
-                require(report["drain_complete"] and report["pending"] == 0 and
-                        report["scheduled"] == len(report["samples"]) + report["omitted_schedules"],
-                        "contention lost final schedule accounting")
-            finally:
-                private_write(stop, "stop")
-                release.set()
-                runner.join(3)
+    namespace = {}
+    exec(sampler_program().split("\nconfig = ", 1)[0], namespace)
+    clock = SimpleNamespace(now=0.0, delayed=False)
+    posts, admitted = [], []
+    with tempfile.TemporaryDirectory(prefix="sampler-accounting-") as directory:
+        stop = Path(directory) / "stop"
+        controlled = '''import json,sys,time
+json.loads(sys.stdin.readline())
+print('{"kind":"ready"}',flush=True)
+for line in sys.stdin:
+ job=json.loads(line);index=job['index'];elapsed=index*.1
+ sample={'sequence':index,'scheduled_elapsed_seconds':elapsed,'elapsed_seconds':elapsed,
+ 'dispatch_lag_ms':0,'status':200,'body_valid':True,'latency_ms':0,'service_latency_ms':0,
+ 'completed_elapsed_seconds':elapsed}
+ if index==0 and ERROR:
+  sample.update(status=None,body_valid=False,error='TimeoutError')
+ print(json.dumps({'kind':'sample','sample':sample}),flush=True)
+print('{"kind":"done"}',flush=True)
+'''.replace('ERROR',repr(scenario=='lateness'))
+        if scenario in ('capacity','drain'):
+            controlled=controlled[:controlled.index('for line in sys.stdin:')]+'''jobs=[json.loads(line) for line in sys.stdin]
+if STUCK:time.sleep(30)
+for job in jobs:
+ index=job['index'];elapsed=index*.1
+ sample={'sequence':index,'scheduled_elapsed_seconds':elapsed,'elapsed_seconds':elapsed,
+ 'dispatch_lag_ms':0,'status':200,'body_valid':True,'latency_ms':0,'service_latency_ms':0,
+ 'completed_elapsed_seconds':elapsed}
+ print(json.dumps({'kind':'sample','sample':sample}),flush=True)
+print('{"kind":"done"}',flush=True)
+'''.replace('STUCK',repr(scenario=='drain'))
+        namespace['CHILD_SOURCE']=controlled
+        original=namespace['admission']
+        def admit(process,index,start):
+            original(process,index,start);admitted.append(index)
+            if scenario=='lateness' and len(admitted)==2:private_write(stop,'stop')
+            if scenario=='drain':private_write(stop,'stop')
+        namespace['admission']=admit
+        def sleep(seconds):
+            if scenario=='lateness' and seconds>0 and not clock.delayed:
+                clock.now+=.35;clock.delayed=True
+            else:clock.now+=seconds
+            if scenario=='capacity' and clock.now>=2.6:private_write(stop,'stop')
+            time.sleep(.001)
+        namespace['time']=SimpleNamespace(monotonic=lambda:clock.now,
+            monotonic_ns=lambda:int(clock.now*1e9),time_ns=time.time_ns,sleep=sleep)
+        class CaptureQueue(queue.Queue):
+            def put_nowait(self,item):
+                if isinstance(item,dict):posts.append(item)
+                return super().put_nowait(item)
+        namespace['queue']=SimpleNamespace(Queue=CaptureQueue,Empty=queue.Empty,Full=queue.Full)
+        if scenario=='drain':
+            class Condition(threading.Condition):
+                def wait(self,timeout=None):clock.now+=timeout or 0;return False
+            namespace['threading']=SimpleNamespace(Condition=Condition,Event=threading.Event,
+                BoundedSemaphore=threading.BoundedSemaphore,Thread=threading.Thread,Lock=threading.Lock)
+        report=namespace['sampler_worker']({'service':'offline','port':1,'path':'/','host':'offline',
+            'api_key':'offline-only','body':'marker','positive_path':str(Path(directory)/'positive'),
+            'progress_path':str(Path(directory)/'progress')},str(stop))
+        require(report['scheduled']==len(report['samples'])+report['pending']+report['omitted_schedules'],
+            'generated sampler lost accepted schedules')
+        require(all(p['scheduled']==p['completed']+p['pending']+p['omitted_schedules'] for p in posts)
+            and any(p['pending'] for p in posts),'partial accounting lost pending work')
+        require(report['http_child_terminal'] and report['peak_inflight']<=24 and
+            'offline-only' not in json.dumps(report),'child lifecycle/bound/secret contract failed')
+        return report
 
 
 def sampler_program_accounting_self_test():
+    for scenario in ('lateness','capacity','drain'):
+        report=sampler_offline_accounting(scenario)
+        if scenario=='lateness':
+            require(report['scheduled']==4 and report['omitted_schedules']==2 and
+                [s['sequence'] for s in report['samples']]==[0,3] and
+                report['samples'][0]['error']=='TimeoutError' and report['drain_complete'] and
+                report['omissions']==[{'first_sequence':1,'count':2,'reason':'lateness'}],
+                'generated IPC sampler hid timing omissions or transport error')
+        elif scenario=='capacity':
+            require(report['scheduled']==26 and len(report['samples'])==24 and
+                report['omitted_schedules']==2 and report['peak_inflight']==24 and
+                report['pending']==0 and report['drain_complete'] and
+                all(item['reason']=='capacity' for item in report['omissions']),
+                'global child capacity/drain contract changed')
+            require(not sampler_summary(report)['uninterrupted_observed'],'capacity omission passed')
+        else:
+            require(report['pending_sequences']==[0] and not report['drain_complete'],
+                'stuck child accepted work disappeared')
+            try:sampler_summary(report)
+            except ProofError:pass
+            else:raise ProofError('unfinished child drain passed')
+
+
+def sampler_contention_self_test():
     from types import SimpleNamespace
-    for scenario in ("lateness", "capacity", "drain"):
-        namespace = {}
-        exec(sampler_program().rsplit("\nconfig = ", 1)[0], namespace)
-        clock = SimpleNamespace(now=0.0, delayed=False)
-        release, closed = threading.Event(), threading.Event()
-        connections, progress_reports, progress_posts = [], [], []
-        class CaptureQueue(queue.Queue):
-            def put_nowait(self, item):
-                if isinstance(item, dict) and item.get("partial"):
-                    progress_posts.append(item)
-                return super().put_nowait(item)
-        namespace["queue"] = SimpleNamespace(Queue=CaptureQueue, Empty=queue.Empty, Full=queue.Full)
-        connection_lock = threading.Lock()
-        with tempfile.TemporaryDirectory(prefix="sampler-program-accounting-") as directory:
-            stop = Path(directory) / "stop"
+    for stop_during_lock in (False,True):
+        namespace={};exec(sampler_program().split('\nconfig = ',1)[0],namespace)
+        clock=SimpleNamespace(now=0.0)
+        held,attempting,release=threading.Event(),threading.Event(),threading.Event()
+        result={};admitted=[]
+        with tempfile.TemporaryDirectory(prefix='sampler-contention-') as directory:
+            stop=Path(directory)/'stop'
+            controlled='''import json,sys
+json.loads(sys.stdin.readline());print('{"kind":"ready"}',flush=True)
+for line in sys.stdin:
+ job=json.loads(line);index=job['index'];elapsed=index*.1
+ sample={'sequence':index,'scheduled_elapsed_seconds':elapsed,'elapsed_seconds':elapsed,
+ 'dispatch_lag_ms':0,'status':200,'body_valid':True,'latency_ms':0,'service_latency_ms':0,
+ 'completed_elapsed_seconds':elapsed}
+ print(json.dumps({'kind':'sample','sample':sample}),flush=True)
+print('{"kind":"done"}',flush=True)
+'''
+            namespace['CHILD_SOURCE']=controlled
+            class Condition(threading.Condition):
+                def __enter__(self):
+                    name=threading.current_thread().name
+                    if name=='scheduler-contention':
+                        self.entries=getattr(self,'entries',0)+1
+                        if self.entries==2:attempting.set()
+                    acquired=super().__enter__()
+                    if name.endswith('(collect)') and not held.is_set():
+                        held.set();require(release.wait(2),'collector lock not released')
+                    return acquired
+            namespace['threading']=SimpleNamespace(Condition=Condition,Event=threading.Event,
+                BoundedSemaphore=threading.BoundedSemaphore,Thread=threading.Thread,Lock=threading.Lock)
             def sleep(seconds):
-                if scenario == "lateness" and seconds > 0 and not clock.delayed:
-                    clock.now += .35
-                    clock.delayed = True
-                else:
-                    clock.now += seconds
-                if scenario == "capacity" and clock.now >= 2.6:
-                    private_write(stop, "stop")
-                    release.set()
-                if scenario == "drain" and clock.now >= .1:
-                    private_write(stop, "stop")
-                time.sleep(.01)  # Let real worker threads dispatch before advancing synthetic time.
-            namespace["time"] = SimpleNamespace(monotonic=lambda: clock.now,
-                monotonic_ns=lambda: int(clock.now * 1e9), time_ns=lambda: int(clock.now * 1e9), sleep=sleep)
-            if scenario == "drain":
-                class DrainCondition(threading.Condition):
-                    def wait(self, timeout=None):
-                        clock.now += timeout
-                        return False
-                namespace["threading"] = SimpleNamespace(Condition=DrainCondition,
-                    BoundedSemaphore=threading.BoundedSemaphore, Event=threading.Event,
-                    Thread=threading.Thread, Lock=threading.Lock)
-            class Connection:
-                def __init__(self, *args, **kwargs):
-                    require(kwargs["timeout"] == 2, "generated sampler changed HTTP timeout")
-                    with connection_lock:
-                        connections.append(self)
-                        self.number = len(connections)
-                def request(self, method, path, headers):
-                    require(method == "GET" and headers["Connection"] == "close", "sampler reused transport")
-                def getresponse(self):
-                    if scenario == "lateness" and self.number == 1:
-                        raise TimeoutError("offline transport failure")
-                    if scenario in ("capacity", "drain"):
-                        release.wait()
-                    return SimpleNamespace(status=200, read=lambda: b"marker\n")
-                def close(self):
-                    if scenario == "lateness" and self.number == 2:
-                        private_write(stop, "stop")
-                    closed.set()
-            namespace["http"] = SimpleNamespace(client=SimpleNamespace(HTTPConnection=Connection))
-            writer = namespace["private_write"]
-            def capture_write(path, content):
-                if Path(path).name.startswith("progress"):
-                    progress_reports.append(json.loads(content))
-                writer(path, content)
-            namespace["private_write"] = capture_write
+                if seconds>0:require(held.wait(2),'collector did not hold scheduler condition');clock.now+=seconds
+                time.sleep(.001)
+            namespace['time']=SimpleNamespace(monotonic=lambda:clock.now,
+                monotonic_ns=lambda:int(clock.now*1e9),time_ns=time.time_ns,sleep=sleep)
+            original=namespace['admission']
+            def admit(process,index,start):
+                original(process,index,start);admitted.append(index)
+                if len(admitted)==2:private_write(stop,'stop')
+            namespace['admission']=admit
+            def run():
+                try:result['report']=namespace['sampler_worker']({'service':'offline','port':1,
+                    'path':'/','host':'offline','api_key':'offline-only','body':'marker',
+                    'positive_path':str(Path(directory)/'positive'),'progress_path':str(Path(directory)/'progress')},str(stop))
+                except BaseException as error:result['error']=error
+            thread=threading.Thread(target=run,name='scheduler-contention');thread.start()
             try:
-                report = namespace["sampler_worker"]({"service": "offline", "port": 80, "host": "offline",
-                    "path": "/load", "api_key": "offline-only", "body": "marker",
-                    "positive_path": str(Path(directory) / "positive"),
-                    "progress_path": str(Path(directory) / "progress")}, str(stop))
-                require(report["interval_ms"] == 100 and report["scheduled"] == len(report["samples"]) +
-                        report["pending"] + report["omitted_schedules"], "generated sampler lost scheduled work")
-                require(all(r["scheduled"] == (r["completed"] if r.get("partial") else len(r["samples"]))
-                            + r["pending"] + r["omitted_schedules"] for r in progress_reports + progress_posts)
-                        and any(r["pending"] for r in progress_posts),
-                        "private progress excluded unfinished schedules")
-                require(report["peak_inflight"] <= 24 and "offline-only" not in json.dumps(report),
-                        "sampler exceeded hard inflight bound or leaked credentials")
-                if scenario == "lateness":
-                    require(report["scheduled"] == 4 and report["omitted_schedules"] == 2 and
-                            [s["sequence"] for s in report["samples"]] == [0, 3] and
-                            report["samples"][0]["error"] == "TimeoutError" and report["drain_complete"],
-                            "generated sampler hid scheduler omissions or transport errors")
-                    require(report["omissions"] == [{"first_sequence": 1, "count": 2, "reason": "lateness"}],
-                            "sampler omission provenance changed")
-                elif scenario == "capacity":
-                    require(report["scheduled"] == 26 and len(report["samples"]) == 24 and
-                            report["omitted_schedules"] == 2 and report["peak_inflight"] == 24 and
-                            report["pending"] == 0 and report["drain_complete"] and
-                            all(item["reason"] == "capacity" for item in report["omissions"]),
-                            "bounded saturation omitted work silently or failed to drain submitted samples")
-                    require(not sampler_summary(report)["uninterrupted_observed"], "saturation omissions passed acceptance")
-                else:
-                    require(report["pending"] == 1 and not report["drain_complete"], "stuck request disappeared from final report")
-                    try:
-                        sampler_summary(report)
-                    except ProofError:
-                        pass
-                    else:
-                        raise ProofError("unfinished sampler drain passed summary")
-            finally:
-                release.set()
-                if connections:
-                    require(closed.wait(2), "offline blocked connection did not close")
+                require(attempting.wait(2),'scheduler never contended on completion lock')
+                clock.now=.35
+                if stop_during_lock:private_write(stop,'stop')
+                release.set();thread.join(3)
+                require(not thread.is_alive() and 'error' not in result,'contended child sampler failed')
+                report=result['report']
+                expected=[0] if stop_during_lock else [0,3]
+                require(admitted==expected and [s['sequence'] for s in report['samples']]==expected,
+                    'post-lock stop/deadline admitted wrong child requests')
+                require(report['scheduled']==(1 if stop_during_lock else 4) and
+                    report['omitted_schedules']==(0 if stop_during_lock else 2) and report['drain_complete'],
+                    'post-lock judgment or drain changed')
+                require(report['scheduled']==len(report['samples'])+report['pending']+report['omitted_schedules'],
+                    'contention accounting changed')
+            finally:private_write(stop,'stop');release.set();thread.join(8)
 
 
 def self_test():
@@ -2605,7 +2733,7 @@ def self_test():
     require(redis_hash_contents(b"revision\n1\nepoch\nstable") ==
             redis_hash_contents(b"epoch\nstable\nrevision\n1"), "Redis metadata compared hash iteration order")
     program = sampler_program()
-    require(len(program.encode()) < 16 * 1024, "sampler program exceeds conservative command argument budget")
+    require(len(program.encode()) < 24 * 1024, "sampler program exceeds explicit 24KiB process sampler command argument budget")
     compile(program, "sampler-worker", "exec")
     from unittest.mock import patch
     with patch.object(Path, "read_text", return_value="# unrelated module growth\n" * 6000):
@@ -2657,7 +2785,7 @@ def self_test():
                 "progress_path": str(Path(directory) / "progress.json")}
             worker_program = sampler_program(stop, Path(directory) / "started")
             worker_args = [sys.executable, "-c", worker_program]
-            require(max(len(arg.encode()) for arg in worker_args) < 16 * 1024 and
+            require(max(len(arg.encode()) for arg in worker_args) < 24 * 1024 and
                     "offline-fixture" not in worker_program, "sampler argv contains credentials or oversized program")
             executed = subprocess.run(worker_args, input=(json.dumps(configuration) + "\n").encode(),
                                       capture_output=True, timeout=10)
