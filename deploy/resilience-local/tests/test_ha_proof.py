@@ -422,12 +422,15 @@ class DenseDeadlineDiagnosticsTests(unittest.TestCase):
         self.assertNotIn('public-test-key', json.dumps(result))
         self.assertTrue(dense_samples([200] * 100, budget=5, handshake_delay=2)['recovered'])
 
-    def rpc(self, overrun=False, timeout=False):
+    def rpc(self, overrun=False, timeout=False, denied_group=False, denied_child=False):
         clock = Clock()
         process = MagicMock()
         process.pid, process.returncode = 12345, 0
         process.stdout.fileno.return_value = 42
         process.poll.return_value = None if timeout or overrun else 0
+        if denied_child:
+            process.terminate.side_effect = PermissionError(1, 'private error')
+            process.kill.side_effect = PermissionError(1, 'private error')
         ready = json.dumps({'event': 'ready', 'remote_started_unix_ms': 900000,
                             'remote_started_monotonic_seconds': 1000}).encode() + b'\n'
         sample = json.dumps({'event': 'sample', 'status': 503, 'body_valid': False,
@@ -443,7 +446,11 @@ class DenseDeadlineDiagnosticsTests(unittest.TestCase):
             return [process.stdout], [], []
 
         def communicate(input=None, timeout=None):
-            if input is None: return b'', b''  # Independent bounded child-group cleanup.
+            if input is None:
+                if denied_child:
+                    raise subprocess.TimeoutExpired('cleanup', timeout)
+                process.poll.return_value = 0
+                return b'', b''  # Independent bounded child-group cleanup.
             grants.append(json.loads(input)['remaining_seconds'])
             self.assertEqual(timeout, 27)
             clock.now = 31 if overrun or timeout_failure else 5
@@ -455,6 +462,12 @@ class DenseDeadlineDiagnosticsTests(unittest.TestCase):
                 patch('time.monotonic', clock.monotonic), patch('time.time_ns', clock.time_ns), \
                 patch('select.select', side_effect=ready_readable), patch('os.read', return_value=ready), \
                 patch('os.killpg') as kill:
+            def group_signal(pid, signal):
+                if denied_group:
+                    raise PermissionError(1, 'private group error')
+                if signal == 0:
+                    raise ProcessLookupError()
+            kill.side_effect = group_signal
             if timeout or overrun:
                 with self.assertRaises(subprocess.TimeoutExpired) as raised:
                     MODULE['run_dense_gateway_probe'](['owned-kubectl'], {}, 30)
@@ -464,7 +477,24 @@ class DenseDeadlineDiagnosticsTests(unittest.TestCase):
                 self.assertNotIn('DO-NOT-PERSIST', json.dumps(evidence))
                 self.assertNotIn('ignored-private-stderr', json.dumps(evidence))
                 self.assertNotIn('recovered', evidence)  # Final or partial recovery can NEVER override root timeout.
-                self.assertEqual(kill.call_count, 2)
+                if denied_group:
+                    self.assertEqual(evidence['process_cleanup']['process_absent'], not denied_child)
+                    self.assertFalse(evidence['process_cleanup']['passed'])
+                    self.assertFalse(evidence['process_cleanup']['group_absent'])
+                    self.assertTrue(evidence['process_cleanup']['issues'])
+                    self.assertNotIn('private', json.dumps(evidence))
+                    process.terminate.assert_called_once()
+                    process.kill.assert_called_once()
+                else:
+                    self.assertGreaterEqual(kill.call_count, 2)
+            elif denied_group:
+                with self.assertRaises(MODULE['DenseProbeFailure']) as raised:
+                    MODULE['run_dense_gateway_probe'](['owned-kubectl'], {}, 30)
+                cleanup = raised.exception.evidence['process_cleanup']
+                self.assertTrue(cleanup['process_absent'])
+                self.assertFalse(cleanup['group_absent'])
+                self.assertFalse(cleanup['passed'])
+                self.assertNotIn('recovered', raised.exception.evidence)
             else:
                 accepted = MODULE['run_dense_gateway_probe'](['owned-kubectl'], {}, 30)
                 self.assertTrue(accepted['recovered'])
@@ -472,6 +502,12 @@ class DenseDeadlineDiagnosticsTests(unittest.TestCase):
                 self.assertEqual(accepted['rpc_diagnostics']['root_rpc_seconds'], 5)
             self.assertTrue(popen.call_args.kwargs['start_new_session'])
         self.assertAlmostEqual(grants[0], 26.9)
+
+    def test_group_permission_denied_preserves_timeout_samples_and_falls_back_to_owned_child(self):
+        self.rpc(timeout=True, denied_group=True)
+
+    def test_group_and_child_permission_denied_preserve_primary_timeout_with_failed_cleanup(self):
+        self.rpc(timeout=True, denied_group=True, denied_child=True)
 
     def test_rpc_startup_consumes_original_root_budget_without_utc_clock_alignment(self):
         self.rpc()
@@ -482,6 +518,36 @@ class DenseDeadlineDiagnosticsTests(unittest.TestCase):
     def test_late_final_recovery_result_cannot_override_original_root_deadline(self):
         self.rpc(overrun=True)
 
+
+    def test_real_owned_group_timeout_is_cleaned_and_caller_retains_partial_evidence(self):
+        source = "import json,time;print(json.dumps({'event':'ready'}),flush=True);" \
+                 "print(json.dumps({'event':'sample','status':503,'body_valid':False}),flush=True);time.sleep(10)"
+        with self.assertRaises(subprocess.TimeoutExpired) as raised:
+            MODULE['run_dense_gateway_probe']([sys.executable, '-u', '-c', source], {}, MODULE['time'].monotonic() + .5)
+        error = raised.exception
+        self.assertEqual(error.dense_evidence['sample_count'], 1)
+        self.assertTrue(error.dense_evidence['process_cleanup']['passed'])
+        self.assertTrue(error.dense_evidence['process_cleanup']['process_absent'])
+        self.assertTrue(error.dense_evidence['process_cleanup']['group_absent'])
+        self.assertFalse(error.dense_evidence['process_cleanup']['issues'])
+        environment = {'time': Clock(), 'fixture': {'gateway_service': 'gateway', 'gateway_namespace': 'eg',
+                       'load_path': '/api/load', 'gateway_host': 'fixture', 'backend_body': 'backend'},
+                       'ns': 'fixture', 'probe': 'probe', 'kube_base': ['kubectl'], 'env': {},
+                       'DenseProbeFailure': MODULE['DenseProbeFailure'], 'subprocess': subprocess,
+                       'DENSE_RECOVERY_SOURCE': MODULE['DENSE_RECOVERY_SOURCE']}
+        def probe(*args):
+            raise error
+        environment['run_dense_gateway_probe'] = probe
+        function = nested_function('dense_gateway_recovery')
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(SCRIPT), 'exec'), environment)
+        evidence = {'timestamps': {}}
+        with self.assertRaises(subprocess.TimeoutExpired) as retained:
+            environment['dense_gateway_recovery'](0, lambda: True, [], evidence)
+        self.assertIs(retained.exception, error)
+        self.assertEqual(evidence['dense_gateway_batches'], [error.dense_evidence])
+
+    def test_successful_result_cannot_pass_with_unverified_process_group_cleanup(self):
+        self.rpc(denied_group=True)
 
     def test_actual_payload_streams_through_real_owned_local_child(self):
         # Real pipes/select/communicate; the child HTTP opener and credential reader are offline fakes.

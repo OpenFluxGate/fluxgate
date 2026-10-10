@@ -191,6 +191,53 @@ def dense_stream_evidence(output):
     return evidence
 
 
+def cleanup_dense_probe(process):
+    """Bounded cleanup of this owned session; never hide a primary probe failure."""
+    evidence = {'issues': [], 'process_absent': False, 'group_absent': False, 'passed': False}
+
+    def issue(action, error):
+        detail = {'action': action, 'error_type': type(error).__name__}
+        if isinstance(error, OSError):
+            detail['errno'] = error.errno
+        evidence['issues'].append(detail)
+
+    def signal_group(signal, fallback, action):
+        try:
+            os.killpg(process.pid, signal)
+        except ProcessLookupError:
+            pass
+        except OSError as error:
+            issue(action, error)
+            try:
+                fallback()
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                issue(action + '_child_fallback', error)
+
+    if process.poll() is None:
+        signal_group(process_signal.SIGTERM, process.terminate, 'group_term')
+        try:
+            process.communicate(timeout=1)
+        except (subprocess.TimeoutExpired, OSError) as error:
+            issue('term_wait', error)
+        # The leader may exit while descendants retain its pipes or continue running.
+        signal_group(process_signal.SIGKILL, process.kill, 'group_kill')
+        try:
+            process.communicate(timeout=1)
+        except (subprocess.TimeoutExpired, OSError) as error:
+            issue('kill_wait', error)
+    evidence['process_absent'] = process.poll() is not None
+    try:
+        os.killpg(process.pid, 0)
+    except ProcessLookupError:
+        evidence['group_absent'] = True
+    except OSError as error:
+        issue('group_absence_check', error)
+    evidence['passed'] = evidence['process_absent'] and evidence['group_absent']
+    return evidence
+
+
 def run_dense_gateway_probe(command, env, deadline):
     started = time.monotonic()
     timing = {'root_rpc_started': utc_milestone(), 'root_deadline_monotonic_seconds': deadline,
@@ -200,6 +247,8 @@ def run_dense_gateway_probe(command, env, deadline):
     process = subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, start_new_session=True)
     prefix, output = b'', b''
+    failure_evidence = None
+    result = None
     try:
         while b'\n' not in prefix:
             remaining = deadline - time.monotonic()
@@ -235,28 +284,23 @@ def run_dense_gateway_probe(command, env, deadline):
         evidence = dict(timing, **dense_stream_evidence(prefix + output), root_rpc_failed=True,
                         root_rpc_timed_out=isinstance(error, subprocess.TimeoutExpired),
                         root_observed_elapsed_seconds=round(time.monotonic() - started, 6))
+        failure_evidence = evidence
         if isinstance(error, subprocess.TimeoutExpired):
             error.dense_evidence = evidence
             raise error from None
         raise DenseProbeFailure(evidence) from None
     finally:
-        if process.poll() is None:
-            try:
-                os.killpg(process.pid, process_signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.communicate(timeout=1)
-            except subprocess.TimeoutExpired:
-                pass
-            try:
-                os.killpg(process.pid, process_signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            try:
-                process.communicate(timeout=1)
-            except subprocess.TimeoutExpired:
-                pass
+        cleanup = cleanup_dense_probe(process)
+        if failure_evidence is not None:
+            # Mutate the attached object before the primary exception reaches its caller.
+            failure_evidence['process_cleanup'] = cleanup
+        else:
+            if result is not None:
+                result['rpc_diagnostics']['process_cleanup'] = cleanup
+            if not cleanup['passed']:
+                raise DenseProbeFailure(dict(timing, **dense_stream_evidence(prefix + output),
+                                             root_rpc_failed=True, process_cleanup=cleanup)) from None
+
 
 
 
