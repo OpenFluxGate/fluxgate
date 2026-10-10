@@ -195,6 +195,12 @@ def sampler_worker(config, stop_path):
     jobs = queue.Queue(maxsize=24)
     shutdown = threading.Event()
     positive_claimed = False
+    status_counts = {}
+    progress_failures = 0
+    progress_mailbox = queue.Queue(maxsize=1)
+    progress_stop, progress_cancel = threading.Event(), threading.Event()
+    publication_lock = threading.Lock()
+    progress_path = Path(config.get("progress_path", "/tmp/sampler-progress.json"))
 
     def snapshot():  # Caller holds condition: pending and completed cannot disappear between reads.
         return {**anchor, "interval_ms": 100, "scheduled": sequence,
@@ -206,8 +212,50 @@ def sampler_worker(config, stop_path):
             "latency_basis": "scheduled arrival including worker dispatch; service latency separate",
             "transport": "in-cluster Gateway Service; fresh connection per sample"}
 
-    def progress():
-        private_write(config.get("progress_path", "/tmp/sampler-progress.json"), json.dumps(snapshot()))
+    def publish(contents, final=False):
+        # Write outside both scheduler and publication locks; only rename is serialized.
+        temporary = progress_path.with_name(progress_path.name + (".final" if final else ".partial"))
+        try:
+            private_write(temporary, contents)
+            with publication_lock:
+                if final or not progress_cancel.is_set():
+                    os.replace(temporary, progress_path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def progress():  # Caller holds condition; fixed-size state, never full sample history.
+        if progress_stop.is_set():
+            return
+        partial = {"progress_schema": 1, "partial": True, "complete": False,
+            "interval_ms": 100, "scheduled": sequence, "completed": len(samples),
+            "pending": len(pending), "pending_sequences": sorted(pending),
+            "omitted_schedules": omitted, "status_counts": dict(status_counts),
+            "worker_failures": worker_failures, "progress_writer_failures": progress_failures,
+            "captured_utc_ns": time.time_ns(), "captured_monotonic_ns": time.monotonic_ns()}
+        try:
+            progress_mailbox.put_nowait(partial)
+        except queue.Full:
+            try:
+                progress_mailbox.get_nowait()
+            except queue.Empty:
+                pass
+            progress_mailbox.put_nowait(partial)
+
+    def report_progress():
+        nonlocal progress_failures
+        while not progress_stop.is_set() or not progress_mailbox.empty():
+            try:
+                partial = progress_mailbox.get(timeout=.1)
+            except queue.Empty:
+                continue
+            try:
+                publish(json.dumps(partial))
+            except Exception:
+                with condition:
+                    progress_failures += 1
+
+    reporter = threading.Thread(target=report_progress, daemon=True)
+    reporter.start()
 
     def worker():
         nonlocal worker_failures, positive_claimed
@@ -259,6 +307,10 @@ def sampler_worker(config, stop_path):
                         # Publish completion only after marker I/O; snapshots stay disjoint.
                         samples.append(sample)
                         pending.remove(index)
+                        status = sample["status"]
+                        label = ("ERROR" if status is None else str(status) if status in (200, 403, 429)
+                                 else "5xx" if 500 <= status <= 599 else "OTHER")
+                        status_counts[label] = status_counts.get(label, 0) + 1
                         try:
                             if len(samples) == 1 and not shutdown.is_set():
                                 progress()
@@ -309,12 +361,23 @@ def sampler_worker(config, stop_path):
         join_deadline = time.monotonic() + 1
         for thread in workers:
             thread.join(timeout=max(0, join_deadline - time.monotonic()))
+    progress_stop.set()
+    reporter.join(timeout=1)
+    # Cancellation + the rename lock fence even a reporter stalled in file I/O.
+    progress_cancel.set()
+    with publication_lock:
+        reporter_drained = not reporter.is_alive()
     with condition:
         report = snapshot()
-        report.update(stopped_utc_ns=time.time_ns(), stopped_monotonic_ns=time.monotonic_ns(),
+        report.update(partial=False, complete=True, stopped_utc_ns=time.time_ns(),
+            stopped_monotonic_ns=time.monotonic_ns(), progress_writer_failures=progress_failures,
+            progress_writer_drained=reporter_drained,
             drain_complete=not pending and not any(thread.is_alive() for thread in workers))
-        private_write(config.get("progress_path", "/tmp/sampler-progress.json"), json.dumps(report))
-        return report
+    try:
+        publish(json.dumps(report), final=True)
+    except Exception:
+        report["progress_writer_failures"] += 1
+    return report
 
 
 def sampler_program(stop_path="/tmp/sampler-stop", started_path="/tmp/sampler-started"):
@@ -326,7 +389,34 @@ def sampler_program(stop_path="/tmp/sampler-stop", started_path="/tmp/sampler-st
             + "print(json.dumps(sampler_worker(config, " + repr(str(stop_path)) + ")), flush=True)\n")
 
 
+def validate_sampler_partial(report):
+    """Validate bounded diagnostics; partial progress is never acceptance evidence."""
+    require(isinstance(report, dict) and report.get("progress_schema") == 1
+            and report.get("partial") is True and report.get("complete") is False
+            and report.get("interval_ms") == 100, "invalid sampler partial schema")
+    fields = ("scheduled", "completed", "pending", "omitted_schedules", "worker_failures",
+              "progress_writer_failures", "captured_utc_ns", "captured_monotonic_ns")
+    require(all(type(report.get(field)) is int and report[field] >= 0 for field in fields),
+            "invalid sampler partial counters")
+    pending, counts = report.get("pending_sequences"), report.get("status_counts")
+    require(report["pending"] <= 24 and isinstance(pending, list)
+            and len(pending) == report["pending"]
+            and all(type(index) is int and 0 <= index < report["scheduled"] for index in pending)
+            and len(set(pending)) == len(pending),
+            "invalid sampler partial pending")
+    require(isinstance(counts, dict) and set(counts) <= {"200", "403", "429", "5xx", "OTHER", "ERROR"}
+            and all(type(value) is int and value >= 0 for value in counts.values())
+            and sum(counts.values()) == report["completed"], "invalid sampler partial statuses")
+    require(report["scheduled"] == report["completed"] + report["pending"] + report["omitted_schedules"]
+            and "samples" not in report and "omissions" not in report,
+            "invalid sampler partial accounting")
+    return report
+
+
 def sampler_summary(report):
+    require(not report.get("partial", False) and report.get("complete", True)
+            and report.get("progress_writer_failures", 0) == 0
+            and report.get("progress_writer_drained", True), "sampler progress reporter did not drain cleanly")
     samples = report["samples"]
     require(report.get("pending", 0) == 0 and report.get("drain_complete", True) and
             report.get("worker_failures", 0) == 0, "credential traffic sampler did not drain cleanly")
@@ -358,6 +448,9 @@ def credential_acceptance(results, phases):
         valid = (report.get("interval_ms") == 100 and bool(samples)
                  and report.get("pending", 0) == 0 and report.get("drain_complete", True) is True
                  and report.get("worker_failures", 0) == 0
+                 and not report.get("partial", False) and report.get("complete", True)
+                 and report.get("progress_writer_failures", 0) == 0
+                 and report.get("progress_writer_drained", True)
                  and report.get("scheduled") == len(samples) + report.get("omitted_schedules", -1)
                  and report.get("omitted_schedules") == 0
                  and all(sample.get("sequence") == index and sample.get("status") == 200
@@ -994,7 +1087,7 @@ class Proof:
             result = self.kube("exec", name, "--request-timeout=10s", "--", "cat", "/tmp/sampler-progress.json", check=False)
             require(result.returncode == 0, "sampler progress unavailable")
             require(self.api_key.encode() not in result.stdout, "sampler progress contains a secret")
-            report = sampler_summary(json.loads(result.stdout))
+            report = validate_sampler_partial(json.loads(result.stdout))
             report["partial_failed_phase"] = True
             private_write(self.work / (phase + "-traffic-partial.json"), json.dumps(report, indent=2) + "\n")
         except Exception:
@@ -1089,10 +1182,11 @@ class Proof:
                     output, _ = process.communicate(timeout=15)
                     require(process.returncode == 0, "credential sampler failed")
                     require(self.api_key.encode() not in output, "credential sampler leaked secret; evidence suppressed")
-                    report = sampler_summary(json.loads(output))
-                    self.results.setdefault("rotation_traffic", {})[phase] = report
-                    # Retain failed-phase observations privately even when no complete proof is emitted.
+                    report = json.loads(output)
+                    # Preserve screened raw evidence even when reporter/drain validation fails.
                     private_write(self.work / (phase + "-traffic.json"), json.dumps(report, indent=2) + "\n")
+                    report = sampler_summary(report)
+                    self.results.setdefault("rotation_traffic", {})[phase] = report
                     traffic_complete = True
             finally:
                 try:
@@ -1601,7 +1695,11 @@ def sampler_cleanup_self_test():
                 elif args[0] == "exec" and "touch" in args and stop_fails:
                     status = 1
                 elif args[0] == "exec" and "cat" in args:
-                    output = json.dumps(baseline).encode()
+                    output = json.dumps({"progress_schema": 1, "partial": True, "complete": False,
+                        "interval_ms": 100, "scheduled": 1, "completed": 1, "pending": 0,
+                        "pending_sequences": [], "omitted_schedules": 0, "status_counts": {"200": 1},
+                        "worker_failures": 0, "progress_writer_failures": 0,
+                        "captured_utc_ns": 1, "captured_monotonic_ns": 1}).encode()
                 if status and check:
                     raise ProofError("offline sampler stop failure")
                 return subprocess.CompletedProcess(args, status, output, b"")
@@ -2307,13 +2405,19 @@ def sampler_contention_self_test():
             stop = Path(directory) / "stop"
             class ContendedCondition(threading.Condition):
                 def __enter__(self):
-                    if threading.current_thread().name == "sampler-scheduler-test":
+                    name = threading.current_thread().name
+                    if name == "sampler-scheduler-test":
                         self.scheduler_entries = getattr(self, "scheduler_entries", 0) + 1
                         if self.scheduler_entries == 2:
                             attempting.set()  # Observe the actual blocked scheduler acquisition.
-                    return super().__enter__()
+                    acquired = super().__enter__()
+                    if name.endswith("(worker)") and not holding.is_set():
+                        holding.set()  # Explicit contention; progress I/O no longer owns this lock.
+                        require(release.wait(2), "contention lock was not released")
+                    return acquired
             namespace["threading"] = SimpleNamespace(Condition=ContendedCondition,
-                BoundedSemaphore=threading.BoundedSemaphore, Event=threading.Event, Thread=threading.Thread)
+                BoundedSemaphore=threading.BoundedSemaphore, Event=threading.Event,
+                Thread=threading.Thread, Lock=threading.Lock)
             def sleep(seconds):
                 if seconds > 0:
                     require(holding.wait(2), "worker did not hold the real scheduler lock")
@@ -2322,9 +2426,6 @@ def sampler_contention_self_test():
             namespace["time"] = SimpleNamespace(monotonic=lambda: clock.now,
                 monotonic_ns=lambda: int(clock.now * 1e9), time_ns=lambda: int(clock.now * 1e9), sleep=sleep)
             def write(path, value):
-                if str(path).endswith("progress") and json.loads(value)["samples"] and not holding.is_set():
-                    holding.set()  # Worker calls progress while holding the real Condition.
-                    require(release.wait(2), "contention writer was not released")
                 private_write(path, value)
             namespace["private_write"] = write
             class Connection:
@@ -2384,7 +2485,13 @@ def sampler_program_accounting_self_test():
         exec(sampler_program().rsplit("\nconfig = ", 1)[0], namespace)
         clock = SimpleNamespace(now=0.0, delayed=False)
         release, closed = threading.Event(), threading.Event()
-        connections, progress_reports = [], []
+        connections, progress_reports, progress_posts = [], [], []
+        class CaptureQueue(queue.Queue):
+            def put_nowait(self, item):
+                if isinstance(item, dict) and item.get("partial"):
+                    progress_posts.append(item)
+                return super().put_nowait(item)
+        namespace["queue"] = SimpleNamespace(Queue=CaptureQueue, Empty=queue.Empty, Full=queue.Full)
         connection_lock = threading.Lock()
         with tempfile.TemporaryDirectory(prefix="sampler-program-accounting-") as directory:
             stop = Path(directory) / "stop"
@@ -2408,7 +2515,8 @@ def sampler_program_accounting_self_test():
                         clock.now += timeout
                         return False
                 namespace["threading"] = SimpleNamespace(Condition=DrainCondition,
-                    BoundedSemaphore=threading.BoundedSemaphore, Event=threading.Event, Thread=threading.Thread)
+                    BoundedSemaphore=threading.BoundedSemaphore, Event=threading.Event,
+                    Thread=threading.Thread, Lock=threading.Lock)
             class Connection:
                 def __init__(self, *args, **kwargs):
                     require(kwargs["timeout"] == 2, "generated sampler changed HTTP timeout")
@@ -2430,7 +2538,7 @@ def sampler_program_accounting_self_test():
             namespace["http"] = SimpleNamespace(client=SimpleNamespace(HTTPConnection=Connection))
             writer = namespace["private_write"]
             def capture_write(path, content):
-                if str(path) == str(Path(directory) / "progress"):
+                if Path(path).name.startswith("progress"):
                     progress_reports.append(json.loads(content))
                 writer(path, content)
             namespace["private_write"] = capture_write
@@ -2441,8 +2549,9 @@ def sampler_program_accounting_self_test():
                     "progress_path": str(Path(directory) / "progress")}, str(stop))
                 require(report["interval_ms"] == 100 and report["scheduled"] == len(report["samples"]) +
                         report["pending"] + report["omitted_schedules"], "generated sampler lost scheduled work")
-                require(all(r["scheduled"] == len(r["samples"]) + r["pending"] + r["omitted_schedules"]
-                        for r in progress_reports) and any(r["pending"] for r in progress_reports),
+                require(all(r["scheduled"] == (r["completed"] if r.get("partial") else len(r["samples"]))
+                            + r["pending"] + r["omitted_schedules"] for r in progress_reports + progress_posts)
+                        and any(r["pending"] for r in progress_posts),
                         "private progress excluded unfinished schedules")
                 require(report["peak_inflight"] <= 24 and "offline-only" not in json.dumps(report),
                         "sampler exceeded hard inflight bound or leaked credentials")

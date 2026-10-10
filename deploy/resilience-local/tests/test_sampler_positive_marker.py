@@ -108,10 +108,11 @@ class PositiveMarker(unittest.TestCase):
             self.assertTrue(snapshots)
             self.assertTrue(any(0 in snapshot['pending_sequences'] for snapshot in snapshots))
             for snapshot in snapshots:
-                self.assertEqual(snapshot['scheduled'], len(snapshot['samples']) +
+                self.assertEqual(snapshot['scheduled'], (snapshot['completed'] if snapshot.get('partial')
+                                 else len(snapshot['samples'])) +
                                  snapshot['pending'] + snapshot['omitted_schedules'])
                 self.assertTrue(set(snapshot['pending_sequences']).isdisjoint(
-                    sample['sequence'] for sample in snapshot['samples']))
+                    sample['sequence'] for sample in snapshot.get('samples', [])))
             stop.touch()
             thread.join(.2)
             self.assertTrue(thread.is_alive(), 'stop discarded the blocked marker worker')
