@@ -126,6 +126,7 @@ def validate_restart_identity(before, after, originals, current):
 def sampler_worker(config, stop_path):
     """Fixed 100ms schedules, fresh sockets, and explicit missed schedules/errors."""
     start = time.monotonic()
+    anchor = {"started_utc_ns": time.time_ns(), "started_monotonic_ns": time.monotonic_ns()}
     sequence = 0
     samples = []
     omitted = 0
@@ -161,12 +162,13 @@ def sampler_worker(config, stop_path):
         sequence += 1
         if len(samples) == 1 or sequence % 10 == 1:
             private_write(config.get("progress_path", "/tmp/sampler-progress.json"), json.dumps({
-                "interval_ms": 100, "scheduled": sequence, "omitted_schedules": omitted,
+                **anchor, "interval_ms": 100, "scheduled": sequence, "omitted_schedules": omitted,
                 "samples": samples, "duration_seconds": time.monotonic() - start,
                 "transport": "in-cluster Gateway Service; fresh connection per sample"}))
         if sample["status"] == 200 and sample["body_valid"]:
             private_write(config.get("positive_path", "/tmp/sampler-positive"), "yes")
-    return {"interval_ms": 100, "scheduled": sequence, "omitted_schedules": omitted,
+    return {**anchor, "stopped_utc_ns": time.time_ns(), "stopped_monotonic_ns": time.monotonic_ns(),
+            "interval_ms": 100, "scheduled": sequence, "omitted_schedules": omitted,
             "samples": samples, "duration_seconds": time.monotonic() - start,
             "transport": "in-cluster Gateway Service; fresh connection per sample"}
 
@@ -209,6 +211,54 @@ class Proof:
         self.cold_sentinels = []
         self.ns = self.f["namespace"]
         self.api_key = self.read("api_key_file")
+
+    @contextlib.contextmanager
+    def operation(self, label):
+        allowed = {
+            'api.old-mapping',
+            'api.overlap-mapping',
+            'api.retire-mapping',
+            'mtls.ca-overlap',
+            'mtls.client-envoy-roll',
+            'mtls.client-leaf-switch',
+            'mtls.client-trust-overlap',
+            'mtls.overlap-authz-roll',
+            'mtls.retire-client-ca',
+            'mtls.retire-server-ca',
+            'mtls.retirement-authz-roll',
+            'mtls.retirement-envoy-roll',
+            'mtls.server-authz-roll',
+            'mtls.server-leaf-switch',
+            'phase.api-key',
+            'phase.jwt',
+            'phase.mtls',
+            'phase.stores',
+            'stores.app-roll',
+            'stores.app-switch',
+            'stores.cold-restart',
+            'stores.mongo-overlap',
+            'stores.redis-overlap',
+            'stores.retire-mongo',
+            'stores.retire-redis',
+        }
+        require(label in allowed, "unknown rotation timeline label")
+        events = self.results.setdefault("rotation_timeline", [])
+        def mark(state):
+            events.append({"action": label, "state": state, "utc_ns": time.time_ns(),
+                           "monotonic_ns": time.monotonic_ns()})
+            private_write(self.work / "rotation-timeline.json", json.dumps(events, indent=2) + "\n")
+        mark("start")
+        try:
+            yield
+        except BaseException:
+            mark("failure")
+            raise
+        else:
+            mark("end")
+
+    def perform(self, label, function, *args, **kwargs):
+        with self.operation(label):
+            return function(*args, **kwargs)
 
     def read(self, key):
         p = Path(self.f[key])
@@ -426,24 +476,24 @@ class Proof:
         server_cm = self.f.get("server_ca_configmap", "fluxgate-authz-server-ca")
         overlap_server = old_server_ca.read_bytes() + new_sca.read_bytes()
         overlap_client = old_client_ca.read_bytes() + new_cca.read_bytes()
-        self.patch_data("configmap", server_cm, {"ca.crt": overlap_server.decode()})
-        self.patch_data("secret", server_secret, {"client-ca.crt": overlap_client})
-        self.rollout()
+        self.perform("mtls.ca-overlap", self.patch_data, "configmap", server_cm, {"ca.crt": overlap_server.decode()})
+        self.perform("mtls.client-trust-overlap", self.patch_data, "secret", server_secret, {"client-ca.crt": overlap_client})
+        self.perform("mtls.overlap-authz-roll", self.rollout)
         controls["overlap_old_client"] = self.tls_probe(old_server_ca, old_client, old_client_key)
         controls["overlap_new_client"] = self.tls_probe(old_server_ca, *new_client)
         self.available()
-        self.patch_data("secret", server_secret,
+        self.perform("mtls.server-leaf-switch", self.patch_data, "secret", server_secret,
                         {"tls.crt": new_server[0].read_bytes(), "tls.key": new_server[1].read_bytes()})
-        self.rollout()
-        self.patch_data("secret", client_secret,
+        self.perform("mtls.server-authz-roll", self.rollout)
+        self.perform("mtls.client-leaf-switch", self.patch_data, "secret", client_secret,
                         {"tls.crt": new_client[0].read_bytes(), "tls.key": new_client[1].read_bytes()})
-        self.envoy_rollout()
+        self.perform("mtls.client-envoy-roll", self.envoy_rollout)
         self.available()
         controls["new_pair_overlap"] = self.tls_probe(new_sca, *new_client)
-        self.patch_data("secret", server_secret, {"client-ca.crt": new_cca.read_bytes()})
-        self.rollout()
-        self.patch_data("configmap", server_cm, {"ca.crt": new_sca.read_text()})
-        self.envoy_rollout()
+        self.perform("mtls.retire-client-ca", self.patch_data, "secret", server_secret, {"client-ca.crt": new_cca.read_bytes()})
+        self.perform("mtls.retirement-authz-roll", self.rollout)
+        self.perform("mtls.retire-server-ca", self.patch_data, "configmap", server_cm, {"ca.crt": new_sca.read_text()})
+        self.perform("mtls.retirement-envoy-roll", self.envoy_rollout)
         self.available()
         controls["retired_client"] = self.tls_probe(new_sca, old_client, old_client_key, expected="tls-reject")
         controls["retired_server_ca"] = self.tls_probe(old_server_ca, *new_client, expected="tls-reject")
@@ -486,17 +536,17 @@ class Proof:
         template = {"user-id": identity, "api-key-id": identity, "attributes": {"tenant": "resilience"}}
         old_map = dict(template, sha256=hashlib.sha256(old.encode()).hexdigest())
         new_map = dict(template, sha256=hashlib.sha256(new.encode()).hexdigest())
-        self.api_mapping(original + [old_map])
+        self.perform("api.old-mapping", self.api_mapping, original + [old_map])
         require(self.gateway(self.f["quota_path"], old) == 200, "old API key initial quota")
         before = self.counter_snapshot(identity)
         require(before, "quota Redis counter absent; API-key identity not proven")
-        self.api_mapping(original + [old_map, new_map])
+        self.perform("api.overlap-mapping", self.api_mapping, original + [old_map, new_map])
         require(self.gateway(self.f["quota_path"], new) == 200, "new API key overlap quota")
         require(self.gateway(self.f["quota_path"], old) == 200, "old API key overlap quota")
         overlap = self.counter_snapshot(identity)
         require(set(before) == set(overlap), "rotation changed bucket key/epoch")
         require(before != overlap, "quota counter did not change across rotation")
-        content = self.api_mapping(original + [new_map])
+        content = self.perform("api.retire-mapping", self.api_mapping, original + [new_map])
         require(self.gateway(self.f["quota_path"], old) == 403, "retired API key accepted")
         for _ in range(2):
             require(self.gateway(self.f["quota_path"], new) == 200, "new key lost remaining quota")
@@ -849,7 +899,7 @@ class Proof:
                                                        "mongo_app_password_file") if self.f.get(field)},
                                "fixture": self.fixture_path.read_bytes(),
                                "new_user": new_user, "ownership": secrets.token_hex(24)}
-        self.mongo(admin, "c.getDB(" + json.dumps(auth_db) + ").createUser({user:" + json.dumps(new_user) +
+        self.perform("stores.mongo-overlap", self.mongo, admin, "c.getDB(" + json.dumps(auth_db) + ").createUser({user:" + json.dumps(new_user) +
                    ",pwd:" + json.dumps(new_mongo_password) + ",customData:" +
                    json.dumps({"fluxgateCredentialProof": self.store_rollback["ownership"]}) + ",roles:[{role:'readWrite',db:'fluxgate'}]})")
         new_uri = urlunsplit(parsed._replace(netloc=quote(new_user) + ":" + quote(new_mongo_password) + "@" + hosts))
@@ -858,7 +908,7 @@ class Proof:
         new_redis_password = secrets.token_urlsafe(40)
         self.store_rollback["new_password"] = new_redis_password
         for pod in self.f["redis_pods"]:
-            output = self.redis(pod, ["ACL", "SETUSER", "default", ">" + new_redis_password], old_password)
+            output = self.perform("stores.redis-overlap", self.redis, pod, ["ACL", "SETUSER", "default", ">" + new_redis_password], old_password)
             require(b"OK" in output and b"ERR" not in output, "Redis overlapping password add failed")
             self.redis_check(pod, new_redis_password, True)
             self.redis_check(pod, old_password, True)
@@ -867,26 +917,26 @@ class Proof:
         new_redis_uri = ",".join(urlunsplit(urlsplit(seed)._replace(
             netloc=":" + quote(new_redis_password) + "@" + urlsplit(seed).netloc.rsplit("@", 1)[-1]))
                                  for seed in redis_uri.split(","))
-        self.patch_data("secret", self.f["credentials_secret"],
+        self.perform("stores.app-switch", self.patch_data, "secret", self.f["credentials_secret"],
                         {"mongo-app-password": new_mongo_password, "redis-password": new_redis_password,
                          "fluxgate.mongo.uri": new_uri, "fluxgate.redis.uri": new_redis_uri})
-        self.rollout()
+        self.perform("stores.app-roll", self.rollout)
         self.available()
         # Update replication password before retiring the old default-user password.
         for pod in self.f["redis_pods"]:
             output = self.redis(pod, ["CONFIG", "SET", "masterauth", new_redis_password], new_redis_password)
             require(b"OK" in output and b"ERR" not in output, "Redis replication credential update failed")
-        self.mongo(admin, "const removed=c.getDB(" + json.dumps(auth_db) + ").dropUser(" + json.dumps(username) +
+        self.perform("stores.retire-mongo", self.mongo, admin, "const removed=c.getDB(" + json.dumps(auth_db) + ").dropUser(" + json.dumps(username) +
                    "); if(!removed) throw Error('user retirement failed')")
         self.mongo(uri, protected_read, False)
         self.mongo(new_uri, protected_read)
         for pod in self.f["redis_pods"]:
-            output = self.redis(pod, ["ACL", "SETUSER", "default", "resetpass", ">" + new_redis_password],
+            output = self.perform("stores.retire-redis", self.redis, pod, ["ACL", "SETUSER", "default", "resetpass", ">" + new_redis_password],
                                 new_redis_password)
             require(b"OK" in output and b"ERR" not in output, "Redis old password retirement failed")
             self.redis_check(pod, old_password, False)
             self.redis_check(pod, new_redis_password, True)
-        cold_restart = self.redis_cold_restart(new_redis_password, old_password)
+        cold_restart = self.perform("stores.cold-restart", self.redis_cold_restart, new_redis_password, old_password)
         self.available()
         private_write(self.f["mongo_uri_file"], new_uri)
         if self.f.get("mongo_app_password_file"):
@@ -1449,6 +1499,40 @@ def strict_tls_self_test():
             server.server_close()
 
 
+def rotation_timeline_self_test():
+    with tempfile.TemporaryDirectory(prefix="credential-timeline-test-") as directory:
+        proof = Proof.__new__(Proof)
+        proof.work, proof.results = Path(directory), {}
+        secret = "private-uri-key-jwt-do-not-record"
+        with proof.operation("mtls.ca-overlap"):
+            pass
+        try:
+            with proof.operation("stores.app-roll"):
+                raise RuntimeError(secret)
+        except RuntimeError:
+            pass
+        else:
+            raise ProofError("timeline swallowed operation failure")
+        path = proof.work / "rotation-timeline.json"
+        saved = path.read_text()
+        events = json.loads(saved)
+        require([event["state"] for event in events] == ["start", "end", "start", "failure"],
+                "timeline omitted failure-finalization or completed prior action")
+        require(all(set(event) == {"action", "state", "utc_ns", "monotonic_ns"} for event in events)
+                and secret not in saved and secret not in json.dumps(proof.results), "timeline leaked operation inputs")
+        require(all(events[i]["monotonic_ns"] <= events[i+1]["monotonic_ns"] for i in range(len(events)-1))
+                and all(event["utc_ns"] > 0 for event in events), "timeline lost clock accounting")
+        require(path.stat().st_mode & 0o077 == 0, "private timeline permissions are unsafe")
+        try:
+            with proof.operation(secret):
+                pass
+        except ProofError:
+            pass
+        else:
+            raise ProofError("timeline allowed caller-provided sensitive label")
+        require(path.read_text() == saved, "rejected label changed retained evidence")
+
+
 def redis_policy_selection_self_test():
     """Select actual Lua metadata, never bucket counters or revision fences."""
     proof = Proof.__new__(Proof)
@@ -1596,6 +1680,7 @@ def tls_runtime_self_test():
 
 def self_test():
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
+    rotation_timeline_self_test()
     redis_policy_selection_self_test()
     tls_alert_read_self_test()
     strict_tls_self_test()
@@ -1653,6 +1738,14 @@ def self_test():
             require(observed["statuses"] == {"200": 4, "503": 1} and observed["unexpected_body_responses"] == 2 and
                     observed["backend_successes"] == 2 and not observed["uninterrupted_observed"],
                     "actual traffic sampler hid status/body failures")
+            require(observed["started_utc_ns"] <= observed["stopped_utc_ns"]
+                    and observed["started_monotonic_ns"] <= observed["stopped_monotonic_ns"]
+                    and observed["scheduled"] == len(observed["samples"]) + observed["omitted_schedules"],
+                    "sampler clock anchors changed schedule accounting")
+            progress = json.loads((Path(directory) / "progress.json").read_text())
+            require(progress["started_utc_ns"] == observed["started_utc_ns"]
+                    and progress["started_monotonic_ns"] == observed["started_monotonic_ns"],
+                    "partial sampler evidence lost invocation anchor")
             stop.unlink()
             calls.clear()
             original_sleep = time.sleep
@@ -1810,11 +1903,12 @@ def main():
             print("Credential phase: " + phase, flush=True)
             method = {"mtls": proof.tls, "api-key": proof.api_keys, "stores": proof.stores,
                       "jwt": proof.jwt}[phase]
-            if phase in ("mtls", "api-key", "stores"):
-                with proof.traffic_sampler(phase):
+            with proof.operation("phase." + phase):
+                if phase in ("mtls", "api-key", "stores"):
+                    with proof.traffic_sampler(phase):
+                        method()
+                else:
                     method()
-            else:
-                method()
         result = {"passed": True, "complete": set(phases) == {"mtls", "api-key", "stores", "jwt"},
                   "context": proof.f["context"], "namespace": proof.ns, "runtime": runtime, "results": proof.results,
                   "limits": ["Local ephemeral fixture only; no external credential authority tested.",
