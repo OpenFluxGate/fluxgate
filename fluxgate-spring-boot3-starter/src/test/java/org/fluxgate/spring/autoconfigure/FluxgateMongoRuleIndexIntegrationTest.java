@@ -110,6 +110,62 @@ class FluxgateMongoRuleIndexIntegrationTest {
   }
 
   @Test
+  void createAndValidateRequireExplicitLegacyMigrationWithoutMutatingDataOrIndexes() {
+    // Create the valid compound first: validation must still inspect later global constraints.
+    rules.createIndex(
+        Indexes.ascending("ruleSetId", "id"),
+        new IndexOptions().unique(true).name(MongoRateLimitRuleRepository.UNIQUE_RULE_INDEX));
+    rules.createIndex(Indexes.ascending("id"), new IndexOptions().unique(true).name("id_1"));
+    Document preserved = rule("A", "legacy").append("deniedKeys", List.of("user:blocked"));
+    rules.insertOne(preserved);
+    List<Document> before = indexes();
+    for (String mode : List.of("create", "validate")) {
+      runner(mode)
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasRootCauseMessage(
+                        "Legacy global-id index id_1 requires explicit migration: stop old writers and concurrent DDL, then call migrateLegacyGlobalIdConstraint()");
+              });
+      assertThat(indexes()).isEqualTo(before);
+      assertThat(rules.find().first()).isEqualTo(preserved);
+      // The context's failed owned client must not close the independent fixture client.
+      assertThat(client.getDatabase(database).runCommand(new Document("ping", 1)).get("ok"))
+          .isEqualTo(1.0);
+    }
+    new MongoRateLimitRuleRepository(rules).migrateLegacyGlobalIdConstraint();
+    for (String mode : List.of("create", "validate")) {
+      runner(mode).run(context -> assertThat(context).hasNotFailed());
+    }
+    rules.insertOne(rule("B", "legacy"));
+    assertThat(rules.countDocuments()).isEqualTo(2);
+  }
+
+  @Test
+  void createAndValidateRefuseForeignGlobalIdConstraintsWithoutRemovingThem() {
+    rules.createIndex(
+        Indexes.ascending("ruleSetId", "id"),
+        new IndexOptions().unique(true).name(MongoRateLimitRuleRepository.UNIQUE_RULE_INDEX));
+    rules.createIndex(
+        Indexes.ascending("id"), new IndexOptions().unique(true).name("application_owned_id"));
+    rules.insertOne(rule("A", "legacy"));
+    List<Document> before = indexes();
+    for (String mode : List.of("create", "validate")) {
+      runner(mode)
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasRootCauseMessage(
+                        "Unknown/custom global-id index requires manual operator resolution; FluxGate never removes custom constraints automatically");
+              });
+    }
+    assertThat(indexes()).isEqualTo(before);
+    assertThat(rules.countDocuments()).isEqualTo(1);
+  }
+
+  @Test
   @DisplayName("create: the adapter's unique (ruleSetId, id) and id indexes are created")
   void createBuildsTheAdapterIndexes() {
     runner("create")

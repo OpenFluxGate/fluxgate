@@ -13,11 +13,13 @@ Java·Go·Rust 서비스가 FluxGate SDK를 설치하지 않아도 **Gateway를 
                  └──(허용된 요청만)──> 실제 서비스 Pod
 ```
 
-Envoy는 MongoDB·Redis의 클라이언트가 아니다. Java 판정 서비스는 요청을 프록시하지 않는다. `200/OK` 판정 뒤 Envoy가 원래 요청을 서비스 Pod로 전달한다. 거부·판정 장애 시 원 서비스는 호출하지 않는다. 제한 카운터는 **판정 허용 시점**에 소비되므로 원 서비스가 나중에 5xx를 반환하거나 연결이 끊겨도 자동 환급되지 않는다. 여러 규칙이 매칭될 때는 현재 엔진의 fail-fast 순서가 적용되며, 앞선 규칙의 소비 뒤 뒤쪽 규칙이 거부할 수 있다. 이를 전체 규칙 원자성으로 설명하지 않는다.
+Envoy는 MongoDB·Redis의 클라이언트가 아니다. Java 판정 서비스는 요청을 프록시하지 않는다. `200/OK` 판정 뒤 Envoy가 원래 요청을 서비스 Pod로 전달한다. 거부·판정 장애 시 원 서비스는 호출하지 않는다. 제한 카운터는 **판정 허용 시점**에 소비되므로 원 서비스가 나중에 5xx를 반환하거나 연결이 끊겨도 자동 환급되지 않는다. LTS에서는 같은 Redis slot의 다중 규칙을 단일 Lua로 판정·소비하며 거부 시 앞 규칙도 소비하지 않는다. 서로 다른 slot은 엔진의 보상·환급 계약을 따르므로 분산 트랜잭션으로 설명하지 않는다. 환급 실패나 프로세스 종료로 이미 소비한 permit이 남을 수 있으며 동시 호출은 일시적으로 더 엄격한 제한을 볼 수 있다.
 
-## 현재 확인된 상태
+## 이전 Envoy 브랜치의 검증 기록
 
-| 항목 | 2026-10-10 근거 | 남은 일 |
+이 표와 아래 96점은 LTS 통합 전 브랜치의 기록이며 새 통합본의 통과나 점수 근거로 사용하지 않는다.
+
+| 항목 | 2026-10-10 이전 브랜치 근거 | 남은 일 |
 | --- | --- | --- |
 | Envoy → Java → 실제 Pod | Calico kind에서 200·200·429, 내부 mTLS 인증·인증서 누락 거부 | 운영 ingress TLS·실제 업무 서비스 연결 |
 | Mongo 규칙 → 기존 엔진 → Redis | 발행 정책 2개, Redis Cluster 포함 전체 2,213개 테스트 통과 | 운영 저장소 HA·영속화 |
@@ -74,6 +76,8 @@ sequenceDiagram
 `revision`은 설정 변경 번호, `counterEpoch`은 카운터 수명의 별도 ID다. 이름·matcher·ACL·capacity 변경은 epoch를 유지한다. TOKEN_BUCKET은 저장된 이전 capacity/window로 먼저 refill하고 signed usage debt를 새 capacity로 이행하므로 감소→증가→rollback이 무료 quota를 만들지 않는다. FIXED_WINDOW와 SLIDING_WINDOW도 raw count를 보존한다. 알고리즘·key scope·window·timezone·calendar period·sliding bucket 구조 변경과 삭제했던 rule ID 재사용은 명시적 reset 및 사유가 필요하다. published rule ID와 band label은 Redis 키 변환이 충돌하지 않는 안전한 문자 집합을 사용한다.
 
 Redis Lua는 epoch가 달라도 같은 rule/key의 monotonic revision fence를 모든 쓰기 전에 검사한다. 모든 밴드의 타입·숫자 상태·sliding 정수 범위·migration을 먼저 검증하므로 후속 오류가 앞 밴드의 정책 정보나 소비를 부분 변경하지 않는다. stale-policy 실패는 요청 전체를 재시도하지 않는다. 이미 실행 중인 이전 요청은 완료될 수 있으며 전역 동시 전환을 보장하지 않는다. fence 보존은 설정된 최대 bucket TTL의 범위다. 소비 잔량을 보존하는 용량 축소의 회복 시간이 최대 TTL을 초과하면 `POLICY_RESET_REQUIRED`로 거절하며 명시적 reset이 필요하다. 이 검사는 Redis 실행 시 이루어지므로 publication 성공만으로 모든 기존 카운터에 즉시 적용 가능하다고 보장하지 않는다. 해당 경우 안전한 재게시나 reset 전까지 요청이 fail-closed할 수 있다. **구버전 Lua나 직접 Redis 호출자는 새 fence 계약을 따르지 않으므로 최초 발행 전에 업그레이드하거나 소비를 중지해야 한다.** 새 발행 경로와 예전 SDK를 무검증 혼용하지 않는다.
+
+Mongo 구버전 전역 unique ID 인덱스는 [명시적 유지보수 이행](lts-mongo-identity-migration.ko.md)이 필요하다. CREATE·VALIDATE 시작 검사 모두 이를 자동 삭제하지 않으며, 모든 구버전 writer와 동시 DDL을 중지한 뒤 복합 unique 제약을 먼저 검증한다. 이 구간은 무중단 업그레이드 보장이 아니다.
 
 키 인코딩은 LTS의 충돌 방지 계약을 유지한다. 이전 0.3.7 인코더가 치환했던 특수문자 identity, 예약된 `h:` 표기 및 일부 긴 identity는 LTS에서 다른 키를 만든다. 해당 카운터의 자동 데이터 이행은 제공하지 않는다. 실제 업그레이드 전 사용 중인 identity를 확인하고 카운터 이행 또는 명시적 reset을 계획해야 한다. 로컬 배포 검증의 정상 문자 API key identity에서 잔량과 소진 상태를 보존한 결과를 모든 기존 identity의 이행 보장으로 확대하지 않는다.
 

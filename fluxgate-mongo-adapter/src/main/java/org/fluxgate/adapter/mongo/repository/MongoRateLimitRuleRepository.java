@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -148,6 +149,10 @@ public class MongoRateLimitRuleRepository
    *   <li>{@value #ID_INDEX}: {@code id} - the deprecated id-only lookups.
    * </ul>
    *
+   * <p>The legacy unique {@code id_1} index requires an explicit maintenance migration through
+   * {@link #migrateLegacyGlobalIdConstraint()}. Startup never removes an index or silently keeps
+   * global id uniqueness, which would violate the rule-set-scoped identity contract.
+   *
    * <p>Fails loudly instead of logging: without the unique index concurrent saves can create
    * duplicate rules, and an existing duplicate means a rule set is already ambiguous.
    *
@@ -156,6 +161,7 @@ public class MongoRateLimitRuleRepository
    * @since 0.4.0
    */
   public void ensureIndexes() {
+    validateScopedIdConstraints();
     try {
       collection.createIndex(
           Indexes.ascending("ruleSetId", "id"),
@@ -184,6 +190,109 @@ public class MongoRateLimitRuleRepository
       throw new IllegalStateException(
           "Cannot create the FluxGate rule index " + ID_INDEX + ": " + e.getMessage(), e);
     }
+  }
+
+  /**
+   * Explicitly migrates the known legacy global-id constraint to rule-set-scoped identity.
+   *
+   * <p>Run only during an exclusive DDL maintenance window with all old-version writers stopped.
+   * Concurrent index replacement cannot be guarded atomically by MongoDB's dropIndex command. This
+   * operation never runs at startup and never changes rule documents or ACL data. It creates and
+   * verifies the exact compound unique constraint BEFORE removing only the known plain unique id_1
+   * index, then creates the nonunique id lookup. Unknown/custom definitions fail closed.
+   *
+   * <p>A failed DDL call propagates. Retry is idempotent: after the legacy drop, the compound
+   * constraint continues to protect identities even if creating the lookup failed. Old-version
+   * rollback is not compatible once different rule sets contain the same id.
+   */
+  public void migrateLegacyGlobalIdConstraint() {
+    validateGlobalIdConstraints(true);
+    Document idIndex = namedIndex(ID_INDEX);
+    if (idIndex != null
+        && !isPlainIndex(idIndex, new Document("id", 1), true)
+        && !isPlainIndex(idIndex, new Document("id", 1), false)) {
+      throw new IllegalStateException("Refusing migration: unknown/custom id_1 index definition");
+    }
+    Document compoundKey = new Document("ruleSetId", 1).append("id", 1);
+    Document compound = namedIndex(UNIQUE_RULE_INDEX);
+    if (compound != null && !isPlainIndex(compound, compoundKey, true)) {
+      throw new IllegalStateException(
+          "Refusing migration: unknown/custom compound rule index definition");
+    }
+    collection.createIndex(
+        Indexes.ascending("ruleSetId", "id"),
+        new IndexOptions().unique(true).name(UNIQUE_RULE_INDEX));
+    requirePlainIndex(UNIQUE_RULE_INDEX, compoundKey, true);
+    // Recheck immediately before deletion; callers must still exclude concurrent DDL writers.
+    idIndex = namedIndex(ID_INDEX);
+    if (idIndex != null) {
+      if (isPlainIndex(idIndex, new Document("id", 1), true)) {
+        collection.dropIndex(ID_INDEX);
+      } else if (!isPlainIndex(idIndex, new Document("id", 1), false)) {
+        throw new IllegalStateException("Refusing migration: id_1 changed during maintenance");
+      }
+    }
+    collection.createIndex(Indexes.ascending("id"), new IndexOptions().name(ID_INDEX));
+    requirePlainIndex(UNIQUE_RULE_INDEX, compoundKey, true);
+    requirePlainIndex(ID_INDEX, new Document("id", 1), false);
+    validateScopedIdConstraints();
+  }
+
+  /** Read-only startup guard: no id-only unique constraint may override scoped rule identity. */
+  public void validateScopedIdConstraints() {
+    validateGlobalIdConstraints(false);
+  }
+
+  private void validateGlobalIdConstraints(boolean allowKnownLegacy) {
+    for (Document index : collection.listIndexes()) {
+      Document key = index.get("key", Document.class);
+      if (!Boolean.TRUE.equals(index.getBoolean("unique"))
+          || key == null
+          || key.size() != 1
+          || !key.containsKey("id")) continue;
+      if (ID_INDEX.equals(index.getString("name"))
+          && isPlainIndex(index, new Document("id", 1), true)) {
+        if (allowKnownLegacy) continue;
+        throw new IllegalStateException(
+            "Legacy global-id index id_1 requires explicit migration: "
+                + "stop old writers and concurrent DDL, then call migrateLegacyGlobalIdConstraint()");
+      }
+      throw new IllegalStateException(
+          "Unknown/custom global-id index requires manual operator resolution; "
+              + "FluxGate never removes custom constraints automatically");
+    }
+  }
+
+  private Document namedIndex(String name) {
+    for (Document index : collection.listIndexes()) {
+      if (name.equals(index.getString("name"))) return index;
+    }
+    return null;
+  }
+
+  private void requirePlainIndex(String name, Document key, boolean unique) {
+    if (!isPlainIndex(namedIndex(name), key, unique)) {
+      throw new IllegalStateException("Cannot verify the exact FluxGate index " + name);
+    }
+  }
+
+  private boolean isPlainIndex(Document index, Document key, boolean unique) {
+    if (index == null || !(index.get("key") instanceof Document)) return false;
+    Document actualKey = index.get("key", Document.class);
+    if (!new ArrayList<>(actualKey.keySet()).equals(new ArrayList<>(key.keySet()))
+        || !key.equals(actualKey)
+        || Boolean.TRUE.equals(index.getBoolean("unique")) != unique) return false;
+    // Index version/name/namespace are server metadata. No custom functional option is accepted.
+    Set<String> known =
+        new HashSet<>(
+            Arrays.asList("v", "key", "name", "ns", "unique", "sparse", "hidden", "background"));
+    if (!known.containsAll(index.keySet())) return false;
+    if (Boolean.TRUE.equals(index.getBoolean("sparse"))
+        || Boolean.TRUE.equals(index.getBoolean("hidden"))
+        || Boolean.TRUE.equals(index.getBoolean("background"))) return false;
+    if (index.containsKey("ns")
+        && !collection.getNamespace().getFullName().equals(index.getString("ns"))) return false;
+    return true;
   }
 
   private List<String> findDuplicateRuleKeys() {
