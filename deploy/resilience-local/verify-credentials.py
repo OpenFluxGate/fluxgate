@@ -14,6 +14,7 @@ import http.server
 import inspect
 import json
 import os
+import queue
 import re
 from pathlib import Path
 import secrets
@@ -184,58 +185,126 @@ def validate_restart_identity(before, after, originals, current):
 
 
 def sampler_worker(config, stop_path):
-    """Fixed 100ms schedules, fresh sockets, and explicit missed schedules/errors."""
+    """Fixed 100ms arrivals, bounded concurrent fresh sockets, and explicit omissions."""
     start = time.monotonic()
     anchor = {"started_utc_ns": time.time_ns(), "started_monotonic_ns": time.monotonic_ns()}
-    sequence = 0
-    samples = []
-    omitted = 0
-    while not Path(stop_path).exists():
-        deadline = start + sequence * .1
-        lag = time.monotonic() - deadline
-        if lag >= .1:
-            missed = int(lag / .1)
-            omitted += missed
-            sequence += missed
-            deadline = start + sequence * .1
-        time.sleep(max(0, deadline - time.monotonic()))
-        # A stop may arrive while waiting for the next schedule. Do not dispatch after it.
-        if Path(stop_path).exists():
-            break
-        began = time.monotonic()
-        sample = {"sequence": sequence, "elapsed_seconds": began - start,
-                  "dispatch_lag_ms": max(0, began - deadline) * 1000}
-        connection = http.client.HTTPConnection(config["service"], config["port"], timeout=2)
-        try:
-            connection.request("GET", config["path"], headers={"Host": config["host"],
-                               "x-api-key": config["api_key"], "Connection": "close"})
-            response = connection.getresponse()
-            body = response.read()
-            expected = config["body"].encode()
-            sample.update(status=response.status, body_valid=body in (expected, expected + b"\n"))
-        except Exception as error:
-            sample.update(status=None, body_valid=False, error=type(error).__name__)
-        finally:
-            connection.close()
-        sample["latency_ms"] = (time.monotonic() - began) * 1000
-        samples.append(sample)
-        sequence += 1
-        if len(samples) == 1 or sequence % 10 == 1:
-            private_write(config.get("progress_path", "/tmp/sampler-progress.json"), json.dumps({
-                **anchor, "interval_ms": 100, "scheduled": sequence, "omitted_schedules": omitted,
-                "samples": samples, "duration_seconds": time.monotonic() - start,
-                "transport": "in-cluster Gateway Service; fresh connection per sample"}))
-        if sample["status"] == 200 and sample["body_valid"]:
-            private_write(config.get("positive_path", "/tmp/sampler-positive"), "yes")
-    return {**anchor, "stopped_utc_ns": time.time_ns(), "stopped_monotonic_ns": time.monotonic_ns(),
-            "interval_ms": 100, "scheduled": sequence, "omitted_schedules": omitted,
-            "samples": samples, "duration_seconds": time.monotonic() - start,
+    sequence, omitted, peak, worker_failures = 0, 0, 0, 0
+    samples, omissions, pending = [], [], set()
+    condition = threading.Condition()
+    slots = threading.BoundedSemaphore(24)
+    jobs = queue.Queue(maxsize=24)
+    shutdown = threading.Event()
+
+    def snapshot():  # Caller holds condition: pending and completed cannot disappear between reads.
+        return {**anchor, "interval_ms": 100, "scheduled": sequence,
+            "omitted_schedules": omitted, "omissions": list(omissions),
+            "samples": sorted(samples, key=lambda sample: sample["sequence"]),
+            "pending": len(pending), "pending_sequences": sorted(pending),
+            "peak_inflight": peak, "max_inflight": 24, "worker_failures": worker_failures,
+            "duration_seconds": time.monotonic() - start,
+            "latency_basis": "scheduled arrival including worker dispatch; service latency separate",
             "transport": "in-cluster Gateway Service; fresh connection per sample"}
+
+    def progress():
+        private_write(config.get("progress_path", "/tmp/sampler-progress.json"), json.dumps(snapshot()))
+
+    def worker():
+        nonlocal worker_failures
+        while not shutdown.is_set():
+            try:
+                index = jobs.get(timeout=.1)
+            except queue.Empty:
+                continue
+            origin = start + index * .1
+            began = time.monotonic()
+            sample = {"sequence": index, "scheduled_elapsed_seconds": index * .1,
+                "elapsed_seconds": began - start, "dispatch_lag_ms": max(0, began - origin) * 1000,
+                "status": None, "body_valid": False}
+            connection = None
+            try:
+                connection = http.client.HTTPConnection(config["service"], config["port"], timeout=2)
+                connection.request("GET", config["path"], headers={"Host": config["host"],
+                    "x-api-key": config["api_key"], "Connection": "close"})
+                response = connection.getresponse()
+                body = response.read()
+                expected = config["body"].encode()
+                sample.update(status=response.status, body_valid=body in (expected, expected + b"\n"))
+            except BaseException as error:
+                sample.update(status=None, body_valid=False, error=type(error).__name__)
+            finally:
+                if connection is not None:
+                    try:
+                        connection.close()
+                    except BaseException as error:
+                        sample.update(status=None, body_valid=False, error=type(error).__name__)
+                completed = time.monotonic()
+                sample.update(latency_ms=max(0, completed - origin) * 1000,
+                    service_latency_ms=(completed - began) * 1000,
+                    completed_elapsed_seconds=completed - start)
+                with condition:
+                    samples.append(sample)
+                    pending.remove(index)
+                    try:
+                        if len(samples) == 1 and not shutdown.is_set():
+                            progress()
+                        if sample["status"] == 200 and sample["body_valid"] and not shutdown.is_set():
+                            private_write(config.get("positive_path", "/tmp/sampler-positive"), "yes")
+                    except Exception:
+                        worker_failures += 1  # No exception text or credential data in evidence.
+                    finally:
+                        slots.release()
+                        jobs.task_done()
+                        condition.notify_all()
+
+    workers = [threading.Thread(target=worker, daemon=True) for _ in range(24)]
+    for thread in workers:
+        thread.start()
+    try:
+        while not Path(stop_path).exists():
+            deadline = start + sequence * .1
+            time.sleep(max(0, deadline - time.monotonic()))
+            if Path(stop_path).exists():
+                break
+            lag = time.monotonic() - deadline
+            with condition:
+                if lag >= .1:
+                    missed = int(lag / .1)
+                    omissions.append({"first_sequence": sequence, "count": missed, "reason": "lateness"})
+                    omitted += missed
+                    sequence += missed
+                index = sequence
+                sequence += 1
+                if not slots.acquire(blocking=False):
+                    omitted += 1
+                    omissions.append({"first_sequence": index, "count": 1, "reason": "capacity"})
+                else:
+                    pending.add(index)
+                    peak = max(peak, len(pending))
+                    jobs.put_nowait(index)
+                if sequence == 1 or sequence % 10 == 1:
+                    progress()
+    finally:
+        # Stop halts arrivals; drain all submitted work. A stuck worker remains explicit pending,
+        # and the parent rejects the incomplete report rather than losing accepted schedules.
+        drain_deadline = time.monotonic() + 5
+        with condition:
+            while pending and time.monotonic() < drain_deadline:
+                condition.wait(timeout=max(0, drain_deadline - time.monotonic()))
+        shutdown.set()
+        join_deadline = time.monotonic() + 1
+        for thread in workers:
+            thread.join(timeout=max(0, join_deadline - time.monotonic()))
+    with condition:
+        report = snapshot()
+        report.update(stopped_utc_ns=time.time_ns(), stopped_monotonic_ns=time.monotonic_ns(),
+            drain_complete=not pending and not any(thread.is_alive() for thread in workers))
+        private_write(config.get("progress_path", "/tmp/sampler-progress.json"), json.dumps(report))
+        return report
 
 
 def sampler_program(stop_path="/tmp/sampler-stop", started_path="/tmp/sampler-started"):
     """Only the stdlib worker and private writer belong in the nonsecret exec argument."""
-    return ("import http.client,json,os,sys,time\nfrom pathlib import Path\n\n"
+    return ("import http.client,json,os,queue,sys,threading,time\nfrom pathlib import Path\n\n"
             + inspect.getsource(private_write) + "\n" + inspect.getsource(sampler_worker)
             + "\nconfig = json.loads(sys.stdin.readline())\n"
             + "private_write(" + repr(str(started_path)) + ", 'yes')\n"
@@ -244,6 +313,8 @@ def sampler_program(stop_path="/tmp/sampler-stop", started_path="/tmp/sampler-st
 
 def sampler_summary(report):
     samples = report["samples"]
+    require(report.get("pending", 0) == 0 and report.get("drain_complete", True) and
+            report.get("worker_failures", 0) == 0, "credential traffic sampler did not drain cleanly")
     require(bool(samples), "credential traffic sampler produced no observations")
     require(report["scheduled"] == len(samples) + report["omitted_schedules"],
             "credential traffic sampler lost schedules")
@@ -270,6 +341,8 @@ def credential_acceptance(results, phases):
         samples = report.get("samples", [])
         cleanup = report.get("cleanup", {})
         valid = (report.get("interval_ms") == 100 and bool(samples)
+                 and report.get("pending", 0) == 0 and report.get("drain_complete", True) is True
+                 and report.get("worker_failures", 0) == 0
                  and report.get("scheduled") == len(samples) + report.get("omitted_schedules", -1)
                  and report.get("omitted_schedules") == 0
                  and all(sample.get("sequence") == index and sample.get("status") == 200
@@ -1726,7 +1799,7 @@ def credential_acceptance_self_test():
                     "credential proof confused protocol, requested availability and final acceptance")
             require("rollback" not in actions and retained.read_text() == "successfully-rotated-private-value",
                     "availability scoring rolled back completed credential rotations")
-        for mutation in ("omitted", "wrong-body", "transport", "cleanup", "missing-report", "empty", "accounting", "contradictory-error", "contradictory-transport-error"):
+        for mutation in ("omitted", "wrong-body", "transport", "cleanup", "missing-report", "empty", "accounting", "contradictory-error", "contradictory-transport-error", "pending", "drain", "worker-failure"):
             report = json.loads(json.dumps(clean))
             if mutation == "omitted":
                 report["scheduled"], report["omitted_schedules"] = 2, 1
@@ -1744,6 +1817,12 @@ def credential_acceptance_self_test():
                 report["samples"][0]["error"] = "TimeoutError"
             elif mutation == "contradictory-transport-error":
                 report["samples"][0]["transport_error"] = "ConnectionResetError"
+            elif mutation == "pending":
+                report["pending"] = 1
+            elif mutation == "drain":
+                report["drain_complete"] = False
+            elif mutation == "worker-failure":
+                report["worker_failures"] = 1
             results = {"rotation_traffic": {"stores": report}} if mutation != "missing-report" else {}
             require(not credential_acceptance(results, ["stores"])["rotation_availability_passed"],
                     "credential acceptance allowed missing/failed/omitted/unclean traffic")
@@ -2056,48 +2135,151 @@ def tls_runtime_self_test():
         ssl.HAS_TLSv1_3 = original
 
 
+def sampler_parallel_self_test():
+    with tempfile.TemporaryDirectory(prefix="sampler-parallel-unit-") as directory:
+        stop = Path(directory) / "stop"
+        arrivals = []
+        arrival_lock = threading.Lock()
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                with arrival_lock:
+                    arrivals.append(time.monotonic())
+                    number = len(arrivals)
+                if number == 1:
+                    time.sleep(.510)
+                if number == 3:
+                    private_write(stop, "stop")
+                self.send_response(200)
+                self.send_header("Content-Length", "7")
+                self.end_headers()
+                self.wfile.write(b"marker\n")
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            configuration = {"service": "127.0.0.1", "port": server.server_port, "path": "/load",
+                "host": "offline", "api_key": "offline-private-key", "body": "marker",
+                "positive_path": str(Path(directory) / "positive"),
+                "progress_path": str(Path(directory) / "progress")}
+            program = sampler_program(stop, Path(directory) / "started")
+            result = subprocess.run([sys.executable, "-c", program],
+                input=(json.dumps(configuration) + "\n").encode(), capture_output=True, timeout=5)
+            require(result.returncode == 0 and not result.stderr, "parallel generated sampler failed")
+            report = sampler_summary(json.loads(result.stdout))
+            require(arrivals[1] - arrivals[0] < .35, "slow response coalesced fixed 100ms arrivals")
+            require(report["scheduled"] == 3 and report["omitted_schedules"] == 0 and
+                    [s["sequence"] for s in report["samples"]] == [0, 1, 2],
+                    "parallel sampler omitted schedules or lost drained/out-of-order responses")
+            require(report["samples"][0]["service_latency_ms"] >= 500 and
+                    report["samples"][1]["elapsed_seconds"] < .35 and report["pending"] == 0 and
+                    report["drain_complete"], "sampler hid pending work or excluded scheduled-origin timing")
+            for sample in report["samples"]:
+                require(sample["latency_ms"] >= sample["service_latency_ms"] and
+                        sample["latency_ms"] >= sample["dispatch_lag_ms"], "sampler latency excludes dispatch lag")
+            progress = json.loads((Path(directory) / "progress").read_text())
+            require(progress["scheduled"] == len(progress["samples"]) + progress["pending"] +
+                    progress["omitted_schedules"], "private progress lost unfinished accounting")
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
 def sampler_program_accounting_self_test():
     from types import SimpleNamespace
-    # Execute the same generated worker definitions with a deterministic clock and transport.
-    namespace = {}
-    exec(sampler_program().rsplit("\nconfig = ", 1)[0], namespace)
-    clock = SimpleNamespace(now=0.0)
-    namespace["time"] = SimpleNamespace(monotonic=lambda: clock.now,
-        monotonic_ns=lambda: int(clock.now * 1e9), time_ns=lambda: int(clock.now * 1e9),
-        sleep=lambda seconds: setattr(clock, "now", clock.now + seconds))
-    with tempfile.TemporaryDirectory(prefix="sampler-program-accounting-") as directory:
-        stop = Path(directory) / "stop"
-        connections = []
-        class Connection:
-            def __init__(self, *args, **kwargs):
-                connections.append(self)
-            def request(self, method, path, headers):
-                require(method == "GET" and headers["Connection"] == "close", "sampler reused transport")
-            def getresponse(self):
-                if len(connections) == 1:
+    for scenario in ("lateness", "capacity", "drain"):
+        namespace = {}
+        exec(sampler_program().rsplit("\nconfig = ", 1)[0], namespace)
+        clock = SimpleNamespace(now=0.0, delayed=False)
+        release, closed = threading.Event(), threading.Event()
+        connections, progress_reports = [], []
+        connection_lock = threading.Lock()
+        with tempfile.TemporaryDirectory(prefix="sampler-program-accounting-") as directory:
+            stop = Path(directory) / "stop"
+            def sleep(seconds):
+                if scenario == "lateness" and seconds > 0 and not clock.delayed:
                     clock.now += .35
-                    raise TimeoutError("offline transport failure")
-                return SimpleNamespace(status=200, read=lambda: b"marker\n")
-            def close(self):
-                if len(connections) == 2:
+                    clock.delayed = True
+                else:
+                    clock.now += seconds
+                if scenario == "capacity" and clock.now >= 2.6:
                     private_write(stop, "stop")
-        namespace["http"] = SimpleNamespace(client=SimpleNamespace(HTTPConnection=Connection))
-        report = namespace["sampler_worker"]({"service": "offline", "port": 80, "host": "offline",
-            "path": "/load", "api_key": "offline-only", "body": "marker",
-            "positive_path": str(Path(directory) / "positive"),
-            "progress_path": str(Path(directory) / "progress")}, str(stop))
-        require(report["interval_ms"] == 100 and report["scheduled"] == 4 and
-                report["omitted_schedules"] == 2 and [s["sequence"] for s in report["samples"]] == [0, 3],
-                "generated sampler changed fixed schedules or omitted accounting")
-        require(report["samples"][0]["error"] == "TimeoutError" and
-                report["samples"][0]["status"] is None and report["samples"][1]["body_valid"],
-                "generated sampler changed errors or exact-body control")
-        require(set(report) == {"started_utc_ns", "started_monotonic_ns", "stopped_utc_ns",
-                "stopped_monotonic_ns", "interval_ms", "scheduled", "omitted_schedules", "samples",
-                "duration_seconds", "transport"}, "generated sampler report fields changed")
-        progress = json.loads((Path(directory) / "progress").read_text())
-        require(progress["scheduled"] == 1 and progress["samples"][0]["error"] == "TimeoutError" and
-                "offline-only" not in json.dumps(report), "generated sampler partial progress lost error or privacy")
+                    release.set()
+                if scenario == "drain" and clock.now >= .1:
+                    private_write(stop, "stop")
+                time.sleep(.01)  # Let real worker threads dispatch before advancing synthetic time.
+            namespace["time"] = SimpleNamespace(monotonic=lambda: clock.now,
+                monotonic_ns=lambda: int(clock.now * 1e9), time_ns=lambda: int(clock.now * 1e9), sleep=sleep)
+            if scenario == "drain":
+                class DrainCondition(threading.Condition):
+                    def wait(self, timeout=None):
+                        clock.now += timeout
+                        return False
+                namespace["threading"] = SimpleNamespace(Condition=DrainCondition,
+                    BoundedSemaphore=threading.BoundedSemaphore, Event=threading.Event, Thread=threading.Thread)
+            class Connection:
+                def __init__(self, *args, **kwargs):
+                    require(kwargs["timeout"] == 2, "generated sampler changed HTTP timeout")
+                    with connection_lock:
+                        connections.append(self)
+                        self.number = len(connections)
+                def request(self, method, path, headers):
+                    require(method == "GET" and headers["Connection"] == "close", "sampler reused transport")
+                def getresponse(self):
+                    if scenario == "lateness" and self.number == 1:
+                        raise TimeoutError("offline transport failure")
+                    if scenario in ("capacity", "drain"):
+                        release.wait()
+                    return SimpleNamespace(status=200, read=lambda: b"marker\n")
+                def close(self):
+                    if scenario == "lateness" and self.number == 2:
+                        private_write(stop, "stop")
+                    closed.set()
+            namespace["http"] = SimpleNamespace(client=SimpleNamespace(HTTPConnection=Connection))
+            writer = namespace["private_write"]
+            def capture_write(path, content):
+                if str(path) == str(Path(directory) / "progress"):
+                    progress_reports.append(json.loads(content))
+                writer(path, content)
+            namespace["private_write"] = capture_write
+            try:
+                report = namespace["sampler_worker"]({"service": "offline", "port": 80, "host": "offline",
+                    "path": "/load", "api_key": "offline-only", "body": "marker",
+                    "positive_path": str(Path(directory) / "positive"),
+                    "progress_path": str(Path(directory) / "progress")}, str(stop))
+                require(report["interval_ms"] == 100 and report["scheduled"] == len(report["samples"]) +
+                        report["pending"] + report["omitted_schedules"], "generated sampler lost scheduled work")
+                require(all(r["scheduled"] == len(r["samples"]) + r["pending"] + r["omitted_schedules"]
+                        for r in progress_reports) and any(r["pending"] for r in progress_reports),
+                        "private progress excluded unfinished schedules")
+                require(report["peak_inflight"] <= 24 and "offline-only" not in json.dumps(report),
+                        "sampler exceeded hard inflight bound or leaked credentials")
+                if scenario == "lateness":
+                    require(report["scheduled"] == 4 and report["omitted_schedules"] == 2 and
+                            [s["sequence"] for s in report["samples"]] == [0, 3] and
+                            report["samples"][0]["error"] == "TimeoutError" and report["drain_complete"],
+                            "generated sampler hid scheduler omissions or transport errors")
+                    require(report["omissions"] == [{"first_sequence": 1, "count": 2, "reason": "lateness"}],
+                            "sampler omission provenance changed")
+                elif scenario == "capacity":
+                    require(report["scheduled"] == 26 and len(report["samples"]) == 24 and
+                            report["omitted_schedules"] == 2 and report["peak_inflight"] == 24 and
+                            report["pending"] == 0 and report["drain_complete"] and
+                            all(item["reason"] == "capacity" for item in report["omissions"]),
+                            "bounded saturation omitted work silently or failed to drain submitted samples")
+                    require(not sampler_summary(report)["uninterrupted_observed"], "saturation omissions passed acceptance")
+                else:
+                    require(report["pending"] == 1 and not report["drain_complete"], "stuck request disappeared from final report")
+                    try:
+                        sampler_summary(report)
+                    except ProofError:
+                        pass
+                    else:
+                        raise ProofError("unfinished sampler drain passed summary")
+            finally:
+                release.set()
+                if connections:
+                    require(closed.wait(2), "offline blocked connection did not close")
 
 
 def self_test():
@@ -2120,6 +2302,7 @@ def self_test():
     from unittest.mock import patch
     with patch.object(Path, "read_text", return_value="# unrelated module growth\n" * 6000):
         require(sampler_program() == program, "sampler command grew with unrelated module source")
+    sampler_parallel_self_test()
     sampler_program_accounting_self_test()
     original = {"metadata": {"uid": "old"}, "spec": {"volumes": [{"persistentVolumeClaim": {"claimName": "data"}}]}}
     replacement = {"metadata": {"uid": "new"}, "spec": original["spec"]}
