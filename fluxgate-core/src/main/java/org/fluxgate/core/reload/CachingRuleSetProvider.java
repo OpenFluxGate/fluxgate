@@ -49,6 +49,10 @@ public class CachingRuleSetProvider implements RateLimitRuleSetProvider, RuleRel
   public Optional<RateLimitRuleSet> findById(String ruleSetId) {
     Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
 
+    if (delegate.requiresFreshRead()) {
+      return delegate.findById(ruleSetId);
+    }
+
     // Delegate get/load/put to the cache so implementations can load atomically
     return cache.getOrLoad(
         ruleSetId,
@@ -56,6 +60,11 @@ public class CachingRuleSetProvider implements RateLimitRuleSetProvider, RuleRel
           log.debug("Cache miss for ruleSetId: {}, loading from delegate", id);
           return delegate.findById(id);
         });
+  }
+
+  @Override
+  public boolean requiresFreshRead() {
+    return delegate.requiresFreshRead();
   }
 
   @Override

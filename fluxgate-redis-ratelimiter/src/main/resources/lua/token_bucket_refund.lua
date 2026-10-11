@@ -52,11 +52,13 @@ local ALG_TOKEN_BUCKET   = 1
 local ALG_SLIDING_WINDOW = 2
 local ALG_FIXED_WINDOW   = 3
 
-local band_count = #KEYS
+local extended = ARGV[#ARGV] == 'FENCED'
+local band_count = extended and (#KEYS / 2) or #KEYS
 if band_count < 1 then
     return redis.error_reply("at least one bucket key is required")
 end
-if #ARGV ~= 2 + 5 * band_count then
+if (extended and (#KEYS % 2 ~= 0 or #ARGV ~= 3 + 5 * band_count))
+    or (not extended and #ARGV ~= 2 + 5 * band_count) then
     return redis.error_reply(
         "expected " .. (2 + 5 * band_count) .. " arguments for " .. band_count .. " band(s)")
 end
@@ -103,6 +105,26 @@ for i = 1, band_count do
         return redis.error_reply("unknown algorithm code: " .. tostring(alg))
     end
 
+    if extended then
+        local current = redis.call('HMGET', KEYS[band_count + i], 'capacity', 'window_micros', 'algorithm', 'buckets')
+        if current[1] then
+            if tonumber(current[2]) ~= win_micros or tonumber(current[3]) ~= alg
+                or (alg == ALG_SLIDING_WINDOW and tonumber(current[4]) ~= buckets) then
+                return redis.error_reply('POLICY_RESET_REQUIRED: refund geometry changed')
+            end
+            capacity = tonumber(current[1])
+        end
+    end
+    local kind = redis.call('TYPE', KEYS[i]).ok
+    if kind ~= 'none' and kind ~= 'hash' then
+        return redis.error_reply('WRONGTYPE: refund bucket must be a hash')
+    end
+    local values = redis.call('HMGET', KEYS[i], 'tokens', 'count', 'window_end_micros')
+    for j = 1, 3 do
+        if values[j] and tonumber(values[j]) == nil then
+            return redis.error_reply('INVALID_POLICY_STATE: refund bucket numeric field')
+        end
+    end
     capacities[i] = capacity
     windows[i]    = win_micros
     algorithms[i] = alg

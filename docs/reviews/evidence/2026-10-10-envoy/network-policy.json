@@ -1,0 +1,253 @@
+{
+  "context": "kind-fluxgate-enterprise",
+  "checks": [
+    {
+      "check": "untrusted-probe-to-unrestricted-sink",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.96.194.124\", \"port\": 8080}",
+      "stderr": ""
+    },
+    {
+      "check": "trusted-before-echo-service",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.96.205.197\", \"port\": 5678}",
+      "stderr": ""
+    },
+    {
+      "check": "untrusted-to-echo-service",
+      "expected": "blocked",
+      "actual": "blocked",
+      "exit": 42,
+      "marker": "{\"marker\": \"TCP_CONNECT_TIMEOUT\", \"target\": \"10.96.205.197\", \"port\": 5678}",
+      "stderr": "command terminated with exit code 42\n"
+    },
+    {
+      "check": "trusted-after-echo-service",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.96.205.197\", \"port\": 5678}",
+      "stderr": ""
+    },
+    {
+      "check": "trusted-before-echo-pod-ip",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.244.85.202\", \"port\": 5678}",
+      "stderr": ""
+    },
+    {
+      "check": "untrusted-to-echo-pod-ip",
+      "expected": "blocked",
+      "actual": "blocked",
+      "exit": 42,
+      "marker": "{\"marker\": \"TCP_CONNECT_TIMEOUT\", \"target\": \"10.244.85.202\", \"port\": 5678}",
+      "stderr": "command terminated with exit code 42\n"
+    },
+    {
+      "check": "trusted-after-echo-pod-ip",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.244.85.202\", \"port\": 5678}",
+      "stderr": ""
+    },
+    {
+      "check": "trusted-before-fluxgate-authz-service",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.96.33.242\", \"port\": 8443}",
+      "stderr": ""
+    },
+    {
+      "check": "untrusted-to-fluxgate-authz-service",
+      "expected": "blocked",
+      "actual": "blocked",
+      "exit": 42,
+      "marker": "{\"marker\": \"TCP_CONNECT_TIMEOUT\", \"target\": \"10.96.33.242\", \"port\": 8443}",
+      "stderr": "command terminated with exit code 42\n"
+    },
+    {
+      "check": "trusted-after-fluxgate-authz-service",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.96.33.242\", \"port\": 8443}",
+      "stderr": ""
+    },
+    {
+      "check": "trusted-before-fluxgate-authz-pod-ip",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.244.85.201\", \"port\": 8443}",
+      "stderr": ""
+    },
+    {
+      "check": "untrusted-to-fluxgate-authz-pod-ip",
+      "expected": "blocked",
+      "actual": "blocked",
+      "exit": 42,
+      "marker": "{\"marker\": \"TCP_CONNECT_TIMEOUT\", \"target\": \"10.244.85.201\", \"port\": 8443}",
+      "stderr": "command terminated with exit code 42\n"
+    },
+    {
+      "check": "trusted-after-fluxgate-authz-pod-ip",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.244.85.201\", \"port\": 8443}",
+      "stderr": ""
+    },
+    {
+      "check": "trusted-before-mongo-service",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "AUTHZ_CONNECTED",
+      "stderr": ""
+    },
+    {
+      "check": "untrusted-to-mongo-service",
+      "expected": "blocked",
+      "actual": "blocked",
+      "exit": 42,
+      "marker": "{\"marker\": \"TCP_CONNECT_TIMEOUT\", \"target\": \"10.96.108.100\", \"port\": 27017}",
+      "stderr": "command terminated with exit code 42\n"
+    },
+    {
+      "check": "trusted-after-mongo-service",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "AUTHZ_CONNECTED",
+      "stderr": ""
+    },
+    {
+      "check": "trusted-before-mongo-pod-ip",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "AUTHZ_CONNECTED",
+      "stderr": ""
+    },
+    {
+      "check": "untrusted-to-mongo-pod-ip",
+      "expected": "blocked",
+      "actual": "blocked",
+      "exit": 42,
+      "marker": "{\"marker\": \"TCP_CONNECT_TIMEOUT\", \"target\": \"10.244.85.200\", \"port\": 27017}",
+      "stderr": "command terminated with exit code 42\n"
+    },
+    {
+      "check": "trusted-after-mongo-pod-ip",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "AUTHZ_CONNECTED",
+      "stderr": ""
+    },
+    {
+      "check": "trusted-before-redis-service",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "AUTHZ_CONNECTED",
+      "stderr": ""
+    },
+    {
+      "check": "untrusted-to-redis-service",
+      "expected": "blocked",
+      "actual": "blocked",
+      "exit": 42,
+      "marker": "{\"marker\": \"TCP_CONNECT_TIMEOUT\", \"target\": \"10.96.160.68\", \"port\": 6379}",
+      "stderr": "command terminated with exit code 42\n"
+    },
+    {
+      "check": "trusted-after-redis-service",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "AUTHZ_CONNECTED",
+      "stderr": ""
+    },
+    {
+      "check": "trusted-before-redis-pod-ip",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "AUTHZ_CONNECTED",
+      "stderr": ""
+    },
+    {
+      "check": "untrusted-to-redis-pod-ip",
+      "expected": "blocked",
+      "actual": "blocked",
+      "exit": 42,
+      "marker": "{\"marker\": \"TCP_CONNECT_TIMEOUT\", \"target\": \"10.244.85.205\", \"port\": 6379}",
+      "stderr": "command terminated with exit code 42\n"
+    },
+    {
+      "check": "trusted-after-redis-pod-ip",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "AUTHZ_CONNECTED",
+      "stderr": ""
+    },
+    {
+      "check": "untrusted-sink-before-authz-egress-negative",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.96.194.124\", \"port\": 8080}",
+      "stderr": ""
+    },
+    {
+      "check": "actual-authz-egress-to-unrestricted-sink",
+      "expected": "blocked",
+      "actual": "blocked",
+      "exit": 124,
+      "marker": "",
+      "stderr": "command terminated with exit code 124\n"
+    },
+    {
+      "check": "untrusted-sink-after-authz-egress-negative",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.96.194.124\", \"port\": 8080}",
+      "stderr": ""
+    },
+    {
+      "check": "gateway-echo-before-authz-bypass-negative",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.96.205.197\", \"port\": 5678}",
+      "stderr": ""
+    },
+    {
+      "check": "actual-authz-to-echo-bypass",
+      "expected": "blocked",
+      "actual": "blocked",
+      "exit": 124,
+      "marker": "",
+      "stderr": "command terminated with exit code 124\n"
+    },
+    {
+      "check": "gateway-echo-after-authz-bypass-negative",
+      "expected": "allowed",
+      "actual": "allowed",
+      "exit": 0,
+      "marker": "{\"marker\": \"TCP_CONNECTED\", \"target\": \"10.96.205.197\", \"port\": 5678}",
+      "stderr": ""
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "passed": false,
+  "complete": false,
+  "diagnostic_only": true,
+  "reason": "Cold authz rollout failed the strict warmup before any fault injection; cause was not established by the failed run.",
+  "artifacts": {
+    "summary.json": {
+      "sha256": "cfedb777a21990a5cece6b335485f9a77b85f6cc39f5e860c2485f12af7dca7a",
+      "bytes": 441
+    },
+    "raw-load.json": {
+      "sha256": "a69ec3a1d361a1dc58da480276691dd3de7c593f406d6c2a869ab4826517dda9",
+      "bytes": 231637
+    }
+  },
+  "load_result": "FAIL",
+  "load_failure_stage": "resilience-warmup",
+  "warmup": {
+    "target_requests": 500,
+    "planned_requests": 500,
+    "submitted_requests": 500,
+    "completed_requests": 500,
+    "target_rps": 100.0,
+    "achieved_rps": 25.57555423289215,
+    "measurement_seconds": 5,
+    "elapsed_including_drain_seconds": 19.54991846694611,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "503": 325,
+      "200": 175
+    },
+    "request_distributions": {
+      "GET": {
+        "503": 325,
+        "200": 175
+      }
+    },
+    "expected_status_fraction": 0.35,
+    "latency_ms": {
+      "p50": 8461.432964075357,
+      "p95": 12585.8550069388,
+      "p99": 14191.92900811322,
+      "max": 14560.704383067787
+    },
+    "dispatch_lag_ms": {
+      "p95": 8040.635755984113,
+      "max": 9552.689464995638
+    },
+    "schedule_start_unix_ms": 1791582178815.8757,
+    "schedule_end_unix_ms": 1791582183815.8757,
+    "clock_unix_offset_seconds": 1790353654.4841428
+  }
+}

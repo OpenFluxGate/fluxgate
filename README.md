@@ -85,10 +85,13 @@ English | [한국어](README.ko.md)
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-The decision path is always the same: the filter (or the `@RateLimit` aspect) builds a
+For Java SDK integration, the filter (or the `@RateLimit` aspect) builds a
 `RequestContext`, hands it to a `FluxgateRateLimitHandler`, and the library's default handler
 delegates to `RateLimitEngine`, which resolves the rule set and calls a `RateLimiter`. See
-[docs/en/architecture/README.md](docs/en/architecture/README.md) for the full walk-through.
+[docs/en/architecture/README.md](docs/en/architecture/README.md) for the full walk-through. Envoy integration uses `fluxgate-envoy-extauth` as an external
+authorization service: Envoy calls Java FluxGate, which reads policy from MongoDB and consumes
+quota in Redis. Envoy forwards an allowed request to the application; the application can use
+Java, Go, Rust, or another language. MongoDB and Redis are not request-forwarding hops.
 
 ## Modules
 
@@ -102,27 +105,49 @@ delegates to `RateLimitEngine`, which resolves the rule set and calls a `RateLim
 | **fluxgate-control-support** | Control-plane helpers: `@NotifyRuleChange` / `@NotifyFullReload` and the Redis rule-change notifier |
 | **fluxgate-testkit** | Integration testing utilities |
 | **fluxgate-benchmarks** | JMH benchmarks (not published) |
+| **fluxgate-envoy-extauth** | Envoy Gateway external authorization service using the existing engine and MongoDB/Redis adapters |
 | **fluxgate-samples** | Sample applications demonstrating various use cases |
+
+This repository owns the rate limiting engine, MongoDB/Redis adapters, Spring Boot starters and the optional `fluxgate-envoy-extauth` service. The starters and adapters are application libraries; the testkit, benchmarks and samples support development. These Maven modules do not each require a separate service deployment. The separate [FluxGate Studio repository](https://github.com/openfluxgate/fluxgate-studio) owns the admin API and web UI. Local Git worktrees are development checkouts, not additional modules or release contents.
 
 ## Quick Start
 
-Two paths: **Path A** needs nothing but Java and Maven — it runs an in-memory limiter that
-is perfect for a first demo or a single-instance service. **Path B** adds Redis for
+To enforce limits on Java, Go or Rust services at a Kubernetes Gateway, follow the [Envoy Gateway integration and local testing guide](docs/en/guides/envoy-local-testing.md). Connect the existing FluxGate authorization service and check allowed requests, authentication rejection and quotas on Docker Desktop.
+
+Two paths: **Path A** runs an in-memory limiter without external stores, suitable for a first demo
+or a single-instance service. **Path B** adds Redis for
 distributed, multi-instance rate limiting, and an optional MongoDB step for dynamic rule
 management without restarts.
 
 ### Prerequisites
 
 - Java 17+ and Maven 3.8+ (Path A)
+- An existing Spring Boot web application; the example below adds its `/api/hello` controller.
 - Java 11 with Spring Boot 2.7 is also supported via `fluxgate-spring-boot2-starter`
 - Docker (Path B, to start Redis/MongoDB)
+
+This branch is **0.4.0-SNAPSHOT**, built from source. The published Maven Central release is
+0.3.7; the examples below use the current branch APIs and do not resolve as a released 0.4.0.
+Prepare the paired libraries once with Java 21 and Docker running:
+
+```bash
+git clone --branch feature/lts-1.0.0 https://github.com/OpenFluxGate/openfluxgate-core.git
+cd openfluxgate-core
+export FLUXGATE_M2_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fluxgate-quickstart-m2.XXXXXX")"
+./mvnw -B -Dmaven.repo.local="$FLUXGATE_M2_DIR" \
+  -pl fluxgate-spring-boot3-starter,fluxgate-control-support -am install spotless:check
+```
+
+Keep this terminal and pass `-Dmaven.repo.local="$FLUXGATE_M2_DIR"` to Maven commands in your
+application as well. For published 0.3.7, use that release's README and APIs instead.
+The source-build tests need Docker even if the resulting Path A application uses no stores.
 
 ---
 
 ### Path A — In-Memory (no infrastructure required)
 
-This path works with nothing but Java and Maven. Copy-paste the four steps below; the app
-will start and enforce a 5-requests-per-minute limit per client IP.
+After preparing the source libraries, apply these steps to a Spring Boot 3 web application.
+The running app needs no Redis or MongoDB and enforces a 5-requests-per-minute limit per client IP.
 
 #### A-1. Add the dependency
 
@@ -131,7 +156,11 @@ will start and enforce a 5-requests-per-minute limit per client IP.
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
-    <version>0.4.0</version>
+    <version>0.4.0-SNAPSHOT</version>
+</dependency>
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-web</artifactId>
 </dependency>
 ```
 
@@ -169,13 +198,21 @@ import org.fluxgate.spring.annotation.EnableFluxgateFilter;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 @SpringBootApplication
+@RestController
 @EnableFluxgateFilter                          // activates the rate-limit filter
 public class MyApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(MyApplication.class, args);
+    }
+
+    @GetMapping("/api/hello")
+    public String hello() {
+        return "hello";
     }
 
     @Bean
@@ -258,13 +295,13 @@ docker compose -f docker/redis-standalone.yml up -d
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
-    <version>0.4.0</version>
+    <version>0.4.0-SNAPSHOT</version>
 </dependency>
 <!-- Redis rate limiter (Lua-based, atomic) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
-    <version>0.4.0</version>
+    <version>0.4.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -304,7 +341,7 @@ Add the MongoDB adapter:
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
-    <version>0.4.0</version>
+    <version>0.4.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -332,7 +369,7 @@ db.rate_limit_rules.insertOne({
   ruleSetId: "api-limits",
   scope: "PER_IP",
   onLimitExceedPolicy: "REJECT_REQUEST",
-  bands: [{ capacity: NumberLong(10), windowMs: NumberLong(60000) }]
+  bands: [{ capacity: NumberLong(10), windowSeconds: NumberLong(60) }]
 })
 '
 ```
@@ -348,8 +385,17 @@ automatically — no `ruleSetProvider` bean needed.
 
 #### B-6. Test
 
-Same `curl` loop as Path A-4. The only difference is that limits are now shared across
-every instance that connects to the same Redis.
+The seeded rule permits 10 requests per minute for one IP. Send 12 requests within that minute
+to see HTTP 429, using the same endpoint as Path A-4:
+
+```bash
+for i in $(seq 1 12); do
+  curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/api/hello
+done
+```
+
+Limits are shared across every instance using the same Redis. Existing bucket state or elapsed
+refill time can change the exact number of successful responses.
 
 ---
 
@@ -687,7 +733,9 @@ to the client IP (the key then carries `ip:`, its real source) and rejecting the
 
 ### Composite Key Example (IP + User)
 
-For fine-grained rate limiting by IP and User combination:
+The factory already resolves the authenticated user and trusted client IP. Reuse those values
+for a composite key; an anonymous caller in this example uses an IP-only key. If authentication
+is required, omit the attribute for anonymous callers and set `missing-key-behavior=REJECT`.
 
 ```java
 // Rule with CUSTOM scope
@@ -702,8 +750,8 @@ RateLimitRule rule = RateLimitRule.builder("composite-rule")
 @Bean
 public RequestContextCustomizer requestContextCustomizer() {
     return (builder, request) -> {
-        String userId = request.getHeader("X-User-Id");
-        String clientIp = request.getRemoteAddr();
+        String userId = builder.build().getUserId();
+        String clientIp = builder.build().getClientIp();
 
         // Prefix each component so they stay unambiguous: "ip:192.168.1.100:user:user-123"
         String compositeKey = userId != null
@@ -720,30 +768,18 @@ For multi-tenant systems, validate `X-Tenant-Id` at your application boundary be
 
 ### RequestContext Customization
 
+Use a server-verified request attribute for tenant identity. An authentication filter must set
+`verifiedTenantId` after checking the authenticated user's tenant membership, before FluxGate runs.
+The customizer preserves the factory's authenticated identity and trusted client IP.
+
 ```java
 @Bean
 public RequestContextCustomizer requestContextCustomizer() {
     return (builder, request) -> {
-        // Set userId for PER_USER scope
-        String userId = request.getHeader("X-User-Id");
-        if (userId != null) {
-            builder.userId(userId);
+        Object tenant = request.getAttribute("verifiedTenantId");
+        if (tenant instanceof String && !((String) tenant).trim().isEmpty()) {
+            builder.attribute("tenantId", (String) tenant);
         }
-
-        // Set apiKey for PER_API_KEY scope
-        String apiKey = request.getHeader("X-API-Key");
-        if (apiKey != null) {
-            builder.apiKey(apiKey);
-        }
-
-        // Override client IP from Cloudflare header
-        String cfIp = request.getHeader("CF-Connecting-IP");
-        if (cfIp != null) {
-            builder.clientIp(cfIp);
-        }
-
-        // Add tenant info for CUSTOM scope with keyStrategyId="tenantId"
-        builder.attribute("tenantId", request.getHeader("X-Tenant-Id"));
         return builder;
     };
 }
@@ -996,11 +1032,13 @@ FluxGate is honest about what it does not do yet:
   them a permit lower, and a refund that cannot run leaves the permit spent. Use one rule
   with several bands when you need strict atomicity on a cluster. The in-memory limiter is
   all-or-nothing across rules.
-- **Servlet only.** There is no WebFlux or reactive support, and no Spring Cloud Gateway
-  filter. `WAIT_FOR_REFILL` blocks a worker thread, which would need redesigning for a
+- **The Java SDK is servlet based.** There is no WebFlux or reactive SDK or Spring Cloud
+  Gateway filter. Applications in other languages can use the separate Envoy authorization service. `WAIT_FOR_REFILL` blocks a worker thread, which would need redesigning for a
   reactive stack.
 - **No bucket introspection or manual reset API.** There is no endpoint to read or clear a
-  single caller's bucket; a rule-set reload resets the buckets of that rule set.
+  single caller's bucket. The Java SDK's legacy rule-set reload resets the affected buckets.
+  Published Envoy policies preserve the counter epoch by default; `resetCounters=true` explicitly
+  starts a new epoch for the entire rule set.
 
 ## Documentation
 

@@ -58,13 +58,17 @@ public interface RequestContextCustomizer {
 }
 ```
 
-빈 하나만 등록하면 스타터가 자동으로 집어갑니다.
+빈 하나만 등록하면 스타터가 자동으로 적용합니다. 이 예시의 `verifiedTenantId`는 먼저 실행되는
+인증 필터가 인증된 사용자의 테넌트 소속을 검증한 뒤 설정하는 요청 속성입니다.
 
 ```java
 @Bean
 public RequestContextCustomizer requestContextCustomizer() {
     return (builder, request) -> {
-        builder.attribute("tenantId", request.getHeader("X-Tenant-Id"));
+        Object tenant = request.getAttribute("verifiedTenantId");
+        if (tenant instanceof String && !((String) tenant).trim().isEmpty()) {
+            builder.attribute("tenantId", (String) tenant);
+        }
         return builder;
     };
 }
@@ -72,12 +76,11 @@ public RequestContextCustomizer requestContextCustomizer() {
 
 ### 가장 중요한 용도: 인증된 신원
 
-기본 설정에서 `userId`와 `apiKey`는 **클라이언트가 제어하는** 요청 헤더에서 옵니다. 따라서 호출자가
-요청마다 다른 `X-User-Id`를 보내 사용자별 제한을 우회할 수 있고, 다른 사람의 식별자를 보내 그 사람의
-쿼터를 소진시킬 수 있습니다.
-
-인증 엣지가 그 헤더들을 재작성하는 게이트웨이 뒤에서는 올바른 동작입니다. 그 외 모든 경우에는
-인증된 principal에서 값을 설정하세요:
+기본값 `identity.source=PRINCIPAL`은 인증된 principal을 읽고 신원 헤더를 무시합니다.
+`HEADERS`와 `PRINCIPAL_THEN_HEADERS`는 클라이언트가 제어할 수 있는 헤더를 명시적으로 켭니다.
+신뢰할 수 있는 인증 엣지가 외부 값을 제거하고 검증한 신원을 공급할 때만 사용하세요. 커스터마이저는
+마지막에 실행되어 이 보호를 덮어쓸 수 있으므로 인증된 신원을 원본 요청 헤더로 바꾸지 마세요.
+Spring Security를 별도로 연동해야 하는 경우:
 
 ```java
 @Bean
@@ -102,25 +105,20 @@ public RequestContextCustomizer authenticatedIdentityCustomizer() {
 - 미인증 요청이 IP 버킷으로 폴백해 인증 티어의 쿼터를 물려받으면 안 된다면
   `fluxgate.ratelimit.missing-key-behavior=REJECT`와 함께 쓰세요.
 
-### 클라이언트 IP 재정의
+### 신뢰된 클라이언트 IP
 
-CDN이 자체 헤더를 쓰거나, 전달 체인이 `trusted-proxies`로 표현할 수 없는 형태일 때:
+전달 헤더와 서비스에 직접 연결되는 프록시의 CIDR을 설정합니다. 팩토리는 연결한 프록시를 확인한 뒤
+헤더를 받아들입니다. 커스터마이저에서 이 결과를 덮어쓰지 마세요. 아래 CIDR은 예시이므로 실제
+Ingress 프록시 주소로 바꿔야 합니다.
 
-```java
-@Bean
-public RequestContextCustomizer cloudflareIpCustomizer() {
-    return (builder, request) -> {
-        String cfIp = request.getHeader("CF-Connecting-IP");
-        if (cfIp != null && !cfIp.isEmpty()) {
-            builder.clientIp(cfIp);
-        }
-        return builder;
-    };
-}
+```yaml
+fluxgate:
+  ratelimit:
+    client-ip-header: CF-Connecting-IP
+    trust-client-ip-header: true
+    trusted-proxies:
+      - 10.20.0.0/24
 ```
-
-이 코드는 `CF-Connecting-IP`를 무조건 신뢰하므로, CDN 외에는 애플리케이션에 도달할 수 없을 때만
-안전합니다. 가능하면 `fluxgate.ratelimit.trusted-proxies`를 쓰세요.
 
 ### `CUSTOM` 스코프용 복합 키
 
@@ -130,8 +128,8 @@ public RequestContextCustomizer cloudflareIpCustomizer() {
 @Bean
 public RequestContextCustomizer compositeKeyCustomizer() {
     return (builder, request) -> {
-        String userId = request.getHeader("X-User-Id");
-        String clientIp = request.getRemoteAddr();
+        String userId = builder.build().getUserId();
+        String clientIp = builder.build().getClientIp();
 
         // 각 구성 요소에 접두사를 붙여, 새니타이즈 후에도 모호해지지 않게 합니다.
         String composite = userId != null
@@ -173,7 +171,8 @@ fluxgate:
 
 `Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`, `X-API-Key`
 
-`X-API-Key`는 여전히 `RequestContext.getApiKey()`를 채웁니다. 헤더 맵에만 들어가지 않습니다.
+`X-API-Key`는 신원 헤더를 명시적으로 켰을 때만 `RequestContext.getApiKey()`를 채웁니다.
+헤더 맵에는 들어가지 않습니다.
 
 기본값이 꺼짐인 이유는 컨텍스트가 메트릭 레코더로 넘어가 **영속화**될 수 있기 때문입니다 —
 `MongoRateLimitMetricsRecorder`는 이를 MongoDB에 씁니다. 허용 목록에 넣는 헤더는 "저장하기로

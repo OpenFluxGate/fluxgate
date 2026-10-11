@@ -1,0 +1,40 @@
+{
+  "accepted": false,
+  "configuration": "heartbeat2s/minPool4/maxConnecting8/checkoutWait2s; no admission bound yet",
+  "failure": "original30s sustained Gateway recovery gate exceeded; omitted schedules independently reject load",
+  "publication_seconds": 25.11192047,
+  "global_publication_seconds": 26.853,
+  "dense_successes": 2,
+  "load": {
+    "target_requests": 12000,
+    "submitted_requests": 11144,
+    "completed_requests": 11144,
+    "omitted_schedules": 856,
+    "all_statuses": {
+      "200": 10515,
+      "503": 629
+    },
+    "latency_ms": {
+      "p50": 5.865168059244752,
+      "p95": 7907.300394028425,
+      "p99": 10883.85460106656,
+      "max": 11484.107890864834
+    }
+  },
+  "raw_provenance": [
+    {
+      "private_path": "/tmp/fluxgate-resilience-combined-mongo-pool-final/summary.json",
+      "sha256": "1590ea693dc80fa8b368e8018e72d82753469c7236269004fad386fe7e919d4e"
+    },
+    {
+      "private_path": "/tmp/fluxgate-resilience-combined-mongo-pool-final/ha/failure.json",
+      "sha256": "c0773bccc43fdac4ac94203bd970a5a0cdd99f1f1c61ba5b65bed6d698acc1b3"
+    },
+    {
+      "private_path": "/tmp/fluxgate-resilience-combined-mongo-pool-final/raw-load.json",
+      "sha256": "f603967fda809cd5313919f3d20f99cdb0363b099e29043f494700d970c87688"
+    }
+  ],
+  "application_jar_sha256": "8774b4dc7be69c17b97e4a4b9c4f1b9a4b2ca7b414d4ba3ff99d56713d111d5f",
+  "root_cause_claim": "pool starvation not established; protected overload admission proposed without weakening policy/audit/SLO"
+}

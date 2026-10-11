@@ -10,6 +10,10 @@ buildNumber.properties
 .mvn/timing.properties
 .mvn/wrapper/maven-wrapper.jar
 
+# Local Python verification caches
+__pycache__/
+*.py[cod]
+
 # Eclipse
 .classpath
 .project

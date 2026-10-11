@@ -10,6 +10,8 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.IndexOptions;
+import com.mongodb.client.model.Indexes;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.time.Duration;
@@ -26,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.bson.BsonDocument;
 import org.bson.Document;
+import org.fluxgate.adapter.mongo.converter.InvalidRuleDocumentException;
 import org.fluxgate.adapter.mongo.converter.RateLimitRuleConverter;
 import org.fluxgate.adapter.mongo.converter.RateLimitRuleMongoConverter;
 import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
@@ -36,7 +39,6 @@ import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.key.RateLimitKey;
-import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -281,6 +283,135 @@ class MongoRateLimitRuleRepositoryIdentityIntegrationTest {
   // ================================================================================== indexes
 
   @Test
+  void legacyGlobalIdMigrationPreservesDocumentsAclAndEnablesScopedIdentity() {
+    collection.createIndex(Indexes.ascending("id"), new IndexOptions().unique(true).name("id_1"));
+    collection.createIndex(Indexes.ascending("ruleSetId"));
+    repository.save(rule("A", "shared-rule", 10));
+    repository.saveAccessControl("A", List.of(), List.of(), Set.of(), Set.of("user:blocked"));
+    Document existing = collection.find(Filters.eq("id", "shared-rule")).first();
+    List<Document> oldIndexes = collection.listIndexes().into(new ArrayList<>());
+    assertThatThrownBy(repository::ensureIndexes).hasMessageContaining("explicit migration");
+    assertThatThrownBy(repository::ensureIndexes).hasMessageContaining("explicit migration");
+    assertThat(collection.listIndexes().into(new ArrayList<>())).isEqualTo(oldIndexes);
+    repository.migrateLegacyGlobalIdConstraint();
+    repository.migrateLegacyGlobalIdConstraint();
+    repository.ensureIndexes();
+    List<Document> indexes = collection.listIndexes().into(new ArrayList<>());
+    assertThat(indexes)
+        .anySatisfy(
+            index -> {
+              assertThat(index.getString("name")).isEqualTo(MongoRateLimitRuleRepository.ID_INDEX);
+              assertThat(index.get("key")).isEqualTo(new Document("id", 1));
+              assertThat(Boolean.TRUE.equals(index.getBoolean("unique"))).isFalse();
+            });
+    assertThat(indexes)
+        .anySatisfy(
+            index -> {
+              assertThat(index.getString("name"))
+                  .isEqualTo(MongoRateLimitRuleRepository.UNIQUE_RULE_INDEX);
+              assertThat(index.get("key")).isEqualTo(new Document("ruleSetId", 1).append("id", 1));
+              assertThat(index.getBoolean("unique")).isTrue();
+            });
+    assertThat(collection.find(Filters.eq("id", "shared-rule")).first()).isEqualTo(existing);
+    assertThat(repository.findAccessControlByRuleSetId("A").getDeniedKeys())
+        .contains("user:blocked");
+    repository.save(rule("B", "shared-rule", 20));
+    assertThat(capacityOf(repository.findById("A", "shared-rule").orElseThrow())).isEqualTo(10);
+    assertThat(capacityOf(repository.findById("B", "shared-rule").orElseThrow())).isEqualTo(20);
+    assertThatThrownBy(
+            () ->
+                collection.insertOne(
+                    RateLimitRuleMongoConverter.toBson(
+                        RateLimitRuleConverter.toDocument(rule("A", "shared-rule", 30)))))
+        .isInstanceOf(MongoWriteException.class);
+  }
+
+  @Test
+  void unknownLegacyDefinitionIsNeverDroppedOrModified() {
+    collection.createIndex(
+        Indexes.ascending("id"), new IndexOptions().unique(true).sparse(true).name("id_1"));
+    repository.save(rule("A", "preserved", 10));
+    List<Document> before = collection.listIndexes().into(new ArrayList<>());
+    assertThatThrownBy(repository::migrateLegacyGlobalIdConstraint)
+        .hasMessageContaining("Unknown/custom global-id");
+    assertThat(collection.listIndexes().into(new ArrayList<>())).isEqualTo(before);
+    assertThat(repository.findById("A", "preserved")).isPresent();
+  }
+
+  @Test
+  void customCompoundConstraintIsNeverDroppedOrModified() {
+    collection.createIndex(Indexes.ascending("id"), new IndexOptions().unique(true).name("id_1"));
+    collection.createIndex(
+        Indexes.ascending("ruleSetId", "id"),
+        new IndexOptions()
+            .unique(true)
+            .sparse(true)
+            .name(MongoRateLimitRuleRepository.UNIQUE_RULE_INDEX));
+    repository.save(rule("A", "preserved", 10));
+    List<Document> before = collection.listIndexes().into(new ArrayList<>());
+    assertThatThrownBy(repository::migrateLegacyGlobalIdConstraint)
+        .hasMessageContaining("unknown/custom compound");
+    assertThat(collection.listIndexes().into(new ArrayList<>())).isEqualTo(before);
+    assertThat(repository.findById("A", "preserved")).isPresent();
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void failedLookupCreationAfterLegacyDropCanBeRetriedSafely() {
+    collection.createIndex(Indexes.ascending("id"), new IndexOptions().unique(true).name("id_1"));
+    repository.save(rule("A", "preserved", 10));
+    AtomicBoolean failOnce = new AtomicBoolean(true);
+    MongoCollection<Document> failing =
+        (MongoCollection<Document>)
+            Proxy.newProxyInstance(
+                MongoCollection.class.getClassLoader(),
+                new Class<?>[] {MongoCollection.class},
+                (proxy, method, args) -> {
+                  if ("createIndex".equals(method.getName())
+                      && args.length == 2
+                      && args[1] instanceof IndexOptions
+                      && MongoRateLimitRuleRepository.ID_INDEX.equals(
+                          ((IndexOptions) args[1]).getName())
+                      && failOnce.getAndSet(false))
+                    throw new com.mongodb.MongoException("injected lookup failure");
+                  try {
+                    return method.invoke(collection, args);
+                  } catch (InvocationTargetException error) {
+                    throw error.getCause();
+                  }
+                });
+    assertThatThrownBy(
+            () -> new MongoRateLimitRuleRepository(failing).migrateLegacyGlobalIdConstraint())
+        .hasMessageContaining("injected lookup failure");
+    assertThat(collection.listIndexes().into(new ArrayList<>()))
+        .anySatisfy(
+            index -> {
+              assertThat(index.getString("name"))
+                  .isEqualTo(MongoRateLimitRuleRepository.UNIQUE_RULE_INDEX);
+              assertThat(index.getBoolean("unique")).isTrue();
+            });
+    assertThat(repository.findById("A", "preserved")).isPresent();
+    assertThatThrownBy(
+            () ->
+                collection.insertOne(
+                    RateLimitRuleMongoConverter.toBson(
+                        RateLimitRuleConverter.toDocument(rule("A", "preserved", 30)))))
+        .isInstanceOf(MongoWriteException.class);
+    repository.migrateLegacyGlobalIdConstraint();
+    repository.ensureIndexes();
+    repository.save(rule("B", "preserved", 20));
+    assertThat(repository.findById("B", "preserved")).isPresent();
+  }
+
+  @Test
+  void unrelatedLookupNameConflictStillFailsClosed() {
+    collection.createIndex(Indexes.ascending("unrelated"), new IndexOptions().name("id_1"));
+    assertThatThrownBy(repository::ensureIndexes)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Cannot create the FluxGate rule index");
+  }
+
+  @Test
   @DisplayName("ensureIndexes creates the unique (ruleSetId, id) and the id index, idempotently")
   void ensureIndexes_createsIndexes() {
     repository.ensureIndexes();
@@ -336,8 +467,8 @@ class MongoRateLimitRuleRepositoryIdentityIntegrationTest {
 
   @Test
   @DisplayName(
-      "Int32/Double numbers load, malformed documents are skipped, the rule set still loads")
-  void findByRuleSetId_mixedAndMalformedDocuments() {
+      "Management listing tolerates malformed documents but runtime refuses a partial rule set")
+  void malformedDocumentsAreVisibleToRuntimeAsFailure() {
     collection.insertOne(
         rawRule(
             "S",
@@ -371,7 +502,7 @@ class MongoRateLimitRuleRepositoryIdentityIntegrationTest {
                 .append("algorithm", "FIXED_WINDOW")
                 .append("zoneId", "Mars/Olympus")));
 
-    List<RateLimitRule> rules = repository.findByRuleSetId("S");
+    List<RateLimitRule> rules = repository.findAll();
 
     assertThat(rules).extracting(RateLimitRule::getId).containsExactlyInAnyOrder("int32", "double");
     assertThat(rules)
@@ -381,8 +512,12 @@ class MongoRateLimitRuleRepositoryIdentityIntegrationTest {
 
     MongoRuleSetProvider provider =
         new MongoRuleSetProvider(repository, (context, rule) -> RateLimitKey.of("k"));
-    RateLimitRuleSet ruleSet = provider.findById("S").orElseThrow();
-    assertThat(ruleSet.getRules()).hasSize(2);
+    assertThatThrownBy(() -> repository.findByRuleSetId("S"))
+        .isInstanceOf(InvalidRuleDocumentException.class)
+        .hasMessageContaining("capacity");
+    assertThatThrownBy(() -> provider.findById("S"))
+        .isInstanceOf(InvalidRuleDocumentException.class)
+        .hasMessageContaining("capacity");
   }
 
   // ========================================================================== access control
@@ -392,6 +527,17 @@ class MongoRateLimitRuleRepositoryIdentityIntegrationTest {
         RateLimitRuleMongoConverter.toBson(RateLimitRuleConverter.toDocument(rule("acl", id, 5)));
     doc.putAll(acl);
     collection.insertOne(doc);
+  }
+
+  @Test
+  void invalidDeniedCidrCannotDisappearFromRuntimeAcl() {
+    insertWithAcl("bad", new Document("deniedIps", List.of("203.0.113.0/24", "10.0.0.0/99")));
+    assertThatThrownBy(() -> repository.findAccessControlByRuleSetId("acl"))
+        .isInstanceOf(IllegalArgumentException.class);
+    MongoRuleSetProvider provider =
+        new MongoRuleSetProvider(repository, (context, rule) -> RateLimitKey.of("k"));
+    assertThatThrownBy(() -> provider.findById("acl"))
+        .hasMessageContaining("Invalid access control");
   }
 
   @Test

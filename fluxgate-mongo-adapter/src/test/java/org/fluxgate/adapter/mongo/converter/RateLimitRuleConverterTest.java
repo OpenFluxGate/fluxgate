@@ -425,6 +425,22 @@ class RateLimitRuleConverterTest {
     }
 
     @Test
+    void invalidPolicyCidrsAreRejectedIncludingMixedValidAndInvalidEntries() {
+      for (String invalid : List.of("10.0.0.0/99", "not-an-ip", " ")) {
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                RateLimitRuleConverter.toAccessControl(
+                    List.of(), List.of("203.0.113.0/24", invalid), Set.of(), Set.of()));
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                RateLimitRuleConverter.toAccessControl(
+                    List.of(invalid), List.of(), Set.of(), Set.of()));
+      }
+    }
+
+    @Test
     @DisplayName("toAccessControl builds every list that is present")
     void toAccessControl_buildsAllLists() {
       RateLimitRuleDocument doc = createDocument();

@@ -209,10 +209,10 @@ public final class RateLimitRuleConverter {
     AccessControl.Builder acBuilder = AccessControl.builder();
 
     if (!allowedIpsList.isEmpty()) {
-      acBuilder.allowedIps(CidrSet.of(allowedIpsList));
+      acBuilder.allowedIps(CidrSet.ofStrict(allowedIpsList));
     }
     if (!deniedIpsList.isEmpty()) {
-      acBuilder.deniedIps(CidrSet.of(deniedIpsList));
+      acBuilder.deniedIps(CidrSet.ofStrict(deniedIpsList));
     }
     if (!allowedKeySet.isEmpty()) {
       acBuilder.allowedKeys(allowedKeySet);

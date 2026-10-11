@@ -1,0 +1,235 @@
+{
+  "diagnostic_only": true,
+  "full_ha_passed": false,
+  "phase_complete_not_full_ha": true,
+  "coordinator_terminal_exit": 1,
+  "root_terminal_exit_witness": "Root witnessed process36535 exit1; diagnostic observer completed and retained three SIGQUIT checkpoints.",
+  "application_jar_sha256": "893ce2fdc1f4b75d6ccabdf7f54ec1cd18e694adfef876dfb649aeb337440d40",
+  "root_source_base": "b82",
+  "loaded_ha_source_base": "25f32a8",
+  "thread_checkpoints_seconds": [
+    19,
+    22,
+    25
+  ],
+  "active_request_stack_observations": [
+    {
+      "pod": "fluxgate-authz-64f586c786-qts6t",
+      "dump_local_timestamp": "2026-10-10 01:00:20",
+      "request_executor_suffix": 4,
+      "allowlisted_frame_symbols": [
+        "sun.nio.ch.Net.poll",
+        "sun.nio.ch.NioSocketImpl.timedRead",
+        "com.mongodb.internal.connection.SocketStream.read",
+        "com.mongodb.client.internal.MongoCollectionImpl.insertOne",
+        "org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder.record",
+        "org.fluxgate.core.metrics.CompositeMetricsRecorder.record",
+        "org.fluxgate.redis.RedisRateLimiter.record",
+        "org.fluxgate.redis.RedisRateLimiter.tryConsume",
+        "org.fluxgate.spring.handler.ResilientRateLimiter.consume"
+      ]
+    },
+    {
+      "pod": "fluxgate-authz-64f586c786-qts6t",
+      "dump_local_timestamp": "2026-10-10 01:00:20",
+      "request_executor_suffix": 9,
+      "allowlisted_frame_symbols": [
+        "sun.nio.ch.Net.poll",
+        "sun.nio.ch.NioSocketImpl.timedRead",
+        "com.mongodb.internal.connection.SocketStream.read",
+        "com.mongodb.client.internal.MongoCollectionImpl.insertOne",
+        "org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder.record",
+        "org.fluxgate.core.metrics.CompositeMetricsRecorder.record",
+        "org.fluxgate.redis.RedisRateLimiter.record",
+        "org.fluxgate.redis.RedisRateLimiter.tryConsume",
+        "org.fluxgate.spring.handler.ResilientRateLimiter.consume"
+      ]
+    },
+    {
+      "pod": "fluxgate-authz-64f586c786-qts6t",
+      "dump_local_timestamp": "2026-10-10 01:00:23",
+      "request_executor_suffix": 6,
+      "allowlisted_frame_symbols": [
+        "sun.nio.ch.Net.poll",
+        "sun.nio.ch.NioSocketImpl.timedRead",
+        "com.mongodb.internal.connection.SocketStream.read",
+        "com.mongodb.client.internal.MongoCollectionImpl.insertOne",
+        "org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder.record",
+        "org.fluxgate.core.metrics.CompositeMetricsRecorder.record",
+        "org.fluxgate.redis.RedisRateLimiter.record",
+        "org.fluxgate.redis.RedisRateLimiter.tryConsume",
+        "org.fluxgate.spring.handler.ResilientRateLimiter.consume"
+      ]
+    }
+  ],
+  "other_authz_pod_active_request_stack_count": 0,
+  "dense_gateway": {
+    "completed_exact_200_count": 4,
+    "response_header_seconds": [
+      0.7408,
+      1.798374,
+      1.808902,
+      1.792005
+    ],
+    "transport_errors": {
+      "TimeoutError": 1
+    },
+    "two_slow_request_windows_unix_ms": [
+      [
+        1791594019631,
+        1791594021430
+      ],
+      [
+        1791594021631,
+        1791594023440
+      ]
+    ],
+    "rpc_timing": {
+      "rpc_startup_seconds": 0.670824,
+      "granted_remote_seconds": 8.651610749866814,
+      "root_rpc_seconds": 9.385601,
+      "sample_count": 5,
+      "clock_contract": "Remote duration starts at READY before root grants remaining time; no UTC clock alignment assumed"
+    }
+  },
+  "cpu": {
+    "records": 246,
+    "errors": 0,
+    "window_selection": "Per-container closest retained observation at or before publication verification, and at or after final dense-request completion.",
+    "containers": [
+      {
+        "pod": "fluxgate-authz-64f586c786-qts6t",
+        "window_start_unix_ms": 1791594017341,
+        "window_end_unix_ms": 1791594027777,
+        "window_seconds": 10.436,
+        "deltas": {
+          "usage_usec": 208067,
+          "nr_periods": 57,
+          "nr_throttled": 0,
+          "throttled_usec": 0
+        }
+      },
+      {
+        "pod": "fluxgate-authz-64f586c786-rkgm9",
+        "window_start_unix_ms": 1791594017343,
+        "window_end_unix_ms": 1791594027775,
+        "window_seconds": 10.432,
+        "deltas": {
+          "usage_usec": 280373,
+          "nr_periods": 46,
+          "nr_throttled": 0,
+          "throttled_usec": 0
+        }
+      },
+      {
+        "pod": "ha-probe-bf045488",
+        "window_start_unix_ms": 1791594017337,
+        "window_end_unix_ms": 1791594027771,
+        "window_seconds": 10.434,
+        "deltas": {
+          "usage_usec": 406610,
+          "nr_periods": 58,
+          "nr_throttled": 34,
+          "throttled_usec": 2126633
+        }
+      },
+      {
+        "pod": "mongo-0",
+        "window_start_unix_ms": 1791594017341,
+        "window_end_unix_ms": 1791594027777,
+        "window_seconds": 10.436,
+        "deltas": {
+          "usage_usec": 477077,
+          "nr_periods": 91,
+          "nr_throttled": 0,
+          "throttled_usec": 0
+        }
+      },
+      {
+        "pod": "mongo-1",
+        "window_start_unix_ms": 1791594017343,
+        "window_end_unix_ms": 1791594027775,
+        "window_seconds": 10.432,
+        "deltas": {
+          "usage_usec": 136960,
+          "nr_periods": 85,
+          "nr_throttled": 0,
+          "throttled_usec": 0
+        }
+      },
+      {
+        "pod": "mongo-2",
+        "window_start_unix_ms": 1791594017337,
+        "window_end_unix_ms": 1791594027771,
+        "window_seconds": 10.434,
+        "deltas": {
+          "usage_usec": 106582,
+          "nr_periods": 1,
+          "nr_throttled": 1,
+          "throttled_usec": 25190
+        }
+      }
+    ]
+  },
+  "conclusion": "Concurrent HTTP request executors were synchronously waiting for Mongo event insert responses after Redis consumption; this best-effort recording work can delay authorization responses.",
+  "limits": [
+    "This partial Mongo phase failed the original30-second dense recovery gate; it is not full HA acceptance.",
+    "Thread and CPU observations do not establish the exact Mongo server-side stall cause or that synchronous events alone explain the entire HA failure.",
+    "Authz and healthy Mongo containers had zero CFS throttle delta in the selected window; the probe had2.126633seconds accumulated CFS throttle, which does not establish the request-thread stall cause.",
+    "Dump wall timestamps and request timestamps support temporal overlap; global inter-node clock alignment is not independently established.",
+    "Earlier v1 observer diagnostics were incomplete due to unavailable CPU observations and permission errors; no v1 measurements are credited.",
+    "An asynchronous bounded best-effort event path may lose events during saturation or process failure; it cannot be described as lossless audit delivery.",
+    "No raw thread headers, server addresses, request values, event payloads or logs are exported."
+  ],
+  "provenance": {
+    "observer_result": {
+      "path": "/tmp/fluxgate-resilience-mongo-thread-cgroup-diagnostic-v2/result.json",
+      "sha256": "9a0c327c2f18fd3ce5a31bd4257829d85f235a5342961afe4b0a16733bafad0f",
+      "size_bytes": 188
+    },
+    "cpu_observations": {
+      "path": "/tmp/fluxgate-resilience-mongo-thread-cgroup-diagnostic-v2/cpu-observations.json",
+      "sha256": "c4e2cc6f01eeacc279c7116f0ad9e2e3f3e6feabb584937958e938d0c21e79a7",
+      "size_bytes": 181384
+    },
+    "observer_log": {
+      "path": "/tmp/fluxgate-resilience-mongo-thread-cgroup-diagnostic-v2/coordinator.log",
+      "sha256": "d158a14a800fc6c310992de7a45e18abced59aad349b28ff112e5d8c62852164",
+      "size_bytes": 1216
+    },
+    "thread_dump_logs": [
+      {
+        "path": "/tmp/fluxgate-resilience-mongo-thread-cgroup-diagnostic-v2/fluxgate-authz-64f586c786-qts6t.log",
+        "sha256": "e7d1d02b993a525d0c2788d3c1c045d13812520ffe478b9480845007243e5913",
+        "size_bytes": 194525
+      },
+      {
+        "path": "/tmp/fluxgate-resilience-mongo-thread-cgroup-diagnostic-v2/fluxgate-authz-64f586c786-rkgm9.log",
+        "sha256": "1adc2626c4806280fd8a7180c9c4221cbd2c7e145fd560df1515eb660de973b8",
+        "size_bytes": 221602
+      }
+    ],
+    "ha_failure": {
+      "path": "/tmp/fluxgate-resilience-mongo-thread-ha-diagnostic-v2/failure.json",
+      "sha256": "9dc10419d9fc28a50a82fe9509103c03d73bbb0ec9a85e212b66f1fd7d6106d9",
+      "size_bytes": 29449
+    },
+    "ha_progress": {
+      "path": "/tmp/fluxgate-resilience-mongo-thread-ha-diagnostic-v2/progress.json",
+      "sha256": "eb9611cb397953c4487b033feeb8caf795e822320449502c33becfee1ad2c3c8",
+      "size_bytes": 33326
+    },
+    "publication": [
+      {
+        "path": "/tmp/fluxgate-resilience-mongo-thread-ha-diagnostic-v2/publication-5f69a08094a6450c933fd9f8503b57e8.json",
+        "sha256": "623c2fcfff34a715679634bf210ea848bbfbc99d3a4f5fcd18dc0cd5a1f16605",
+        "size_bytes": 4998
+      }
+    ],
+    "publisher_cleanup": {
+      "path": "/tmp/fluxgate-resilience-mongo-thread-ha-diagnostic-v2/publisher-cleanup.json",
+      "sha256": "89aeeb83455518f6559c9baf73643ee1e77c5bab6f4186026abec33d7311de6d",
+      "size_bytes": 669
+    }
+  }
+}

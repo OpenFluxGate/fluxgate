@@ -2,6 +2,7 @@ package org.fluxgate.redis;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -192,7 +193,9 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
 
       List<String> bucketKeys = new ArrayList<>(bands.size());
       for (RateLimitBand band : bands) {
-        bucketKeys.add(buildBucketKey(ruleSet.getId(), rule.getId(), logicalKey, band));
+        String bucketKey = buildBucketKey(ruleSet.getId(), rule.getId(), logicalKey, band);
+        String epoch = counterEpoch(rule);
+        bucketKeys.add(epoch.isEmpty() ? bucketKey : bucketKey + ":epoch:" + epoch);
       }
       calls.add(new RuleCall(rule, logicalKey, bands, bucketKeys));
     }
@@ -231,7 +234,20 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
       allBands.addAll(call.bands);
     }
 
-    BucketState state = tokenBucketStore.tryConsume(allKeys, allBands, permits);
+    List<Long> revisions = new ArrayList<>();
+    List<String> epochs = new ArrayList<>();
+    boolean published = false;
+    for (RuleCall candidate : calls) {
+      long revision = counterRevision(candidate.rule);
+      String epoch = counterEpoch(candidate.rule);
+      published |= revision != 0 || !epoch.isEmpty();
+      revisions.addAll(java.util.Collections.nCopies(candidate.bands.size(), revision));
+      epochs.addAll(java.util.Collections.nCopies(candidate.bands.size(), epoch));
+    }
+    BucketState state =
+        published
+            ? tokenBucketStore.tryConsumeFenced(allKeys, allBands, permits, revisions, epochs)
+            : tokenBucketStore.tryConsume(allKeys, allBands, permits);
 
     RuleCall call = calls.get(0);
     int localIndex = state.bandIndex();
@@ -267,7 +283,12 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
       RuleCall call = calls.get(index);
       BucketState state;
       try {
-        state = tokenBucketStore.tryConsume(call.bucketKeys, call.bands, permits);
+        long revision = counterRevision(call.rule);
+        String epoch = counterEpoch(call.rule);
+        state =
+            revision != 0 || !epoch.isEmpty()
+                ? tokenBucketStore.tryConsume(call.bucketKeys, call.bands, permits, revision, epoch)
+                : tokenBucketStore.tryConsume(call.bucketKeys, call.bands, permits);
       } catch (RuntimeException e) {
         refund(charged, chargedStates, permits);
         throw e;
@@ -320,7 +341,13 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
     for (RuleCall call : unchecked.subList(0, checks)) {
       BucketState state;
       try {
-        state = tokenBucketStore.check(call.bucketKeys, call.bands, permits);
+        long revision = counterRevision(call.rule);
+        String epoch = counterEpoch(call.rule);
+        state =
+            revision != 0 || !epoch.isEmpty()
+                ? tokenBucketStore.checkFenced(
+                    call.bucketKeys, call.bands, permits, revision, epoch)
+                : tokenBucketStore.check(call.bucketKeys, call.bands, permits);
       } catch (RuntimeException e) {
         log.debug("Could not check rule {} for its wait: {}", call.rule.getId(), e.getMessage());
         continue;
@@ -429,9 +456,39 @@ public class RedisRateLimiter implements RateLimiter, AutoCloseable {
         .policy(rule.getOnLimitExceedPolicy())
         .remainingTokens(0L)
         .nanosToWaitForRefill(0L)
+        .decisionReason(RateLimitResult.DecisionReason.MISSING_KEY)
         .limit(-1L)
         .resetTimeMillis(-1L)
         .build();
+  }
+
+  private static long counterRevision(RateLimitRule rule) {
+    Object revision = rule.getAttributes().get("fluxgate.counterRevision");
+    if (revision == null) return 0L;
+    if (!(revision instanceof Number)) {
+      throw new IllegalArgumentException("fluxgate.counterRevision must be a nonnegative integer");
+    }
+    Number value = (Number) revision;
+    long integer = value.longValue();
+    if (integer < 0
+        || value.doubleValue() != (double) integer
+        || integer > 9_007_199_254_740_991L) {
+      throw new IllegalArgumentException(
+          "fluxgate.counterRevision is outside the exact Lua integer range");
+    }
+    return integer;
+  }
+
+  private static String counterEpoch(RateLimitRule rule) {
+    Object epoch = rule.getAttributes().get("fluxgate.counterEpoch");
+    if (epoch == null || "legacy".equals(epoch)) return "";
+    if (!(epoch instanceof String) || ((String) epoch).isEmpty()) {
+      throw new IllegalArgumentException("fluxgate.counterEpoch must be a nonempty string");
+    }
+    // Lossless encoding avoids collisions between reset epochs and cannot introduce hash tags.
+    return Base64.getUrlEncoder()
+        .withoutPadding()
+        .encodeToString(((String) epoch).getBytes(StandardCharsets.UTF_8));
   }
 
   private static RateLimitBand bandAt(List<RateLimitBand> bands, int index) {

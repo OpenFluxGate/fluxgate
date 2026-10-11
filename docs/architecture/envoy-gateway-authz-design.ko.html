@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FluxGate × Envoy Gateway — 설계 결정 초안</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#f5f7fb; --surface:#fff; --ink:#18243a; --muted:#53627a; --line:#dce4ef; --accent:#146c77; --accent-soft:#e6f5f3; --warn:#9a5a16; --warn-soft:#fff2df; --danger:#a23443; --danger-soft:#fff0f2; --code:#eef2f8; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#101722; --surface:#182334; --ink:#e9f0fa; --muted:#adbbce; --line:#32445a; --accent:#7bd5da; --accent-soft:#193a43; --warn:#f6c47e; --warn-soft:#49351f; --danger:#ffa3af; --danger-soft:#492934; --code:#223046; } }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.65 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",sans-serif; }
+    a { color:var(--accent); text-underline-offset:3px; }
+    .shell { width:min(1180px,calc(100% - 40px)); margin:0 auto; }
+    header { padding:52px 0 28px; }
+    .eyebrow { color:var(--accent); font-size:.8rem; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+    h1 { margin:.3rem 0 .6rem; font-size:clamp(2rem,4.7vw,3.6rem); line-height:1.16; letter-spacing:-.045em; }
+    h2 { margin:0 0 18px; font-size:1.55rem; letter-spacing:-.025em; }
+    h3 { margin:0 0 8px; font-size:1.05rem; }
+    p { margin:.25rem 0 1rem; }
+    .lead { max-width:920px; color:var(--muted); font-size:1.17rem; }
+    .meta { display:flex; flex-wrap:wrap; gap:8px; margin-top:22px; }
+    .pill { display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:999px; background:var(--surface); padding:5px 12px; font-size:.8rem; font-weight:700; }
+    nav { display:flex; flex-wrap:wrap; gap:8px; border-top:1px solid var(--line); padding:18px 0 26px; }
+    nav a { text-decoration:none; border-radius:8px; padding:6px 10px; background:var(--surface); border:1px solid var(--line); font-size:.85rem; font-weight:700; }
+    section { scroll-margin-top:24px; margin:0 0 28px; padding:26px; border:1px solid var(--line); border-radius:18px; background:var(--surface); box-shadow:0 8px 26px #14284609; }
+    .callout { border-left:4px solid var(--accent); background:var(--accent-soft); padding:15px 18px; border-radius:0 10px 10px 0; }
+    .warning { border-left-color:var(--warn); background:var(--warn-soft); }
+    .danger { border-left-color:var(--danger); background:var(--danger-soft); }
+    .grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+    .card { border:1px solid var(--line); border-radius:12px; padding:18px; background:var(--bg); }
+    .card strong { display:block; margin-bottom:6px; }
+    .selected { border-color:var(--accent); background:var(--accent-soft); }
+    .diagram { width:100%; height:min(720px,74vw); min-height:470px; border:1px solid var(--line); border-radius:12px; background:#fff; }
+    .diagram-link { display:block; margin:8px 0 0; font-size:.84rem; }
+    .table-wrap { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; min-width:690px; }
+    th,td { text-align:left; vertical-align:top; padding:11px 12px; border-bottom:1px solid var(--line); }
+    th { font-size:.82rem; color:var(--muted); background:var(--bg); }
+    td:first-child { font-weight:700; }
+    ol,ul { padding-left:1.35rem; }
+    li { margin:7px 0; }
+    code { font: .9em ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--code); border-radius:4px; padding:2px 5px; overflow-wrap:anywhere; }
+    pre { background:var(--code); padding:18px; border-radius:10px; overflow:auto; }
+    pre code { padding:0; }
+    .small { color:var(--muted); font-size:.87rem; }
+    footer { color:var(--muted); padding:0 0 48px; font-size:.85rem; }
+    @media (max-width:800px) { .grid { grid-template-columns:1fr; } section { padding:18px; } .diagram { height:560px; } }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div class="eyebrow">Architecture decision · 로컬 파일럿</div>
+    <h1>FluxGate를 K8s 라우터의<br>요청 판정 지점에 연결하기</h1>
+    <p class="lead">목표는 Java·Go·Rust 서비스에 SDK를 심지 않고, 외부에서 들어오는 HTTP 요청을 Envoy Gateway에서 공통 제한하는 것이다. FluxGate는 기존 Java 규칙 엔진과 Redis 카운터를 사용하는 판정 서비스로 둔다.</p>
+    <div class="meta"><span class="pill">권장: Envoy Gateway HTTP extAuth</span><span class="pill">브랜치: feature/envoy-gateway-authz</span><span class="pill">기준: 40e78fe</span><span class="pill">상태: 로컬 Gateway 검증</span></div>
+  </header>
+  <nav aria-label="문서 목차">
+    <a href="#decision">결론</a><a href="#topology">구성</a><a href="#sequence">요청 순서</a><a href="#alternatives">대안</a><a href="#contract">계약</a><a href="#failure">장애</a><a href="#security">보안</a><a href="#local">로컬 테스트</a><a href="#delivery">검증·도입</a><a href="#sources">근거</a>
+  </nav>
+  <main>
+    <section id="decision">
+      <h2>권장 결정</h2>
+      <div class="callout"><strong>Envoy Gateway의 <code>SecurityPolicy.extAuth</code>를 1차 통합 지점으로 선택한다.</strong> 요청별 판정은 FluxGate Java 서비스가 소유하고, Redis의 소비 결과를 HTTP 상태로 반환한다. Envoy는 허용된 요청만 기존 서비스 Pod로 전달한다.</div>
+      <p><strong>판정 서비스는 현재 존재하지 않는 새 컴포넌트다.</strong> 기존 FluxGate의 규칙·키·제한 알고리즘을 재사용해 만든다. 정책을 HTTPRoute에 부착하기 전까지 기존 서비스의 요청 경로는 변하지 않는다. Go나 Rust로 판정 서비스를 다시 작성해도 Envoy→판정 서비스, 판정 서비스→Redis 호출은 사라지지 않는다. 서비스 구현 언어와 제한 정책을 분리하는 것이 핵심이다.</p>
+      <p class="small">범위: Gateway를 통과하는 HTTP 트래픽. Pod 간 직접 호출, 비HTTP 트래픽, 배치 작업은 자동으로 보호되지 않는다.</p>
+    </section>
+    <section id="topology">
+      <h2>전체 구성</h2>
+      <iframe class="diagram" title="Envoy Gateway와 FluxGate 구성 다이어그램" src="envoy-gateway-authz-diagram.html"></iframe>
+      <a class="diagram-link" href="envoy-gateway-authz-diagram.html" target="_blank" rel="noopener">다이어그램을 전체 화면으로 열기 ↗</a>
+      <p class="small">그림의 Redis 위치는 예시다. 클러스터 안 또는 관리형 서비스일 수 있으며, 실제 배치와 네트워크 정책은 별도로 정한다.</p>
+    </section>
+    <section id="sequence">
+      <h2>요청 한 건의 순서</h2>
+      <iframe class="diagram" title="외부 인가와 Redis 판정 시퀀스 다이어그램" src="envoy-gateway-authz-sequence.html"></iframe>
+      <a class="diagram-link" href="envoy-gateway-authz-sequence.html" target="_blank" rel="noopener">시퀀스를 전체 화면으로 열기 ↗</a>
+      <p>제한을 초과하면 FluxGate가 429를 반환하고 Envoy는 원 서비스에 요청을 보내지 않는다. 제한 카운터는 서비스의 비즈니스 처리 성공과 무관하게 <strong>판정 시도 시점</strong>에 소비된다. 현재 Redis 소비 원자성은 한 규칙의 band 묶음에만 적용된다. 여러 규칙이 매칭되면 앞선 규칙에서 카운터를 소비한 뒤 뒤쪽 규칙이 거절할 수 있다. 파일럿은 매 요청에 제한 규칙 하나만 매칭되도록 제한하고, 다중 규칙 전체의 의미는 별도 설계한다.</p>
+    </section>
+    <section id="alternatives">
+      <h2>왜 이 확장 지점인가</h2>
+      <div class="grid">
+        <div class="card selected"><strong>1. SecurityPolicy.extAuth</strong>요청 전체 문맥을 보고 FluxGate가 허용·403·429를 결정한다. 기존 엔진·Redis 의미를 보존하기 쉽다. 매 요청 동기 네트워크 호출이 생기고 Envoy 전용 정책 CRD를 쓴다.</div>
+        <div class="card"><strong>2. BackendTrafficPolicy global rate limit</strong>Envoy의 정식 트래픽 정책에 잘 맞고 공유 버킷·shadow mode·비용 설정이 있다. 그러나 기존 FluxGate의 ACL·규칙 우선순위·알고리즘·Redis 키를 그대로 재사용하는 연결은 아니다.</div>
+        <div class="card"><strong>3. Envoy RLS 프로토콜 어댑터</strong>장기적으로 rate limit 전용 인터페이스와 결합할 수 있다. <code>domain + descriptors + hits_addend</code> 계약, 정책 descriptor 생성, 배포 연결을 새로 설계해야 한다.</div>
+      </div>
+      <p class="small">Gateway API의 라우팅 리소스와 판정 API는 분리할 수 있지만, <code>SecurityPolicy</code> 바인딩은 Envoy Gateway 전용이다. Experimental <code>HTTPRoute.externalAuth</code> 지원 여부는 배포할 컨트롤러 버전에서 확인한다.</p>
+    </section>
+    <section id="contract">
+      <h2>Envoy ↔ FluxGate 계약</h2>
+      <div class="table-wrap"><table><thead><tr><th>항목</th><th>초기 설계</th><th>검증할 점</th></tr></thead><tbody>
+        <tr><td>호출 방식</td><td>HTTP extAuth. 원 method와 path를 보존하는 prefix 경로를 사용하고, adapter가 prefix를 제거한다. endpoint는 GET·POST·PATCH 등 대상 method 모두 받으며 body를 요구하지 않는다.</td><td>HTTP extAuth는 기본적으로 원 요청 body를 보내지 않는다. Envoy가 전달하는 경로·쿼리·authority·헤더와 URL rewrite 전후 기준을 캡처해 확인한다.</td></tr>
+        <tr><td>판정 입력</td><td>method, 정규화된 path, client IP, 검증된 사용자·테넌트 ID, 서버가 정한 rule-set ID와 permits.</td><td>첫 HTTPRoute 파일럿은 판정 서비스 설정에 rule-set ID와 permits=1을 고정한다. 확장 시 신뢰된 route context 또는 서버 소유 host/path 매핑을 설계하고 클라이언트가 값을 고르게 두지 않는다.</td></tr>
+        <tr><td>판정 출력</td><td><code>200</code> 허용, <code>403</code> ACL 거부, <code>429</code> 한도 초과 + <code>Retry-After</code>, 내부 장애는 <code>503</code>.</td><td>HTTP extAuth는 JSON의 <code>allowed</code> 필드를 해석하지 않는다. 상태 코드와 허용된 헤더만 계약으로 삼는다.</td></tr>
+        <tr><td>거절 사유</td><td>ACL 차단·규칙 누락·매칭 규칙 없음·한도 초과를 타입으로 구분하는 판정 결과가 필요하다.</td><td>현재 <code>RateLimitResult</code>에는 명시적 reason 필드가 없다. <code>denied:</code> 키 문자열을 파싱해 403을 추론하는 구현은 피한다.</td></tr>
+        <tr><td>규칙 공급</td><td>FluxGate의 현재 <code>RateLimitEngine</code>과 기존 provider를 재사용한다.</td><td>규칙 부재, 다중 규칙, ACL, hot reload, Redis 키 호환성을 최신 코드에서 다시 검증한다. 판정 경로에서 <code>WAIT_FOR_REFILL</code>로 Gateway 요청을 오래 붙잡지 않는다.</td></tr>
+        <tr><td>응답 헤더</td><td>거절 시 <code>Retry-After</code>; 허용 응답의 rate-limit 헤더는 첫 버전 범위 밖.</td><td>Envoy의 <code>headersToBackend</code>는 백엔드 요청 헤더용이다. 클라이언트로 가는 허용 응답 헤더는 별도 기능과 버전을 검증해야 한다.</td></tr>
+      </tbody></table></div>
+      <div class="callout warning"><strong>프로토콜 함정:</strong> 기존 샘플의 <code>200 {"allowed":false}</code>를 Envoy에 연결하면 허용으로 처리된다. 샘플 API를 재사용하지 말고 extAuth 전용 HTTP 응답 어댑터를 둔다.</div>
+    </section>
+    <section id="failure">
+      <h2>장애와 지연의 의미</h2>
+      <div class="table-wrap"><table><thead><tr><th>상황</th><th>권장 응답</th><th>이유·확인</th></tr></thead><tbody>
+        <tr><td>한도 초과</td><td>429 + Retry-After</td><td>정책상 정상 거절. 서비스 Pod 미호출 확인.</td></tr>
+        <tr><td>ACL 차단</td><td>403</td><td>한도 초과와 분리해 관측한다.</td></tr>
+        <tr><td>FluxGate 연결 실패·시간 초과</td><td>503, <code>failOpen: false</code></td><td>장애를 403 또는 허용으로 오인하지 않도록 <code>statusOnError</code>를 명시한다.</td></tr>
+        <tr><td>Redis 불능</td><td>판정 서비스의 실패 정책에 따라 503</td><td>Envoy의 failOpen 설정만으로 내부 Redis 실패는 정의되지 않는다. 서비스가 오류를 성공으로 변환하지 않아야 한다.</td></tr>
+        <tr><td>규칙 누락·매칭 규칙 없음·잘못된 설정</td><td>명시적 거부 및 운영 알림</td><td>현재 limiter는 규칙이 하나도 매칭되지 않거나 band가 비었으면 허용한다. extAuth 어댑터는 이를 보호 경로의 정상 허용과 구분해야 한다.</td></tr>
+      </tbody></table></div>
+      <p>Envoy의 extAuth 기본 timeout은 서비스 경로에 비해 길 수 있으므로 명시적으로 제한한다. 목표치는 실제 요청 지연·Redis 지연·재시도 분포를 측정한 뒤 정한다. 이 판정 호출은 모든 허용 요청의 지연에 포함되므로 수평 확장, connection reuse, health check, 과부하 보호가 설계 일부다.</p>
+    </section>
+    <section id="security">
+      <h2>정책 우회를 막는 경계</h2>
+      <ol>
+        <li><strong>사용자 신원:</strong> <code>X-User-Id</code> 같은 클라이언트 입력을 신뢰하지 않는다. Gateway 또는 신뢰된 앞단에서 인증하고, 전달 헤더를 제거·재작성한 뒤 판정 서비스에 보낸다.</li>
+        <li><strong>클라이언트 IP:</strong> 프록시 체인과 신뢰 프록시 범위를 명시한다. 사용자가 만든 <code>X-Forwarded-For</code>를 그대로 카운터 키로 쓰지 않는다.</li>
+        <li><strong>경로 연결:</strong> 정책을 Gateway 전체에 붙일지 HTTPRoute별로 붙일지 정한다. Route 정책이 Gateway 정책을 가릴 수 있으므로 새 Route의 보호 여부를 배포 검증에 포함한다.</li>
+        <li><strong>직접 호출:</strong> 모든 진입을 제한하려면 서비스 Pod/ClusterIP에 대한 직접 접근을 NetworkPolicy 등으로 제한한다. 내부 서비스 간 호출은 별도 정책 영역으로 정의한다.</li>
+        <li><strong>격리:</strong> 판정 endpoint는 외부 공개 Route에 싣지 않는다. Envoy→FluxGate와 FluxGate→Redis 접근만 허용하고 인증·TLS 요구는 클러스터 위협 모델에 맞춰 정한다.</li>
+      </ol>
+    </section>
+    <section id="local">
+      <h2>로컬 테스트: Java 판정 서비스와 Envoy 연결 확인</h2>
+      <p>판정 서비스와 배포 예제를 구현했다. 재현 가능한 명령은 <a href="../../deploy/envoy-gateway-local/README.md">로컬 배포 가이드</a>와 <a href="../../deploy/envoy-gateway-local/pilot.yaml">파일럿 매니페스트</a>에 있다. 아래 공식 모의 서비스 절차는 Envoy 자체를 따로 살펴볼 때 참고한다.</p>
+      <div class="callout">2026-10-10 실측: Docker Desktop 위의 별도 <code>kind-fluxgate-eg</code> 클러스터(Kubernetes 1.35)에서 Envoy Gateway 1.9.2를 설치했다. Java 판정 서비스, Redis, Echo Pod가 준비된 뒤 Gateway 경유 요청은 <strong>200 → 200 → 429</strong>였고, 거부 응답에 <code>Retry-After: 30</code>이 있었다. Redis Pod 중단은 GET과 OPTIONS 모두 <strong>503</strong>, 전역 키 ACL 거부 프로필은 <strong>403</strong>을 반환했다. 판정 Pod를 0개로 줄여 엔드포인트를 없애자 Envoy는 <strong>500</strong>을 반환하며 차단했다. kind에서 외부 주소가 없어 Gateway 최상위 <code>Programmed=False</code>였지만 listener와 Route·SecurityPolicy는 수락됐고 포트포워드로 요청을 검증했다.</div>
+      <h3>1. Java 엔진과 Redis를 먼저 확인</h3>
+      <pre><code>./mvnw -pl fluxgate-core,fluxgate-redis-ratelimiter -am test
+./mvnw -pl fluxgate-core,fluxgate-redis-ratelimiter -am verify</code></pre>
+      <p class="small">이 브랜치에서 실제 실행 결과: core unit 536건, Redis unit 248건 모두 통과. Redis integration 65건 중 실패 0건·건너뜀 6건이다. 건너뛴 6건은 별도 Redis Cluster 테스트 설정이 필요한 케이스다. 이 결과는 Envoy 연동 성공을 뜻하지 않는다.</p>
+      <h3>2. 실제 Envoy Gateway를 별도 kind 클러스터에서 확인</h3>
+      <pre><code>brew install kind
+kind create cluster --name fluxgate-eg \
+  --image kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f \
+  --wait 5m
+kubectl --context kind-fluxgate-eg get nodes
+
+helm --kube-context kind-fluxgate-eg install eg \
+  oci://docker.io/envoyproxy/gateway-helm --version v1.9.2 \
+  --namespace envoy-gateway-system --create-namespace
+kubectl --context kind-fluxgate-eg wait deployment/envoy-gateway \
+  -n envoy-gateway-system --for=condition=Available --timeout=5m
+kubectl --context kind-fluxgate-eg apply -f \
+  https://github.com/envoyproxy/gateway/releases/download/v1.9.2/quickstart.yaml</code></pre>
+      <p>공식 quickstart의 echo 서비스와 <a href="https://raw.githubusercontent.com/envoyproxy/gateway/v1.9.2/examples/kubernetes/ext-auth-http-service.yaml">버전 고정 extAuth 데모</a>를 연결하면, 새 FluxGate 서비스 없이도 Envoy가 200 허용과 403 거절을 서비스 호출 전에 처리하는지 볼 수 있다. 데모는 제품 구현으로 사용하지 않는다.</p>
+      <p>다음 SecurityPolicy를 <code>/tmp/fluxgate-eg-securitypolicy.yaml</code>에 저장한다. 파일럿 Route 하나에만 붙이므로 기존 서비스 경로에는 영향이 없다.</p>
+      <pre><code>apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: local-http-auth
+  namespace: default
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: backend
+  extAuth:
+    failOpen: false
+    http:
+      backendRefs:
+        - name: http-ext-auth
+          port: 9002</code></pre>
+      <pre><code>kubectl --context kind-fluxgate-eg apply -f \
+  https://raw.githubusercontent.com/envoyproxy/gateway/v1.9.2/examples/kubernetes/ext-auth-http-service.yaml
+kubectl --context kind-fluxgate-eg apply -f /tmp/fluxgate-eg-securitypolicy.yaml
+kubectl --context kind-fluxgate-eg wait securitypolicy/local-http-auth \
+  --for=condition=Accepted --timeout=2m
+
+ENVOY_SERVICE=$(kubectl --context kind-fluxgate-eg get service \
+  -n envoy-gateway-system \
+  -l gateway.envoyproxy.io/owning-gateway-namespace=default,gateway.envoyproxy.io/owning-gateway-name=eg \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl --context kind-fluxgate-eg port-forward \
+  -n envoy-gateway-system "service/$ENVOY_SERVICE" 8888:80</code></pre>
+      <p>port-forward를 켜 둔 채 다른 터미널에서 아래 두 요청을 보낸다. 첫 요청은 인증 데모의 403, 두 번째는 200과 echo 응답이어야 한다. 이것이 <strong>Envoy 정책 연결</strong>의 증거이지 FluxGate 제한 기능의 증거는 아니다.</p>
+      <pre><code>curl -i -H 'Host: www.example.com' http://127.0.0.1:8888/get
+curl -i -H 'Host: www.example.com' \
+  -H 'Authorization: Bearer token1' http://127.0.0.1:8888/get</code></pre>
+      <h3>3. FluxGate 판정 서비스로 교체한 결과</h3>
+      <p>파일럿 HTTPRoute에 새 Java extAuth 서비스를 연결했다. 규칙은 서버가 소유하는 단일 전역 버킷(2회/60초)이다. 전달받은 IP·사용자·rule-set 헤더로 사용자를 나누지 않는다. 서로 다른 위조 X-Forwarded-For 세 값으로 호출해도 200·200·429였다. 따라서 사용자별 제한은 아직 구현 범위 밖이다. 단위 테스트는 매칭 없음·중복 매칭·Redis 실패를 503으로 처리하는지 확인했다.</p>
+      <div class="table-wrap"><table><thead><tr><th>호출</th><th>예상</th><th>확인할 증거</th></tr></thead><tbody>
+        <tr><td>정상 요청 2건</td><td>200</td><td>echo 응답 2건, Redis 카운터 2회 소비</td></tr>
+        <tr><td>같은 키의 3번째 요청</td><td>429</td><td>echo 호출 0건 증가, Retry-After 확인</td></tr>
+        <tr><td>ACL 차단 IP</td><td>403</td><td>서비스 미호출, Redis 제한 카운터 미소비</td></tr>
+        <tr><td>Redis 장애</td><td>503</td><td>서비스 미호출, 실패 허용 없음</td></tr>
+        <tr><td>판정 Pod 엔드포인트 없음</td><td>실측 500</td><td>Envoy가 차단, 503 고정은 별도 검토 필요</td></tr>
+        <tr><td>규칙 매칭 없음</td><td>명시적 거부</td><td>빈 규칙을 정상 허용으로 해석하지 않음</td></tr>
+      </tbody></table></div>
+      <p class="small">버전 선택 근거: Envoy Gateway v1.9.2의 공식 호환 범위는 Kubernetes 1.33–1.36이다. kind 노드는 1.35로 고정했다. kind 기본 CNI는 NetworkPolicy를 강제하지 않으므로 내부 직접 호출 차단은 검증되지 않았다. 이 실험용 클러스터는 <code>kind delete cluster --name fluxgate-eg</code>로 정리할 수 있다.</p>
+    </section>
+    <section id="delivery">
+      <h2>구현 순서와 통과 기준</h2>
+      <ol>
+        <li><strong>격리된 파일럿:</strong> 새 판정 서비스를 별도 브랜치와 테스트 HTTPRoute에서 만든다. 기존 서비스의 라우팅 정책은 바꾸지 않는다.</li>
+        <li><strong>정합성 게이트:</strong> 실제 트래픽에 연결하기 전 ACL, Mongo 저장, Redis window, provider 결합 등 앞선 리뷰 항목을 최신 커밋에서 재검증한다. 이 결과 없이 보안 판정 서비스로 선언하지 않는다.</li>
+        <li><strong>작은 어댑터:</strong> Java FluxGate에 전용 extAuth HTTP endpoint를 추가한다. 샘플 controller가 아닌 엔진을 호출하고 상태 코드 계약을 테스트한다.</li>
+        <li><strong>실제 Envoy 연결:</strong> 배포 버전의 CRD를 고정하고 SecurityPolicy를 한 테스트 HTTPRoute에만 적용한다. 원 경로·method·identity 전달을 기록한다.</li>
+        <li><strong>장애 실험:</strong> 허용, 403, 429, FluxGate timeout, Redis down, 잘못된 헤더, 우회 경로, 중복 호출, 매칭 규칙 없음·빈 band를 Envoy 경유로 확인한다. GET·POST·PATCH와 URL rewrite도 포함한다.</li>
+        <li><strong>확장:</strong> 지연·오류율·정책 누락을 관측한 뒤 점진적으로 Route 범위를 넓힌다. 서비스별 SDK는 필요한 내부 호출에만 남긴다.</li>
+      </ol>
+      <div class="callout danger"><strong>출시 전 미결정:</strong> 어느 신원 공급자가 user/tenant ID를 보증하는지, 내부 호출도 제한할지, 판정 서비스와 Redis 장애 때 어느 요청을 예외적으로 허용할지, 허용 응답의 카운터 소비를 중복 호출에서 어떻게 다룰지 합의가 필요하다.</div>
+    </section>
+    <section id="sources">
+      <h2>공식 근거와 현재 확인 범위</h2>
+      <ul>
+        <li><a href="https://gateway.envoyproxy.io/docs/tasks/security/ext-auth/">Envoy Gateway External Authorization</a> — HTTP/gRPC, SecurityPolicy 구성</li>
+        <li><a href="https://gateway.envoyproxy.io/docs/install/install-helm/">Envoy Gateway Helm 설치</a> · <a href="https://gateway.envoyproxy.io/news/releases/matrix/">버전 호환성 표</a> · <a href="https://gateway.envoyproxy.io/docs/tasks/quickstart/">Quickstart</a> — 로컬 검증 경로</li>
+        <li><a href="https://gateway.envoyproxy.io/docs/concepts/gateway_api_extensions/security-policy/">SecurityPolicy</a> — 정책 부착과 우선순위</li>
+        <li><a href="https://gateway.envoyproxy.io/docs/tasks/traffic/global-rate-limit/">Global Rate Limit</a> — Envoy Gateway의 대안</li>
+        <li><a href="https://gateway.envoyproxy.io/docs/api/extension_types/">Envoy Gateway extension API</a> — extAuth 및 rate-limit 필드</li>
+        <li><a href="https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/http/ext_authz/v3/ext_authz.proto#extensions-filters-http-ext-authz-v3-httpservice">Envoy HTTP ext_authz 계약</a> · <a href="https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/auth/v3/external_auth.proto">gRPC 계약</a></li>
+        <li><a href="https://gateway-api.sigs.k8s.io/reference/api-spec/1.5/spec/#httpexternalauthfilter">Gateway API 1.5 ExternalAuth</a> — Experimental/Extended API, 컨트롤러 지원 확인 필요</li>
+      </ul>
+      <p class="small">2026-10-10의 확인 범위는 별도 kind 클러스터에서의 HTTPRoute 파일럿과 로컬 테스트다. 200·429·403·Redis 중단 503·판정 Pod 엔드포인트 없음 500을 실측했다. 지연 분포, 고가용성, 직접 Pod 접근 차단, 사용자별 신원 보증, 운영 환경 호환성은 아직 검증하지 않았다. 다이어그램 뷰어의 고정 UI는 한국어 현지화를 지원하지 않아 영어로 표시되며, 설계 본문과 다이어그램 내용은 한국어다.</p>
+    </section>
+  </main>
+  <footer>OpenFluxGate · 2026-10-10 · 파일럿 구현 및 로컬 Gateway 검증 · 운영 검증 필요</footer>
+</div>
+</body>
+</html>

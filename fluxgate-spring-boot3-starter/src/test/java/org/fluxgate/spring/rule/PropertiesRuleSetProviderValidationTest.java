@@ -41,6 +41,20 @@ class PropertiesRuleSetProviderValidationTest {
   }
 
   @Test
+  void invalidPolicyCidrFailsStartupInsteadOfDroppingProtection() {
+    for (String invalid : List.of("10.0.0.0/99", "not-an-ip", " ")) {
+      RuleSetProperties denied = ruleSet(rule("r1", band(Duration.ofMinutes(1))));
+      denied.getAccessControl().setDeniedIps(List.of("203.0.113.0/24", invalid));
+      assertThatThrownBy(() -> new PropertiesRuleSetProvider(List.of(denied), KEYS))
+          .isInstanceOf(IllegalArgumentException.class);
+      RuleSetProperties allowed = ruleSet(rule("r1", band(Duration.ofMinutes(1))));
+      allowed.getAccessControl().setAllowedIps(List.of(invalid));
+      assertThatThrownBy(() -> new PropertiesRuleSetProvider(List.of(allowed), KEYS))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  @Test
   void rejectsAnUnknownZoneId() {
     BandProperties band = band(Duration.ofDays(1));
     band.setZoneId("Mars/Olympus_Mons");

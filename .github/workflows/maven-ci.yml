@@ -2,9 +2,9 @@ name: Java CI with Maven
 
 on:
   push:
-    branches: [ "main", "development/**" ]
+    branches: [ "main", "development/**", "feature/lts-*", "fix/main-review-findings" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "feature/lts-*" ]
 
 # Read-only by default: a compromised dependency or build plugin running in CI would otherwise
 # inherit the repository default, which is usually read-write.

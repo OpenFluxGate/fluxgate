@@ -50,7 +50,7 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
   private static final Logger log = LoggerFactory.getLogger(ClusterRedisConnection.class);
 
   /** How often the cluster topology is refreshed when no other period is given. */
-  public static final Duration DEFAULT_TOPOLOGY_REFRESH_PERIOD = Duration.ofSeconds(30);
+  public static final Duration DEFAULT_TOPOLOGY_REFRESH_PERIOD = Duration.ofSeconds(5);
 
   private final RedisClusterClient clusterClient;
   private final StatefulRedisClusterConnection<String, String> connection;
@@ -148,6 +148,7 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
             ClusterTopologyRefreshOptions.builder()
                 .enablePeriodicRefresh(topologyRefreshPeriod)
                 .enableAllAdaptiveRefreshTriggers()
+                .adaptiveRefreshTriggersTimeout(Duration.ofSeconds(2))
                 .build())
         .build();
   }

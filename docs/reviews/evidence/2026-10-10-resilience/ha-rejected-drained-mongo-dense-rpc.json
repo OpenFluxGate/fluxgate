@@ -1,0 +1,192 @@
+{
+  "result": "REJECTED",
+  "passed": false,
+  "complete": false,
+  "process_exit_code": 1,
+  "process_exit_provenance": "Root witnessed terminal process 50128 exit 1.",
+  "failure_phase": "mongo-election-publication",
+  "exception_class": "TimeoutExpired",
+  "application_jar_sha256": "31d4b361db424392517ff11b40a62a54f0d0736b4b5f02837159c82cbf14b97a",
+  "reported_root_commit_at_invocation": "e102a9a",
+  "loaded_ha_source_commit": "cf954a6",
+  "loaded_ha_source_sha256": "08391f1bbee9629d41220f408d981f928353216e63920f15923c1e2b3e89eccd",
+  "redis_partial_observation": {
+    "recovery_seconds": 14.523,
+    "final_quota_seconds": 16.4,
+    "target_still_paused": true,
+    "task_state": "PAUSED",
+    "cache_absent_before_promotion": true,
+    "cache_loaded_after_real_request": true
+  },
+  "mongo_publication": {
+    "passed": true,
+    "published": true,
+    "beforeRevision": 12,
+    "revision": 13,
+    "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+    "snapshotId": "947a6b4f-4463-4502-b51d-7a2ec97996a1",
+    "checksum": "16735e088d7b7ace55fb77e547db87a6c53f23eb93b80f5e8b932f2eb6e0b486",
+    "epochPreserved": true,
+    "majorityReadVerified": true,
+    "idempotentReplay": true,
+    "elapsedSeconds": 16.301484841,
+    "transientFailureClasses": [
+      "MongoTimeoutException",
+      "MongoTimeoutException",
+      "MongoSocketReadTimeoutException",
+      "MongoSocketReadTimeoutException"
+    ],
+    "verified_from_original_rto_start_seconds": 18.747,
+    "attempt_outcomes": [
+      {
+        "attempt": 1,
+        "outcome": "mongo-failure",
+        "elapsedSeconds": 2.019551126
+      },
+      {
+        "attempt": 2,
+        "outcome": "mongo-failure",
+        "elapsedSeconds": 2.00122271
+      },
+      {
+        "attempt": 3,
+        "outcome": "mongo-failure",
+        "elapsedSeconds": 3.803213419
+      },
+      {
+        "attempt": 4,
+        "outcome": "mongo-failure",
+        "elapsedSeconds": 2.005487793
+      },
+      {
+        "attempt": 5,
+        "outcome": "success",
+        "elapsedSeconds": 5.468584294
+      }
+    ]
+  },
+  "mongo_dense_recovery": {
+    "passed": false,
+    "completed_batches": 0,
+    "inner_budget_seconds": 10.663085917000004,
+    "outer_rpc_timeout_seconds": 11.163085917000004,
+    "required_consecutive_successes": 10,
+    "required_success_span_seconds": 2,
+    "original_rto_gate_seconds": 30,
+    "required_recovery_not_proven": true,
+    "diagnosis": "The bounded dense kubectl exec RPC timed out without a completed batch; sparse background successes do not establish the dense recovery gate.",
+    "application_fault_cause_attributed": false
+  },
+  "continuous_background_observation": {
+    "observations": 12,
+    "statuses": {
+      "503": 2,
+      "200": 10
+    },
+    "first_success_elapsed_seconds": 10.753,
+    "last_success_elapsed_seconds": 29.189,
+    "transport_errors": 0,
+    "unexpected_responses": 0
+  },
+  "mongo_timestamps": {
+    "rto_budget_started": {
+      "unix_ms": 1791591829193,
+      "utc": "2026-10-10T00:23:49.193Z"
+    },
+    "fault_start": {
+      "unix_ms": 1791591829317,
+      "utc": "2026-10-10T00:23:49.317Z"
+    },
+    "paused_verified": {
+      "unix_ms": 1791591829443,
+      "utc": "2026-10-10T00:23:49.443Z"
+    },
+    "publication_verified": {
+      "unix_ms": 1791591847940,
+      "utc": "2026-10-10T00:24:07.940Z"
+    }
+  },
+  "finally_restoration": {
+    "passed": true,
+    "final_restore_seconds": 15.197,
+    "mongo_healthy_voters": 3,
+    "redis_primaries": 3,
+    "redis_linked_replicas": 6,
+    "redis_primary_nodes_distinct": true,
+    "publisher_cleanup": {
+      "passed": true,
+      "pod_absent": true,
+      "network_policy_absent": true
+    },
+    "owned_probe_cleanup": [
+      {
+        "kind": "pod",
+        "absent": true
+      },
+      {
+        "kind": "secret",
+        "absent": true
+      },
+      {
+        "kind": "networkpolicy",
+        "absent": true
+      }
+    ],
+    "scope": "Restoration/cleanup passed; the failed HA acceptance outcome remains rejected."
+  },
+  "check_names_before_failure": [
+    "redis-primary-placement-restoration",
+    "complete-fixture-restoration",
+    "baseline",
+    "redis-promotion",
+    "redis-primary-placement-restoration",
+    "complete-fixture-restoration"
+  ],
+  "check_names_in_final_progress": [
+    "redis-primary-placement-restoration",
+    "complete-fixture-restoration",
+    "baseline",
+    "redis-promotion",
+    "redis-primary-placement-restoration",
+    "complete-fixture-restoration",
+    "redis-primary-placement-restoration",
+    "complete-fixture-restoration",
+    "publication-probe-cleanup",
+    "owned-probe-resource-cleanup",
+    "owned-probe-resource-cleanup",
+    "owned-probe-resource-cleanup"
+  ],
+  "raw_files": {
+    "failure": {
+      "file": "failure.json",
+      "sha256": "c3b16eb3e319533a2d21ae27b9d46224933d101755b1825f8cc7b120b6b9835e",
+      "bytes": 53663
+    },
+    "progress": {
+      "file": "progress.json",
+      "sha256": "50c2c25de93a02a0129b31f777bb62059f458ee1eb85b342eae9690cab000632",
+      "bytes": 62727
+    },
+    "publication": {
+      "file": "publication-5553eebd19214462b9e0282d5dfc1b84.json",
+      "sha256": "2127179e58ada78a2eb0dff30c00385cbf4f40eb648ebed69150ff67e5cf9ef0",
+      "bytes": 4163
+    },
+    "publisher_cleanup": {
+      "file": "publisher-cleanup.json",
+      "sha256": "a1e45fc593e0f90645ba992eba1e1a3e6a64fe5599de2dc8456c6b5a4a7407a3",
+      "bytes": 669
+    },
+    "process_log": {
+      "file": "fluxgate-resilience-ha-drained-final.log",
+      "sha256": "ae898099ff616141f1a4f0980938be63af971abab6999fe561b85e732d79e5ce",
+      "bytes": 4534
+    }
+  },
+  "limits": [
+    "Redis promotion and Mongo publication are partial observations, not full HA PASS.",
+    "Zero completed dense batches means the required ten-success/two-second/30-second recovery gate remains unproven.",
+    "The timeout does not identify an application fault cause.",
+    "Later diagnostic changes must retain the original acceptance thresholds and require a fresh run."
+  ]
+}

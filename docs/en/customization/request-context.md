@@ -57,13 +57,17 @@ public interface RequestContextCustomizer {
 }
 ```
 
-Register one bean; the starter picks it up automatically.
+Register one bean; the starter picks it up automatically. Here an earlier authentication filter
+sets `verifiedTenantId` only after validating the authenticated user's tenant membership.
 
 ```java
 @Bean
 public RequestContextCustomizer requestContextCustomizer() {
     return (builder, request) -> {
-        builder.attribute("tenantId", request.getHeader("X-Tenant-Id"));
+        Object tenant = request.getAttribute("verifiedTenantId");
+        if (tenant instanceof String && !((String) tenant).trim().isEmpty()) {
+            builder.attribute("tenantId", (String) tenant);
+        }
         return builder;
     };
 }
@@ -71,12 +75,11 @@ public RequestContextCustomizer requestContextCustomizer() {
 
 ### The most important use: authenticated identity
 
-By default `userId` and `apiKey` come from request headers, which the **client controls**. A caller
-can therefore send a different `X-User-Id` per request and bypass a per-user limit, or send someone
-else's identifier and exhaust their quota.
-
-That is correct behaviour for a gateway behind an authenticating edge that rewrites those headers.
-Everywhere else, set them from the authenticated principal:
+The default `identity.source=PRINCIPAL` reads the authenticated principal and ignores identity
+headers. `HEADERS` and `PRINCIPAL_THEN_HEADERS` explicitly opt into client-controlled headers;
+use them only behind an authenticating edge that removes untrusted values and supplies verified
+identities. A customizer runs last and can undo these protections, so never replace an authenticated
+identity with a raw request header. For a custom Spring Security integration:
 
 ```java
 @Bean
@@ -101,26 +104,20 @@ Two conditions for this to work:
 - Combine it with `fluxgate.ratelimit.missing-key-behavior=REJECT` if an unauthenticated request
   must not fall back to the IP bucket and inherit the authenticated tier's quota.
 
-### Overriding the client IP
+### Trusted client IP
 
-When your CDN uses its own header, or the forwarding chain is shaped in a way
-`trusted-proxies` cannot express:
+Configure a forwarding header and the CIDRs of the proxies that actually connect to the service.
+The factory verifies the peer before accepting the header. Do not overwrite its result in a customizer.
+The CIDRs below are examples; replace them with your actual ingress proxy addresses.
 
-```java
-@Bean
-public RequestContextCustomizer cloudflareIpCustomizer() {
-    return (builder, request) -> {
-        String cfIp = request.getHeader("CF-Connecting-IP");
-        if (cfIp != null && !cfIp.isEmpty()) {
-            builder.clientIp(cfIp);
-        }
-        return builder;
-    };
-}
+```yaml
+fluxgate:
+  ratelimit:
+    client-ip-header: CF-Connecting-IP
+    trust-client-ip-header: true
+    trusted-proxies:
+      - 10.20.0.0/24
 ```
-
-This trusts `CF-Connecting-IP` unconditionally, so it is only safe when nothing but your CDN can
-reach the application. Prefer `fluxgate.ratelimit.trusted-proxies` where it fits.
 
 ### Composite keys for `CUSTOM` scope
 
@@ -130,8 +127,8 @@ A `CUSTOM` rule reads one attribute, named by the rule's `keyStrategyId`:
 @Bean
 public RequestContextCustomizer compositeKeyCustomizer() {
     return (builder, request) -> {
-        String userId = request.getHeader("X-User-Id");
-        String clientIp = request.getRemoteAddr();
+        String userId = builder.build().getUserId();
+        String clientIp = builder.build().getClientIp();
 
         // Prefix each component so the parts stay unambiguous after sanitisation.
         String composite = userId != null
@@ -173,7 +170,8 @@ Matching is case-insensitive. These headers are **never** copied, whatever the a
 
 `Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`, `X-API-Key`
 
-`X-API-Key` still populates `RequestContext.getApiKey()`; it just does not end up in the header map.
+`X-API-Key` populates `RequestContext.getApiKey()` only when identity headers are explicitly enabled;
+it never enters the header map.
 
 Collection is off by default because the context is handed to metrics recorders that may **persist**
 it — `MongoRateLimitMetricsRecorder` writes it to MongoDB. Treat anything you allow-list as data you

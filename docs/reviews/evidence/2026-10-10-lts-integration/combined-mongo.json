@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "profile": "combined-mongo",
+  "profile_passed": true,
+  "global_acceptance": false,
+  "global_complete": false,
+  "credential_acceptance": false,
+  "source_commit_at_invocation": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
+  "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+  "independent_terminal_exit_code": 0,
+  "independent_terminal_witness_valid": true,
+  "provenance": {
+    "raw": {
+      "sha256": "731272e712e8fa6eb2acf32295486c01674d270bf265ea6c7e3b31d5705b458f",
+      "bytes": 5168
+    },
+    "log": {
+      "sha256": "731272e712e8fa6eb2acf32295486c01674d270bf265ea6c7e3b31d5705b458f",
+      "bytes": 5168
+    },
+    "witness": {
+      "sha256": "33c0d2358127c940ccfc7842efbe793dbb7a980d2d2fb0149394e4befe5502c3",
+      "bytes": 6525
+    },
+    "exporter_stage": {
+      "sha256": "ef06143300bdc18eadeeeb1832a0bf024e9d6e890a780c7d68d3073cdf4cbcd7",
+      "bytes": 11123
+    },
+    "manifest": {
+      "sha256": "a3e1d0017a90608b17e916b0fb16e5eafa42855fc5d179c54a67546ef3d7b6ee",
+      "bytes": 2015
+    }
+  },
+  "limits": [
+    "Specific terminal-passing profile only; global credential availability remains rejected.",
+    "Private identities, paths and free-form strings were removed from the projected summary. Inspect bound private raw proof for omitted detail."
+  ],
+  "private_selected_stage_sha256": "cc4cf6c0a7796bd25cba0839b4df2a56567e24d239598a0f86b0647e371d4f82",
+  "summary": {
+    "passed": true,
+    "complete": false,
+    "fault": "mongo",
+    "phase_complete": true,
+    "fault_timestamps": {
+      "rto_budget_started": {
+        "unix_ms": 1791606521294
+      },
+      "fault_start": {
+        "unix_ms": 1791606521460
+      },
+      "paused_verified": {
+        "unix_ms": 1791606521611
+      },
+      "publication_verified": {
+        "unix_ms": 1791606541838
+      }
+    },
+    "verified_rto_monotonic_seconds": 23.641,
+    "verified_rto_utc_seconds": 23.641,
+    "clock": {
+      "host_before_unix_ms": 1791606505711.017,
+      "host_after_unix_ms": 1791606505783.464,
+      "pod_unix_ms": 1791606505779.092,
+      "pod_minus_host_interval_ms": [
+        -4.3720703125,
+        68.074951171875
+      ],
+      "pod_minus_host_estimate_ms": 31.8514404296875,
+      "measurement_bound_ms": 36.2235107421875,
+      "within_100ms": true
+    },
+    "observation_requests": 12000,
+    "all_statuses": {
+      "200": 11357,
+      "503": 643
+    },
+    "fault_window_failures": 643,
+    "last_minute": {
+      "target_requests": 6000,
+      "completed_requests": 6000,
+      "achieved_rps": 100.0,
+      "all_statuses": {
+        "200": 6000
+      },
+      "latency_ms": {
+        "p50": 3.150635864585638,
+        "p95": 4.680531099438667,
+        "p99": 7.746169110760093,
+        "max": 28.634672984480858
+      },
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0
+    },
+    "raw_proofs": {
+      "load": {
+        "sha256": "72e6b34ce52ebf20c9ca1bf5803664c2b3bf99e6bd2c7c6177790860da9e9490"
+      },
+      "ha": {
+        "sha256": "39e725ad416d006a781f28116e21460d46ff7005aa3784685951f29cbc3ff0ff"
+      },
+      "readiness": {
+        "sha256": "8cd8c1957ed5e7fbafa44ecbc58d1d4ddcd0cd67cdaa5c95ad570cb2fa316f84"
+      }
+    },
+    "publisher_cleanup": {
+      "started_unix_ms": 1791606629449,
+      "pid": 44647,
+      "completed_unix_ms": 1791606629785,
+      "exit_code": 0,
+      "owned_resources_absent_verified_by_helper": true,
+      "state": {
+        "sha256": "72437cdfb10dae28acceaf1fa9efafccd6b028f991ea89fc4364709a30247c13"
+      }
+    },
+    "preparations": {
+      "baseline_preflight": {
+        "source": {
+          "sha256": "582b637a107e496f66f249a9288bb88da37d81ce5fb4e26577444c248b59cdd3"
+        },
+        "started_unix_ms": 1791606461881,
+        "pid": 40804,
+        "proof": {
+          "sha256": "604e069e0615c196776da407f1af1497cf43173f5dafd6377c206ff1be6bb2ee"
+        },
+        "passed": true,
+        "completed_unix_ms": 1791606490104,
+        "exit_code": 0
+      },
+      "publisher_preparation": {
+        "source": {
+          "sha256": "5e9d33675cb9a193fb11a86f5dbbb1f7eb0e520a7ba5053ad5c0b75f332bb04e"
+        },
+        "started_unix_ms": 1791606490105,
+        "pid": 41567,
+        "completed_unix_ms": 1791606493880,
+        "exit_code": 0
+      }
+    },
+    "processes": [
+      {
+        "pid": 40804,
+        "exit_code": 0
+      },
+      {
+        "pid": 41567,
+        "exit_code": 0
+      },
+      {
+        "name": "load",
+        "pid": 41667,
+        "exit_code": 0
+      },
+      {
+        "name": "ha",
+        "pid": 41932,
+        "exit_code": 0
+      },
+      {
+        "pid": 44647,
+        "exit_code": 0
+      }
+    ]
+  },
+  "selected_fault_proof_complete": false,
+  "selected_fault_phase_complete": true
+}

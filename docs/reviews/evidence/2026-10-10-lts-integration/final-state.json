@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "profile": "final-state-progress-independent",
+  "profile_passed": true,
+  "global_acceptance": false,
+  "global_complete": false,
+  "credential_acceptance": false,
+  "source_commit_at_invocation": "b57418fb3612f71203cab6ccd62b5eea94b98091",
+  "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+  "independent_terminal_exit_code": 0,
+  "independent_terminal_witness_valid": true,
+  "provenance": {
+    "raw": {
+      "sha256": "4de8b67ade9d65271f920ef94d5c7bd6c79f661b028512a32ecef65b775218fb",
+      "bytes": 13589
+    },
+    "log": {
+      "sha256": "4de8b67ade9d65271f920ef94d5c7bd6c79f661b028512a32ecef65b775218fb",
+      "bytes": 13589
+    },
+    "witness": {
+      "sha256": "07df5ac0463cc710e74f5473e218270e2c29c9d7735c71bcf7721498485df2ba",
+      "bytes": 7274
+    },
+    "exporter_stage": {
+      "sha256": "e8d4edcdade4a5958f2d13e0c9ec8c65224e0a5ace0e84e406edd66e11db14cf",
+      "bytes": 16313
+    },
+    "manifest": {
+      "sha256": "5a89f1ed07e6e6f52a5fb06380c92f0c60c2a99dad2467c26f64e0f0fc4f4607",
+      "bytes": 1037
+    }
+  },
+  "limits": [
+    "Specific terminal-passing profile only; global credential availability remains rejected.",
+    "Private identities, paths and free-form strings were removed from the projected summary. Inspect bound private raw proof for omitted detail."
+  ],
+  "private_selected_stage_sha256": "245eeb4d32e7b74cb03ea401f2dbc865329b58afa3855348f6952274f50bf934",
+  "summary": {
+    "passed": true,
+    "read_only": true,
+    "serialized_check_count": 19,
+    "ready_workloads": {
+      "authz": 2,
+      "echo": 2,
+      "controller": 2,
+      "envoy": 2,
+      "mongo": 3,
+      "redis": 9
+    },
+    "ready_pod_total": 20,
+    "node_count": 3,
+    "bound_pvc_count": 12,
+    "owned_probe_count": 0,
+    "redis_home_primary_indices": [
+      0,
+      1,
+      2
+    ],
+    "healthy_redis_members": 9,
+    "replicas_per_primary": 2,
+    "mongo_voters": 3,
+    "paused_tasks": 0,
+    "authz_jars_exact_verified": 2,
+    "default_context_preserved": true,
+    "boundary": "Sequential read-only restored-state snapshot, not uninterrupted rotation or overall acceptance."
+  },
+  "post_process_comparison": {
+    "passed": true,
+    "actual_exit": 0,
+    "witness_valid": true,
+    "check_count": 19,
+    "source_commit": "87df806925bd8027477693c8e61c1b5839e3fe81",
+    "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+    "log": {
+      "sha256": "8887eea4f482817172c98f7794af3c333e5ec77e479b64002bd49f50ceec6283",
+      "bytes": 13589
+    },
+    "witness": {
+      "sha256": "2f92b5563f045b8807107c421023ba44621064fee7b6c64e193fae3aafbdbf28",
+      "bytes": 8087
+    },
+    "boundary": "Separate later read-only state check; does not reclassify the original failed state check or credential availability."
+  },
+  "original_process_comparison_state_failed": {
+    "actual_exit": 1,
+    "witness_valid": true,
+    "passed": false,
+    "completed_checks": 14,
+    "failure_stage": "redis-topology",
+    "raw_sha256": "11de9aa1a47550f1e963a4b95f495d743192c3203e855d87902d78e29b46743f",
+    "witness_sha256": "57516b71b9834d48db14470094cc0ed9cd71686868898aa4423d12a1df774371"
+  },
+  "subsequent_baseline": {
+    "actual_exit": 0,
+    "witness_valid": true,
+    "phase": "baseline",
+    "phase_complete": true,
+    "complete": false,
+    "role_changing_commands_performed": false,
+    "replica_repairs": 0,
+    "policy_exact_preserved": true,
+    "ha_counter_exact_preserved": true,
+    "raw": {
+      "sha256": "9dd5b5146b4a05ea3a39b4cda8050708df3947ac53847a6c857440ff4778eefd",
+      "bytes": 33639
+    },
+    "witness": {
+      "sha256": "964a3d18302dbe982d424fce17830f5593a8b53643b059a91a5d16941b36da2f",
+      "bytes": 8170
+    },
+    "boundary": "Guarded baseline observed normal roles without FAILOVER or REPLICATE. It does not establish the cause of the earlier topology assertion or a new full HA run."
+  },
+  "latest_host_confirmation_state": {
+    "passed": true,
+    "actual_exit": 0,
+    "witness_valid": true,
+    "wrapper_error_count": 0,
+    "check_count": 19,
+    "source_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "source_tree": "fa7b3c2bf247d110889a057ebc71a3b2bb79c3f4",
+    "log": {
+      "sha256": "764716619d6a8719e8be5a6d92ef213bbefbe1a46bec40d8232ff658ebffc897",
+      "bytes": 13589
+    },
+    "witness": {
+      "sha256": "57b97b6acfa3f4366825143ed473f789da968aa4b16af6c43599de1f1e267201",
+      "bytes": 7812
+    },
+    "raw": {
+      "sha256": "764716619d6a8719e8be5a6d92ef213bbefbe1a46bec40d8232ff658ebffc897",
+      "bytes": 13589
+    },
+    "node_cgroup_weights": [
+      100,
+      100,
+      100
+    ],
+    "default_context_preserved": true,
+    "boundary": "Independent read-only terminal state after the full host credential proof; does not reclassify historical failed state checks."
+  }
+}

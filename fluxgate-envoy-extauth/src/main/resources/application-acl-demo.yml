@@ -1,0 +1,14 @@
+# Local-only profile: deny the pilot global key to exercise HTTP 403 through Envoy.
+fluxgate:
+  ratelimit:
+    rule-sets:
+      - id: gateway-pilot
+        access-control:
+          denied-keys: [global]
+        rules:
+          - id: pilot-global
+            scope: GLOBAL
+            key-strategy-id: global
+            bands:
+              - capacity: 2
+                window: 60s

@@ -1,0 +1,52 @@
+{
+  "result": "REJECTED",
+  "complete": false,
+  "coordinator_process_exit": 1,
+  "child_processes": [
+    {
+      "name": "identity_preparation",
+      "pid": 85300,
+      "exit_code": 0
+    },
+    {
+      "name": "load",
+      "pid": 85936,
+      "exit_code": 0
+    },
+    {
+      "name": "ha",
+      "pid": 86124,
+      "exit_code": 0
+    }
+  ],
+  "reason": "missing sustained recovery responses",
+  "fix_required": "Coordinator must validate the new dense recovery record format rather than require exactly three legacy sparse samples.",
+  "automatic_recovery_seconds": 17.229,
+  "quota_verified_seconds": 19.298,
+  "ha_phase_complete": true,
+  "ha_full_complete": false,
+  "private_artifact_hashes": {
+    "summary.json": "f9f626112b075b1e4eccc018709881787210f23f97785592e0d730649a9c0b83",
+    "raw-load.json": "fb30823e25679a83ecee27b96494dff0389c5715c974444301c80e404c24fa7e",
+    "ha.log": "efd1831f03eaaee7db02864d8fc43caabbe4c765e1a7e49264426543faf73142",
+    "identity.json": "409d139b0bfe78c6a18deede896d0a966eeeb8350b4b3b94918d2c8ea7a24707",
+    "readiness.json": "ce39f282a5228e989de276ccaf8a1626625171101f787c8e9e97bcfc8adf7780",
+    "prepare.log": "257000e8290c44cacbc0503b6a7e1b1fb6136cd32c6881a9e071cf2015f4df44",
+    "load.log": "fb30823e25679a83ecee27b96494dff0389c5715c974444301c80e404c24fa7e",
+    "ha/ha.json": "12d1efe1020087a622fc1416650424c06f4eba7510e5a0c9179532cabe8f92c2",
+    "ha/publisher-cleanup.json": "f5f03db335589249eb3ac98875a326ad9e36abf3c9022eaa82d33d3fadb16128",
+    "ha/pending-result.json": "e6d0317271ea69eb2f6287ccbe7a96188e953e6e3ad2e787a91215a6e36d1c2a",
+    "ha/progress.json": "6dfda05ca27272b3e8c50da272ee292e1c57e97c1d6555203dd90256aa507db7"
+  },
+  "subsequent_offline_dense_schema_validation": {
+    "passed": false,
+    "reason": "final60latencySLO violation after correcting dense schema",
+    "p95_ms": 152.534,
+    "p99_ms": 450.519,
+    "threshold_p95_ms": 100,
+    "threshold_p99_ms": 250,
+    "successful_requests": 6000,
+    "new_coordinator_checks": 53,
+    "raw_failed_files_unchanged": true
+  }
+}

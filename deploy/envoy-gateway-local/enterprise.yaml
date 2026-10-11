@@ -1,0 +1,317 @@
+# Isolated, ephemeral development stack. NetworkPolicy requires an enforcing CNI.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fluxgate-enterprise
+  labels: {fluxgate.io/environment: local-ephemeral}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluxgate-enterprise-config
+  namespace: fluxgate-enterprise
+data:
+  application-enterprise.yml: |
+    server:
+      port: 8443
+      ssl:
+        enabled: true
+        certificate: /tls/tls.crt
+        certificate-private-key: /tls/tls.key
+        trust-certificate: /tls/client-ca.crt
+        client-auth: need
+    fluxgate:
+      envoy:
+        allow-insecure: false
+        health-port: 8081
+        published-policies: true
+        gateway-certificate-subjects: [CN=fluxgate-envoy-gateway]
+        trusted-proxies: [10.244.0.0/16]
+        header-allowlist: [host,content-type]
+        bootstrap-file: /bootstrap/policy.json
+        # Public local-only fixture credential: fluxgate-local-test-key. Never deploy this fixture.
+        api-keys:
+          - sha256: d9cdeb8f445b83a9b73cf50df243734b1c5dd4c35a6c486685e06c76133eaad4
+            user-id: local-user
+            api-key-id: local-key
+            attributes:
+              tenant: local
+        routes:
+          - id: enterprise-api
+            path-prefix: /api
+            rule-set-id: default-limits
+            permits: 1
+      mongo:
+        enabled: true
+        uri: mongodb://mongo.fluxgate-enterprise.svc.cluster.local:27017/fluxgate?connectTimeoutMS=2000&serverSelectionTimeoutMS=2000&socketTimeoutMS=2000
+        database: fluxgate
+        rule-collection: rate_limit_rules
+        event-collection: rate_limit_events
+        ddl-auto: create
+      redis:
+        enabled: true
+        uri: redis://redis.fluxgate-enterprise.svc.cluster.local:6379
+        timeout-ms: 2000
+      reload:
+        enabled: false
+      ratelimit:
+        mode: REDIS
+        filter-enabled: false
+        missing-rule-behavior: DENY
+        missing-key-behavior: REJECT
+        failure-behavior: DENY
+        fallback:
+          mode: NONE
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluxgate-policy-bootstrap
+  namespace: fluxgate-enterprise
+data:
+  policy.json: |
+    {"ruleSetId":"default-limits","operationId":"d085111f-4689-45a0-b388-ec51ea0d0f93","rules":[{"id":"route-quota","name":"Route quota","enabled":true,"scope":"GLOBAL","keyStrategyId":"global","onLimitExceedPolicy":"REJECT_REQUEST","ruleSetId":"default-limits","priority":20,"pathPatterns":["/api/**"],"bands":[{"windowSeconds":3600,"capacity":3,"label":"hourly"}]},{"id":"shared-quota","name":"Shared quota","enabled":true,"scope":"GLOBAL","keyStrategyId":"global","onLimitExceedPolicy":"REJECT_REQUEST","ruleSetId":"default-limits","priority":10,"pathPatterns":["/api/**"],"bands":[{"windowSeconds":3600,"capacity":2,"label":"hourly"}]}],"accessControl":{}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo
+  namespace: fluxgate-enterprise
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mongo}
+  template:
+    metadata:
+      labels: {app: mongo}
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:7
+          ports: [{containerPort: 27017}]
+          readinessProbe: {tcpSocket: {port: 27017}, periodSeconds: 3}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: '1', memory: 512Mi}
+          volumeMounts: [{name: data, mountPath: /data/db}]
+      volumes: [{name: data, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: mongo, namespace: fluxgate-enterprise}
+spec:
+  selector: {app: mongo}
+  ports: [{port: 27017}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: redis, namespace: fluxgate-enterprise}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          args: [redis-server, --maxmemory, 128mb, --maxmemory-policy, noeviction]
+          ports: [{containerPort: 6379}]
+          readinessProbe: {tcpSocket: {port: 6379}, periodSeconds: 3}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: '1', memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: redis, namespace: fluxgate-enterprise}
+spec:
+  selector: {app: redis}
+  ports: [{port: 6379}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: fluxgate-authz, namespace: fluxgate-enterprise}
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app: fluxgate-authz}
+  template:
+    metadata:
+      labels: {app: fluxgate-authz}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001}
+      containers:
+        - name: authz
+          image: fluxgate-envoy-extauth:enterprise
+          imagePullPolicy: Never
+          env:
+            - {name: SPRING_CONFIG_ADDITIONAL_LOCATION, value: 'file:/config/application-enterprise.yml'}
+            - {name: SPRING_PROFILES_ACTIVE, value: local-enterprise}
+            - {name: JAVA_TOOL_OPTIONS, value: '-XX:MaxRAMPercentage=65 -XX:ActiveProcessorCount=2'}
+          ports: [{name: https, containerPort: 8443}, {name: management, containerPort: 8081}]
+          startupProbe:
+            httpGet: {path: /healthz, port: management}
+            periodSeconds: 3
+            failureThreshold: 60
+          livenessProbe:
+            httpGet: {path: /healthz, port: management}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /readyz, port: management}
+            periodSeconds: 3
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: '1', memory: 512Mi}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: tls, mountPath: /tls, readOnly: true}
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: bootstrap, mountPath: /bootstrap, readOnly: true}
+      volumes:
+        - name: tls
+          secret: {secretName: fluxgate-authz-server-tls, defaultMode: 288}
+        - name: config
+          configMap: {name: fluxgate-enterprise-config}
+        - name: bootstrap
+          configMap: {name: fluxgate-policy-bootstrap}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: fluxgate-authz, namespace: fluxgate-enterprise}
+spec:
+  selector: {app: fluxgate-authz}
+  ports: [{name: https, port: 8443, targetPort: https}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: echo, namespace: fluxgate-enterprise}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: echo}
+  template:
+    metadata:
+      labels: {app: echo}
+    spec:
+      containers:
+        - name: echo
+          image: hashicorp/http-echo:1.0.0
+          args: ['-listen=:5678', '-text=fluxgate-enterprise-ok']
+          ports: [{containerPort: 5678}]
+          readinessProbe: {tcpSocket: {port: 5678}, periodSeconds: 3}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: echo, namespace: fluxgate-enterprise}
+spec:
+  selector: {app: echo}
+  ports: [{port: 5678}]
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata: {name: fluxgate-enterprise-proxy, namespace: fluxgate-enterprise}
+spec:
+  backendTLS:
+    clientCertificateRef: {kind: Secret, name: fluxgate-envoy-client-tls}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata: {name: fluxgate-enterprise-gateway, namespace: fluxgate-enterprise}
+spec:
+  gatewayClassName: eg
+  infrastructure:
+    parametersRef: {group: gateway.envoyproxy.io, kind: EnvoyProxy, name: fluxgate-enterprise-proxy}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces: {from: Same}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: enterprise-api, namespace: fluxgate-enterprise}
+spec:
+  parentRefs: [{name: fluxgate-enterprise-gateway}]
+  rules:
+    - matches: [{path: {type: PathPrefix, value: /api}}]
+      backendRefs: [{name: echo, port: 5678}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata: {name: authz-backend-tls, namespace: fluxgate-enterprise}
+spec:
+  targetRefs: [{group: '', kind: Service, name: fluxgate-authz, sectionName: https}]
+  validation:
+    caCertificateRefs: [{group: '', kind: ConfigMap, name: fluxgate-authz-server-ca}]
+    hostname: fluxgate-authz.fluxgate-enterprise.svc.cluster.local
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata: {name: enterprise-ext-auth, namespace: fluxgate-enterprise}
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: enterprise-api}]
+  extAuth:
+    http:
+      backendRefs: [{name: fluxgate-authz, port: 8443}]
+      path: /authz
+    headersToExtAuth: [content-type, x-forwarded-for, x-api-key]
+    timeout: 5s
+    failOpen: false
+    statusOnError: 503
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny, namespace: fluxgate-enterprise}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: gateway-to-authz-and-backend, namespace: fluxgate-enterprise}
+spec:
+  podSelector:
+    matchExpressions: [{key: app, operator: In, values: [fluxgate-authz, echo]}]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: envoy-gateway-system}}
+          podSelector:
+            matchLabels:
+              gateway.envoyproxy.io/owning-gateway-namespace: fluxgate-enterprise
+              gateway.envoyproxy.io/owning-gateway-name: fluxgate-enterprise-gateway
+      ports: [{port: 8443}, {port: 5678}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: authz-to-stores-and-dns, namespace: fluxgate-enterprise}
+spec:
+  podSelector: {matchLabels: {app: fluxgate-authz}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: mongo}}}]
+      ports: [{port: 27017}]
+    - to: [{podSelector: {matchLabels: {app: redis}}}]
+      ports: [{port: 6379}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: stores-from-authz, namespace: fluxgate-enterprise}
+spec:
+  podSelector:
+    matchExpressions: [{key: app, operator: In, values: [mongo, redis]}]
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{podSelector: {matchLabels: {app: fluxgate-authz}}}]
+      ports: [{port: 27017}, {port: 6379}]

@@ -118,7 +118,15 @@ public final class RateLimitEngine {
       return onMissingRuleSet(ruleSetId);
     }
 
-    RateLimitRuleSet ruleSet = optionalRuleSet.get();
+    return checkUsingSnapshot(optionalRuleSet.get(), context, permits);
+  }
+
+  /** Executes exactly the supplied policy snapshot, without reading the provider again. */
+  public RateLimitResult checkUsingSnapshot(
+      RateLimitRuleSet ruleSet, RequestContext context, long permits) {
+    Objects.requireNonNull(ruleSet, "ruleSet must not be null");
+    Objects.requireNonNull(context, "context must not be null");
+    if (permits <= 0) throw new IllegalArgumentException("permits must be > 0");
 
     // ===== access control =====
     AccessControl accessControl = ruleSet.getAccessControl();
@@ -138,10 +146,15 @@ public final class RateLimitEngine {
             .allowed(false)
             .remainingTokens(0L)
             .nanosToWaitForRefill(0L)
+            .decisionReason(RateLimitResult.DecisionReason.ACCESS_DENIED)
             .build();
       }
       if (decision == AccessControl.Decision.ALLOW_BYPASS) {
-        return RateLimitResult.allowedWithoutRule();
+        return RateLimitResult.builder(null)
+            .allowed(true)
+            .remainingTokens(-1L)
+            .decisionReason(RateLimitResult.DecisionReason.ACCESS_BYPASS)
+            .build();
       }
     }
 
@@ -152,7 +165,7 @@ public final class RateLimitEngine {
           "RateLimiter "
               + rateLimiter.getClass().getName()
               + " returned null for ruleSetId: "
-              + ruleSetId);
+              + ruleSet.getId());
     }
     return result;
   }
@@ -239,6 +252,7 @@ public final class RateLimitEngine {
             .allowed(false)
             .remainingTokens(0L)
             .nanosToWaitForRefill(0L)
+            .decisionReason(RateLimitResult.DecisionReason.MISSING_RULE_SET)
             .build();
       case ALLOW:
       default:

@@ -87,6 +87,29 @@ public final class CidrSet {
   }
 
   /**
+   * Creates a set for policy configuration, rejecting any invalid or empty entry.
+   *
+   * @param cidrs the addresses/CIDRs to include (must not be {@code null})
+   * @return the immutable set
+   * @throws IllegalArgumentException if an entry is not a valid IP literal or CIDR
+   */
+  public static CidrSet ofStrict(Collection<String> cidrs) {
+    Objects.requireNonNull(cidrs, "cidrs must not be null");
+    List<Entry> entries = new ArrayList<>();
+    for (String cidr : cidrs) {
+      if (cidr == null || cidr.trim().isEmpty()) {
+        throw new IllegalArgumentException("Invalid CIDR: " + cidr);
+      }
+      try {
+        entries.add(Entry.parse(cidr.trim()));
+      } catch (UnknownHostException | IllegalArgumentException e) {
+        throw new IllegalArgumentException("Invalid CIDR: " + cidr, e);
+      }
+    }
+    return new CidrSet(Collections.unmodifiableList(entries));
+  }
+
+  /**
    * Returns {@code true} if the given IP address is contained within this set.
    *
    * <p>Both IPv4 and IPv6 addresses are accepted. IPv4-mapped IPv6 addresses are normalised to IPv4

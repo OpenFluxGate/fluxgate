@@ -1,0 +1,145 @@
+{
+  "passed": true,
+  "total_tests": 2444,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "repositories": [
+    {
+      "repo": "fluxgate",
+      "totals": {
+        "tests": 2244,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "modules": {
+        "fluxgate-control-support": {
+          "tests": 52,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "fluxgate-redis-ratelimiter": {
+          "tests": 324,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "fluxgate-core": {
+          "tests": 542,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "fluxgate-mongo-adapter": {
+          "tests": 157,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "fluxgate-spring-boot2-starter": {
+          "tests": 524,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "fluxgate-envoy-extauth": {
+          "tests": 68,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "fluxgate-spring-boot3-starter": {
+          "tests": 530,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        },
+        "fluxgate-testkit": {
+          "tests": 47,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      }
+    },
+    {
+      "repo": "studio",
+      "totals": {
+        "tests": 200,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "modules": {
+        "fluxgate-studio-admin-api": {
+          "tests": 200,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      }
+    }
+  ],
+  "actual_cluster_it_tests": 6,
+  "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+  "studio_jar_sha256": "d566a0bcd715a3d53ad4b8e8567a95d9b0466352b483498e24c43bad23824895",
+  "verification_steps": [
+    {
+      "scope": "full Java reactor: 2,238 cases; cluster beforeAll launched zero cases; not counted as executed",
+      "actual_process_exit": 0,
+      "log": {
+        "filename": "fluxgate-resilience-final-reactor.log",
+        "sha256": "4e07155d849c903e987202153165ec51cc6d5625c3336905b8a9c8626eee2ab9",
+        "size_bytes": 1785912
+      }
+    },
+    {
+      "scope": "dedicated actual Redis Cluster IT: 6 cases; owned local bridges removed",
+      "actual_process_exit": 0,
+      "log": {
+        "filename": "fluxgate-resilience-final-cluster-it.log",
+        "sha256": "7925b710987abda16316fdf1c044d953f2c3e3a0b104865be79745d131286568",
+        "size_bytes": 2709
+      }
+    },
+    {
+      "scope": "fresh Envoy module installation: 68 cases; Spotless and JaCoCo",
+      "actual_process_exit": 0,
+      "log": {
+        "filename": "fluxgate-resilience-security-root-install.log",
+        "sha256": "1188c9382d2ef506948507c3ecf9dfa7f60cea991abd519f73bc630f8e757560",
+        "size_bytes": 184153
+      }
+    },
+    {
+      "scope": "fresh paired Studio clean package: 200 cases; Spotless and JaCoCo",
+      "actual_process_exit": 0,
+      "log": {
+        "filename": "fluxgate-studio-security-package.log",
+        "sha256": "deb03ff2079b528977b5032be37aadb9d0211d8ffb474de5ab919ed6a9ad581a",
+        "size_bytes": 355537
+      }
+    }
+  ],
+  "limits": [
+    "Fresh executed reports across independent commands, not one 2444-case reactor invocation.",
+    "A default Cluster test launch with no actual cases is excluded; six actual cases were subsequently executed separately.",
+    "Counts do not certify CVE cleanliness or runtime HA; those are separate proofs."
+  ],
+  "offline_credential_controls": {
+    "per_replica_actual_mtls_tests": 9,
+    "actual_process_exit": 0,
+    "source_commit": "00c1da4",
+    "test_source": {
+      "path": "deploy/resilience-local/tests/test_credential_pod_controls.py",
+      "sha256": "55fd7ebdbb78da98626c9c6b8d5eb0eae82ee3ae59fc60f8ee66b038cb7941e4"
+    },
+    "log_sha256": "f4230ad497922a44664beeef85851ccf6988c26537adbf56839d4ebb8dff3ba3",
+    "complete_selftest_actual_process_exit": 0,
+    "selftest_log_sha256": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0",
+    "not_in_java_total": true
+  },
+  "staging_source_sha256": "bd8f52e408b88c4bf6ac801c31fff446f02f4f3aea80d819d0f5bcbbd754fbc1"
+}

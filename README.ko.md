@@ -86,10 +86,14 @@
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-결정 경로는 항상 동일합니다. 필터(또는 `@RateLimit` 애스펙트)가 `RequestContext`를 만들어
+Java SDK 연동에서는 필터(또는 `@RateLimit` 애스펙트)가 `RequestContext`를 만들어
 `FluxgateRateLimitHandler`에 넘기고, 라이브러리 기본 핸들러가 `RateLimitEngine`에 위임하면
 엔진이 룰셋을 해석해 `RateLimiter`를 호출합니다. 전체 흐름은
 [docs/ko/architecture/README.ko.md](docs/ko/architecture/README.ko.md)를 참고하세요.
+Envoy 연동에서는 `fluxgate-envoy-extauth`가 외부 판정 서비스입니다. Envoy가 Java FluxGate를 호출하면
+FluxGate가 MongoDB에서 정책을 읽고 Redis에서 사용량을 계산합니다. 허용된 요청은 Envoy가 실제
+서비스로 전달하므로 서비스 언어는 Java·Go·Rust 등 자유롭게 선택할 수 있습니다. MongoDB와 Redis는
+요청을 다음 서비스로 전달하는 프록시가 아닙니다.
 
 ## 모듈
 
@@ -103,27 +107,49 @@
 | **fluxgate-control-support** | 컨트롤 플레인 보조: `@NotifyRuleChange` / `@NotifyFullReload` 와 Redis 규칙 변경 통지기 |
 | **fluxgate-testkit** | 통합 테스트 유틸리티 |
 | **fluxgate-benchmarks** | JMH 벤치마크 (배포되지 않음) |
+| **fluxgate-envoy-extauth** | 기존 엔진과 MongoDB·Redis 어댑터를 사용하는 Envoy Gateway 외부 판정 서비스 |
 | **fluxgate-samples** | 다양한 사용 사례를 보여주는 샘플 애플리케이션 |
+
+이 저장소는 Rate Limiting 엔진, MongoDB·Redis 어댑터, Spring Boot 스타터와 선택적으로 배포하는 `fluxgate-envoy-extauth` 서비스를 담당합니다. 스타터·어댑터는 애플리케이션 라이브러리이며 testkit·벤치마크·샘플은 개발을 지원합니다. Maven 모듈을 각각 별도 서비스로 배포할 필요는 없습니다. 별도 [FluxGate Studio 저장소](https://github.com/openfluxgate/fluxgate-studio)가 관리 API와 웹 UI를 담당합니다. 로컬 Git worktree는 개발용 checkout이며 추가 모듈이나 릴리스 구성물이 아닙니다.
 
 ## 빠른 시작
 
-두 가지 경로로 시작할 수 있습니다. **경로 A**는 Java와 Maven만 있으면 됩니다 — 인프라 없이
-실행되는 인메모리 Limiter로, 첫 데모나 단일 인스턴스 서비스에 딱 맞습니다. **경로 B**는 Redis를
+Java·Go·Rust 서비스를 Kubernetes Gateway에서 제한하려면 [Envoy Gateway 연동과 로컬 테스트 가이드](docs/ko/guides/envoy-local-testing.ko.md)를 참고하세요. 기존 FluxGate 판정 서비스를 연결하고 Docker Desktop에서 정상 요청·인증 차단·사용량 제한을 확인할 수 있습니다.
+
+두 가지 경로로 시작할 수 있습니다. **경로 A**는 외부 저장소 없이 실행되는 인메모리
+Limiter로, 첫 데모나 단일 인스턴스 서비스에 적합합니다. **경로 B**는 Redis를
 추가해 다중 인스턴스 분산 Rate Limiting을 구현하고, 선택적으로 MongoDB를 더해 재시작 없는
 동적 규칙 관리까지 확장합니다.
 
 ### 사전 요구 사항
 
 - Java 17+ 및 Maven 3.8+ (경로 A)
+- 기존 Spring Boot 웹 애플리케이션; 아래 예제에 `/api/hello` 컨트롤러를 포함합니다.
 - Java 11 / Spring Boot 2.7도 `fluxgate-spring-boot2-starter`로 지원
 - Docker (경로 B, Redis/MongoDB 시작용)
+
+이 브랜치는 소스에서 빌드하는 **0.4.0-SNAPSHOT**입니다. Maven Central의 공개 릴리스는
+0.3.7이며, 아래 예제의 현재 브랜치 API를 출시된 0.4.0 의존성으로 가져올 수는 없습니다.
+Java 21과 실행 중인 Docker로 라이브러리를 먼저 준비합니다.
+
+```bash
+git clone --branch feature/lts-1.0.0 https://github.com/OpenFluxGate/openfluxgate-core.git
+cd openfluxgate-core
+export FLUXGATE_M2_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fluxgate-quickstart-m2.XXXXXX")"
+./mvnw -B -Dmaven.repo.local="$FLUXGATE_M2_DIR" \
+  -pl fluxgate-spring-boot3-starter,fluxgate-control-support -am install spotless:check
+```
+
+같은 터미널에서 애플리케이션의 Maven 명령에도 `-Dmaven.repo.local="$FLUXGATE_M2_DIR"`를
+전달합니다. 공개 0.3.7을 사용하려면 해당 릴리스의 README와 API를 참고하세요.
+소스 빌드의 테스트에는 Docker가 필요하며, 준비된 경로 A 애플리케이션은 저장소 없이 실행됩니다.
 
 ---
 
 ### 경로 A — 인메모리 (인프라 불필요)
 
-Java와 Maven만 있으면 됩니다. 아래 네 단계를 복사하면 앱이 시작되고 클라이언트 IP별로
-분당 5건 제한이 적용됩니다.
+소스 라이브러리를 준비한 뒤 기존 Spring Boot 3 웹 애플리케이션에 아래 단계를 적용합니다.
+실행 시 Redis·MongoDB 없이 클라이언트 IP별 분당 5건 제한을 적용합니다.
 
 #### A-1. 의존성 추가
 
@@ -132,7 +158,11 @@ Java와 Maven만 있으면 됩니다. 아래 네 단계를 복사하면 앱이 �
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
-    <version>0.4.0</version>
+    <version>0.4.0-SNAPSHOT</version>
+</dependency>
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-web</artifactId>
 </dependency>
 ```
 
@@ -170,13 +200,21 @@ import org.fluxgate.spring.annotation.EnableFluxgateFilter;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 @SpringBootApplication
+@RestController
 @EnableFluxgateFilter                          // Rate Limit 필터 활성화
 public class MyApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(MyApplication.class, args);
+    }
+
+    @GetMapping("/api/hello")
+    public String hello() {
+        return "hello";
     }
 
     @Bean
@@ -258,13 +296,13 @@ docker compose -f docker/redis-standalone.yml up -d
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
-    <version>0.4.0</version>
+    <version>0.4.0-SNAPSHOT</version>
 </dependency>
 <!-- Redis Rate Limiter (Lua 기반, 원자적) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
-    <version>0.4.0</version>
+    <version>0.4.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -303,7 +341,7 @@ Maven 의존성 추가:
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
-    <version>0.4.0</version>
+    <version>0.4.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -331,7 +369,7 @@ db.rate_limit_rules.insertOne({
   ruleSetId: "api-limits",
   scope: "PER_IP",
   onLimitExceedPolicy: "REJECT_REQUEST",
-  bands: [{ capacity: NumberLong(10), windowMs: NumberLong(60000) }]
+  bands: [{ capacity: NumberLong(10), windowSeconds: NumberLong(60) }]
 })
 '
 ```
@@ -347,7 +385,17 @@ db.rate_limit_rules.insertOne({
 
 #### B-6. 테스트
 
-경로 A-4의 `curl` 루프와 동일. 차이점은 이제 동일한 Redis에 연결된 모든 인스턴스가 제한을 공유한다는 것입니다.
+위 Mongo 규칙은 같은 IP에서 분당 10회 요청을 허용합니다. 같은 분 안에 경로 A-4와 동일한
+엔드포인트로 12회 요청하면 HTTP 429를 확인할 수 있습니다.
+
+```bash
+for i in $(seq 1 12); do
+  curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/api/hello
+done
+```
+
+동일한 Redis를 사용하는 모든 인스턴스가 사용량을 공유합니다. 기존 버킷 상태나 토큰 보충 시간에 따라
+성공 응답의 정확한 개수는 달라질 수 있습니다.
 
 ---
 
@@ -681,7 +729,9 @@ RateLimitRule rule = RateLimitRule.builder("api-rule")
 
 ### 복합 키 예시 (IP + 사용자)
 
-IP와 사용자 조합으로 세밀하게 Rate Limit을 적용하려면:
+팩토리가 이미 해석한 인증 사용자와 신뢰된 클라이언트 IP를 복합 키에 사용합니다. 이 예시의
+미인증 요청은 IP만 사용합니다. 인증이 필수라면 미인증 요청에 속성을 설정하지 않고
+`missing-key-behavior=REJECT`를 사용하세요.
 
 ```java
 // CUSTOM 스코프 규칙
@@ -696,8 +746,8 @@ RateLimitRule rule = RateLimitRule.builder("composite-rule")
 @Bean
 public RequestContextCustomizer requestContextCustomizer() {
     return (builder, request) -> {
-        String userId = request.getHeader("X-User-Id");
-        String clientIp = request.getRemoteAddr();
+        String userId = builder.build().getUserId();
+        String clientIp = builder.build().getClientIp();
 
         // 각 구성 요소에 접두사를 붙여 모호성을 없앱니다: "ip:192.168.1.100:user:user-123"
         String compositeKey = userId != null
@@ -716,30 +766,18 @@ public RequestContextCustomizer requestContextCustomizer() {
 
 ### RequestContext 커스터마이징
 
+테넌트 식별자는 서버에서 검증한 요청 속성을 사용합니다. FluxGate보다 먼저 실행되는 인증 필터가
+인증된 사용자의 테넌트 소속을 확인한 뒤 `verifiedTenantId`를 설정해야 합니다. 아래 커스터마이저는
+팩토리가 추출한 인증 신원과 신뢰된 클라이언트 IP를 유지합니다.
+
 ```java
 @Bean
 public RequestContextCustomizer requestContextCustomizer() {
     return (builder, request) -> {
-        // PER_USER 스코프용 userId 설정
-        String userId = request.getHeader("X-User-Id");
-        if (userId != null) {
-            builder.userId(userId);
+        Object tenant = request.getAttribute("verifiedTenantId");
+        if (tenant instanceof String && !((String) tenant).trim().isEmpty()) {
+            builder.attribute("tenantId", (String) tenant);
         }
-
-        // PER_API_KEY 스코프용 apiKey 설정
-        String apiKey = request.getHeader("X-API-Key");
-        if (apiKey != null) {
-            builder.apiKey(apiKey);
-        }
-
-        // Cloudflare 헤더로 클라이언트 IP 재정의
-        String cfIp = request.getHeader("CF-Connecting-IP");
-        if (cfIp != null) {
-            builder.clientIp(cfIp);
-        }
-
-        // keyStrategyId="tenantId"인 CUSTOM 스코프용 테넌트 정보 추가
-        builder.attribute("tenantId", request.getHeader("X-Tenant-Id"));
         return builder;
     };
 }
@@ -989,10 +1027,12 @@ FluxGate가 아직 하지 못하는 것을 솔직히 적습니다:
   앞선 규칙을 한 개 적게 보고, 환불이 실행되지 못하면 토큰은 소비된 채로 남습니다. 클러스터에서 엄격한
   원자성이 필요하면 여러 대역을 가진 하나의 규칙을 사용하세요. 인메모리 리미터는 규칙 간에도
   전부-또는-전무입니다.
-- **서블릿 전용입니다.** WebFlux/리액티브 지원도, Spring Cloud Gateway 필터도 없습니다.
+- **Java SDK는 서블릿 기반입니다.** WebFlux/리액티브 SDK와 Spring Cloud Gateway 필터는 없습니다.
+  다른 언어의 서비스는 별도 Envoy 판정 서비스를 통해 연동할 수 있습니다.
   `WAIT_FOR_REFILL`은 워커 스레드를 블로킹하므로 리액티브 스택에서는 재설계가 필요합니다.
 - **버킷 조회/수동 초기화 API가 없습니다.** 특정 호출자의 버킷을 읽거나 비우는 엔드포인트는 없습니다.
-  룰셋 리로드가 해당 룰셋의 버킷을 초기화합니다.
+  Java SDK의 레거시 룰셋 리로드는 해당 버킷을 초기화합니다. Envoy의 게시 정책은 기본적으로
+  counter epoch를 보존하며, `resetCounters=true`를 명시할 때 룰셋 전체의 새 epoch를 시작합니다.
 
 ## 문서
 

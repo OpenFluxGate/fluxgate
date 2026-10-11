@@ -544,6 +544,7 @@ public class Bucket4jRateLimiter implements RateLimiter {
     log.debug("Rejecting request because no rate limit key could be resolved: {}", e.getMessage());
     RateLimitResult.Builder builder =
         RateLimitResult.builder(RateLimitKey.of("missing-key:", e.getRuleId()))
+            .decisionReason(RateLimitResult.DecisionReason.MISSING_KEY)
             .allowed(false)
             .remainingTokens(0L)
             .nanosToWaitForRefill(0L)

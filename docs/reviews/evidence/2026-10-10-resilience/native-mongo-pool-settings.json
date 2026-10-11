@@ -1,0 +1,12 @@
+{
+  "min_pool_size": 4,
+  "max_connecting": 8,
+  "checkout_wait_ms": 2000,
+  "heartbeat_ms": 2000,
+  "native_packaged_driver": true,
+  "live_secret_updated": true,
+  "authz_rollout_ready": true,
+  "application_jar_changed": false,
+  "claim": "bounded local HA preset; pool-starvation root cause not established",
+  "application_jar_sha256": "8774b4dc7be69c17b97e4a4b9c4f1b9a4b2ca7b414d4ba3ff99d56713d111d5f"
+}

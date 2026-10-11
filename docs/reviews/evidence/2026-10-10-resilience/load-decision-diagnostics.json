@@ -1,0 +1,161 @@
+{
+  "application_jar_sha256": "893ce2fdc1f4b75d6ccabdf7f54ec1cd18e694adfef876dfb649aeb337440d40",
+  "source_at_invocation": "25f32a8",
+  "load_terminal_exit_code": 0,
+  "sample_count": 292,
+  "management_sample_period_seconds": 1,
+  "observation_error_count": 0,
+  "observed_reason_deltas": {
+    "admission_rejected": 39,
+    "invalid_permits": 0,
+    "unavailable_snapshot": 0,
+    "wait_policy": 0,
+    "engine_infrastructure": 0,
+    "runtime_exception": 0
+  },
+  "pods": [
+    {
+      "pod_uid": "2e02e966-6a88-4f77-84b0-3aae65990d70",
+      "sample_count": 146,
+      "host_first_sample_unix_ms": 1791593100214,
+      "host_last_completed_unix_ms": 1791593247509,
+      "first_counts": {
+        "admitted": 1,
+        "completed": 1,
+        "inflight": 0,
+        "peak": 1,
+        "503": {
+          "admission_rejected": 0,
+          "invalid_permits": 0,
+          "unavailable_snapshot": 0,
+          "wait_policy": 0,
+          "engine_infrastructure": 0,
+          "runtime_exception": 0
+        }
+      },
+      "last_counts": {
+        "admitted": 17259,
+        "completed": 17259,
+        "inflight": 0,
+        "peak": 32,
+        "503": {
+          "admission_rejected": 1,
+          "invalid_permits": 0,
+          "unavailable_snapshot": 0,
+          "wait_policy": 0,
+          "engine_infrastructure": 0,
+          "runtime_exception": 0
+        }
+      },
+      "reason_deltas": {
+        "admission_rejected": 1,
+        "invalid_permits": 0,
+        "unavailable_snapshot": 0,
+        "wait_policy": 0,
+        "engine_infrastructure": 0,
+        "runtime_exception": 0
+      },
+      "counter_change_windows": [
+        {
+          "host_sample_window_unix_ms": [
+            1791593209865,
+            1791593210892
+          ],
+          "reason_deltas": {
+            "admission_rejected": 1
+          }
+        }
+      ]
+    },
+    {
+      "pod_uid": "ad5b1dae-c427-4fb3-86f1-07ff414b8beb",
+      "sample_count": 146,
+      "host_first_sample_unix_ms": 1791593100225,
+      "host_last_completed_unix_ms": 1791593247512,
+      "first_counts": {
+        "admitted": 0,
+        "completed": 0,
+        "inflight": 0,
+        "peak": 0,
+        "503": {
+          "admission_rejected": 0,
+          "invalid_permits": 0,
+          "unavailable_snapshot": 0,
+          "wait_policy": 0,
+          "engine_infrastructure": 0,
+          "runtime_exception": 0
+        }
+      },
+      "last_counts": {
+        "admitted": 17154,
+        "completed": 17154,
+        "inflight": 0,
+        "peak": 32,
+        "503": {
+          "admission_rejected": 38,
+          "invalid_permits": 0,
+          "unavailable_snapshot": 0,
+          "wait_policy": 0,
+          "engine_infrastructure": 0,
+          "runtime_exception": 0
+        }
+      },
+      "reason_deltas": {
+        "admission_rejected": 38,
+        "invalid_permits": 0,
+        "unavailable_snapshot": 0,
+        "wait_policy": 0,
+        "engine_infrastructure": 0,
+        "runtime_exception": 0
+      },
+      "counter_change_windows": [
+        {
+          "host_sample_window_unix_ms": [
+            1791593209869,
+            1791593210915
+          ],
+          "reason_deltas": {
+            "admission_rejected": 38
+          }
+        }
+      ]
+    }
+  ],
+  "load_503_counts": {
+    "baseline": 0,
+    "mixed": 0,
+    "quota": 0,
+    "characterization_300_rps": 0,
+    "characterization_600_rps": 39
+  },
+  "provenance": {
+    "raw": {
+      "path": "/tmp/fluxgate-resilience-load-decision-observations.json",
+      "sha256": "6852c1105020d5e0d38b39cd0237d2633f4a4779a639cfa1a252a70aec53e04a",
+      "size_bytes": 158393
+    },
+    "observation_helper": {
+      "path": "/tmp/fluxgate-observe-load.py",
+      "sha256": "b58e2a2b15e0d7ba26982d2c8a097c53d210a52e17645713980b2be040d69040",
+      "size_bytes": 4027
+    },
+    "wrapper_log": {
+      "path": "/tmp/fluxgate-resilience-load-observed-wrapper.log",
+      "sha256": "57bbb0e489a8da1ff6c85088682bc21c0a70f1bf6d5ff329c0426cf7730f95d6",
+      "size_bytes": 52
+    },
+    "load_raw": {
+      "path": "/tmp/fluxgate-resilience-load-observed-final.json",
+      "sha256": "761b13c821cb30253cbaa5ba7b0778a9050d0fc0a6758631e6a8bf89ad878c32",
+      "size_bytes": 16758635
+    }
+  },
+  "limits": [
+    "Management snapshots are observational and sequential across Pods.",
+    "Pod/host clock alignment is not established here; timed attribution needs a separation margin.",
+    "Counters cover decision service only, not controller or Envoy failures.",
+    "The observed aggregate 39 admission rejections equals the 39 current 600 RPS status-503 responses; exact request-level causal matching is not established.",
+    "No attribution of earlier-artifact load failures is made.",
+    "No raw request samples or credential material are exported."
+  ]
+}

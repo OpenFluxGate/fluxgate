@@ -163,6 +163,8 @@ public class FluxgateMongoAutoConfiguration {
    * treats distinct ids as equal. Such an index is reported by name and the startup fails.
    */
   private void validateRuleIndexes(MongoCollection<Document> collection, String collectionName) {
+    // Read every global-id constraint before accepting any otherwise valid compound index.
+    new MongoRateLimitRuleRepository(collection).validateScopedIdConstraints();
     List<String> restricted = new ArrayList<>();
     for (Document index : collection.listIndexes()) {
       if (!Boolean.TRUE.equals(index.get("unique"))

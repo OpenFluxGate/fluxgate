@@ -5,8 +5,8 @@ package org.fluxgate.adapter.mongo.converter;
  *
  * <p>Typical causes are a field of the wrong BSON type (a capacity stored as a string), a value
  * outside its range, or an enum value this version does not know (an algorithm, zone id or quota
- * period). The repository skips such a document with a WARN instead of failing the whole rule set,
- * and never substitutes a default that would change what the rule limits.
+ * period). Runtime reads fail instead of enforcing a partial rule set. Management lists may skip
+ * the document with a WARN, and never substitute a default that would change what the rule limits.
  *
  * @since 0.4.0
  */

@@ -1,0 +1,310 @@
+{
+  "result": "REJECTED",
+  "passed": false,
+  "complete": false,
+  "terminal_exit_code": 1,
+  "terminal_exit_provenance": "Root witnessed process 45667 exit 1 after independent finally restoration and probe cleanup.",
+  "phase": "mongo-election-publication",
+  "exception_class": "TimeoutExpired",
+  "application_jar_sha256": "893ce2fdc1f4b75d6ccabdf7f54ec1cd18e694adfef876dfb649aeb337440d40",
+  "root_source_at_invocation": "25f32a8",
+  "redis_partial": {
+    "recovery_seconds": 13.927,
+    "final_quota_seconds": 16.484,
+    "identity_promotion_seconds": 5.812,
+    "target_still_paused": true,
+    "task_state": "PAUSED",
+    "load_key_owned_failed_shard": true,
+    "script_exists_old_primary_before_flush": true,
+    "cache_absent_before_promotion": true,
+    "cache_loaded_after_real_request": true,
+    "rpo": "Observed counter preserved; asynchronous replication is not zero-loss consensus",
+    "tokens_before": "1",
+    "tokens_after_promotion": "1",
+    "tokens_exhausted": "0",
+    "acceptance_scope": "Redis phase only; does not make full HA pass."
+  },
+  "mongo_partial": {
+    "root_budget_start_unix_ms": 1791593384299,
+    "fault_start_unix_ms": 1791593384442,
+    "paused_verified_unix_ms": 1791593384628,
+    "publication_verified_unix_ms": 1791593404032,
+    "publication_verified_seconds_from_original_budget_start": 19.733,
+    "publication": {
+      "passed": true,
+      "published": true,
+      "epochPreserved": true,
+      "majorityReadVerified": true,
+      "idempotentReplay": true,
+      "elapsedSeconds": 17.212591299,
+      "transientFailureClasses": [
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException"
+      ]
+    },
+    "publication_attempt_timings": [
+      {
+        "attempt": 1,
+        "outcome": "mongo-failure",
+        "elapsedSeconds": 2.015325751,
+        "startedAtUnixMs": 1791593385040,
+        "finishedAtUnixMs": 1791593387054
+      },
+      {
+        "attempt": 2,
+        "outcome": "mongo-failure",
+        "elapsedSeconds": 2.001302459,
+        "startedAtUnixMs": 1791593387305,
+        "finishedAtUnixMs": 1791593389307
+      },
+      {
+        "attempt": 3,
+        "outcome": "mongo-failure",
+        "elapsedSeconds": 2.003254292,
+        "startedAtUnixMs": 1791593389557,
+        "finishedAtUnixMs": 1791593391560
+      },
+      {
+        "attempt": 4,
+        "outcome": "mongo-failure",
+        "elapsedSeconds": 2.001529418,
+        "startedAtUnixMs": 1791593391811,
+        "finishedAtUnixMs": 1791593393813
+      },
+      {
+        "attempt": 5,
+        "outcome": "success",
+        "elapsedSeconds": 8.188682504,
+        "startedAtUnixMs": 1791593394064,
+        "finishedAtUnixMs": 1791593402248
+      }
+    ],
+    "dense_gateway": {
+      "rpc_startup_seconds": 0.5601,
+      "granted_remote_seconds": 9.48739749994129,
+      "sample_count": 6,
+      "root_rpc_failed": true,
+      "root_rpc_timed_out": true,
+      "root_observed_elapsed_seconds": 10.148737,
+      "clock_contract": "Remote duration starts at READY before root grants remaining time; no UTC clock alignment assumed",
+      "exact_backend_successes": 5,
+      "response_headers_seconds": [
+        1.151785,
+        1.793964,
+        1.796594,
+        1.800007,
+        1.801391
+      ],
+      "request_seconds": [
+        1.151991,
+        1.794115,
+        1.796726,
+        1.80021,
+        1.801588
+      ],
+      "completed_remote_elapsed_seconds": [
+        1.253272,
+        3.248901,
+        5.246287,
+        7.247451,
+        9.249865
+      ],
+      "transport_error_count": 1,
+      "terminal_transport_error_class": "TimeoutError",
+      "required_successes": 10,
+      "required_minimum_span_seconds": 2,
+      "original_rto_budget_seconds": 30,
+      "required_dense_gate_passed": false
+    },
+    "continuous_outage_observations": {
+      "count": 13,
+      "status_counts": {
+        "503": 3,
+        "200": 10
+      },
+      "first_200_elapsed_seconds": 11.148,
+      "last_observed_elapsed_seconds": 29.967
+    }
+  },
+  "finally_checks": [
+    {
+      "check": "redis-primary-placement-restoration",
+      "performed": false,
+      "placement_restoration_deferred": false,
+      "home_roles_pending": false,
+      "actual_primary_nodes_distinct": true,
+      "policy_exact_preserved": true,
+      "ha_counter_exact_preserved": true,
+      "shared_restore_elapsed_seconds": 11.333,
+      "automatic_placement_claim": false,
+      "replica_repair_count": 0
+    },
+    {
+      "check": "complete-fixture-restoration",
+      "ready_counts": {
+        "app=mongo": 3,
+        "app=redis": 9,
+        "app=fluxgate-authz": 2,
+        "app=echo": 2,
+        "control-plane=envoy-gateway": 2,
+        "gateway.envoyproxy.io/owning-gateway-namespace=fluxgate-resilience": 2
+      },
+      "mongo_healthy_voters": 3,
+      "redis_primaries": 3,
+      "redis_linked_replicas": 6,
+      "replica_migration_disabled_on_all_members": true,
+      "redis_primary_nodes_distinct": true,
+      "placement_restoration_deferred": false,
+      "restore_seconds": 11.333,
+      "original_route_restored": false,
+      "sustained_gateway_status_counts": {
+        "200": 3
+      },
+      "each_shard_member_nodes_distinct": true
+    },
+    {
+      "check": "baseline",
+      "evidence_present": true
+    },
+    {
+      "check": "redis-promotion",
+      "evidence_present": true
+    },
+    {
+      "check": "redis-primary-placement-restoration",
+      "performed": true,
+      "placement_restoration_deferred": false,
+      "home_roles_pending": false,
+      "actual_primary_nodes_distinct": true,
+      "policy_exact_preserved": true,
+      "ha_counter_exact_preserved": true,
+      "shared_restore_elapsed_seconds": 15.125,
+      "automatic_placement_claim": false,
+      "replica_repair_count": 0
+    },
+    {
+      "check": "complete-fixture-restoration",
+      "ready_counts": {
+        "app=mongo": 3,
+        "app=redis": 9,
+        "app=fluxgate-authz": 2,
+        "app=echo": 2,
+        "control-plane=envoy-gateway": 2,
+        "gateway.envoyproxy.io/owning-gateway-namespace=fluxgate-resilience": 2
+      },
+      "mongo_healthy_voters": 3,
+      "redis_primaries": 3,
+      "redis_linked_replicas": 6,
+      "replica_migration_disabled_on_all_members": true,
+      "redis_primary_nodes_distinct": true,
+      "placement_restoration_deferred": false,
+      "restore_seconds": 15.125,
+      "original_route_restored": false,
+      "sustained_gateway_status_counts": {
+        "200": 3
+      },
+      "each_shard_member_nodes_distinct": true
+    },
+    {
+      "check": "redis-primary-placement-restoration",
+      "performed": false,
+      "placement_restoration_deferred": false,
+      "home_roles_pending": false,
+      "actual_primary_nodes_distinct": true,
+      "policy_exact_preserved": true,
+      "ha_counter_exact_preserved": true,
+      "shared_restore_elapsed_seconds": 13.543,
+      "automatic_placement_claim": false,
+      "replica_repair_count": 0
+    },
+    {
+      "check": "complete-fixture-restoration",
+      "ready_counts": {
+        "app=mongo": 3,
+        "app=redis": 9,
+        "app=fluxgate-authz": 2,
+        "app=echo": 2,
+        "control-plane=envoy-gateway": 2,
+        "gateway.envoyproxy.io/owning-gateway-namespace=fluxgate-resilience": 2
+      },
+      "mongo_healthy_voters": 3,
+      "redis_primaries": 3,
+      "redis_linked_replicas": 6,
+      "replica_migration_disabled_on_all_members": true,
+      "redis_primary_nodes_distinct": true,
+      "placement_restoration_deferred": false,
+      "restore_seconds": 13.543,
+      "original_route_restored": false,
+      "sustained_gateway_status_counts": {
+        "200": 3
+      },
+      "each_shard_member_nodes_distinct": true
+    },
+    {
+      "check": "publication-probe-cleanup",
+      "passed": true,
+      "pod_absent": true,
+      "network_policy_absent": true,
+      "resource_count": 3,
+      "all_recorded_resources_absent": true
+    },
+    {
+      "check": "owned-probe-resource-cleanup",
+      "kind": "pod",
+      "name": "ha-probe-5e571349",
+      "uid": "b69a4269-5a71-45f8-8cd1-d1295e572b30",
+      "absent": true
+    },
+    {
+      "check": "owned-probe-resource-cleanup",
+      "kind": "secret",
+      "name": "ha-probe-5e571349-key",
+      "uid": "1220ced8-c74e-45e9-8af6-899d49c51014",
+      "absent": true
+    },
+    {
+      "check": "owned-probe-resource-cleanup",
+      "kind": "networkpolicy",
+      "name": "ha-probe-5e571349-egress",
+      "uid": "45ab8d4f-bcc8-4e76-a25c-f3603d87a41f",
+      "absent": true
+    }
+  ],
+  "provenance": {
+    "failure": {
+      "path": "/tmp/fluxgate-resilience-ha-observed-final/failure.json",
+      "sha256": "81f122f720183abe5e0d12721d7c117ffb469018a0002af7b19c4ef44584850a",
+      "size_bytes": 64931
+    },
+    "progress": {
+      "path": "/tmp/fluxgate-resilience-ha-observed-final/progress.json",
+      "sha256": "6cd22c3103f23786af514e869fa9c1d875679886f27b8d69929d5af6513bcec9",
+      "size_bytes": 70481
+    },
+    "publication": {
+      "path": "/tmp/fluxgate-resilience-ha-observed-final/publication-a3b1ea15e386416187bf042a1e2533ff.json",
+      "sha256": "cded6992fb4f7a933c54b86f958919a4c424f4341694157244de5beaea29c54f",
+      "size_bytes": 4144
+    },
+    "publisher_cleanup": {
+      "path": "/tmp/fluxgate-resilience-ha-observed-final/publisher-cleanup.json",
+      "sha256": "5aa429b364e3a2686a8e80e7f8967a3a49ae2a33512ddb26a58e05f43d52e1b0",
+      "size_bytes": 669
+    },
+    "log": {
+      "path": "/tmp/fluxgate-resilience-ha-observed-final.log",
+      "sha256": "15b14531c52b67ede7fca243895583f910835a652de9fe2cc231b34278378a22",
+      "size_bytes": 5924
+    }
+  },
+  "limits": [
+    "Original Mongo 30-second publication-plus-dense-gateway gate failed; five exact backend successes do not satisfy the required ten.",
+    "Retained timings show substantial response-header latency after publication; no application, infrastructure or tool-only causal attribution is made.",
+    "Finally restoration and cleanup prove fixture recovery, not successful HA acceptance.",
+    "Historical ha.json is not overwritten or treated as current-artifact acceptance.",
+    "No raw request samples, policy payloads, counter keys or credential material are exported.",
+    "No enterprise score or production availability claim is assigned."
+  ]
+}

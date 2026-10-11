@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Envoy Gateway에서 FluxGate로 요청 제한",
+    "quality_profile": "showcase",
+    "viewBox": [1160, 700]
+  },
+  "components": [
+    { "id": "clients", "type": "external", "label": "사용자", "sublabel": "HTTP 요청", "pos": [70, 220], "size": [150, 74] },
+    { "id": "envoy", "type": "security", "label": "Envoy Gateway", "sublabel": "SecurityPolicy · extAuth", "pos": [330, 220], "size": [220, 74] },
+    { "id": "services", "type": "backend", "label": "서비스 Pod", "sublabel": "Java · Go · Rust", "pos": [780, 220], "size": [210, 74] },
+    { "id": "fluxgate", "type": "backend", "label": "FluxGate 판정 서비스", "sublabel": "Java · RateLimitEngine", "pos": [330, 445], "size": [220, 76] },
+    { "id": "redis", "type": "database", "label": "Redis", "sublabel": "원자적 제한 카운터", "pos": [780, 445], "size": [210, 76] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Kubernetes 클러스터", "wraps": ["envoy", "services", "fluxgate"] }
+  ],
+  "connections": [
+    { "id": "incoming", "from": "clients", "to": "envoy", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "authorized", "from": "envoy", "to": "services", "label": "허용 시 원 요청 전달", "variant": "emphasis" },
+    { "id": "decision", "from": "envoy", "to": "fluxgate", "label": "HTTP ext_authz · 판정 응답", "variant": "security", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
+    { "id": "counter", "from": "fluxgate", "to": "redis", "label": "Redis Lua · 제한 판정", "variant": "security" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "라우팅", "items": ["FluxGate는 원 요청을 중계하지 않습니다.", "Envoy는 허용된 요청만 서비스 Pod로 보냅니다."] },
+    { "dot": "rose", "title": "거절과 장애", "items": ["한도 초과: 429", "판정 서비스 장애: 503 · failOpen=false"] }
+  ]
+}

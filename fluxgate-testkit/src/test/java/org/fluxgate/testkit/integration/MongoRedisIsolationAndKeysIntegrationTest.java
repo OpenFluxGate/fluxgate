@@ -27,6 +27,7 @@ import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.redis.RedisRateLimiter;
 import org.fluxgate.redis.config.RedisRateLimiterConfig;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
+import org.fluxgate.redis.store.RedisTokenBucketStore;
 import org.fluxgate.testkit.support.MongoContainerSupport;
 import org.fluxgate.testkit.support.RedisContainerSupport;
 import org.junit.jupiter.api.*;
@@ -308,7 +309,7 @@ class MongoRedisIsolationAndKeysIntegrationTest {
             .method("GET")
             .build();
 
-    redisRateLimiter.tryConsume(context, ruleSet, 1);
+    assertTrue(redisRateLimiter.tryConsume(context, ruleSet, 1).isAllowed());
 
     // Verify Redis keys exist. Scan only this run's keys: the target may be a shared Redis
     // whose other keys (rule sets, other runs) legitimately have no TTL.
@@ -316,6 +317,7 @@ class MongoRedisIsolationAndKeysIntegrationTest {
     assertNotNull(keys);
     assertFalse(keys.isEmpty(), "Redis should have FluxGate keys for " + keyTestRuleSetId);
 
+    int bucketCount = 0;
     System.out.println("  Redis keys created:");
     for (String key : keys) {
       System.out.println("    - " + key);
@@ -326,13 +328,30 @@ class MongoRedisIsolationAndKeysIntegrationTest {
       assertTrue(ttl > 0, "Key should have TTL set");
       System.out.println("      TTL: " + ttl + " seconds");
 
-      // Check key structure
+      // Policy metadata and revision fences share the run's namespace but are not buckets.
+      // Check those through each bucket's actual companion keys below.
+      if (key.startsWith("fluxgate:policy:")) {
+        continue;
+      }
+      bucketCount++;
+
+      // Check bucket structure and the policy geometry used by this request.
       Map<String, String> value = connectionProvider.hgetall(key);
       System.out.println("      Fields: " + value.keySet());
       assertTrue(value.containsKey("tokens"), "Key should have 'tokens' field");
       assertTrue(
           value.containsKey("last_refill_micros"), "Key should have 'last_refill_micros' field");
+      String metadataKey = RedisTokenBucketStore.metadataKey(key);
+      assertTrue(keys.contains(metadataKey), "Bucket policy metadata should exist");
+      Map<String, String> metadata = connectionProvider.hgetall(metadataKey);
+      assertEquals("0", metadata.get("revision"));
+      assertEquals("10", metadata.get("capacity"));
+      assertEquals("30000000", metadata.get("window_micros"));
+      assertTrue(
+          keys.contains(RedisTokenBucketStore.revisionKey(key)),
+          "Rule revision fence should exist");
     }
+    assertEquals(1, bucketCount, "One rule and one band should create exactly one bucket");
 
     System.out.println("\n=== Redis Key Structure Test PASSED ===");
   }

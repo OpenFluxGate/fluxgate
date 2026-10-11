@@ -413,7 +413,7 @@ class FluxgateMongoAutoConfigurationTest {
     /** A rule collection mock whose index creation can be verified. */
     @SuppressWarnings("unchecked")
     private MongoCollection<Document> mockRuleCollection() {
-      return mock(MongoCollection.class);
+      return collectionWithIndexes();
     }
 
     /**
