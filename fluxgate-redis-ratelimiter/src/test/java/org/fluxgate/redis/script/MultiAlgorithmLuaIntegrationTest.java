@@ -450,23 +450,75 @@ class MultiAlgorithmLuaIntegrationTest {
     }
 
     @Test
-    @DisplayName("A window end in the past still leaves a live counter with a ~1 ms TTL")
-    void pastWindowEndIsFlooredToNowPlusOneMilli() {
+    @DisplayName("Expired calendar input fails closed without creating a counter")
+    void expiredCalendarCannotCreateFreshQuota() {
       String key = key("fw-past-window-end");
-      // A calendar window end that has already passed (e.g. clock skew between Java and Redis).
-      long windowEndMicros = redisNowMicros() - 5 * SECOND_MICROS;
-      String[] b = band(5, SECOND_MICROS, ALG_FIXED_WINDOW, 0, windowEndMicros);
+      long end = redisNowMicros() - 5 * SECOND_MICROS;
+      assertThatThrownBy(() -> consume(1, band(1, HOUR_MICROS, ALG_FIXED_WINDOW, 0, end), key))
+          .isInstanceOf(RedisCommandExecutionException.class)
+          .hasMessageContaining("expired calendar window");
+      assertThat(redis.hgetall(key)).isEmpty();
+      assertThat(pttl(key)).isEqualTo(-2L);
+    }
 
-      // Read the counter in the same script invocation: Redis checks key expiry against the
-      // script's start time, so the 1 ms TTL cannot elapse between the write and the reads.
-      List<Long> result = consumeThenInspect(1, b, key);
+    @Test
+    void expiredStoredCalendarIsRejectedWithoutRepairingTtlOrResettingCount() {
+      String key = key("fw-expired-stored");
+      long expiredEnd = redisNowMicros() - 5 * SECOND_MICROS;
+      writeCounter(key, 1, expiredEnd, -1L);
+      Map<String, String> before = redis.hgetall(key);
+      assertThatThrownBy(
+              () ->
+                  consume(
+                      1,
+                      band(1, HOUR_MICROS, ALG_FIXED_WINDOW, 0, expiredEnd + SECOND_MICROS),
+                      key))
+          .isInstanceOf(RedisCommandExecutionException.class)
+          .hasMessageContaining("expired calendar window");
+      assertThat(redis.hgetall(key)).isEqualTo(before);
+      assertThat(pttl(key)).isEqualTo(-1L);
+    }
 
-      assertThat(result.get(0)).as("allowed").isEqualTo(1L);
-      // without the floor, PEXPIREAT in the past deletes the key at once (GET nil -> -1)
-      assertThat(result.get(1)).as("counter value").isEqualTo(1L);
-      // the floor is now + 1 ms; PTTL is measured from the script's (millisecond) start time, which
-      // can trail the TIME call by a rounding step, so allow a few ms rather than exactly 1
-      assertThat(result.get(2)).as("PTTL").isNotEqualTo(-1L).isBetween(1L, 5L);
+    @Test
+    void expiredLaterCalendarCannotMigrateEarlierBandOrAdvanceFences() {
+      String first = key("fw-expired-earlier");
+      String later = key("fw-expired-later");
+      String[] original =
+          bands(
+              band(10, HOUR_MICROS, ALG_TOKEN_BUCKET, 0, 0),
+              band(1, HOUR_MICROS, ALG_FIXED_WINDOW, 0, 0));
+      consumeFenced(original, 1, first, later);
+      // Simulate the earlier calendar counter expiring before a lagging request arrives.
+      redis.del(later);
+      List<String> tracked = List.of(first, later, first + ":meta", later + ":meta");
+      List<Map<String, String>> before =
+          tracked.stream().map(redis::hgetall).collect(java.util.stream.Collectors.toList());
+      List<Long> ttls =
+          tracked.stream()
+              .map(MultiAlgorithmLuaIntegrationTest::pttl)
+              .collect(java.util.stream.Collectors.toList());
+      long firstFenceTtl = pttl(first + ":revision");
+      long laterFenceTtl = pttl(later + ":revision");
+      String[] changed =
+          bands(
+              band(5, HOUR_MICROS, ALG_TOKEN_BUCKET, 0, 0),
+              band(1, HOUR_MICROS, ALG_FIXED_WINDOW, 0, redisNowMicros() - SECOND_MICROS));
+      assertThatThrownBy(() -> consumeFenced(changed, 2, first, later))
+          .isInstanceOf(RedisCommandExecutionException.class)
+          .hasMessageContaining("expired calendar window");
+      assertThat(tracked.stream().map(redis::hgetall).collect(java.util.stream.Collectors.toList()))
+          .isEqualTo(before);
+      for (int i = 0; i < tracked.size(); i++) {
+        assertThat(pttl(tracked.get(i))).isLessThanOrEqualTo(ttls.get(i));
+      }
+      assertThat(
+              redis.<List<Long>>eval(
+                  "return {tonumber(redis.call('GET', KEYS[1])), tonumber(redis.call('GET', KEYS[2]))}",
+                  new String[] {first + ":revision", later + ":revision"},
+                  new String[0]))
+          .containsExactly(1L, 1L);
+      assertThat(pttl(first + ":revision")).isLessThanOrEqualTo(firstFenceTtl);
+      assertThat(pttl(later + ":revision")).isLessThanOrEqualTo(laterFenceTtl);
     }
 
     @Test
@@ -577,20 +629,22 @@ class MultiAlgorithmLuaIntegrationTest {
     @Test
     @DisplayName("Calendar skew: a node whose clock lags does not reset the newer period")
     void laggingNodeKeepsTheNewerPeriod() {
-      String key = key("fw-calendar-behind");
-      long now = redisNowMicros();
-      long yesterdayEnd = now + SECOND_MICROS;
-      long todayEnd = yesterdayEnd + 24 * HOUR_MICROS;
-      writeCounter(key, 3, todayEnd, 60_000L);
+      for (long offset : new long[] {SECOND_MICROS, -SECOND_MICROS}) {
+        String key = key("fw-calendar-behind-" + offset);
+        long now = redisNowMicros();
+        long yesterdayEnd = now + offset;
+        long todayEnd = now + 24 * HOUR_MICROS;
+        writeCounter(key, 2, todayEnd, 60_000L);
 
-      // a node still on "yesterday" must not wipe today's counter and admit again
-      List<Long> result =
-          consume(1, band(3, 24 * HOUR_MICROS, ALG_FIXED_WINDOW, 0, yesterdayEnd), key);
-
-      assertThat(result.get(ALLOWED)).isZero();
-      assertThat(result.get(RESET_TIME_MILLIS)).isEqualTo(todayEnd / 1000L);
-      assertThat(counter(key)).isEqualTo(3L);
-      assertThat(storedWindowEnd(key)).isEqualTo(todayEnd);
+        // A node still on yesterday can use today's remaining quota without resetting it.
+        String[] input = band(3, 24 * HOUR_MICROS, ALG_FIXED_WINDOW, 0, yesterdayEnd);
+        assertThat(consume(1, input, key).get(ALLOWED)).isEqualTo(1L);
+        List<Long> result = consume(1, input, key);
+        assertThat(result.get(ALLOWED)).isZero();
+        assertThat(result.get(RESET_TIME_MILLIS)).isEqualTo(todayEnd / 1000L);
+        assertThat(counter(key)).isEqualTo(3L);
+        assertThat(storedWindowEnd(key)).isEqualTo(todayEnd);
+      }
     }
 
     @Test
@@ -791,23 +845,22 @@ class MultiAlgorithmLuaIntegrationTest {
     return redis.eval(scripts.getTokenBucketConsumeScript(), keys, args);
   }
 
-  /**
-   * Runs the consume script and, in the same script invocation, reads the first key's counter
-   * ({@code HGET count}, -1 when missing) and {@code PTTL}. Returns {allowed, counter, pttl}.
-   */
-  private static List<Long> consumeThenInspect(long permits, String[] bandArgs, String key) {
-    String[] args = new String[2 + bandArgs.length];
-    args[0] = String.valueOf(permits);
+  private static List<Long> consumeFenced(String[] bandArgs, long revision, String... buckets) {
+    int count = buckets.length;
+    String[] keys = new String[count * 3];
+    String[] args = new String[4 + 6 * count];
+    args[0] = "1";
     args[1] = String.valueOf(DEFAULT_MAX_TTL_SECONDS);
     System.arraycopy(bandArgs, 0, args, 2, bandArgs.length);
-    String wrapper =
-        "local consume = function()\n"
-            + scripts.getTokenBucketConsumeScript()
-            + "\nend\n"
-            + "local r = consume()\n"
-            + "return {r[1], tonumber(redis.call('HGET', KEYS[1], 'count') or -1),"
-            + " redis.call('PTTL', KEYS[1])}";
-    return redis.eval(wrapper, new String[] {key}, args);
+    for (int i = 0; i < count; i++) {
+      keys[i] = buckets[i];
+      keys[count + i] = buckets[i] + ":meta";
+      keys[2 * count + i] = buckets[i] + ":revision";
+      args[2 + 5 * count + i] = String.valueOf(revision);
+    }
+    args[args.length - 2] = "0";
+    args[args.length - 1] = "FENCED";
+    return redis.eval(scripts.getTokenBucketConsumeScript(), keys, args);
   }
 
   /** Writes a FIXED_WINDOW counter hash; {@code pexpireMillis < 0} leaves it without a TTL. */

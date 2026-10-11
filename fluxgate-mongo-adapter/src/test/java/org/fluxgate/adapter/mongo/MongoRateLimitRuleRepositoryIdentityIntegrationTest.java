@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.bson.BsonDocument;
 import org.bson.Document;
+import org.fluxgate.adapter.mongo.converter.InvalidRuleDocumentException;
 import org.fluxgate.adapter.mongo.converter.RateLimitRuleConverter;
 import org.fluxgate.adapter.mongo.converter.RateLimitRuleMongoConverter;
 import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
@@ -38,7 +39,6 @@ import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
 import org.fluxgate.core.key.RateLimitKey;
-import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -467,8 +467,8 @@ class MongoRateLimitRuleRepositoryIdentityIntegrationTest {
 
   @Test
   @DisplayName(
-      "Int32/Double numbers load, malformed documents are skipped, the rule set still loads")
-  void findByRuleSetId_mixedAndMalformedDocuments() {
+      "Management listing tolerates malformed documents but runtime refuses a partial rule set")
+  void malformedDocumentsAreVisibleToRuntimeAsFailure() {
     collection.insertOne(
         rawRule(
             "S",
@@ -502,7 +502,7 @@ class MongoRateLimitRuleRepositoryIdentityIntegrationTest {
                 .append("algorithm", "FIXED_WINDOW")
                 .append("zoneId", "Mars/Olympus")));
 
-    List<RateLimitRule> rules = repository.findByRuleSetId("S");
+    List<RateLimitRule> rules = repository.findAll();
 
     assertThat(rules).extracting(RateLimitRule::getId).containsExactlyInAnyOrder("int32", "double");
     assertThat(rules)
@@ -512,8 +512,12 @@ class MongoRateLimitRuleRepositoryIdentityIntegrationTest {
 
     MongoRuleSetProvider provider =
         new MongoRuleSetProvider(repository, (context, rule) -> RateLimitKey.of("k"));
-    RateLimitRuleSet ruleSet = provider.findById("S").orElseThrow();
-    assertThat(ruleSet.getRules()).hasSize(2);
+    assertThatThrownBy(() -> repository.findByRuleSetId("S"))
+        .isInstanceOf(InvalidRuleDocumentException.class)
+        .hasMessageContaining("capacity");
+    assertThatThrownBy(() -> provider.findById("S"))
+        .isInstanceOf(InvalidRuleDocumentException.class)
+        .hasMessageContaining("capacity");
   }
 
   // ========================================================================== access control
@@ -523,6 +527,17 @@ class MongoRateLimitRuleRepositoryIdentityIntegrationTest {
         RateLimitRuleMongoConverter.toBson(RateLimitRuleConverter.toDocument(rule("acl", id, 5)));
     doc.putAll(acl);
     collection.insertOne(doc);
+  }
+
+  @Test
+  void invalidDeniedCidrCannotDisappearFromRuntimeAcl() {
+    insertWithAcl("bad", new Document("deniedIps", List.of("203.0.113.0/24", "10.0.0.0/99")));
+    assertThatThrownBy(() -> repository.findAccessControlByRuleSetId("acl"))
+        .isInstanceOf(IllegalArgumentException.class);
+    MongoRuleSetProvider provider =
+        new MongoRuleSetProvider(repository, (context, rule) -> RateLimitKey.of("k"));
+    assertThatThrownBy(() -> provider.findById("acl"))
+        .hasMessageContaining("Invalid access control");
   }
 
   @Test

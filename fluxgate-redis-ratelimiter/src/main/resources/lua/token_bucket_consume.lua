@@ -278,6 +278,19 @@ local time_info  = redis.call('TIME')
 -- time_info[1] = seconds since epoch, time_info[2] = microseconds within the second
 local now_micros = tonumber(time_info[1]) * 1000000 + tonumber(time_info[2])
 
+-- A lagging Java clock must not recreate quota for an already ended calendar period.
+-- Validate every band before any migration, TTL repair or revision-fence write. A newer
+-- stored period is authoritative and can still be used by a lagging node.
+for i = 1, band_count do
+    if algorithms[i] == ALG_FIXED_WINDOW and win_ends_in[i] ~= 0
+        and win_ends_in[i] <= now_micros then
+        local stored_end = tonumber(redis.call('HGET', KEYS[i], 'window_end_micros'))
+        if stored_end == nil or stored_end <= now_micros then
+            return redis.error_reply('INVALID_POLICY_STATE: expired calendar window')
+        end
+    end
+end
+
 -- TTL in whole seconds, capped at max_ttl_seconds (for TOKEN_BUCKET and SLIDING_WINDOW).
 -- min=1s so a sub-second window still gets a bucket that expires.
 local function ttl_for_window(win_micros)

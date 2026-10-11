@@ -24,6 +24,7 @@ English | [한국어](README.ko.md)
 
 ### Guides
 
+- [**Envoy Gateway integration and local testing**](en/guides/envoy-local-testing.md) - Existing fixture connection, 200/403/429 checks, service Pod routing, first-time setup and troubleshooting
 - [**YAML Rule Sets Guide**](en/guides/yaml-rule-sets.md) - `fluxgate.ratelimit.rule-sets`: matcher, algorithms, calendar quotas, access control, startup validation
 - [**@RateLimit Annotation Guide**](en/guides/annotation.md) - `@EnableFluxgateAspect`, every annotation attribute, exception handling, non-web usage, filter vs. aspect decision table
 

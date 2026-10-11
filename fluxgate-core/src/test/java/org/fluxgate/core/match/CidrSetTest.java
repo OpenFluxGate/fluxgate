@@ -1,6 +1,7 @@
 package org.fluxgate.core.match;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -10,6 +11,18 @@ import org.junit.jupiter.api.Test;
 
 @DisplayName("CidrSet Tests")
 class CidrSetTest {
+
+  @Test
+  void strictPolicyParsingRejectsEveryInvalidEntryInsteadOfReturningAPartialSet() {
+    for (String invalid : Arrays.asList("10.0.0.0/99", "not-an-ip", " ", null)) {
+      assertThatThrownBy(() -> CidrSet.ofStrict(Arrays.asList("203.0.113.0/24", invalid)))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    CidrSet valid = CidrSet.ofStrict(Arrays.asList("203.0.113.0/24", "2001:db8::/32"));
+    assertThat(valid.contains("203.0.113.7")).isTrue();
+    assertThat(valid.contains("2001:db8::1")).isTrue();
+    assertThat(valid.contains("198.51.100.1")).isFalse();
+  }
 
   // ===== IPv4 =====
 

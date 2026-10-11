@@ -330,10 +330,10 @@ public final class PropertiesRuleSetProvider implements RateLimitRuleSetProvider
 
     AccessControl.Builder builder = AccessControl.builder();
     if (!allowedIps.isEmpty()) {
-      builder.allowedIps(CidrSet.of(allowedIps));
+      builder.allowedIps(CidrSet.ofStrict(allowedIps));
     }
     if (!deniedIps.isEmpty()) {
-      builder.deniedIps(CidrSet.of(deniedIps));
+      builder.deniedIps(CidrSet.ofStrict(deniedIps));
     }
     if (!allowedKeysList.isEmpty()) {
       builder.allowedKeys(new HashSet<>(allowedKeysList));

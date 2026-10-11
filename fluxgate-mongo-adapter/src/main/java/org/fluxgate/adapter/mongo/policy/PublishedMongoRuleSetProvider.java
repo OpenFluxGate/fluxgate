@@ -63,8 +63,9 @@ public final class PublishedMongoRuleSetProvider implements RateLimitRuleSetProv
                   .accessControl(
                       AccessControl.builder()
                           .allowedIps(
-                              CidrSet.of(acl.getList("allowedIps", String.class, List.of())))
-                          .deniedIps(CidrSet.of(acl.getList("deniedIps", String.class, List.of())))
+                              CidrSet.ofStrict(acl.getList("allowedIps", String.class, List.of())))
+                          .deniedIps(
+                              CidrSet.ofStrict(acl.getList("deniedIps", String.class, List.of())))
                           .allowedKeys(
                               new HashSet<>(acl.getList("allowedKeys", String.class, List.of())))
                           .deniedKeys(

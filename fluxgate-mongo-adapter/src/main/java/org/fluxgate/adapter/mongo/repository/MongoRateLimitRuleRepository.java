@@ -54,8 +54,9 @@ import org.slf4j.LoggerFactory;
  * to act when the id is ambiguous.
  *
  * <p><b>Malformed documents.</b> A document that cannot be converted (wrong BSON type, unknown
- * algorithm, invalid zone id, ...) is skipped with a WARN by the list reads, so one bad rule does
- * not take its whole rule set down; {@link #getSkippedDocumentCount()} counts them.
+ * algorithm, invalid zone id, ...) fails runtime {@link #findByRuleSetId(String)} reads so the
+ * protective policy cannot load partially. Management {@link #findAll()} lists skip it with a WARN;
+ * {@link #getSkippedDocumentCount()} counts these management-list skips.
  *
  * <p><b>Access control.</b> The rule-set-level access control is stored on the rule documents of
  * the rule set (the 0.4 layout, readable by 0.3.x which ignores the extra fields). Every write of
@@ -322,10 +323,8 @@ public class MongoRateLimitRuleRepository
   public List<RateLimitRule> findByRuleSetId(String ruleSetId) {
     List<RateLimitRule> result = new ArrayList<>();
     for (Document doc : collection.find(Filters.eq("ruleSetId", ruleSetId))) {
-      RateLimitRule rule = toDomainOrSkip(doc);
-      if (rule != null) {
-        result.add(rule);
-      }
+      // Runtime must never enforce only the parseable subset of a protective policy.
+      result.add(toDomain(doc));
     }
     return result;
   }
@@ -406,7 +405,7 @@ public class MongoRateLimitRuleRepository
   }
 
   /**
-   * Returns how many malformed documents the list reads have skipped since this repository was
+   * Returns how many malformed documents management lists have skipped since this repository was
    * created.
    *
    * @return the skipped document count

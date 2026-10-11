@@ -6,18 +6,30 @@ import org.fluxgate.adapter.mongo.policy.PublishedMongoRuleSetProvider;
 import org.fluxgate.core.key.KeyResolver;
 import org.fluxgate.core.metrics.RateLimitMetricsRecorder;
 import org.fluxgate.spring.autoconfigure.FluxgateMongoClientHolder;
+import org.fluxgate.spring.properties.FluxgateProperties;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /** Selects authoritative published snapshots instead of mutable draft rules. */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "fluxgate.envoy.published-policies", havingValue = "true")
+@EnableConfigurationProperties(FluxgateProperties.class)
 public class PublishedPolicyConfiguration {
+  public PublishedPolicyConfiguration(FluxgateProperties properties) {
+    // The starter's YAML composer would otherwise replace the authoritative published provider.
+    if (!properties.getRatelimit().getRuleSets().isEmpty()) {
+      throw new IllegalStateException(
+          "fluxgate.ratelimit.rule-sets must be empty when fluxgate.envoy.published-policies=true;"
+              + " published Mongo policies must remain authoritative");
+    }
+  }
+
   @Bean
   public MongoTelemetryDispatcher mongoTelemetryDispatcher(FluxgateMongoClientHolder clientHolder) {
     // Dependency keeps the isolated FluxGate client alive until dispatcher lifecycle drain
