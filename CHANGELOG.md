@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Envoy external authorization applies the existing FluxGate engine and Mongo/Redis policy
   contracts to Java, Go and Rust backends through the gateway.
 - Shared Redis SDK transport dependencies receive public Netty and Lettuce security patches.
+- Sample BOM precedence preserves the public transport/container patches; modern logging uses
+  Logback 1.6.5. The Boot 2 sample retains its explicitly unsupported SLF4J 1.7 logging family.
 - Mongo identity migration requires an explicit maintenance operation; startup never drops
   legacy global-ID constraints. Runtime malformed policies fail instead of enforcing a subset.
 - Spring compatibility is separate from upstream OSS security maintenance; the server baseline

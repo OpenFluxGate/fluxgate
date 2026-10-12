@@ -6,6 +6,14 @@ This module contains sample applications demonstrating various FluxGate rate lim
 
 FluxGate is a distributed rate limiting framework for Spring Boot applications. These samples showcase different deployment patterns and feature combinations.
 
+## Support boundary
+
+These are local compatibility examples, not LTS deployment templates. Boot 2/3 OSS
+maintenance has ended; the Java 11 sample also uses EOL Logback 1.2.13 and has residual
+Spring Data / SnakeYAML advisories. Public transport and container patches do not remove
+that support boundary. See the [security policy](../SECURITY.md#050-source-preparation)
+before using a sample as an application baseline.
+
 ## Sample Applications
 
 | Sample | Port | Description | Prerequisites |

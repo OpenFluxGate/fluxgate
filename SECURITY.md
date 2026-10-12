@@ -13,6 +13,13 @@ compatibility does not provide ongoing upstream OSS security support. Spring 5.3
 still have conditional security advisories, including [CVE-2026-47884](https://spring.io/security/cve-2026-47884/);
 Spring 6.2.19 also has [CVE-2026-47890](https://spring.io/security/cve-2026-47890/).
 
+Modern server and sample logging uses [Logback 1.6.5](https://logback.qos.ch/news.html),
+including the MDC discriminator security fix. The Java 11 / Boot 2 sample retains SLF4J 1.7
+and Logback 1.2.13 for compatibility; that logging line is end of life. Its resolved graph
+also includes legacy Spring Data and SnakeYAML advisories. It is a compatibility example,
+not a security-supported deployment template. Audits include samples as well as SDK/server
+modules; findings in those legacy graphs are not hidden by a clean SDK scan.
+
 The maintained server baseline and legacy compatibility scope must be settled before publishing
 0.5.0 as LTS. A clean dependency scan for an SDK subset does not establish security for the
 consumer application's resolved graph or enabled features. No advisory is suppressed to claim
