@@ -55,8 +55,8 @@
         <logback.version>1.5.11</logback.version>
         <lettuce.version>6.4.0.RELEASE</lettuce.version>
         <aspectj.version>1.9.22</aspectj.version>
-        <!-- Matches the jackson-bom of the Spring Boot 3.3.5 BOM used by the boot3 starter -->
-        <jackson.version>2.17.2</jackson.version>
+        <!-- Patched Jackson 2.x line shared with Envoy; remains compatible with Java 11. -->
+        <jackson.version>2.21.7</jackson.version>
         <micrometer.version>1.13.6</micrometer.version>
         <junit.jupiter.version>5.11.3</junit.jupiter.version>
         <assertj.version>3.26.3</assertj.version>
@@ -160,10 +160,31 @@
                 <version>${aspectj.version}</version>
             </dependency>
 
+            <!-- Keep core, annotations and databind on the BOM's compatible versions. -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>${jackson.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <!-- Explicit entries also override the samples' child Spring Boot BOM imports. -->
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
                 <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-core</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-annotations</artifactId>
+                <!-- Since 2.20 annotations use the minor release version, as in the Jackson BOM. -->
+                <version>2.21</version>
             </dependency>
 
             <dependency>
