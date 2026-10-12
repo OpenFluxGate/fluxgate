@@ -1,0 +1,74 @@
+{
+  "result": "pass",
+  "notification": "disabled",
+  "checks": [
+    {
+      "check": "anonymous-rejected",
+      "status": 401
+    },
+    {
+      "check": "unsigned-rejected",
+      "status": 401
+    },
+    {
+      "check": "wrong-audience-rejected",
+      "status": 401
+    },
+    {
+      "check": "reader-cannot-publish",
+      "status": 403
+    },
+    {
+      "check": "actor-spoof-rejected",
+      "status": 400
+    },
+    {
+      "check": "admin-publishes-complete-generation",
+      "status": 200
+    },
+    {
+      "check": "authz-pod-1",
+      "status": 403
+    },
+    {
+      "check": "authz-pod-2",
+      "status": 403
+    },
+    {
+      "check": "operation-replay",
+      "status": 200
+    },
+    {
+      "check": "stale-cas-rejected",
+      "status": 409
+    },
+    {
+      "check": "invalid-acl-rejected",
+      "status": 400
+    },
+    {
+      "check": "read-active",
+      "status": 200
+    },
+    {
+      "check": "rollback-publishes-new-revision",
+      "status": 200
+    },
+    {
+      "check": "read-active",
+      "status": 200
+    },
+    {
+      "check": "restore-initial-acl",
+      "status": 200
+    },
+    {
+      "check": "authz-pod-1",
+      "status": 429
+    },
+    {
+      "check": "authz-pod-2",
+      "status": 429
+    }
+  ]
+}

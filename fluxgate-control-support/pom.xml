@@ -9,7 +9,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.3.7</version>
+        <version>0.4.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>fluxgate-control-support</artifactId>
@@ -19,22 +19,37 @@
     <description>Support library for FluxGate Control Plane (Admin/Studio) - provides rule change notification capabilities</description>
 
     <properties>
+        <!--
+          Java baseline: this module compiles for Java 11 (root java.version) so the Redis notifier
+          is usable from Java 11 control planes. The optional Spring integration below (autoconfigure,
+          AOP, TX) is built against the same Spring Boot 3.3.x / Spring Framework 6.1.x line as
+          fluxgate-spring-boot3-starter, so that integration only works on Java 17+ at runtime;
+          the plain RedisRuleChangeNotifier has no Spring dependency.
+          Keep these three in step with fluxgate-spring-boot3-starter.
+        -->
+        <spring-boot.version>3.3.5</spring-boot.version>
+        <spring.version>6.1.14</spring.version>
         <skipJacocoForPom>false</skipJacocoForPom>
     </properties>
 
     <dependencies>
-        <!-- Lettuce Redis Client -->
+        <!-- FluxGate Core (shared constants such as the Pub/Sub channel name) -->
+        <dependency>
+            <groupId>io.github.openfluxgate</groupId>
+            <artifactId>fluxgate-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Lettuce Redis Client; version managed in the root pom -->
         <dependency>
             <groupId>io.lettuce</groupId>
             <artifactId>lettuce-core</artifactId>
-            <version>6.3.2.RELEASE</version>
         </dependency>
 
-        <!-- Jackson for JSON serialization -->
+        <!-- Jackson for JSON serialization; version managed in the root pom -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>2.17.2</version>
         </dependency>
 
         <!-- SLF4J Logging -->
@@ -47,7 +62,7 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-autoconfigure</artifactId>
-            <version>3.3.5</version>
+            <version>${spring-boot.version}</version>
             <optional>true</optional>
         </dependency>
 
@@ -55,7 +70,7 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-configuration-processor</artifactId>
-            <version>3.3.5</version>
+            <version>${spring-boot.version}</version>
             <optional>true</optional>
         </dependency>
 
@@ -63,13 +78,20 @@
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-aop</artifactId>
-            <version>6.1.14</version>
+            <version>${spring.version}</version>
             <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>org.aspectj</groupId>
             <artifactId>aspectjweaver</artifactId>
-            <version>1.9.22</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Spring TX (optional, to defer notifications until after commit) -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-tx</artifactId>
+            <version>${spring.version}</version>
             <optional>true</optional>
         </dependency>
 
@@ -77,6 +99,14 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- ApplicationContextRunner, to assert what the auto-configuration wires -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-test</artifactId>
+            <version>${spring-boot.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -87,7 +117,17 @@
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
-            <version>1.5.6</version>
+            <version>${logback.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -97,6 +137,11 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- Keep parameter names: SpEL expressions such as "#ruleSetId" resolve
+                         through them, and Spring 6 no longer reads the local variable table. -->
+                    <parameters>true</parameters>
+                </configuration>
             </plugin>
 
             <plugin>
@@ -123,14 +168,11 @@
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
                 <configuration>
-                    <excludes>
-                        <!-- Exclude auto-configuration that requires Redis -->
-                        <exclude>**/autoconfigure/**</exclude>
-                        <!-- Exclude Redis notifier that requires actual Redis connection -->
-                        <exclude>**/RedisRuleChangeNotifier.class</exclude>
-                        <!-- Exclude AOP aspect that requires Spring context -->
-                        <exclude>**/aop/RuleChangeAspect.class</exclude>
-                    </excludes>
+                    <!--
+                      No excludes: RedisRuleChangeNotifier (signs and publishes rule changes),
+                      RuleChangeAspect (afterCommit publication) and the auto-configuration are
+                      security-relevant and must count towards the coverage gate.
+                    -->
                 </configuration>
             </plugin>
         </plugins>

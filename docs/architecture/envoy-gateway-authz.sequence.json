@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "요청 1건의 판정 순서",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 610],
+    "column_fit": "spread"
+  },
+  "participants": [
+    { "id": "user", "type": "external", "label": "사용자" },
+    { "id": "envoy", "type": "security", "label": "Envoy" },
+    { "id": "fluxgate", "type": "backend", "label": "FluxGate" },
+    { "id": "redis", "type": "database", "label": "Redis" },
+    { "id": "service", "type": "backend", "label": "서비스 Pod" }
+  ],
+  "messages": [
+    { "id": "request", "from": "user", "to": "envoy", "y": 166, "label": "원 요청", "variant": "emphasis" },
+    { "id": "authz", "from": "envoy", "to": "fluxgate", "y": 205, "label": "HTTP ext_authz", "variant": "security" },
+    { "id": "consume", "from": "fluxgate", "to": "redis", "y": 244, "label": "규칙 키 소비", "variant": "security" },
+    { "id": "result", "from": "redis", "to": "fluxgate", "y": 283, "label": "원자적 판정", "variant": "return" },
+    { "id": "allow", "from": "fluxgate", "to": "envoy", "y": 322, "label": "200 = 허용", "variant": "return" },
+    { "id": "forward", "from": "envoy", "to": "service", "y": 361, "label": "원 요청 전달", "variant": "emphasis" },
+    { "id": "response", "from": "service", "to": "envoy", "y": 400, "label": "서비스 응답", "variant": "return" },
+    { "id": "finish", "from": "envoy", "to": "user", "y": 439, "label": "최종 응답", "variant": "return" }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "차단 분기", "items": ["FluxGate가 429를 반환하면 Envoy는 서비스 Pod를 호출하지 않습니다.", "판정 서비스 장애는 503으로 구분합니다."] },
+    { "dot": "cyan", "title": "네트워크 경계", "items": ["Envoy↔FluxGate와 FluxGate↔Redis는 별도 네트워크 호출입니다.", "요청 본문은 첫 버전에서 전달하지 않습니다."] }
+  ]
+}

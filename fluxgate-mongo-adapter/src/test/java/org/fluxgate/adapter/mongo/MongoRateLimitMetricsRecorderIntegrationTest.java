@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.Map;
 import org.bson.Document;
 import org.fluxgate.adapter.mongo.event.MongoRateLimitMetricsRecorder;
+import org.fluxgate.adapter.mongo.support.MongoContainerSupport;
 import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.fluxgate.core.config.RateLimitBand;
@@ -20,21 +21,14 @@ import org.fluxgate.core.key.RateLimitKey;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.junit.jupiter.api.*;
 
+/**
+ * Integration tests for {@link MongoRateLimitMetricsRecorder} against a real MongoDB.
+ *
+ * <p>The target comes from {@link MongoContainerSupport}: a supplied {@code FLUXGATE_MONGO_URI}, a
+ * Testcontainers {@code mongo:7.0}, or the test is skipped. Each test gets its own collection, so
+ * nothing a shared MongoDB already holds is dropped.
+ */
 class MongoRateLimitMetricsRecorderIntegrationTest {
-
-  private static final String MONGO_URI =
-      System.getProperty(
-          "fluxgate.mongo.uri",
-          System.getenv()
-              .getOrDefault(
-                  "FLUXGATE_MONGO_URI",
-                  "mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin"));
-
-  private static final String DB_NAME =
-      System.getProperty(
-          "fluxgate.mongo.db", System.getenv().getOrDefault("FLUXGATE_MONGO_DB", "fluxgate"));
-
-  private static final String EVENT_COLLECTION = "rate_limit_events";
 
   private MongoClient client;
   private MongoDatabase database;
@@ -43,18 +37,34 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
   @BeforeEach
   void setUp() {
-    client = MongoClients.create(MONGO_URI);
-    database = client.getDatabase(DB_NAME);
-    eventCollection = database.getCollection(EVENT_COLLECTION);
+    client = MongoClients.create(MongoContainerSupport.mongoUri());
+    database = client.getDatabase(MongoContainerSupport.databaseName());
 
-    // Start with a clean state
-    eventCollection.drop();
+    // A collection of this test's own, so a shared MongoDB keeps its data
+    eventCollection =
+        database.getCollection(MongoContainerSupport.uniqueCollectionName("rate_limit_events"));
 
     recorder = new MongoRateLimitMetricsRecorder(eventCollection);
   }
 
+  /** The recorder writes on a background thread; wait until it has. */
+  private static void flush(MongoRateLimitMetricsRecorder target) {
+    try {
+      assertTrue(target.flush(Duration.ofSeconds(10)), "events were not written within 10s");
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new AssertionError(e);
+    }
+  }
+
   @AfterEach
   void tearDown() {
+    if (recorder != null) {
+      recorder.close();
+    }
+    if (eventCollection != null) {
+      eventCollection.drop();
+    }
     if (client != null) {
       client.close();
     }
@@ -83,6 +93,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     long count = eventCollection.countDocuments();
@@ -121,6 +132,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     Document doc = eventCollection.find().first();
@@ -162,6 +174,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     Document doc = eventCollection.find().first();
@@ -181,6 +194,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     Document doc = eventCollection.find().first();
@@ -208,6 +222,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     Document doc = eventCollection.find().first();
@@ -243,7 +258,9 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context1, result1);
+    flush(recorder);
     recorder.record(context2, result2);
+    flush(recorder);
 
     // then
     long count = eventCollection.countDocuments();
@@ -275,6 +292,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     long afterRecording = Instant.now().toEpochMilli();
 
@@ -308,6 +326,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     Document doc = eventCollection.find().first();
@@ -343,6 +362,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     Document doc = eventCollection.find().first();
@@ -385,6 +405,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     Document doc = eventCollection.find().first();
@@ -409,6 +430,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     Document doc = eventCollection.find().first();
@@ -429,6 +451,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     Document doc = eventCollection.find().first();
@@ -455,6 +478,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     Document doc = eventCollection.find().first();
@@ -480,6 +504,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     Document doc = eventCollection.find().first();
@@ -509,6 +534,7 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
 
     // when
     recorder.record(context, result);
+    flush(recorder);
 
     // then
     Document doc = eventCollection.find().first();
@@ -517,5 +543,147 @@ class MongoRateLimitMetricsRecorderIntegrationTest {
     assertNotNull(headers);
     assertEquals("valid-value", headers.getString("Valid-Header"));
     assertFalse(headers.containsKey("Null-Header"), "Null header should not be stored");
+  }
+
+  @Test
+  @DisplayName("Should store the API key as a fingerprint and createdAt as a BSON date (N-12)")
+  void record_shouldStoreAFingerprintedApiKeyAndADateForTheTtlIndex() {
+    // given
+    RequestContext context =
+        RequestContext.builder()
+            .clientIp("198.51.100.7")
+            .userId("user-fingerprint")
+            .apiKey("it-test-only-api-key")
+            .endpoint("/api/fingerprint")
+            .method("GET")
+            .build();
+
+    RateLimitResult result = RateLimitResult.allowed(new RateLimitKey("fp-key"), null, 10L, 0L);
+
+    // when
+    recorder.record(context, result);
+    flush(recorder);
+
+    // then
+    Document doc = eventCollection.find().first();
+    assertNotNull(doc);
+    String storedApiKey = doc.getString("apiKey");
+    assertNotNull(storedApiKey, "The apiKey field is still recorded");
+    assertNotEquals(
+        "it-test-only-api-key", storedApiKey, "A credential must not be stored in clear");
+    assertTrue(storedApiKey.startsWith("sha256:"), "The apiKey is a fingerprint");
+    assertEquals("user-fingerprint", doc.getString("userId"), "userId stays readable by default");
+    assertEquals("198.51.100.7", doc.getString("clientIp"));
+
+    // A TTL index only expires a BSON date; the ISO string would look configured and expire
+    // nothing.
+    assertTrue(doc.get("createdAt") instanceof java.util.Date, "createdAt must be a BSON date");
+  }
+
+  @Test
+  @DisplayName("Should fingerprint the user id when the recorder is configured to")
+  void record_shouldFingerprintTheUserIdWhenConfigured() {
+    // given
+    MongoRateLimitMetricsRecorder fingerprinting =
+        new MongoRateLimitMetricsRecorder(eventCollection, true);
+    RequestContext context =
+        RequestContext.builder().clientIp("198.51.100.8").userId("user-secret").build();
+
+    // when
+    fingerprinting.record(context, RateLimitResult.allowedWithoutRule());
+    flush(fingerprinting);
+    fingerprinting.close();
+
+    // then
+    Document doc = eventCollection.find().first();
+    assertNotNull(doc);
+    assertNotEquals("user-secret", doc.getString("userId"));
+    assertTrue(doc.getString("userId").startsWith("sha256:"));
+  }
+
+  @Test
+  @DisplayName("Should let MongoDB expire the events through a TTL index on createdAt")
+  void record_shouldBeExpirableByATtlIndexOnCreatedAt() {
+    // given
+    eventCollection.createIndex(
+        com.mongodb.client.model.Indexes.ascending("createdAt"),
+        new com.mongodb.client.model.IndexOptions()
+            .name("createdAt_ttl")
+            .expireAfter(3600L, java.util.concurrent.TimeUnit.SECONDS));
+
+    // when
+    recorder.record(
+        RequestContext.builder().clientIp("198.51.100.9").build(),
+        RateLimitResult.allowedWithoutRule());
+    flush(recorder);
+
+    // then: the index MongoDB accepted is a TTL index, and the field it covers is present
+    boolean ttlIndexPresent = false;
+    for (Document index : eventCollection.listIndexes()) {
+      if ("createdAt_ttl".equals(index.getString("name"))) {
+        ttlIndexPresent = true;
+        assertEquals(3600L, index.get("expireAfterSeconds", Number.class).longValue());
+      }
+    }
+    assertTrue(ttlIndexPresent, "MongoDB should have accepted the TTL index");
+    assertNotNull(eventCollection.find().first().get("createdAt"));
+  }
+
+  @Test
+  @DisplayName("Header and attribute names with '.' or '$' are stored under safe field names")
+  void record_shouldSanitiseFieldNames() {
+    RequestContext context =
+        RequestContext.builder()
+            .clientIp("198.51.100.10")
+            .header("X.Forwarded.Host", "example.org")
+            .attribute("$where", "1 == 1")
+            .attribute("tenant.id", "t-1")
+            .build();
+
+    recorder.record(context, RateLimitResult.allowedWithoutRule());
+    flush(recorder);
+
+    Document doc = eventCollection.find().first();
+    assertNotNull(doc, "the event must be written, not rejected for its field names");
+    assertEquals(
+        "example.org", doc.get("headers", Document.class).getString("X%2EForwarded%2EHost"));
+    Document attributes = doc.get("attributes", Document.class);
+    assertEquals("1 == 1", attributes.getString("%24where"));
+    assertEquals("t-1", attributes.getString("tenant%2Eid"));
+    assertEquals(1L, recorder.getWrittenEvents());
+  }
+
+  @Test
+  @DisplayName("With MongoDB unreachable, record() returns at once and the failure is counted")
+  void record_shouldNotBlockOrThrowWhenMongoIsDown() throws Exception {
+    MongoClient unreachable =
+        MongoClients.create(
+            com.mongodb.MongoClientSettings.builder()
+                .applyConnectionString(
+                    new com.mongodb.ConnectionString("mongodb://127.0.0.1:1/?connectTimeoutMS=200"))
+                .applyToClusterSettings(
+                    b -> b.serverSelectionTimeout(500, java.util.concurrent.TimeUnit.MILLISECONDS))
+                .build());
+    MongoRateLimitMetricsRecorder down =
+        new MongoRateLimitMetricsRecorder(
+            unreachable.getDatabase("fluxgate").getCollection("events"), false, 4);
+    try {
+      long start = System.nanoTime();
+      for (int i = 0; i < 20; i++) {
+        down.record(
+            RequestContext.builder().clientIp("198.51.100.11").build(),
+            RateLimitResult.allowedWithoutRule());
+      }
+      long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+
+      assertTrue(elapsedMillis < 250, "record() blocked for " + elapsedMillis + "ms");
+      assertTrue(down.getDroppedEvents() > 0, "a full queue must drop, not block");
+      assertTrue(down.flush(Duration.ofSeconds(15)));
+      assertTrue(down.getFailedEvents() > 0, "failed writes must be counted");
+      assertEquals(0L, down.getWrittenEvents());
+    } finally {
+      down.close();
+      unreachable.close();
+    }
   }
 }

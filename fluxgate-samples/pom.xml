@@ -9,7 +9,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.3.7</version>
+        <version>0.4.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>fluxgate-samples</artifactId>
@@ -30,6 +30,8 @@
     <properties>
         <spring-boot.version>3.3.5</spring-boot.version>
         <springdoc.version>2.6.0</springdoc.version>
+        <!-- Boot 3 samples target Java 17; the java11 and java21 samples override this. -->
+        <java.version>17</java.version>
         <!-- Skip coverage check for samples -->
         <jacoco.skip>true</jacoco.skip>
         <!-- Skip deployment to Maven Central -->
@@ -39,6 +41,15 @@
     <build>
         <pluginManagement>
             <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <configuration>
+                        <!-- Spring 6 binds @PathVariable/@RequestParam by name; without -parameters
+                             they fail at runtime on the Boot 3 samples. -->
+                        <parameters>true</parameters>
+                    </configuration>
+                </plugin>
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>

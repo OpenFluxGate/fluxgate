@@ -22,7 +22,10 @@ public class RedisConfig {
 
   @Bean
   public RedisRateLimiterConfig redisRateLimiterConfig() throws IOException {
-    log.info("Creating RedisRateLimiterConfig with URI: {}", redisUri);
+    // mask everything up to the last @ of the authority so credentials never reach the log
+    log.info(
+        "Creating RedisRateLimiterConfig with URI: {}",
+        redisUri.replaceAll("://[^/?#]*@", "://***@"));
     return new RedisRateLimiterConfig(redisUri);
   }
 

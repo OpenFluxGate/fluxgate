@@ -1,8 +1,14 @@
-version: "3.8"
+# Local development only - not for production.
+#
+# Ports are published on 127.0.0.1 so nothing on the surrounding network (office LAN,
+# cafe Wi-Fi) can reach this Redis. Authentication stays off on purpose: the samples and
+# the integration tests default to redis://localhost:6379 with no credentials, and adding
+# --requirepass here would break every one of them. That trade-off is only acceptable
+# because of the loopback binding above.
 
 services:
   redis:
-    image: redis:7.2-alpine
+    image: redis:7.2.5-alpine
     container_name: fluxgate-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"

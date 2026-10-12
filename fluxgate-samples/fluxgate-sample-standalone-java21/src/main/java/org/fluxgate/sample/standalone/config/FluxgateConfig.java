@@ -31,7 +31,8 @@ public class FluxgateConfig {
 
   @Bean
   public RedisRateLimiterConfig redisRateLimiterConfig() throws IOException {
-    log.info("Connecting to Redis: {}", redisUri);
+    // mask everything up to the last @ of the authority so credentials never reach the log
+    log.info("Connecting to Redis: {}", redisUri.replaceAll("://[^/?#]*@", "://***@"));
     this.redisConfig = new RedisRateLimiterConfig(redisUri);
     return this.redisConfig;
   }

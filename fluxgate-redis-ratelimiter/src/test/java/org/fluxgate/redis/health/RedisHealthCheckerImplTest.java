@@ -24,7 +24,6 @@ class RedisHealthCheckerImplTest {
   void shouldReturnUpWhenStandaloneConnectionIsHealthy() {
     when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
     when(connectionProvider.ping()).thenReturn("PONG");
-    when(connectionProvider.isConnected()).thenReturn(true);
 
     RedisHealthCheckerImpl checker = new RedisHealthCheckerImpl(connectionProvider);
     HealthCheckResult result = checker.check();
@@ -64,17 +63,17 @@ class RedisHealthCheckerImplTest {
   }
 
   @Test
-  void shouldReturnDownWhenConnectionIsNotActive() {
+  void shouldIssueExactlyOnePingPerCheck() {
     when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
     when(connectionProvider.ping()).thenReturn("PONG");
-    when(connectionProvider.isConnected()).thenReturn(false);
 
     RedisHealthCheckerImpl checker = new RedisHealthCheckerImpl(connectionProvider);
     HealthCheckResult result = checker.check();
 
-    assertThat(result.isHealthy()).isFalse();
-    assertThat(result.status()).isEqualTo("DOWN");
-    assertThat(result.message()).contains("not active");
+    assertThat(result.isHealthy()).isTrue();
+    // The PONG is the liveness proof; isConnected() would send a second PING.
+    verify(connectionProvider, times(1)).ping();
+    verify(connectionProvider, never()).isConnected();
   }
 
   @Test
@@ -82,7 +81,6 @@ class RedisHealthCheckerImplTest {
     ClusterRedisConnection clusterConnection = mock(ClusterRedisConnection.class);
     when(clusterConnection.getMode()).thenReturn(RedisMode.CLUSTER);
     when(clusterConnection.ping()).thenReturn("PONG");
-    when(clusterConnection.isConnected()).thenReturn(true);
     when(clusterConnection.clusterNodes())
         .thenReturn(
             List.of(
@@ -121,14 +119,14 @@ class RedisHealthCheckerImplTest {
     ClusterRedisConnection clusterConnection = mock(ClusterRedisConnection.class);
     when(clusterConnection.getMode()).thenReturn(RedisMode.CLUSTER);
     when(clusterConnection.ping()).thenReturn("PONG");
-    when(clusterConnection.isConnected()).thenReturn(true);
     when(clusterConnection.clusterNodes()).thenThrow(new RuntimeException("Cluster error"));
 
     RedisHealthCheckerImpl checker = new RedisHealthCheckerImpl(clusterConnection);
     HealthCheckResult result = checker.check();
 
-    // Should still be healthy, just with limited cluster info
-    assertThat(result.isHealthy()).isTrue();
+    // A cluster whose topology cannot be read is not known to be serving: DOWN, not UP
+    assertThat(result.isHealthy()).isFalse();
+    assertThat(result.status()).isEqualTo("DOWN");
     assertThat(result.details()).containsEntry("mode", "CLUSTER");
     assertThat(result.details()).containsKey("cluster_error");
   }
@@ -137,7 +135,6 @@ class RedisHealthCheckerImplTest {
   void shouldMeasureLatency() {
     when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
     when(connectionProvider.ping()).thenReturn("PONG");
-    when(connectionProvider.isConnected()).thenReturn(true);
 
     RedisHealthCheckerImpl checker = new RedisHealthCheckerImpl(connectionProvider);
     HealthCheckResult result = checker.check();
@@ -173,7 +170,6 @@ class RedisHealthCheckerImplTest {
     ClusterRedisConnection clusterConnection = mock(ClusterRedisConnection.class);
     when(clusterConnection.getMode()).thenReturn(RedisMode.CLUSTER);
     when(clusterConnection.ping()).thenReturn("PONG");
-    when(clusterConnection.isConnected()).thenReturn(true);
     when(clusterConnection.clusterNodes())
         .thenReturn(
             List.of(
@@ -191,8 +187,55 @@ class RedisHealthCheckerImplTest {
     RedisHealthCheckerImpl checker = new RedisHealthCheckerImpl(clusterConnection);
     HealthCheckResult result = checker.check();
 
+    assertThat(result.isHealthy()).isFalse();
+    assertThat(result.status()).isEqualTo("DOWN");
+    assertThat(result.message()).contains("cluster_state=fail");
     assertThat(result.details()).containsEntry("cluster_state", "fail");
     assertThat(result.details()).containsEntry("cluster_slots_fail", 10923);
+  }
+
+  @Test
+  void shouldReportDownWhenSlotsFailWhileTheStateIsStillOk() {
+    ClusterRedisConnection clusterConnection = mock(ClusterRedisConnection.class);
+    when(clusterConnection.getMode()).thenReturn(RedisMode.CLUSTER);
+    when(clusterConnection.ping()).thenReturn("PONG");
+    when(clusterConnection.clusterNodes())
+        .thenReturn(List.of("node1 127.0.0.1:7000 master - 0 0 1 connected 0-16383"));
+    when(clusterConnection.getClusterInfo())
+        .thenReturn("cluster_state:ok\ncluster_slots_ok:16000\ncluster_slots_fail:384");
+
+    HealthCheckResult result = new RedisHealthCheckerImpl(clusterConnection).check();
+
+    assertThat(result.isHealthy()).isFalse();
+    assertThat(result.status()).isEqualTo("DOWN");
+    assertThat(result.message()).contains("cluster_slots_fail=384");
+  }
+
+  @Test
+  void shouldReportDownWhenNoClusterNodeIsReported() {
+    ClusterRedisConnection clusterConnection = mock(ClusterRedisConnection.class);
+    when(clusterConnection.getMode()).thenReturn(RedisMode.CLUSTER);
+    when(clusterConnection.ping()).thenReturn("PONG");
+    // ClusterRedisConnection.clusterNodes() answers an empty list when CLUSTER NODES fails
+    when(clusterConnection.clusterNodes()).thenReturn(List.of());
+
+    HealthCheckResult result = new RedisHealthCheckerImpl(clusterConnection).check();
+
+    assertThat(result.isHealthy()).isFalse();
+    assertThat(result.status()).isEqualTo("DOWN");
+  }
+
+  @Test
+  void shouldTrustTheNodeListOfAClusterProviderWithoutClusterInfo() {
+    when(connectionProvider.getMode()).thenReturn(RedisMode.CLUSTER);
+    when(connectionProvider.ping()).thenReturn("PONG");
+    when(connectionProvider.clusterNodes())
+        .thenReturn(List.of("node1 127.0.0.1:7000 master - 0 0 1 connected 0-16383"));
+
+    HealthCheckResult result = new RedisHealthCheckerImpl(connectionProvider).check();
+
+    assertThat(result.isHealthy()).isTrue();
+    assertThat(result.details()).containsEntry("cluster_masters", 1);
   }
 
   @Test
@@ -200,14 +243,16 @@ class RedisHealthCheckerImplTest {
     ClusterRedisConnection clusterConnection = mock(ClusterRedisConnection.class);
     when(clusterConnection.getMode()).thenReturn(RedisMode.CLUSTER);
     when(clusterConnection.ping()).thenReturn("PONG");
-    when(clusterConnection.isConnected()).thenReturn(true);
-    when(clusterConnection.clusterNodes()).thenReturn(List.of());
+    when(clusterConnection.clusterNodes())
+        .thenReturn(List.of("node1 127.0.0.1:7000 master - 0 0 1 connected 0-16383"));
+    // ClusterRedisConnection.getClusterInfo() answers "" when CLUSTER INFO fails
     when(clusterConnection.getClusterInfo()).thenReturn("");
 
     RedisHealthCheckerImpl checker = new RedisHealthCheckerImpl(clusterConnection);
     HealthCheckResult result = checker.check();
 
-    assertThat(result.isHealthy()).isTrue();
+    assertThat(result.isHealthy()).isFalse();
+    assertThat(result.status()).isEqualTo("DOWN");
     assertThat(result.details()).containsEntry("mode", "CLUSTER");
   }
 
@@ -216,14 +261,14 @@ class RedisHealthCheckerImplTest {
     ClusterRedisConnection clusterConnection = mock(ClusterRedisConnection.class);
     when(clusterConnection.getMode()).thenReturn(RedisMode.CLUSTER);
     when(clusterConnection.ping()).thenReturn("PONG");
-    when(clusterConnection.isConnected()).thenReturn(true);
-    when(clusterConnection.clusterNodes()).thenReturn(List.of());
+    when(clusterConnection.clusterNodes())
+        .thenReturn(List.of("node1 127.0.0.1:7000 master - 0 0 1 connected 0-16383"));
     when(clusterConnection.getClusterInfo()).thenReturn(null);
 
     RedisHealthCheckerImpl checker = new RedisHealthCheckerImpl(clusterConnection);
     HealthCheckResult result = checker.check();
 
-    assertThat(result.isHealthy()).isTrue();
+    assertThat(result.isHealthy()).isFalse();
   }
 
   @Test
@@ -231,8 +276,8 @@ class RedisHealthCheckerImplTest {
     ClusterRedisConnection clusterConnection = mock(ClusterRedisConnection.class);
     when(clusterConnection.getMode()).thenReturn(RedisMode.CLUSTER);
     when(clusterConnection.ping()).thenReturn("PONG");
-    when(clusterConnection.isConnected()).thenReturn(true);
-    when(clusterConnection.clusterNodes()).thenReturn(List.of());
+    when(clusterConnection.clusterNodes())
+        .thenReturn(List.of("node1 127.0.0.1:7000 master - 0 0 1 connected 0-16383"));
     when(clusterConnection.getClusterInfo())
         .thenReturn("cluster_slots_ok:not_a_number\ncluster_state:ok");
 
@@ -242,5 +287,26 @@ class RedisHealthCheckerImplTest {
     assertThat(result.isHealthy()).isTrue();
     assertThat(result.details()).containsEntry("cluster_slots_ok", -1);
     assertThat(result.details()).containsEntry("cluster_state", "ok");
+  }
+
+  @Test
+  void shouldCountRolesFromTheFlagsColumnOnly() {
+    ClusterRedisConnection clusterConnection = mock(ClusterRedisConnection.class);
+    when(clusterConnection.getMode()).thenReturn(RedisMode.CLUSTER);
+    when(clusterConnection.ping()).thenReturn("PONG");
+    // The replica's node id spells "master" and its host is "master-host"; only the third
+    // column (flags) decides the role.
+    when(clusterConnection.clusterNodes())
+        .thenReturn(
+            List.of(
+                "aaa 127.0.0.1:7000@17000 myself,master - 0 0 1 connected 0-16383",
+                "master1 master-host:7001@17001 slave aaa 0 0 2 connected"));
+    when(clusterConnection.getClusterInfo()).thenReturn("cluster_state:ok");
+
+    RedisHealthCheckerImpl checker = new RedisHealthCheckerImpl(clusterConnection);
+    HealthCheckResult result = checker.check();
+
+    assertThat(result.details()).containsEntry("cluster_masters", 1);
+    assertThat(result.details()).containsEntry("cluster_replicas", 1);
   }
 }

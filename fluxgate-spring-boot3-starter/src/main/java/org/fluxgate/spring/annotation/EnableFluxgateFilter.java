@@ -41,12 +41,20 @@ import org.springframework.context.annotation.Import;
  * fluxgate:
  *   ratelimit:
  *     include-patterns:
- *       - /api/*
+ *       - /api/**
  *     exclude-patterns:
  *       - /health
- *       - /actuator/*
+ *       - /actuator/**
  *     filter-order: 1
  * </pre>
+ *
+ * <p><b>Precedence</b>: {@code application.yml} always wins. {@link #ruleSetId()}, {@link
+ * #includePatterns()}, {@link #excludePatterns()} and {@link #filterOrder()} are read from {@code
+ * fluxgate.ratelimit.*} first, and the annotation attribute is used only when the corresponding
+ * property is not set. So the attributes here are defaults for code that ships without a yml, and
+ * an operator can always override them without touching the source.
+ *
+ * <p>Set {@code fluxgate.ratelimit.enabled=false} to register no filter at all.
  *
  * @see FluxgateRateLimitHandler
  * @see FluxgateFilterAutoConfiguration
@@ -77,7 +85,7 @@ public @interface EnableFluxgateFilter {
   /**
    * Default rule set ID to apply for rate limiting.
    *
-   * <p>This can be overridden per-request via request attributes or headers.
+   * <p>Overridden by {@code fluxgate.ratelimit.default-rule-set-id} when that property is set.
    *
    * @return Rule set ID
    */
@@ -86,8 +94,10 @@ public @interface EnableFluxgateFilter {
   /**
    * URL patterns to include in rate limiting.
    *
-   * <p>Supports Ant-style patterns (e.g., "/api/**", "/v1/*"). Defaults to all paths if not
-   * specified.
+   * <p>Supports Ant-style patterns (e.g., "/api/**", "/v1/*") and is matched against the
+   * normalized, context-path independent request path. Defaults to all paths if not specified.
+   *
+   * <p>Overridden by {@code fluxgate.ratelimit.include-patterns} when that property is set.
    *
    * @return Include patterns
    */
@@ -98,6 +108,8 @@ public @interface EnableFluxgateFilter {
    *
    * <p>Supports Ant-style patterns (e.g., "/health", "/actuator/**").
    *
+   * <p>Overridden by {@code fluxgate.ratelimit.exclude-patterns} when that property is set.
+   *
    * @return Exclude patterns
    */
   String[] excludePatterns() default {};
@@ -107,6 +119,10 @@ public @interface EnableFluxgateFilter {
    *
    * <p>Default is 1, which runs early in the filter chain. Set to {@code Integer.MIN_VALUE + 100}
    * for highest priority.
+   *
+   * <p>Overridden by {@code fluxgate.ratelimit.filter-order} when that property is set. Identity
+   * based scopes ({@code PER_USER}, {@code PER_API_KEY}) need an order <em>after</em> Spring
+   * Security so the authenticated principal exists when the context is built.
    *
    * @return Filter order
    */

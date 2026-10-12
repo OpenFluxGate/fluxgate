@@ -1,0 +1,100 @@
+{
+  "result": "REJECTED",
+  "passed": false,
+  "complete": false,
+  "process_exit_code": 1,
+  "process_exit_provenance": "Root observed exit 1.",
+  "failure_phase": "redis-promotion",
+  "exception_class": "RuntimeError",
+  "application_jar_sha256": "e2811693800b7ca24a70fdda66ecf46f330aba6b1a4bb449b2b911a144c08699",
+  "automatic_redis_observation": {
+    "recovery_seconds": 12.53,
+    "final_quota_seconds": 14.435,
+    "target_still_paused": true,
+    "task_state": "PAUSED",
+    "cache_absent_before_promotion": true,
+    "cache_loaded_after_real_request": true
+  },
+  "restoration": {
+    "passed": false,
+    "failure_elapsed_seconds": 170.591,
+    "finally_restoration_budget_seconds": 180,
+    "diagnosis": "Replica chain prevented two direct online replicas per primary; automatic promotion alone did not complete restoration.",
+    "operator_reported_relationships": {
+      "slot_owner": "redis-2-0",
+      "direct_online_replicas": 1,
+      "replica_chain": [
+        "redis-5-0",
+        "redis-8-0"
+      ]
+    },
+    "diagnosis_provenance": "Root live inspection; chain topology is not inferred from the exported request samples."
+  },
+  "final_sampler": {
+    "observations": 10,
+    "statuses": {
+      "503": 3,
+      "200": 7
+    },
+    "transport_errors": 0,
+    "unexpected_responses": 0
+  },
+  "check_names_before_failure": [
+    "redis-primary-placement-restoration",
+    "complete-fixture-restoration",
+    "baseline",
+    "redis-promotion"
+  ],
+  "check_names_in_final_progress": [
+    "redis-primary-placement-restoration",
+    "complete-fixture-restoration",
+    "baseline",
+    "redis-promotion",
+    "publication-probe-cleanup",
+    "owned-probe-resource-cleanup",
+    "owned-probe-resource-cleanup",
+    "owned-probe-resource-cleanup"
+  ],
+  "later_operator_repair": {
+    "passed": true,
+    "same_configured_shard": true,
+    "replica": "redis-8-0",
+    "current_slot_owner": "redis-2-0",
+    "protected_ha_counter_exact_preserved": true,
+    "counter_sha256": "19a2626a31f4adbd8f5ad14c26142111b4947eb02f7bef426f9c960e456ed218",
+    "restoration_seconds": 0.291,
+    "automatic_repair_claim": false,
+    "no_counter_reset_or_force": true
+  },
+  "later_operator_repair_process_exit_code": 0,
+  "later_baseline_scope": "Root reports later baseline PASS as a partial phase only; it does not convert this rejected full HA attempt into a PASS.",
+  "raw_files": {
+    "failure": {
+      "file": "failure.json",
+      "sha256": "55c3587d2caf9c1ed014408e4390fec72404bb3d7af71b4b8945419e09906181",
+      "bytes": 46724
+    },
+    "progress": {
+      "file": "progress.json",
+      "sha256": "796f1081c3cc4fe759ab13640ca4e2d389a35bed27854ed0e9aa9ede2736d8dd",
+      "bytes": 35533
+    },
+    "process_log": {
+      "file": "fluxgate-resilience-ha-batched-final.log",
+      "sha256": "bb298b639b7a3453e8eaf8298936fd8b9587d4fe1c21aa0a11673a1aac24b64c",
+      "bytes": 1586
+    },
+    "operator_repair": {
+      "file": "fluxgate-resilience-replica-chain-repair.json",
+      "sha256": "8fddfded3df45339ea39c64bc4e7bf65e47286efacaf3b04c8c60d63c0dbf229",
+      "bytes": 443
+    }
+  },
+  "source_sha256_at_export": {
+    "deploy/resilience-local/verify-ha.py": "08391f1bbee9629d41220f408d981f928353216e63920f15923c1e2b3e89eccd"
+  },
+  "limits": [
+    "Observed Redis promotion/quota success is partial evidence, not complete HA acceptance.",
+    "Operator repair and baseline restoration are separate from automatic recovery."
+  ]
+}

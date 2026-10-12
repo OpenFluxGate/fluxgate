@@ -1,0 +1,70 @@
+{
+  "accepted": false,
+  "reason": "failure outside actual fault window",
+  "application_jar_sha256": "e2811693800b7ca24a70fdda66ecf46f330aba6b1a4bb449b2b911a144c08699",
+  "actual_ha_phase_passed": true,
+  "combined_process_exit": 1,
+  "ha_process_exit": 0,
+  "complete": false,
+  "automatic_mongo_recovery_seconds": 11.991,
+  "publication_elapsed_seconds": 7.055887253,
+  "fault_timestamps": {
+    "rto_budget_started": {
+      "unix_ms": 1791589373136,
+      "utc": "2026-10-09T23:42:53.136Z"
+    },
+    "fault_start": {
+      "unix_ms": 1791589373274,
+      "utc": "2026-10-09T23:42:53.274Z"
+    },
+    "paused_verified": {
+      "unix_ms": 1791589373406,
+      "utc": "2026-10-09T23:42:53.406Z"
+    },
+    "publication_verified": {
+      "unix_ms": 1791589382125,
+      "utc": "2026-10-09T23:43:02.125Z"
+    },
+    "sustained_gateway_recovered": {
+      "unix_ms": 1791589385127,
+      "utc": "2026-10-09T23:43:05.127Z"
+    },
+    "policy_and_traffic_verified": {
+      "unix_ms": 1791589385539,
+      "utc": "2026-10-09T23:43:05.539Z"
+    }
+  },
+  "operator_failbacks_during_load_before_mongo_fault": [
+    {
+      "performed": true,
+      "timestamps": {
+        "started": {
+          "unix_ms": 1791589357032,
+          "utc": "2026-10-09T23:42:37.032Z"
+        },
+        "completed": {
+          "unix_ms": 1791589371192,
+          "utc": "2026-10-09T23:42:51.192Z"
+        }
+      }
+    }
+  ],
+  "outside_fault_window_503_count": 1,
+  "last_minute": {
+    "completed_requests": 6000,
+    "all_statuses": {
+      "200": 6000
+    },
+    "omitted_schedules": 0,
+    "latency_ms": {
+      "p50": 4.9779280088841915,
+      "p95": 7.379589136689901,
+      "p99": 11.739582987502217,
+      "max": 42.649925919249654
+    },
+    "achieved_rps": 100.0
+  },
+  "raw_sha256": "7ec822e7a19a5164a4bc1e0646c18a689e0d75392de637a2cc67eac7dbb7c16f",
+  "ha_sha256": "82bec4e50de1db26e1f14ca22afa3c040f92adf908cc1e76787c9aea4db4a671",
+  "interpretation": "Exactgate unchanged; one pre-fault503 during operatorfailback rejectscombinedproof. This is not a retroactivepass. Add actualbaselinepreflight BEFOREload."
+}

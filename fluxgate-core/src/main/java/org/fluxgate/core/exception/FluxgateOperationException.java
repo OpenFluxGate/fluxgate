@@ -8,6 +8,7 @@ package org.fluxgate.core.exception;
  */
 public class FluxgateOperationException extends FluxgateException {
 
+  /** Whether the failed operation can be retried. */
   private final boolean retryable;
 
   /**

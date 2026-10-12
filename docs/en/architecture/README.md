@@ -2,7 +2,7 @@
 
 This document provides a comprehensive overview of FluxGate's architecture, including module structure, data flow, and customization points.
 
-English | [한국어](ARCHITECTURE.ko.md)
+English | [한국어](../../ko/architecture/README.ko.md)
 
 ---
 
@@ -15,7 +15,7 @@ English | [한국어](ARCHITECTURE.ko.md)
    - [fluxgate-core](#41-fluxgate-core)
    - [fluxgate-redis-ratelimiter](#42-fluxgate-redis-ratelimiter)
    - [fluxgate-mongo-adapter](#43-fluxgate-mongo-adapter)
-   - [fluxgate-spring-boot-starter](#44-fluxgate-spring-boot-starter)
+   - [fluxgate-spring-boot3-starter](#44-fluxgate-spring-boot3-starter)
 5. [Data Flow](#5-data-flow)
 6. [Key Concepts](#6-key-concepts)
 
@@ -31,7 +31,7 @@ flowchart TB
 
     subgraph SpringBoot["Spring Boot Application"]
         Filter[FluxgateRateLimitFilter]
-        Handler[RateLimitHandler]
+        Handler[FluxgateRateLimitHandler]
         Engine[RateLimitEngine]
     end
 
@@ -85,29 +85,28 @@ flowchart TB
 
     subgraph Handler["Handler Layer"]
         direction TB
-        HI[RateLimitHandler Interface]
-        RH[RedisRateLimitHandler]
-        HH[HttpRateLimitHandler]
-        FH[FluxgateRateLimitHandler]
+        HI[FluxgateRateLimitHandler<br/>Interface]
+        EBH[EngineBackedRateLimitHandler<br/>library default]
+        HH[Your own handler<br/>e.g. HTTP API]
     end
 
     subgraph Engine["Engine Layer"]
         ENG[RateLimitEngine]
-        PROV[RuleSetProvider]
+        PROV[RateLimitRuleSetProvider]
+        CPROV[CachingRuleSetProvider]
         CACHE[RuleCache - Caffeine]
-        KEY[KeyResolver]
     end
 
     subgraph RateLimiter["RateLimiter Layer"]
-        RL[RateLimiter Interface]
-        B4J[Bucket4jRateLimiter]
+        RES_RL[ResilientRateLimiter]
         RRL[RedisRateLimiter]
+        B4J[Bucket4jRateLimiter]
+        KEY[KeyResolver - per rule]
     end
 
     subgraph Storage["Storage Layer"]
         subgraph Redis["Redis"]
             TBS[RedisTokenBucketStore]
-            RSS[RedisRuleSetStore]
             LUA[Lua Scripts]
         end
         subgraph MongoDB["MongoDB"]
@@ -116,28 +115,28 @@ flowchart TB
         end
     end
 
-    subgraph Reload["Hot Reload"]
-        POLL[PollingReloadStrategy]
-        PUBSUB[RedisPubSubReloadStrategy]
-        RESET[BucketResetHandler]
+    subgraph External["External API Server"]
+        API[FluxGate API Server]
     end
 
     REQ --> FLT
     FLT --> REQ_CTX
     REQ_CTX --> CUST
     FLT --> HI
-    HI --> RH & HH & FH
-    RH & FH --> ENG
-    HH -->|REST API| RH
+    HI -.->|default implementation| EBH
+    HI -.->|your implementation| HH
+    EBH --> ENG
+    HH -->|REST API| API
     ENG --> PROV
-    PROV --> CACHE
-    CACHE --> REPO
-    ENG --> KEY
-    ENG --> RL
-    RL --> B4J & RRL
+    PROV --> CPROV
+    CPROV --> CACHE
+    CPROV --> REPO
+    ENG --> RES_RL
+    RES_RL --> RRL & B4J
+    RRL --> KEY
+    B4J --> KEY
     RRL --> TBS
     TBS --> LUA
-    B4J --> TBS
     REPO --> COLL
     POLL --> CACHE
     PUBSUB --> CACHE
@@ -146,7 +145,7 @@ flowchart TB
     FLT --> RES
 
     style FLT fill:#e3f2fd
-    style ENG fill:#fff8e1
+    style HI fill:#fff8e1
     style TBS fill:#ffebee
     style REPO fill:#e8f5e9
     style CACHE fill:#f3e5f5
@@ -157,11 +156,29 @@ flowchart TB
 | Layer | Responsibility |
 |-------|----------------|
 | **Filter Layer** | Intercepts HTTP requests, builds context |
-| **Handler Layer** | Orchestrates rate limiting logic |
-| **Engine Layer** | Rule matching, key resolution |
+| **Handler Layer** | Orchestrates rate limiting logic (interface + implementations) |
+| **Engine Layer** | Rule set resolution and caching |
 | **RateLimiter Layer** | Token bucket algorithm execution |
 | **Storage Layer** | Persistent storage for rules and state |
 | **Reload Layer** | Hot reload of rules without restart |
+
+### Handler Implementations
+
+| Implementation | Use Case | Talks To |
+|----------------|----------|----------|
+| `EngineBackedRateLimitHandler` | Direct Redis access (library default) | RuleSetProvider + RedisRateLimiter |
+| `HttpRateLimitHandler` | External API calls | FluxGate API Server (REST) |
+
+```
+EngineBackedRateLimitHandler flow:
+─────────────────────────────────
+Filter → Handler → RuleSetProvider (MongoDB)
+                 → RedisRateLimiter → RedisTokenBucketStore → Lua → Redis
+
+HttpRateLimitHandler flow:
+─────────────────────────────────
+Filter → Handler → HTTP POST → FluxGate API Server (external)
+```
 
 ---
 
@@ -193,7 +210,7 @@ flowchart TB
         end
 
         subgraph StorageCustom["Storage Customization"]
-            CS[Custom RuleSetProvider]
+            CS[Custom RateLimitRuleSetProvider]
             CBS[Custom BucketStore]
         end
     end
@@ -222,8 +239,9 @@ flowchart TB
 |-------|-----------|---------|
 | **RequestContextCustomizer** | `RequestContextCustomizer` | IP extraction, user ID, custom attributes |
 | **KeyResolver** | `KeyResolver` | Rate limit key generation logic |
-| **RateLimitHandler** | `RateLimitHandler` | Full rate limiting flow control |
-| **RuleSetProvider** | `RuleSetProvider` | Rule source (DB, File, etc.) |
+| **FluxgateRateLimitHandler** | `FluxgateRateLimitHandler` | Full rate limiting flow control |
+| **RateLimitRuleSetProvider** | `RateLimitRuleSetProvider` | Rule source (DB, File, etc.) |
+| **RateLimitResponseWriter** | `RateLimitResponseWriter` | The 429 response body |
 | **BucketResetHandler** | `BucketResetHandler` | Bucket reset on rule changes |
 
 ### Example: Custom RequestContextCustomizer
@@ -282,9 +300,9 @@ flowchart TB
 
         subgraph Interfaces["Interfaces"]
             IRL[RateLimiter]
-            IPROV[RuleSetProvider]
+            IPROV[RateLimitRuleSetProvider]
             IKEY[KeyResolver]
-            IHAND[RateLimitHandler]
+            IHAND[FluxgateRateLimitHandler]
             ICACHE[RuleCache]
         end
 
@@ -313,23 +331,26 @@ flowchart TB
 
 | Class | Description |
 |-------|-------------|
-| `RateLimitRule` | Single rate limit rule (path, method, bands, scope) |
-| `RateLimitBand` | Bandwidth configuration (capacity, refillTokens, refillDuration) |
-| `LimitScope` | Key scope (IP, USER_ID, API_KEY, COMPOSITE) |
-| `RateLimitEngine` | Rule matching + rate limiting execution |
-| `RequestContext` | Request metadata (IP, userId, path, method, attributes) |
+| `RateLimitRule` | Single rate limit rule (id, scope, keyStrategyId, bands, policy, attributes, priority, `RuleMatcher`) |
+| `RateLimitBand` | One tier: `(window, capacity)`, with an optional label |
+| `LimitScope` | Key scope (`GLOBAL`, `PER_IP`, `PER_USER`, `PER_API_KEY`, `CUSTOM`) |
+| `RateLimitEngine` | Rule set resolution, access control, delegation to a `RateLimiter` (which evaluates the matching rules) |
+| `RequestContext` | Request metadata (clientIp, userId, apiKey, endpoint, method, headers, attributes) |
 
 #### LimitScope Enum
 
 ```java
 public enum LimitScope {
-    GLOBAL,      // Single global limit
-    IP,          // Per client IP
-    USER_ID,     // Per user identifier
-    API_KEY,     // Per API key
-    COMPOSITE    // Combination of multiple scopes
+    GLOBAL,       // Single bucket for every request
+    PER_API_KEY,  // Per API key
+    PER_USER,     // Per user identifier
+    PER_IP,       // Per client IP
+    CUSTOM        // Per value of a RequestContext attribute named by rule.keyStrategyId
 }
 ```
+
+A composite key is a `CUSTOM` rule whose attribute you build yourself in a
+`RequestContextCustomizer` — there is no `COMPOSITE` scope and no `compositeKeyFields`.
 
 ---
 
@@ -342,7 +363,7 @@ flowchart TB
     subgraph Redis["fluxgate-redis-ratelimiter"]
         subgraph Connection["Connection"]
             CF[RedisConnectionFactory]
-            POOL[Connection Pool]
+            POOL[Standalone / Cluster connection]
             CLUSTER[Cluster Support]
         end
 
@@ -354,12 +375,13 @@ flowchart TB
 
         subgraph Script["Lua Scripts"]
             CONSUME[token_bucket_consume.lua]
+            REFUND[token_bucket_refund.lua]
             MULTI[Multi-Band Atomic]
         end
 
         subgraph Config["Configuration"]
             CONF[RedisRateLimiterConfig]
-            LOADER[LuaScriptLoader]
+            LOADER[LuaScriptRegistry]
         end
 
         subgraph Health["Health"]
@@ -372,7 +394,7 @@ flowchart TB
     TBS --> CONSUME
     TBS --> STATE
     CONF --> CF
-    LOADER --> CONSUME
+    LOADER --> CONSUME & REFUND
     HC --> CF
 
     style TBS fill:#ffebee
@@ -384,41 +406,63 @@ flowchart TB
 
 | Feature | Description |
 |---------|-------------|
-| **Lua Script** | Atomic token consumption (prevents race conditions) |
-| **Multi-Band** | Multiple bandwidths in single Lua call |
-| **Server Time** | Uses Redis server time (prevents clock drift) |
-| **Cluster** | Automatic Redis Cluster detection and support |
+| **Lua Script** | Atomic consumption for `TOKEN_BUCKET`, `SLIDING_WINDOW` and `FIXED_WINDOW` bands (prevents race conditions) |
+| **Multi-Band** | Every band of one rule in a single Lua call, all-or-nothing; every matching rule too when their keys share a slot (always on standalone), otherwise rule by rule with a refund |
+| **Server Time** | Uses Redis server time in microseconds (prevents clock drift) |
+| **Cluster** | Automatic Redis Cluster detection; the `{...}` hash tag pins a rule's bands to one slot |
+| **Scoped deletion** | `SCAN` + `UNLINK` over `fluxgate:bucket:*` only, never `KEYS` |
 
 #### Lua Script Flow
 
 ```lua
--- token_bucket_consume.lua (simplified)
-local key = KEYS[1]
-local capacity = tonumber(ARGV[1])
-local refillTokens = tonumber(ARGV[2])
-local refillNanos = tonumber(ARGV[3])
-local tokensToConsume = tonumber(ARGV[4])
-local nowNanos = redis.call('TIME')[1] * 1000000000
+-- token_bucket_consume.lua (simplified; see the module README for the full contract)
+-- KEYS[1..n]   one bucket key per band, all in one hash slot (a rule's bands share a hash tag)
+-- ARGV[1]      permits,   ARGV[2] max_bucket_ttl_seconds
+-- per band i:  capacity, window_micros, algorithm_code, buckets_or_zero, window_end_or_zero
+--              at ARGV[2 + 5(i-1) + 1 .. 5]; an optional trailing "1" means check-only
 
--- Get current state
-local tokens = tonumber(redis.call('HGET', key, 'tokens') or capacity)
-local lastRefill = tonumber(redis.call('HGET', key, 'lastRefill') or nowNanos)
+local time_info  = redis.call('TIME')
+local now_micros = tonumber(time_info[1]) * 1000000 + tonumber(time_info[2])
 
--- Calculate refill
-local elapsed = nowNanos - lastRefill
-local refillAmount = math.floor(elapsed / refillNanos) * refillTokens
-tokens = math.min(capacity, tokens + refillAmount)
-
--- Try consume
-if tokens >= tokensToConsume then
-    tokens = tokens - tokensToConsume
-    redis.call('HSET', key, 'tokens', tokens, 'lastRefill', nowNanos)
-    return {1, tokens, 0}  -- allowed, remaining, waitNanos
-else
-    local waitNanos = math.ceil((tokensToConsume - tokens) / refillTokens) * refillNanos
-    return {0, tokens, waitNanos}  -- rejected, remaining, waitNanos
+-- Pass 1: read and check EVERY band, writing nothing. A rejecting band does not stop the
+-- loop: reject() keeps the rejection with the longest wait (TOKEN_BUCKET shown).
+for i = 1, band_count do
+    local data        = redis.call('HMGET', KEYS[i], 'tokens', 'last_refill_micros')
+    local cur_tokens  = tonumber(data[1])
+    local last_refill = tonumber(data[2])
+    if cur_tokens == nil or last_refill == nil then
+        cur_tokens  = capacity               -- missing, or a 0.3.x bucket: start full
+        last_refill = now_micros
+    end
+    local elapsed  = math.min(math.max(0, now_micros - last_refill), win_micros)
+    local to_add   = math.floor(elapsed * capacity / win_micros)
+    local refilled = math.min(capacity, cur_tokens + to_add)
+    if refilled < permits then
+        reject(i, refilled, wait, reset_millis)
+    end
 end
+
+if rejection ~= nil then
+    refresh_ttls()      -- EXPIRE the TOKEN_BUCKET / SLIDING_WINDOW keys only (no-op if missing)
+    return rejection    -- {0, band, remaining, wait, reset, limit, band, now_micros}
+end
+
+-- Pass 2: every band can serve the request, so write all of them
+for i = 1, band_count do
+    redis.call('HMSET', KEYS[i],
+        'tokens',             string.format('%.0f', remaining),
+        'last_refill_micros', string.format('%.0f', tb_refills[i]))
+    redis.call('EXPIRE', KEYS[i], ttl_for_window(win_micros))  -- min(cap, max(1, ceil(window * 1.1)))
+end
+
+-- reset_time is computed AFTER consumption, so the caller learns when the bucket is
+-- really full again rather than when it would have been without this request.
+return {1, 0, binding_remaining, 0, reset_millis, binding_capacity, binding, now_micros}
 ```
+
+Time is in **microseconds**, not nanoseconds: Redis runs Lua 5.1, where every number is a double with
+an exact integer range of 2^53, and nanoseconds since the epoch (≈ 1.76e18) fall outside it. Every
+value written to a hash goes through `string.format('%.0f', v)`.
 
 ---
 
@@ -440,12 +484,12 @@ flowchart TB
         end
 
         subgraph Conversion["Conversion"]
-            CONV[DocumentConverter]
+            CONV["RateLimitRuleMongoConverter / RateLimitRuleConverter"]
             ATTR[Custom Attributes]
         end
 
         subgraph Health["Health"]
-            HC[MongoHealthChecker]
+            HC[MongoHealthCheckerImpl]
         end
     end
 
@@ -463,55 +507,70 @@ flowchart TB
 
 ```json
 {
-  "_id": "rule-1",
+  "id": "rule-1",
   "ruleSetId": "api-limits",
-  "path": "/api/users/*",
-  "method": "GET",
-  "limitScope": "IP",
-  "compositeKeyFields": null,
+  "name": "API Rate Limit",
+  "scope": "PER_IP",
+  "keyStrategyId": null,
+  "onLimitExceedPolicy": "REJECT_REQUEST",
   "bands": [
-    {
-      "label": "per-second",
-      "capacity": 100,
-      "refillTokens": 100,
-      "refillSeconds": 1
-    },
-    {
-      "label": "per-minute",
-      "capacity": 1000,
-      "refillTokens": 1000,
-      "refillSeconds": 60
-    }
+    { "label": "per-second", "capacity": 100, "windowSeconds": 1, "algorithm": "TOKEN_BUCKET" },
+    { "label": "per-minute", "capacity": 1000, "windowSeconds": 60, "algorithm": "TOKEN_BUCKET" }
   ],
-  "priority": 10,
   "enabled": true,
-  "onLimitExceed": "REJECT",
   "attributes": {
     "tenant": "enterprise",
     "tier": "premium"
   },
-  "createdAt": "2024-01-01T00:00:00Z",
-  "updatedAt": "2024-01-01T00:00:00Z"
+  "priority": 10,
+  "methods": ["GET", "POST"],
+  "pathPatterns": ["/api/**"],
+  "excludePathPatterns": ["/api/health"],
+  "allowedIps": ["192.168.0.0/16"],
+  "deniedIps": ["10.0.0.0/8"],
+  "allowedKeys": ["user:admin"],
+  "deniedKeys": ["user:blocked"],
+  "aclUpdatedAt": { "$date": "2026-10-10T00:00:00Z" }
 }
 ```
+
+A rule is identified by `(ruleSetId, id)`. The 0.4 matcher fields (`priority`, `methods`,
+`pathPatterns`, `excludePathPatterns`, `headerEquals`, `headerPresent`) select which requests a rule
+applies to; empty matcher fields are omitted and match everything, so every enabled rule whose
+matchers accept the request is evaluated, highest `priority` first. There is no
+`compositeKeyFields` field.
+
+The access-control lists (`allowedIps`, `deniedIps`, `allowedKeys`, `deniedKeys`) belong to the rule
+set, not to the domain `RateLimitRule`: every rule document of the rule set carries a copy, and
+`findAccessControlByRuleSetId` merges the copies (deny lists by union, allow lists by intersection).
+`aclUpdatedAt` marks a copy written by the repository, so a copy whose lists were all cleared still
+takes part in the merge. Only its presence matters: `saveAccessControl` and `moveRule` write the
+server time, the insert of a new rule writes the client time (`$currentDate` cannot be used in
+`$setOnInsert`).
 
 #### Indexes
 
 ```javascript
-// Recommended indexes for performance
-db.rate_limit_rules.createIndex({ "ruleSetId": 1, "enabled": 1 })
-db.rate_limit_rules.createIndex({ "ruleSetId": 1, "priority": -1 })
+// Created by MongoRateLimitRuleRepository#ensureIndexes() when fluxgate.mongo.ddl-auto=create
+db.rate_limit_rules.createIndex({ "ruleSetId": 1, "id": 1 }, { unique: true, name: "ruleSetId_1_id_1_unique" })
+db.rate_limit_rules.createIndex({ "id": 1 }, { name: "id_1" })
 ```
+
+Index creation failures are fatal: duplicate `(ruleSetId, id)` pairs or a conflicting index fail
+startup with an `IllegalStateException` that lists the duplicates. With `ddl-auto=validate` startup
+fails when the unique `{ruleSetId: 1, id: 1}` index is missing, or when the only one is `sparse`,
+partial (`partialFilterExpression`) or has a collation other than `simple` — such an index does not
+enforce uniqueness for every rule and is rejected by name.
 
 ---
 
-### 4.4 fluxgate-spring-boot-starter
+### 4.4 fluxgate-spring-boot3-starter
 
 Spring Boot auto-configuration for seamless integration.
 
 ```mermaid
 flowchart TB
-    subgraph Starter["fluxgate-spring-boot-starter"]
+    subgraph Starter["fluxgate-spring-boot3-starter"]
         subgraph AutoConfig["Auto Configuration"]
             FAC[FluxgateFilterAutoConfiguration]
             MAC[FluxgateMongoAutoConfiguration]
@@ -580,42 +639,49 @@ fluxgate:
   redis:
     enabled: true
     uri: redis://localhost:6379
-    # cluster-nodes: node1:7000,node2:7001,node3:7002
-    pool:
-      max-total: 50
-      max-idle: 10
-      min-idle: 5
+    # cluster: redis://node1:6379,redis://node2:6379,redis://node3:6379
 
   # MongoDB Configuration
   mongo:
     enabled: true
     uri: mongodb://localhost:27017/fluxgate
     database: fluxgate
-    collection: rate_limit_rules
+    rule-collection: rate_limit_rules
 
   # Rate Limiting Configuration
   ratelimit:
-    filter-enabled: true
+    enabled: true                # master switch; filter-enabled is deprecated and inert
+    mode: AUTO                   # AUTO | REDIS | IN_MEMORY
     default-rule-set-id: api-limits
     filter-order: 1
     include-patterns:
-      - /api/*
+      - /api/**                  # /* matches ONE segment only
     exclude-patterns:
       - /health
-      - /actuator/*
-    missing-rule-behavior: ALLOW  # or REJECT
+      - /actuator/**
+    missing-rule-behavior: DENY  # or ALLOW
+    failure-behavior: DENY       # or ALLOW
+    missing-key-behavior: FALLBACK_TO_IP  # or REJECT
+    trust-client-ip-header: false
+    trusted-proxies: []          # required when trust-client-ip-header is true
+    wait-for-refill:
+      enabled: false
+      max-wait-time-ms: 5000
+      max-concurrent-waits: 50
 
-  # Hot Reload Configuration
+  # Hot Reload Configuration (fluxgate.reload, not fluxgate.ratelimit.reload)
   reload:
     enabled: true
-    strategy: POLLING  # or REDIS_PUBSUB
-    polling-interval: 30s
-    reset-buckets-on-reload: true
-
-  # Wait for Refill Configuration
-  wait-for-refill:
-    enabled: false
-    max-wait-time: 5s
+    strategy: AUTO               # AUTO | POLLING | PUBSUB | NONE
+    cache:
+      ttl: 5m
+      negative-ttl: 5s
+    polling:
+      interval: 30s
+      initial-delay: 10s
+    pubsub:
+      channel: fluxgate:rule-reload
+      backstop-polling-interval: 60s
 ```
 
 ---
@@ -630,34 +696,35 @@ sequenceDiagram
     participant F as Filter
     participant H as Handler
     participant E as Engine
-    participant P as RuleSetProvider
-    participant K as KeyResolver
+    participant P as RateLimitRuleSetProvider
+    participant K as KeyResolver (per rule)
     participant R as RateLimiter
     participant S as RedisStore
     participant L as Lua Script
 
     C->>F: HTTP Request
-    F->>F: Build RequestContext
-    F->>H: handle(context)
-    H->>E: check(ruleSetId, context)
-    E->>P: getRuleSet(ruleSetId)
-    P-->>E: RateLimitRuleSet
-    E->>E: Match Rule by Path/Method
-    E->>K: resolve(rule, context)
-    K-->>E: RateLimitKey
-    E->>R: tryConsume(context, ruleSet)
-    R->>S: consume(key, bands)
-    S->>L: EVALSHA (atomic)
-    L-->>S: [allowed, remaining, waitNanos]
-    S-->>R: BucketState
+    F->>F: RequestContextFactory.create(request, endpoint)
+    F->>H: tryConsume(context, ruleSetId, permits)
+    H->>E: check(ruleSetId, context, permits)
+    E->>P: findById(ruleSetId)
+    P-->>E: Optional<RateLimitRuleSet>
+    E->>R: tryConsume(context, ruleSet, permits)
+    loop per enabled rule
+        R->>K: resolve(context, rule)
+        K-->>R: RateLimitKey
+        R->>S: tryConsume(bucketKeys, bands, permits)
+        S->>L: EVALSHA (atomic per call)
+        L-->>S: 8 integers
+        S-->>R: BucketState
+    end
     R-->>E: RateLimitResult
     E-->>H: RateLimitResult
-    H-->>F: RateLimitResponse
+    H-->>F: RateLimitResponse.from(result)
 
     alt Allowed
-        F->>C: 200 OK + Rate Limit Headers
+        F->>C: 200 OK + rate limit headers
     else Rejected
-        F->>C: 429 Too Many Requests
+        F->>C: 429 + Retry-After + application/problem+json
     end
 ```
 
@@ -666,11 +733,20 @@ sequenceDiagram
 When a request is processed, FluxGate adds the following headers:
 
 ```http
-X-RateLimit-Limit: 100
+X-RateLimit-Limit: 100          # legacy family
 X-RateLimit-Remaining: 95
-X-RateLimit-Reset: 1640000000
-Retry-After: 60  # Only when rejected
+X-RateLimit-Reset: 1640000000   # epoch SECONDS
+RateLimit-Limit: 100            # IETF family
+RateLimit-Remaining: 95
+RateLimit-Reset: 27             # DELTA seconds
+RateLimit-Policy: 100;w=60
+Retry-After: 27                 # rejections only; rounded up, never 0
 ```
+
+Both families are on by default and switch independently
+(`fluxgate.ratelimit.response.include-legacy-headers` /
+`response.include-standard-headers`). A value the limiter reports as unknown (`-1`) is omitted rather
+than written as a misleading number. A rejection also carries an RFC 9457 problem document.
 
 ---
 
@@ -681,18 +757,18 @@ Retry-After: 60  # Only when rejected
 ```mermaid
 flowchart LR
     subgraph Scopes["LimitScope Options"]
-        IP[IP - Client IP]
-        USER[USER_ID - User ID]
-        API[API_KEY - API Key]
-        COMP[COMPOSITE - Composite]
+        IP[PER_IP - Client IP]
+        USER[PER_USER - User ID]
+        API[PER_API_KEY - API Key]
+        COMP[CUSTOM - Attribute]
         GLOBAL[GLOBAL - Global]
     end
 
     subgraph Examples["Key Examples"]
-        E1["192.168.1.1"]
-        E2["user-123"]
-        E3["api-key-abc"]
-        E4["192.168.1.1:user-123"]
+        E1["ip:192.168.1.1"]
+        E2["user:user-123"]
+        E3["key:api-key-abc"]
+        E4["custom:ip:192.168.1.1:user:user-123"]
         E5["global"]
     end
 
@@ -732,14 +808,18 @@ flowchart TB
 **Example Multi-Band Configuration:**
 
 ```java
-RateLimitRule rule = RateLimitRule.builder()
-    .id("api-rule")
+RateLimitRule rule = RateLimitRule.builder("api-rule")
     .ruleSetId("api-limits")
-    .path("/api/*")
-    .addBand(RateLimitBand.of(10, 10, Duration.ofSeconds(1)))   // 10/sec
-    .addBand(RateLimitBand.of(100, 100, Duration.ofMinutes(1))) // 100/min
-    .addBand(RateLimitBand.of(1000, 1000, Duration.ofHours(1))) // 1000/hour
-    .limitScope(LimitScope.IP)
+    .scope(LimitScope.PER_IP)
+    .addBand(RateLimitBand.builder(Duration.ofSeconds(1), 10)
+        .label("10-per-second")
+        .build())
+    .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100)
+        .label("100-per-minute")
+        .build())
+    .addBand(RateLimitBand.builder(Duration.ofHours(1), 1000)
+        .label("1000-per-hour")
+        .build())
     .build();
 ```
 
@@ -747,16 +827,26 @@ RateLimitRule rule = RateLimitRule.builder()
 
 | Policy | Behavior |
 |--------|----------|
-| `REJECT` | Immediately return 429 Too Many Requests |
+| `REJECT_REQUEST` | Immediately return 429 Too Many Requests |
 | `WAIT_FOR_REFILL` | Wait for tokens to refill, then proceed |
+
+The policy is set per rule:
+
+```java
+RateLimitRule rule = RateLimitRule.builder("api-rule")
+    .scope(LimitScope.PER_IP)
+    .onLimitExceedPolicy(OnLimitExceedPolicy.WAIT_FOR_REFILL)  // or REJECT_REQUEST
+    .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100).build())
+    .build();
+```
 
 ```yaml
 fluxgate:
   ratelimit:
-    default-policy: REJECT
-  wait-for-refill:
-    enabled: true
-    max-wait-time: 5s
+    wait-for-refill:
+      enabled: false          # enable the WAIT_FOR_REFILL policy
+      max-wait-time-ms: 5000
+      max-concurrent-waits: 50
 ```
 
 ### 6.4 Hot Reload Strategies
@@ -764,7 +854,7 @@ fluxgate:
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
 | `POLLING` | Periodically query MongoDB for changes | Simple setup, eventual consistency |
-| `REDIS_PUBSUB` | Subscribe to Redis channel for real-time updates | Real-time updates, multi-instance sync |
+| `PUBSUB` | Subscribe to Redis channel for real-time updates | Real-time updates, multi-instance sync |
 
 ```mermaid
 flowchart LR
@@ -782,14 +872,31 @@ flowchart LR
 
 ---
 
+## Layer Deep Dives
+
+| Document | Description |
+|----------|-------------|
+| [Filter Layer](filter-layer.md) | FluxgateRateLimitFilter, RequestContext |
+| [Handler Layer](handler-layer.md) | FluxgateRateLimitHandler interface and implementations |
+| [Engine Layer](engine-layer.md) | RateLimitEngine, CachingRuleSetProvider, KeyResolver |
+| [RateLimiter Layer](ratelimiter-layer.md) | RateLimiter interface, token bucket algorithm |
+| [Storage Layer](storage-layer.md) | RedisTokenBucketStore, Lua scripts, NOSCRIPT handling |
+| [Redis RateLimiter Module](redis-ratelimiter.md) | The whole fluxgate-redis-ratelimiter module |
+| [Hot Reload](hot-reload.md) | Polling/PubSub strategies, BucketResetHandler |
+| [Algorithm Analysis](algorithm-analysis.md) | Detailed analysis of the token bucket algorithm |
+
+---
+
 ## Related Documentation
 
-- [README.md](../README.md) - Getting started guide
-- [CONTRIBUTING.md](../CONTRIBUTING.md) - Contribution guidelines
-- [fluxgate-samples](fluxgate-samples/) - Sample applications
+- [Main README](../../../README.md) - Getting started guide
+- [Documentation Index](../../README.md) - All documentation
+- [Migrating to 0.4](../operations/migration-0.4.md) - Upgrade impact from 0.3.x
+- [CONTRIBUTING.md](../../../CONTRIBUTING.md) - Contribution guidelines
+- [fluxgate-samples](../../../fluxgate-samples/README.md) - Sample applications
 
 ---
 
 ## License
 
-MIT License - see [LICENSE](../LICENSE) for details.
+MIT License - see [LICENSE](../../../LICENSE) for details.

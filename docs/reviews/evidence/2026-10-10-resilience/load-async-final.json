@@ -1,0 +1,468 @@
+{
+  "kind": "load",
+  "candidate_passed": true,
+  "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+  "source_commit_at_invocation": "3a9a0cffae66a9a3d812f2c0e28e3aa828a1dda4",
+  "terminal_exit_code": 0,
+  "terminal_exit_witness": "Supplied by root in private manifest; exporter does not infer process exit from file existence.",
+  "summary": {
+    "phase": "all",
+    "thresholds": {
+      "baseline_rps": 100,
+      "baseline_seconds": 60,
+      "min_achieved_rps": 99,
+      "p95_ms": 100,
+      "p99_ms": 250,
+      "expected_200_fraction": 0.999,
+      "omitted_schedules": 0,
+      "quota_burst": 100,
+      "quota_allowed": 5
+    },
+    "latency_origin": "scheduled arrival, including dispatch/queue delay",
+    "backend_positive_control": {
+      "sequence": -1,
+      "method": "GET",
+      "expected": 200,
+      "status": 200,
+      "received_status": 200,
+      "error": null,
+      "body_valid": true,
+      "latency_ms": 331.0277920681983,
+      "scheduled_unix_ms": 1791596523826.8386,
+      "completed_unix_ms": 1791596524157.8665,
+      "service_time_ms": 331.02737506851554,
+      "dispatch_lag_ms": 0.0004169996827840805
+    },
+    "priming": {
+      "target_requests": 50,
+      "planned_requests": 50,
+      "submitted_requests": 50,
+      "completed_requests": 50,
+      "target_rps": 10.0,
+      "achieved_rps": 9.997363273238223,
+      "measurement_seconds": 5,
+      "elapsed_including_drain_seconds": 5.00131871108897,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "200": 50
+      },
+      "request_distributions": {
+        "GET": {
+          "200": 50
+        }
+      },
+      "expected_status_fraction": 1.0,
+      "latency_ms": {
+        "p50": 7.67508614808321,
+        "p95": 14.120125910267234,
+        "p99": 19.67529207468033,
+        "max": 19.67529207468033
+      },
+      "dispatch_lag_ms": {
+        "p95": 1.4835840556770563,
+        "max": 1.7651249654591084
+      },
+      "schedule_start_unix_ms": 1791596524410.3909,
+      "schedule_end_unix_ms": 1791596529410.3909,
+      "clock_unix_offset_seconds": 1790353654.6332335
+    },
+    "warmup": {
+      "target_requests": 500,
+      "planned_requests": 500,
+      "submitted_requests": 500,
+      "completed_requests": 500,
+      "target_rps": 100.0,
+      "achieved_rps": 99.98041129758579,
+      "measurement_seconds": 5,
+      "elapsed_including_drain_seconds": 5.000979627016932,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "200": 500
+      },
+      "request_distributions": {
+        "GET": {
+          "200": 500
+        }
+      },
+      "expected_status_fraction": 1.0,
+      "latency_ms": {
+        "p50": 5.195333855226636,
+        "p95": 13.215667102485895,
+        "p99": 43.59904397279024,
+        "max": 74.85654391348362
+      },
+      "dispatch_lag_ms": {
+        "p95": 1.002168981358409,
+        "max": 21.727377083152533
+      },
+      "schedule_start_unix_ms": 1791596529661.9822,
+      "schedule_end_unix_ms": 1791596534661.9822,
+      "clock_unix_offset_seconds": 1790353654.6332335
+    },
+    "baseline": {
+      "target_requests": 6000,
+      "planned_requests": 6000,
+      "submitted_requests": 6000,
+      "completed_requests": 6000,
+      "target_rps": 100.0,
+      "achieved_rps": 99.94708220753904,
+      "measurement_seconds": 60,
+      "elapsed_including_drain_seconds": 60.031767486128956,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "200": 6000
+      },
+      "request_distributions": {
+        "GET": {
+          "200": 6000
+        }
+      },
+      "expected_status_fraction": 1.0,
+      "latency_ms": {
+        "p50": 4.2443061247467995,
+        "p95": 8.98038106970489,
+        "p99": 19.07575107179582,
+        "max": 123.23764502070844
+      },
+      "dispatch_lag_ms": {
+        "p95": 1.2447529006749392,
+        "max": 61.522357165813446
+      },
+      "schedule_start_unix_ms": 1791596534913.687,
+      "schedule_end_unix_ms": 1791596594913.687,
+      "clock_unix_offset_seconds": 1790353654.6332335,
+      "passed": true
+    },
+    "characterization": [
+      {
+        "target_requests": 9000,
+        "planned_requests": 9000,
+        "submitted_requests": 9000,
+        "completed_requests": 9000,
+        "target_rps": 300.0,
+        "achieved_rps": 299.45755786826714,
+        "measurement_seconds": 30,
+        "elapsed_including_drain_seconds": 30.05434247199446,
+        "omitted_schedules": 0,
+        "unaccounted_schedules": 0,
+        "worker_failures": 0,
+        "transport_errors": 0,
+        "unexpected_body_responses": 0,
+        "all_statuses": {
+          "200": 8954,
+          "503": 46
+        },
+        "request_distributions": {
+          "GET": {
+            "200": 8954,
+            "503": 46
+          }
+        },
+        "expected_status_fraction": 0.9948888888888889,
+        "latency_ms": {
+          "p50": 7.0415043737739325,
+          "p95": 119.4632991682738,
+          "p99": 463.3744654711336,
+          "max": 1000.3115423023701
+        },
+        "dispatch_lag_ms": {
+          "p95": 5.316504510119557,
+          "max": 105.36017408594489
+        },
+        "schedule_start_unix_ms": 1791596595215.3362,
+        "schedule_end_unix_ms": 1791596625215.3362,
+        "clock_unix_offset_seconds": 1790353654.6332335,
+        "classification": "characterization-only-no-performance-pass-claim"
+      },
+      {
+        "target_requests": 18000,
+        "planned_requests": 18000,
+        "submitted_requests": 18000,
+        "completed_requests": 18000,
+        "target_rps": 600.0,
+        "achieved_rps": 598.3000580843204,
+        "measurement_seconds": 30,
+        "elapsed_including_drain_seconds": 30.08523859689012,
+        "omitted_schedules": 0,
+        "unaccounted_schedules": 0,
+        "worker_failures": 0,
+        "transport_errors": 0,
+        "unexpected_body_responses": 0,
+        "all_statuses": {
+          "200": 17776,
+          "503": 224
+        },
+        "request_distributions": {
+          "GET": {
+            "200": 17776,
+            "503": 224
+          }
+        },
+        "expected_status_fraction": 0.9875555555555555,
+        "latency_ms": {
+          "p50": 6.950344191864133,
+          "p95": 244.89817023277283,
+          "p99": 599.2930452339351,
+          "max": 892.6980451215059
+        },
+        "dispatch_lag_ms": {
+          "p95": 74.39779583364725,
+          "max": 211.5991699974984
+        },
+        "schedule_start_unix_ms": 1791596625555.8318,
+        "schedule_end_unix_ms": 1791596655555.8318,
+        "clock_unix_offset_seconds": 1790353654.6332335,
+        "classification": "characterization-only-no-performance-pass-claim"
+      }
+    ],
+    "mixed": {
+      "target_requests": 1000,
+      "planned_requests": 1000,
+      "submitted_requests": 1000,
+      "completed_requests": 1000,
+      "target_rps": 100.0,
+      "achieved_rps": 99.97173877979019,
+      "measurement_seconds": 10,
+      "elapsed_including_drain_seconds": 10.002826920943335,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "403": 200,
+        "200": 800
+      },
+      "request_distributions": {
+        "invalid-key": {
+          "403": 200
+        },
+        "OPTIONS": {
+          "200": 200
+        },
+        "GET": {
+          "200": 600
+        }
+      },
+      "expected_status_fraction": 1.0,
+      "latency_ms": {
+        "p50": 3.4337930846959352,
+        "p95": 6.117165787145495,
+        "p99": 10.672250064089894,
+        "max": 34.077877877280116
+      },
+      "dispatch_lag_ms": {
+        "p95": 1.4274169225245714,
+        "max": 11.394086061045527
+      },
+      "schedule_start_unix_ms": 1791596655976.4329,
+      "schedule_end_unix_ms": 1791596665976.4329,
+      "clock_unix_offset_seconds": 1790353654.6332335,
+      "passed": true
+    },
+    "quota": {
+      "target_requests": 100,
+      "planned_requests": 100,
+      "submitted_requests": 100,
+      "completed_requests": 100,
+      "target_rps": 100.0,
+      "achieved_rps": 669.4413133342149,
+      "measurement_seconds": 1,
+      "elapsed_including_drain_seconds": 0.14937829202972353,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "429": 95,
+        "200": 5
+      },
+      "request_distributions": {
+        "GET": {
+          "429": 95,
+          "200": 5
+        }
+      },
+      "latency_ms": {
+        "p50": 81.32787514477968,
+        "p95": 112.60566697455943,
+        "p99": 118.35895804688334,
+        "max": 121.94395810365677
+      },
+      "dispatch_lag_ms": {
+        "p95": 12.134792050346732,
+        "max": 15.142125077545643
+      },
+      "expected_status_distribution": {
+        "200": 5,
+        "429": 95
+      },
+      "passed": true
+    },
+    "result": "PASS"
+  },
+  "dropped_unknown_or_disallowed_paths": [
+    ".backend_positive_control.backend_body",
+    ".baseline.omitted_samples",
+    ".baseline.samples",
+    ".characterization[].omitted_samples",
+    ".characterization[].samples",
+    ".mixed.omitted_samples",
+    ".mixed.samples",
+    ".priming.omitted_samples",
+    ".priming.samples",
+    ".quota.samples",
+    ".target",
+    ".warmup.omitted_samples",
+    ".warmup.samples"
+  ],
+  "provenance": {
+    "raw": {
+      "path": "fluxgate-resilience-load-async-final.json",
+      "sha256": "7531b47678ff3b75b695eb2fe8489c1ae74595311f06d99582dc5d8805bd9edc",
+      "size_bytes": 16764243
+    },
+    "log": {
+      "path": "fluxgate-resilience-load-async-final.log",
+      "sha256": "7531b47678ff3b75b695eb2fe8489c1ae74595311f06d99582dc5d8805bd9edc",
+      "size_bytes": 16764243
+    },
+    "jar": {
+      "path": "fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.3.7.jar",
+      "sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+      "size_bytes": 32917143
+    },
+    "tools": [
+      {
+        "path": "deploy/resilience-local/verify-load.py",
+        "loaded_sha256": "fee294007cd5dc36e16a54e50a9fcf2a2e167cf4af8d3545997934242a5ebd5e",
+        "current_at_export": {
+          "path": "deploy/resilience-local/verify-load.py",
+          "sha256": "fee294007cd5dc36e16a54e50a9fcf2a2e167cf4af8d3545997934242a5ebd5e",
+          "size_bytes": 40343
+        },
+        "current_equals_loaded": true
+      },
+      {
+        "path": "fluxgate-observe-load-async.py",
+        "loaded_sha256": "4c54976d9c86d523da242bc9457bf51e70d622b68ab475b5bc6c79b316e3eabf",
+        "current_at_export": {
+          "path": "fluxgate-observe-load-async.py",
+          "sha256": "4c54976d9c86d523da242bc9457bf51e70d622b68ab475b5bc6c79b316e3eabf",
+          "size_bytes": 4411
+        },
+        "current_equals_loaded": true
+      },
+      {
+        "path": "deploy/resilience-local/verify-credentials.py",
+        "loaded_sha256": "d9acba0996daaaa284c3e78a7518a6f40d2d4081aa663c24c9ca6de053d1ac35",
+        "current_at_export": {
+          "path": "deploy/resilience-local/verify-credentials.py",
+          "sha256": "a07faed8e2199f4aba9662c3f65a1bf2c079b16cd58330e82dd8b6c9cec0d5e4",
+          "size_bytes": 156240
+        },
+        "current_equals_loaded": false
+      }
+    ],
+    "attachments": [
+      {
+        "path": "fluxgate-resilience-load-async-decision-observations.json",
+        "sha256": "8f860a1d9fcb8bbebe59c61284f638cdeba0442715f2222dace57c06077fe53d",
+        "size_bytes": 225762
+      },
+      {
+        "path": "fluxgate-resilience-quota-async-identity.json",
+        "sha256": "d0ee8404e8f8c7e784485c2799f5cbb601b43d2c86d2bc7a2bf6dc00c4947b7f",
+        "size_bytes": 338
+      }
+    ],
+    "run_witness": {
+      "path": "fluxgate-resilience-load-async-final-witness.json",
+      "sha256": "9e9db096e10e6bc0a3644946d60dca438bb715969772e0229b4e6ec4310b8688",
+      "size_bytes": 6099
+    }
+  },
+  "limits": [
+    "Dropped fields require schema review if material to acceptance; the exporter does not repair or infer absent proof.",
+    "No raw samples, payloads, credentials, arbitrary messages or score are exported.",
+    "Historical successes and failures must remain separate artifacts; this tool never overwrites files.",
+    "Recorded scenario reviewed before this local repository export; no production rollout or certification."
+  ],
+  "run_artifact_identity": {
+    "name": "load-async-final",
+    "before_authz": [
+      {
+        "pod": "fluxgate-authz-796fd5dc48-8dndn",
+        "uid": "4e3e6897-fc4b-489b-aa64-14f25d3a6fff",
+        "node": "fluxgate-resilience-worker",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      },
+      {
+        "pod": "fluxgate-authz-796fd5dc48-nx5vb",
+        "uid": "5be65999-a955-4401-8fdf-284278b3376f",
+        "node": "fluxgate-resilience-worker2",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      }
+    ],
+    "after_authz": [
+      {
+        "pod": "fluxgate-authz-796fd5dc48-8dndn",
+        "uid": "4e3e6897-fc4b-489b-aa64-14f25d3a6fff",
+        "node": "fluxgate-resilience-worker",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      },
+      {
+        "pod": "fluxgate-authz-796fd5dc48-nx5vb",
+        "uid": "5be65999-a955-4401-8fdf-284278b3376f",
+        "node": "fluxgate-resilience-worker2",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      }
+    ],
+    "source_commit_at_invocation": "3a9a0cffae66a9a3d812f2c0e28e3aa828a1dda4",
+    "replacement_scope": "no_authz_replacement",
+    "started": {
+      "utc": "2026-10-10T01:42:01.428580+00:00",
+      "unix_ms": 1791596521428,
+      "monotonic_ns": 1934371469809083
+    },
+    "terminal": {
+      "utc": "2026-10-10T01:44:29.528140+00:00",
+      "unix_ms": 1791596669528,
+      "monotonic_ns": 1934519565656375
+    },
+    "witness_valid": true
+  },
+  "independent_gate_review": {
+    "passed": true,
+    "roles": [
+      "rule-change-review"
+    ],
+    "scope": "Recorded local scenario and gate-critical anonymous export; production approval is separate."
+  },
+  "staging_source_sha256": "ec8a09571e5de8cc863df981da2d60b05c2d01ae37768886eb46064d39dc6b12"
+}

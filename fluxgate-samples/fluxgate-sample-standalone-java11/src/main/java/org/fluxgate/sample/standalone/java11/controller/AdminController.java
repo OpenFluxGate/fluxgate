@@ -30,12 +30,18 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>This controller provides APIs to create different rule sets:
  *
  * <ul>
- *   <li>POST /api/admin/rules/standalone - Create rule for /api/test (10 req/min)
- *   <li>POST /api/admin/rules/multi-filter - Create 2 rules for /api/test/multi-filter (5 req/sec +
- *       20 req/min)
- *   <li>POST /api/admin/rules/all - Create all rules at once
+ *   <li>POST /api/admin/rules/standalone - Create the {@code standalone-rules} rule (10 req/min)
+ *       used by {@code apiFilter} and the {@code @RateLimit} endpoint
+ *   <li>POST /api/admin/rules/multi-filter - Create the 2 {@code multi-filter-rules} rules (10
+ *       req/min + 20 req/min) used by {@code multiFilterApiFilter}
+ *   <li>POST /api/admin/rules/composite - Create the {@code composite-key-rules} rule (10 req/min
+ *       per IP+User) used by {@code compositeKeyApiFilter}
  *   <li>GET /api/admin/rules/{ruleSetId} - Get rules for a specific rule set
  * </ul>
+ *
+ * <p>{@code /api/test}, {@code /api/test/multi-filter} and {@code /api/test/composite} are each
+ * checked by the filter that uses the matching rule set; {@code /api/test/aop/**} is checked by the
+ * {@code @RateLimit} aspect (and {@code apiFilter}). See the README.
  */
 @RestController
 @RequestMapping("/api/admin")
@@ -187,7 +193,8 @@ public class AdminController {
    * <p>Creates a rule with CUSTOM scope and keyStrategyId="ipUser". The RequestContextCustomizer
    * builds the composite key by combining IP and User ID: "192.168.1.100:user-123"
    *
-   * <p>If X-User-Id header is not provided, falls back to IP only.
+   * <p>If X-User-Id header is not provided, falls back to IP only. The header is honoured only with
+   * identity.source=HEADERS (demo only).
    */
   @PostMapping("/rules/composite")
   @Operation(
@@ -196,7 +203,7 @@ public class AdminController {
           "Creates a rate limit rule for /api/test/composite endpoint with composite key (IP+User). "
               + "Limit: 10 requests per minute per IP+User combination. "
               + "RuleSet: composite-key-rules. "
-              + "Use X-User-Id header to provide user identifier.")
+              + "Use X-User-Id header to provide user identifier (requires identity.source=HEADERS, demo only).")
   public ResponseEntity<Map<String, Object>> createCompositeKeyRule() {
     log.info("Creating composite key rule for /api/test/composite");
 
@@ -223,7 +230,10 @@ public class AdminController {
     response.put("endpoint", "/api/test/composite");
     response.put("limit", "10 requests per minute per IP+User");
     response.put("keyStrategy", "ipUser (composite of IP and User ID)");
-    response.put("usage", "curl -H 'X-User-Id: user-123' http://localhost:8085/api/test/composite");
+    response.put(
+        "usage",
+        "curl -H 'X-User-Id: user-123' 'http://localhost:8085/api/test/composite?userId=user-123'"
+            + " (requires identity.source=HEADERS, demo only)");
     response.put("createdAt", Instant.now().toString());
 
     return ResponseEntity.ok(response);

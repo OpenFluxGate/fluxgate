@@ -20,7 +20,8 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
  * Polling-based reload strategy that periodically checks for rule changes.
  *
  * <p>This strategy maintains a version map (using hashCode) of cached rule sets and compares them
- * against the source provider at regular intervals.
+ * against the source provider at regular intervals. A rule set whose content is unchanged fires no
+ * event, so no cache is invalidated and no bucket is reset.
  *
  * <p>Configuration example:
  *
@@ -181,7 +182,14 @@ public class PollingReloadStrategy extends AbstractReloadStrategy {
   /**
    * Computes a version hash for a rule set.
    *
-   * <p>Uses the rule set's content to generate a hash that changes when the rules change.
+   * <p>Uses the rule set's content to generate a hash that changes when the rules change - and only
+   * then. {@code RateLimitRule} and {@code RateLimitBand} have value-based {@code equals}/{@code
+   * hashCode}, so two rule sets loaded from the store in successive polls hash identically as long
+   * as their content is identical. Without that, every poll looked like a change and reset every
+   * bucket in the deployment, handing all clients a fresh full quota each interval.
+   *
+   * <p>Deliberately not {@code RateLimitRuleSet.equals}, which also compares the key resolver and
+   * the metrics recorder - usually freshly created lambdas that are never equal.
    *
    * @param ruleSet the rule set
    * @return version hash
@@ -197,6 +205,29 @@ public class PollingReloadStrategy extends AbstractReloadStrategy {
    */
   public void forceCheck(String ruleSetId) {
     checkForChange(ruleSetId);
+  }
+
+  /**
+   * Records the current version of a rule set without firing a reload event.
+   *
+   * <p>Called by {@link CompositeReloadStrategy} when the primary strategy already notified
+   * listeners of a change for this rule set, so the next backstop poll does not fire a second
+   * reset.
+   *
+   * @param ruleSetId the rule set whose current version should be recorded
+   */
+  public void markSeen(String ruleSetId) {
+    provider.findById(ruleSetId).ifPresent(rs -> versionMap.put(ruleSetId, computeVersion(rs)));
+  }
+
+  /**
+   * Clears the version map without firing any reload event.
+   *
+   * <p>Called by {@link CompositeReloadStrategy} after a full-reload event, so the next poll treats
+   * every rule set as a first observation and does not fire a second reset.
+   */
+  public void markAllSeen() {
+    versionMap.clear();
   }
 
   /**

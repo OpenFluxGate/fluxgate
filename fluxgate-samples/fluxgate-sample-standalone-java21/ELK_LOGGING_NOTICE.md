@@ -2,25 +2,32 @@
 
 ## File-based JSON logging for ELK integration
 
-This application supports **file-based JSON logging**, which can be used for **ELK stack integration**.
+This application writes the logs of `org.fluxgate.spring.filter.FluxgateRateLimitFilter` as
+**JSON** (`LogstashEncoder` from `net.logstash.logback:logstash-logback-encoder`, with the custom
+fields `"service": "fluxgate-sample"` and `"component": "rate-limiter"`), configured in
+`src/main/resources/logback-spring.xml`. They go to two appenders:
 
-Structured JSON logs are written to the following location:
+- `JSON_FILE`: `${user.dir}/log/fluxgate.log`
+- `LOGSTASH`: a TCP connection to Logstash on `localhost:5044`
 
-${user.dir}/log/fluxgate.log
-
-These logs can be collected by log shippers such as **Filebeat** or **Fluent Bit**, and forwarded to **Logstash /
-Elasticsearch** for centralized logging and analysis.
+These logs can be collected by log shippers such as **Filebeat** or **Fluent Bit**, and forwarded to
+**Logstash / Elasticsearch** for centralized logging and analysis.
 
 ---
 
 ## Important notes
 
-- The log directory **must exist before application startup**.
-- **Logback does not automatically create directories or log files**.
-- If the directory does not exist at startup, file-based logging will not be initialized.
-- Ensure the application process has sufficient write permissions for the log directory.
-
-This behavior follows Logback’s default file appender policy.
+- `${user.dir}` is the working directory of the JVM. `spring-boot:run` starts the application in
+  the module's base directory, so with
+  `./mvnw spring-boot:run -pl fluxgate-samples/fluxgate-sample-standalone-java21` (run from the
+  project root) the file is `fluxgate-samples/fluxgate-sample-standalone-java21/log/fluxgate.log`.
+  With `java -jar`, it is `log/fluxgate.log` under the directory you start the JVM from.
+- Logback creates the missing `log/` directory on startup; the process needs write permission
+  for it.
+- The filter logger has `additivity="false"`, so its lines appear **only** in the JSON file and in
+  Logstash, not on the console.
+- Without a Logstash on `localhost:5044` the `LOGSTASH` appender keeps reconnecting (every 30
+  seconds) and logs a warning each time; the file appender is not affected.
 
 ---
 

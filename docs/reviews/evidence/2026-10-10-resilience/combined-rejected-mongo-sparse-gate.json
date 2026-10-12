@@ -1,0 +1,66 @@
+{
+  "result": "REJECTED",
+  "complete": false,
+  "process_exit": 1,
+  "phase": "mongo-election-publication",
+  "reason": "With explicit2s monitoring, publication+policy verification reached26.647s but three separately execed Gateway probes and sleeps exceeded unchanged30s. Replace weak sparse gate with stronger dense sustained sampling; no deadline relaxation.",
+  "publication": [
+    {
+      "passed": true,
+      "published": true,
+      "operationId": "resilience-4c250137060d458b990f2ed8a52c6e86",
+      "beforeRevision": 3,
+      "revision": 4,
+      "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+      "snapshotId": "12aa11a4-0a51-4949-8a69-78a8fc277c71",
+      "checksum": "dbde6ccb98dc076e653dc8c3429cba5190ce5c47099c9b5800c1f9798d22bd84",
+      "epochPreserved": true,
+      "majorityReadVerified": true,
+      "idempotentReplay": true,
+      "elapsedSeconds": 25.114758761,
+      "transientFailureClasses": [
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoSocketReadTimeoutException",
+        "MongoSocketReadTimeoutException",
+        "MongoSocketReadTimeoutException"
+      ]
+    }
+  ],
+  "fault_timestamps": {
+    "rto_budget_started": {
+      "unix_ms": 1791585401073,
+      "utc": "2026-10-09T22:36:41.073Z"
+    },
+    "fault_start": {
+      "unix_ms": 1791585401208,
+      "utc": "2026-10-09T22:36:41.208Z"
+    },
+    "paused_verified": {
+      "unix_ms": 1791585401333,
+      "utc": "2026-10-09T22:36:41.333Z"
+    },
+    "publication_verified": {
+      "unix_ms": 1791585427720,
+      "utc": "2026-10-09T22:37:07.720Z"
+    }
+  },
+  "private_artifact_hashes": {
+    "summary.json": "2f9744eb3b9ca0279ec2c3ce67e9a33d3f3181afd9c59ac1e5e3898f5ed8fe5f",
+    "publication-helper-cleanup-state.json": "09036accdaa183ebb334bd38c11220112ad608f71b75f21d8d8c286d457f50d5",
+    "raw-load.json": "d004a7b34816f11a4c7aa6595683f92197a98abd3ffa858e13c8b739ce8d0a7b",
+    "ha.log": "0711fca32bb83f56d9588c0fb6b9c0083421889abbc61fcb696d440f0e110f0a",
+    "publisher-cleanup.json": "f7a350fd414e431290dc7a5af09aa11ec0ec87cb8b150eee6e69c614266a1019",
+    "publication-helper-state.json": "30f4a659b21b56352e80ad542963872ebf332e0afcd2bfe1929c46cf6f62f514",
+    "publisher-cleanup.log": "d4b78feecc30fe744b42e5739e8a68286f55ef0755c3b7843164a4d116104541",
+    "readiness.json": "420413d88278acea8316718f3f10b7e533541d95aa14e3e6056d298e042700d3",
+    "prepare.log": "478a04c8f251ba205615693ce0f55787fa71e1d6558026d6e71ff46259e41d38",
+    "load.log": "d004a7b34816f11a4c7aa6595683f92197a98abd3ffa858e13c8b739ce8d0a7b",
+    "ha/publication-31cc4ada0298431596d8afeb37d726d8.json": "d7731ed64f57abef70722587d72c35b79d909684572c919b7f21f71ceab70e8b",
+    "ha/publisher-cleanup.json": "f7a350fd414e431290dc7a5af09aa11ec0ec87cb8b150eee6e69c614266a1019",
+    "ha/progress.json": "03564fedb44d962b709e95f2d93fe49f123587b77e63286f61eb686b9d043058",
+    "ha/failure.json": "05c8f20a6b54b904fb40cf21d2a20f8aa5bb41abb85fd10f322d815f088c9fed"
+  }
+}

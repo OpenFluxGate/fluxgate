@@ -1,0 +1,139 @@
+# Prometheus alerting rules for FluxGate.
+#
+# The metrics come from org.fluxgate.spring.metrics.FluxgateMetrics, exported through the
+# Micrometer Prometheus registry:
+#   fluxgate.requests             -> fluxgate_requests_total{rule_set,endpoint,result}
+#   fluxgate.requests.duration    -> fluxgate_requests_duration_seconds_{count,sum,max}
+#   fluxgate.tokens.remaining     -> fluxgate_tokens_remaining{rule_set}
+#   fluxgate.limiter.failures     -> fluxgate_limiter_failures_total{rule_set,endpoint,action,exception}
+#
+# Load it next to prometheus.yml:
+#   rule_files:
+#     - fluxgate-alerts.yml
+#
+# The thresholds are starting points. Tune them per rule set before relying on the alerts:
+# a public API may live at 20% rejections while an internal one should never reject at all.
+
+groups:
+  - name: fluxgate-rate-limiting
+    interval: 30s
+    rules:
+      # ===== recording rules: keep the alert expressions readable =====
+
+      - record: fluxgate:requests:rate5m
+        expr: |
+          sum by (rule_set) (
+            rate(fluxgate_requests_total{result=~"allowed|rejected"}[5m])
+          )
+
+      - record: fluxgate:rejected:rate5m
+        expr: |
+          sum by (rule_set) (
+            rate(fluxgate_requests_total{result="rejected"}[5m])
+          )
+
+      - record: fluxgate:rejection_ratio:rate5m
+        expr: |
+          fluxgate:rejected:rate5m
+            / clamp_min(fluxgate:requests:rate5m, 0.000001)
+
+      # ===== alerts =====
+
+      - alert: FluxgateHighRejectionRatio
+        expr: |
+          fluxgate:rejection_ratio:rate5m > 0.30
+            and fluxgate:requests:rate5m > 1
+        for: 10m
+        labels:
+          severity: warning
+          component: fluxgate
+        annotations:
+          summary: "FluxGate is rejecting over 30% of requests for rule set {{ $labels.rule_set }}"
+          description: >-
+            {{ $labels.rule_set }} has rejected {{ $value | humanizePercentage }} of its requests
+            over the last 5 minutes, sustained for 10 minutes. Either a rule's capacity is too
+            low for real traffic or a single caller is hammering the endpoint. Check the rejection-ratio-by-rule-set panel
+            and the top rejected endpoints table of the FluxGate dashboard.
+            The `and fluxgate:requests:rate5m > 1` guard keeps idle rule sets from alerting on a
+            handful of requests.
+
+      - alert: FluxgateCriticalRejectionRatio
+        expr: |
+          fluxgate:rejection_ratio:rate5m > 0.80
+            and fluxgate:requests:rate5m > 1
+        for: 5m
+        labels:
+          severity: critical
+          component: fluxgate
+        annotations:
+          summary: "FluxGate is rejecting over 80% of requests for rule set {{ $labels.rule_set }}"
+          description: >-
+            {{ $labels.rule_set }} is effectively closed: more than 80% of requests get a 429.
+            Treat this as an outage of whatever depends on that rule set. Verify the rule's
+            capacity and window, and confirm the limiter is not in a fail-closed loop - the
+            FluxgateLimiterFailures alert fires alongside this one when the backend is the cause.
+
+      - alert: FluxgateLimiterFailures
+        expr: |
+          sum by (rule_set, action, exception) (
+            rate(fluxgate_limiter_failures_total[5m])
+          ) > 0
+        for: 5m
+        labels:
+          severity: critical
+          component: fluxgate
+        annotations:
+          summary: "FluxGate limiter is failing for {{ $labels.rule_set }} ({{ $labels.exception }})"
+          description: >-
+            The limiter could not reach its backend and fell back to
+            "{{ $labels.action }}" ({{ $labels.exception }}). While this fires, rate limiting is
+            not being enforced as configured: fail_open serves traffic unlimited, fail_closed
+            rejects legitimate traffic. Check Redis or MongoDB connectivity and the circuit
+            breaker state at /actuator/health.
+
+      - alert: FluxgateNoRequestsObserved
+        expr: |
+          sum(rate(fluxgate_requests_total{result=~"allowed|rejected"}[10m])) == 0
+        for: 15m
+        labels:
+          severity: warning
+          component: fluxgate
+        annotations:
+          summary: "FluxGate has observed no requests for 15 minutes"
+          description: >-
+            The counters are being scraped but have not moved in 15 minutes. Either the service
+            genuinely has no traffic, or the filter and aspect are no longer on the request path -
+            fluxgate.ratelimit.enabled set to false, the starter's auto-configuration not
+            registered (on Spring Boot 2.0 - 2.6 that means META-INF/spring.factories is missing),
+            or include-patterns no longer matching. Silence this alert for services that are
+            expected to be idle.
+
+      - alert: FluxgateBucketsSaturated
+        expr: |
+          min by (rule_set) (fluxgate_tokens_remaining) == 0
+        for: 15m
+        labels:
+          severity: warning
+          component: fluxgate
+        annotations:
+          summary: "FluxGate buckets for {{ $labels.rule_set }} have been empty for 15 minutes"
+          description: >-
+            No tokens have been available for {{ $labels.rule_set }} for 15 minutes, so every
+            request in that window was rejected. Raise the band capacity, widen the window, or
+            find the caller that keeps the bucket drained.
+
+      - alert: FluxgateSlowDecisions
+        expr: |
+          sum(rate(fluxgate_requests_duration_seconds_sum[5m]))
+            / clamp_min(sum(rate(fluxgate_requests_duration_seconds_count[5m])), 0.000001)
+            > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: fluxgate
+        annotations:
+          summary: "FluxGate decisions are averaging over 50ms"
+          description: >-
+            The limiter is adding {{ $value | humanizeDuration }} to the average request.
+            A rate limit check should cost a single Redis round trip; this usually points at Redis latency,
+            connection pool exhaustion, or retry backoff on a failing backend.

@@ -1,0 +1,153 @@
+{
+  "core": {
+    "tests": 2230,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "process_exit": 0,
+    "build_success": true,
+    "log_sha256": "37618f2200797a1debcc60817bf2baaa8e188c5cf43e5b82014dfad852cb6087",
+    "verification_steps": [
+      {
+        "scope": "full reactor Java change plus real Redis Cluster IT",
+        "process_exit": 0,
+        "log_sha256": "37618f2200797a1debcc60817bf2baaa8e188c5cf43e5b82014dfad852cb6087"
+      },
+      {
+        "scope": "subsequent gateway preset only,47tests,Spotless andJaCoCo",
+        "process_exit": 0,
+        "log_sha256": "af4b3603c501c7c10eb38d56f9fb75c3ce40debd161689fd7d0481f43876e901"
+      },
+      {
+        "scope": "subsequent zero-queue authz admission,53 tests,Spotless and JaCoCo; unchanged library verification retained",
+        "process_exit": 0,
+        "log_sha256": "3fcfc568f7fb14fb5a6636a0e757bba08d693365d4b944e30102d6315ba6e096"
+      },
+      {
+        "scope": "Mongo adapter157tests incl15actualrepositoryintegrationtests; Spotless/JaCoCo",
+        "process_exit": 0,
+        "log_sha256": "e0d5114ddb456eef038a35e6b06f8dc1b61cc818fa197370d1cbcef8a43510dc"
+      },
+      {
+        "scope": "Envoy53tests; Spotless/JaCoCo",
+        "process_exit": 0,
+        "log_sha256": "8c2deeeca7af82e67577bc6d42270abd38ce7b6cfc89bec79aae764d7c3044b6"
+      },
+      {
+        "scope": "Fresh root extAuth clean install54 tests including actual embedded Tomcat graceful drain; Spotless/JaCoCo; unchanged libraries retain previous verified reports",
+        "process_exit": 0,
+        "log_sha256": "37c0a5f7f935bc1b4c91135a4041cf22b5700f2c219181bf2f9adafd409be255"
+      }
+    ]
+  },
+  "studio": {
+    "tests": 197,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "process_exit": 0,
+    "build_success": true,
+    "log_sha256": "ec89a2218c319f66178d4a48eb193872eb47b46ed142b6a0c7c729e67cd4cabf",
+    "scope": "fresh paired Studio clean verify after Mongo batch;197 tests; Spotless/JaCoCo"
+  },
+  "application_jar_sha256": "31d4b361db424392517ff11b40a62a54f0d0736b4b5f02837159c82cbf14b97a",
+  "total_tests": 2427,
+  "redis_cluster_it_tests": 6,
+  "checks": [
+    "Spotless",
+    "JaCoCo",
+    "clean install",
+    "actual Redis Cluster IT"
+  ],
+  "offline": {
+    "load": 37,
+    "combined": 57,
+    "publisher": 8,
+    "identity": 6,
+    "network": 11,
+    "credentials": "modern OpenSSL TLS1.3 live-runtime guard; strict initial/rotated chains, role purpose/cross-purpose negatives, actual local mTLS, read-before-write explicit-alert regression; full root self-test exit0",
+    "ha_dense": "actual payload and restoration branch mocks pass; exact-body regression RED then GREEN",
+    "ha_regressions": 25,
+    "setup": "ownership, full BSON config preservation, documented term normalization, idempotence, majority/all3 guards; root self-check process0",
+    "latest_credential_selftest_pass": true,
+    "tls_localhost_repetitions": 10,
+    "rotation_drain": 2,
+    "credential_timeline": {
+      "self_test_process_exit": 0,
+      "log_sha256": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0"
+    },
+    "ha_stream": {
+      "tests": 25,
+      "process_exit": 0,
+      "log_sha256": "c3191e92acd53e8736968c92479a79243e33d60bc9f5c5519a1883b7878be378",
+      "scope": "original30s acceptance budget includes READY startup; actual child streaming, delayedgrant, partialprivacy, latePASS rejection"
+    },
+    "credential_tls_barrier": {
+      "self_test_process_exit": 0,
+      "log_sha256": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0",
+      "scope": "actual savedEnvoyschema exactDER/SDS/SNI/warming/UID/backend/90s late-secondPod regressions"
+    }
+  },
+  "modules": {
+    "fluxgate-control-support": {
+      "tests": 52,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-redis-ratelimiter": {
+      "tests": 324,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-core": {
+      "tests": 542,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-mongo-adapter": {
+      "tests": 157,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-spring-boot2-starter": {
+      "tests": 524,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-envoy-extauth": {
+      "tests": 54,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-spring-boot3-starter": {
+      "tests": 530,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "fluxgate-testkit": {
+      "tests": 47,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "regression_red": {
+    "scope": "actualMongo initialpublish sends3 majorityindexcommands instead of1",
+    "process_exit": 1,
+    "expected_failure": true,
+    "log_sha256": "2d485a160da1c25e6f1f6ddf024af381814c1a275f0554976a6abfa22ba1b19f"
+  },
+  "shutdown_regression_red": {
+    "scope": "Actual embedded Tomcat immediate default ends shutdown while accepted request remains blocked",
+    "process_exit": 1,
+    "expected_failure": true,
+    "log_sha256": "a50954df17eec8ed95c35ce66b2caf2021ab412ca7e62fab2fe4520991106793"
+  }
+}

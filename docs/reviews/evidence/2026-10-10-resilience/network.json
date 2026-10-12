@@ -1,0 +1,48 @@
+{
+  "context": "kind-fluxgate-resilience",
+  "namespace": "fluxgate-resilience",
+  "control_not_selected_by_gateway_service": true,
+  "control_scope": "Operator-created Gateway-namespace policy-identity TCP control; not an actual Envoy client. Requires operator namespace access; does not prove an untrusted caller can create Pods there.",
+  "runtime_policies_unchanged": true,
+  "passed": true,
+  "cleanup_verified": true,
+  "process_exit": 0,
+  "source_commit": "bf211d5",
+  "raw_sha256": "26c4718ef4c3b72088006e897a3af1ca5d2b5ade4446533d0e49e6dc0d30952f",
+  "phases": [
+    {
+      "phase": "default-deny-egress",
+      "passed": true,
+      "identity_verified_before": true,
+      "identity_verified_after": true,
+      "identity_verified_at_phase_end": true,
+      "runtime_policies_unchanged": true,
+      "positive_controls_before": 58,
+      "positive_controls_after": 58,
+      "gateway_after": {
+        "passed": true
+      },
+      "negative_result_counts": {
+        "dns": 5,
+        "cases": 16
+      }
+    },
+    {
+      "phase": "destination-ingress",
+      "passed": true,
+      "identity_verified_before": true,
+      "identity_verified_after": true,
+      "identity_verified_at_phase_end": true,
+      "runtime_policies_unchanged": true,
+      "positive_controls_before": 58,
+      "positive_controls_after": 58,
+      "gateway_after": {
+        "passed": true
+      },
+      "negative_result_counts": {
+        "dns": 5,
+        "cases": 32
+      }
+    }
+  ]
+}

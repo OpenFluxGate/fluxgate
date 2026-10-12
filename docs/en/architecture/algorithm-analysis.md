@@ -35,8 +35,8 @@ The heart of FluxGate is an optimized Token Bucket implementation running as a R
 | Metric | Complexity | Description |
 |--------|------------|-------------|
 | **Time** | O(1) | Constant time per rate limit check |
-| **Space** | O(1) per key | 2 fields per bucket (tokens, last_refill_nanos) |
-| **Network** | 1 RTT | Single round-trip for atomic execution |
+| **Space** | O(1) per band | 2 fields per bucket (`tokens`, `last_refill_micros`) |
+| **Network** | 1 RTT per rule | Every band of one rule in a single round-trip |
 
 ### 2.2 Key Optimizations
 
@@ -101,19 +101,29 @@ end
 
 ---
 
-#### Fix #4: TTL Safety Margin
+#### Fix #4: TTL Safety Margin, with a configurable upper cap
 
-**Problem:** Clock skew can cause premature key expiration.
+**Problem:** Clock skew can cause premature key expiration. The hard 24-hour cap of 0.3.x caused the
+opposite problem: it silently reset any window longer than a day.
 
 ```lua
--- Add 10% safety margin
-local desired_ttl = math.ceil(window_nanos / 1000000000 * 1.1)
-
--- Cap at 24 hours to prevent runaway TTLs
-local actual_ttl = math.min(desired_ttl, 86400)
+-- Window plus a 10% margin for clock skew, never below 1s, capped at max_bucket_ttl (ARGV[2],
+-- fluxgate.redis.max-bucket-ttl, default 7 days). Used for TOKEN_BUCKET and SLIDING_WINDOW.
+local function ttl_for_window(win_micros)
+    return math.min(max_ttl_seconds, math.max(1, math.ceil(win_micros / 1000000 * 1.1)))
+end
 ```
 
-**Impact:** Prevents edge cases where buckets expire too early.
+**Impact:** Buckets no longer expire too early. The previous `math.min(desired_ttl, 86400)` cap meant
+a 7-day quota reset every 24 hours, effectively allowing 7× its configured capacity. FIXED_WINDOW
+counters expire at their window end (`PEXPIREAT`) and are exempt from the cap. A TOKEN_BUCKET or
+SLIDING_WINDOW bucket idle for longer than `max-bucket-ttl` expires and starts full, so a window longer
+than the cap is effectively shortened for idle callers; the limiter logs a WARN once per such rule.
+
+On rejection the script issues `EXPIRE` on every key but writes no state. `EXPIRE` is a no-op for a
+key that does not exist, so a band that was never charged is not created, and a bucket that only ever
+sees rejections still expires on schedule instead of inheriting the shrinking TTL of its last allowed
+request.
 
 ---
 
@@ -184,29 +194,42 @@ switch (scope) {
 | Operation | Time | Notes |
 |-----------|------|-------|
 | Cache refresh | O(R) | R = number of rules in MongoDB |
-| Bucket cleanup (KEYS) | O(N) | N = total Redis keys (see optimization below) |
+| Bucket cleanup (SCAN + UNLINK) | O(N) total, non-blocking | N = total Redis keys; one SCAN page at a time (see 5.1) |
 
 ---
 
 ## 5. Optimization Opportunities
 
-### 5.1 Bucket Deletion: KEYS → SCAN
+### 5.1 Bucket Deletion: KEYS → SCAN (done in 0.4)
 
-**Current Implementation (O(N)):**
-```java
-// WARNING: KEYS blocks Redis during full keyspace scan
-List<String> keys = connectionProvider.keys("fluxgate:*");
-```
+**0.3.x (O(N), blocking):** `connectionProvider.keys("fluxgate:*")` - `KEYS` blocks Redis for a
+full keyspace scan, and the `fluxgate:*` pattern also matched rule set definitions.
 
-**Recommended Improvement (O(1) per iteration):**
+**0.4 (implemented):** the reset paths (`deleteBucketsByRuleSetId`, `deleteAllBuckets`) scan
+`fluxgate:bucket:...` patterns with `SCAN` and delete each page with `UNLINK` as it arrives, so the
+keys are never held in memory all at once.
+
 ```java
-// Non-blocking incremental scan
-String cursor = "0";
-do {
-    ScanResult<String> result = redis.scan(cursor, "fluxgate:*", 100);
-    cursor = result.getCursor();
-    redis.del(result.getResult());
-} while (!cursor.equals("0"));
+// RedisTokenBucketStore.java - actual code
+private long scanAndUnlink(String pattern) {
+  long[] deleted = {0L};
+  try {
+    connectionProvider.scanKeys(
+        pattern, BUCKET_SCAN_COUNT, page -> deleted[0] += deleteInBatches(page));
+  } catch (RedisException e) {
+    throw driverFailed("SCAN/UNLINK " + pattern, e);
+  }
+  return deleted[0];
+}
+
+private long deleteInBatches(List<String> keys) {
+  long deleted = 0;
+  for (int start = 0; start < keys.size(); start += DELETE_BATCH_SIZE) {
+    int end = Math.min(start + DELETE_BATCH_SIZE, keys.size());
+    deleted += connectionProvider.unlink(keys.subList(start, end).toArray(new String[0]));
+  }
+  return deleted;
+}
 ```
 
 | Approach | Time | Blocking |

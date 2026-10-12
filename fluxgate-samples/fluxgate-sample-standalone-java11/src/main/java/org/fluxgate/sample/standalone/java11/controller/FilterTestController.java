@@ -26,10 +26,13 @@ import org.springframework.web.bind.annotation.RestController;
  *   <li>/api/test - Uses "standalone-rules" (10 req/min per IP)
  *   <li>/api/test/multi-filter - Uses "multi-filter-rules" (10 req/min + 20 req/min)
  *   <li>/api/test/composite - Uses "composite-key-rules" (10 req/min per IP+User)
+ *   <li>/api/test/info - Request counters (checked by {@code apiFilter} like {@code /api/test})
  * </ul>
+ *
+ * <p>Each path is matched by the servlet filter of the same name in {@code MultipleFiltersConfig}.
  */
 @RestController
-@RequestMapping("/api/test/filter")
+@RequestMapping("/api/test")
 @Tag(name = "Test", description = "Rate-limited Filter-Test API")
 public class FilterTestController {
 
@@ -128,8 +131,9 @@ public class FilterTestController {
    * <p>Usage examples:
    *
    * <ul>
-   *   <li>curl http://localhost:8085/api/test/composite (uses IP only)
-   *   <li>curl -H "X-User-Id: user-123" http://localhost:8085/api/test/composite (uses IP:user-123)
+   *   <li>curl "http://localhost:8085/api/test/composite?userId=alice" (uses IP only)
+   *   <li>curl -H "X-User-Id: user-123" "http://localhost:8085/api/test/composite?userId=user-123"
+   *       (uses IP:user-123; requires identity.source=HEADERS, demo only)
    * </ul>
    *
    * <p>Different users from the same IP have separate rate limits.
@@ -140,7 +144,7 @@ public class FilterTestController {
       description =
           "Rate-limited to 10 requests per minute per IP+User combination. "
               + "Uses 'composite-key-rules' rule set with CUSTOM scope. "
-              + "Provide X-User-Id header to set user identifier. "
+              + "Provide X-User-Id header to set user identifier (requires identity.source=HEADERS, demo only). "
               + "Call POST /api/admin/rules/composite first to create rules.")
   @ApiResponses({
     @ApiResponse(responseCode = "200", description = "Request allowed"),
@@ -211,15 +215,10 @@ public class FilterTestController {
     return ResponseEntity.ok(response);
   }
 
+  // Forwarding headers are client-controlled; only the starter's trusted-proxies handling may
+  // honour
+  // them. This sample uses the socket address.
   private String getClientIp(HttpServletRequest request) {
-    String xForwardedFor = request.getHeader("X-Forwarded-For");
-    if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
-      return xForwardedFor.split(",")[0].trim();
-    }
-    String xRealIp = request.getHeader("X-Real-IP");
-    if (xRealIp != null && !xRealIp.isEmpty()) {
-      return xRealIp;
-    }
     return request.getRemoteAddr();
   }
 }

@@ -27,4 +27,19 @@ public class AopTestController {
   public Object aopTest1() {
     return "SUCCESS";
   }
+
+  @RateLimit(ruleSetId = "standalone-rules", throwOnReject = true)
+  @GetMapping("/aop-test2")
+  @Operation(
+      summary = "Rate-limited endpoint that renders 429 through a @ControllerAdvice",
+      description =
+          "Same limit as /aop-test1, but throwOnReject=true makes the aspect raise "
+              + "RateLimitExceededException so RateLimitExceptionHandler shapes the response.")
+  @ApiResponses({
+    @ApiResponse(responseCode = "200", description = "Request allowed"),
+    @ApiResponse(responseCode = "429", description = "Rate limit exceeded")
+  })
+  public Object aopTest2() {
+    return "SUCCESS";
+  }
 }

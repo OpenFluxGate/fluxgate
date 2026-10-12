@@ -1,0 +1,113 @@
+{
+  "complete": true,
+  "all_requested_local_gates_passed": true,
+  "production_release_approved": false,
+  "scope": "Authorized Docker Desktop local HA, load, credentials and isolation engineering verification; not enterprise production certification.",
+  "independent_review_score": 96,
+  "maximum_score": 100,
+  "score_components": {
+    "correctness": 25,
+    "ha": 24,
+    "load": 19,
+    "credentials": 19,
+    "reproducibility": 9
+  },
+  "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+  "studio_jar_sha256": "d566a0bcd715a3d53ad4b8e8567a95d9b0466352b483498e24c43bad23824895",
+  "envoy_source_commit_at_last_validation": "00c1da4",
+  "paired_studio_source_commit": "5fe85c6d69f414e6823de6226766abe2a173d6d1",
+  "artifact_identity_rule": "Each scenario records its own actual source commit and loaded tool hashes; earlier script revisions remain distinct from the final credential-only correction.",
+  "java_studio_executed_tests": 2444,
+  "credential_per_pod_actual_tls_regressions": 9,
+  "credential_rotation_scheduled": 3801,
+  "credential_rotation_valid_backend_200": 3801,
+  "credential_rotation_omissions_errors_pending_worker_failures": 0,
+  "final_state_checks": 19,
+  "secret_scan": {
+    "coverage_complete": true,
+    "scanned_public_files": 654,
+    "private_material_files_read": 1309,
+    "exact_secret_patterns": 1318,
+    "hit_file_count": 0
+  },
+  "secret_scan_limits": [
+    "Exact known current and retained fixture secret patterns and encoding variants, not comprehensive credential or vulnerability detection.",
+    "This pre-final-document scan is followed by a final whole-scope scan recorded by SHA in the review commit validation."
+  ],
+  "artifacts": [
+    {
+      "file": "ha-async-final.json",
+      "sha256": "5a65e97948fd5e3e7e9f9c4f57326d9e99f5bb4caae08e0f635770cd6c80f375",
+      "bytes": 43464
+    },
+    {
+      "file": "load-async-final.json",
+      "sha256": "5c001dcbc0f3966031d3ef5eb0c29dbdde17c8c599dd1c1de43a740b55767ab3",
+      "bytes": 15194
+    },
+    {
+      "file": "combined-mongo-async-final.json",
+      "sha256": "8c44a56c69fb6993e770378a35177ae600cc4780448ae78bd3ed853b5602b5f6",
+      "bytes": 14518
+    },
+    {
+      "file": "combined-redis-async-final.json",
+      "sha256": "dd1b520d02d291c6a334e6bab3d6782c258d04e4b9de1f4d2e7e93d0f2cb9107",
+      "bytes": 13869
+    },
+    {
+      "file": "credentials-perpod-final.json",
+      "sha256": "058dae23c212dcef4be2a9eefd7e3852bd5ef5eaffc012bcb100e9a0c21ca70d",
+      "bytes": 43689
+    },
+    {
+      "file": "network-async-final.json",
+      "sha256": "e06b0e4002afa7b488e353f160cab22b6fd67e9b7e157bd0b6ea152cbaff6a23",
+      "bytes": 84920
+    },
+    {
+      "file": "final-state-async-final.json",
+      "sha256": "7f21da4acaa63c1a58747710c44dff00fce406c6fa8b33df6766d45f1af35ed9",
+      "bytes": 21875
+    },
+    {
+      "file": "tests-async-final.json",
+      "sha256": "9a789c8bb02a65878e18cc7db3fb415597382da5457c4ff424afd3655b9efc52",
+      "bytes": 4373
+    },
+    {
+      "file": "dependency-security-final.json",
+      "sha256": "824fe49934c03a02d34fe448d1ed19c29f3937aa1e13cfb7ad992b76bc9b9fe1",
+      "bytes": 31872
+    },
+    {
+      "file": "path-equivalence-final.json",
+      "sha256": "6bbced15e3e5554d5b1416a55d0a4c0d91cc9c6a3a285fd28ac44bde2ea0129a",
+      "bytes": 1466
+    },
+    {
+      "file": "load-async-decision-diagnostics.json",
+      "sha256": "f3d65fea129cda4f459fcf30c7efb486a4c71541612effece333dbce27307f48",
+      "bytes": 3394
+    },
+    {
+      "file": "credential-parallel-sampler-control.json",
+      "sha256": "c62dfac7b9a2ade99e3b75ee1539288510e2d1f18f82a1ab37c25b3230320762",
+      "bytes": 1783
+    },
+    {
+      "file": "credential-sequential-sampler-rejected-control.json",
+      "sha256": "01d029b11a4ceb0979bf46b15e6cc551c225d2a18122ac89e35abf8f3d52683f",
+      "bytes": 1136
+    }
+  ],
+  "history_retained": true,
+  "limits": [
+    "Operator-assisted Redis home-role restoration does not establish successive unattended failures.",
+    "Short synthetic workload horizons; 300/600 RPS are saturation characterization.",
+    "100ms credential sampling does not observe all instants between samples.",
+    "Floating infrastructure image tags and development artifacts limit future reproducibility.",
+    "Shared physical host and control plane; Redis nonzero RPO; plaintext stores/default Redis ACL; best-effort request statistics.",
+    "Production gates include supported runtime line, external authority, off-host backup restoration, soak and full OS/JRE/transitive security review."
+  ]
+}

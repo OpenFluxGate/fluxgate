@@ -3,7 +3,15 @@ package org.fluxgate.redis.store;
 /**
  * Simple data class for storing RuleSet configuration in Redis. This is a simplified representation
  * for JSON serialization.
+ *
+ * @deprecated A single capacity/window pair cannot represent the multi-rule, multi-band model of
+ *     {@code org.fluxgate.core.ratelimiter.RateLimitRuleSet}, so nothing in the rate limiting path
+ *     reads it. Store rule sets in MongoDB through {@code
+ *     org.fluxgate.adapter.mongo.MongoRuleSetProvider}, or implement {@code
+ *     org.fluxgate.core.ratelimiter.RateLimitRuleSetProvider} against your own storage. This class
+ *     will be removed in a future release.
  */
+@Deprecated(since = "0.4.0")
 public class RuleSetData {
 
   private String ruleSetId;

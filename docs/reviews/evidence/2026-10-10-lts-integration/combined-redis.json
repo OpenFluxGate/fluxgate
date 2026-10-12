@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "profile": "combined-redis",
+  "profile_passed": true,
+  "global_acceptance": false,
+  "global_complete": false,
+  "credential_acceptance": false,
+  "source_commit_at_invocation": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
+  "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+  "independent_terminal_exit_code": 0,
+  "independent_terminal_witness_valid": true,
+  "provenance": {
+    "raw": {
+      "sha256": "3d00e3fe47e90ba8a4d4ae36a22ce1ccb0ac9525fce9da374b74c0f6ec6248d3",
+      "bytes": 3929
+    },
+    "log": {
+      "sha256": "3d00e3fe47e90ba8a4d4ae36a22ce1ccb0ac9525fce9da374b74c0f6ec6248d3",
+      "bytes": 3929
+    },
+    "witness": {
+      "sha256": "367fd3002d473f2504e77bddb320be3411c622a2e0546560618c344061eb7d64",
+      "bytes": 8520
+    },
+    "exporter_stage": {
+      "sha256": "345516e3679c7b1c84ef97b8ff4b722a192826a6574fca96432116c71ca6c8a4",
+      "bytes": 10454
+    },
+    "manifest": {
+      "sha256": "5ae14c3199d1747d01aff19d169a0ff4abf58e66b9380c4569aee4f6b5a2e6cd",
+      "bytes": 2015
+    }
+  },
+  "limits": [
+    "Specific terminal-passing profile only; global credential availability remains rejected.",
+    "Private identities, paths and free-form strings were removed from the projected summary. Inspect bound private raw proof for omitted detail."
+  ],
+  "private_selected_stage_sha256": "47f5ccfb8462cca1b9f3321b8d7cef21978459b7cab98093f99a5e3419c51efe",
+  "summary": {
+    "passed": true,
+    "complete": false,
+    "fault": "redis",
+    "phase_complete": true,
+    "fault_timestamps": {
+      "rto_budget_started": {
+        "unix_ms": 1791606724214
+      },
+      "fault_start": {
+        "unix_ms": 1791606724326
+      },
+      "paused_verified": {
+        "unix_ms": 1791606724448
+      }
+    },
+    "verified_rto_monotonic_seconds": 18.735,
+    "verified_rto_utc_seconds": 18.735,
+    "clock": {
+      "host_before_unix_ms": 1791606707462.929,
+      "host_after_unix_ms": 1791606707538.073,
+      "pod_unix_ms": 1791606707533.278,
+      "pod_minus_host_interval_ms": [
+        -4.794921875,
+        70.34912109375
+      ],
+      "pod_minus_host_estimate_ms": 32.777099609375,
+      "measurement_bound_ms": 37.572021484375,
+      "within_100ms": true
+    },
+    "observation_requests": 12000,
+    "all_statuses": {
+      "200": 10945,
+      "503": 1055
+    },
+    "fault_window_failures": 1055,
+    "last_minute": {
+      "target_requests": 6000,
+      "completed_requests": 6000,
+      "achieved_rps": 100.0,
+      "all_statuses": {
+        "200": 6000
+      },
+      "latency_ms": {
+        "p50": 3.456367878243327,
+        "p95": 5.223656306043267,
+        "p99": 9.098781272768974,
+        "max": 49.34187117032707
+      },
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0
+    },
+    "raw_proofs": {
+      "load": {
+        "sha256": "f7f02f714955b8529fbaa0033110d9136d35b938bd75d1a932408c068e94d3fb"
+      },
+      "ha": {
+        "sha256": "487b3f63d81850d4240312781c6ccd3794d4a252d4d1fcd68091813ee25c832c"
+      },
+      "readiness": {
+        "sha256": "c330dca64376387582950241ab1f1a7ef2cfb7c54810bc7f51e31766474c5789"
+      }
+    },
+    "preparations": {
+      "identity_preparation": {
+        "source": {
+          "sha256": "cd37647595abd107e221b78c1da9af0f485b012565ad61f265f659d71b15558f"
+        },
+        "started_unix_ms": 1791606630658,
+        "pid": 44681,
+        "completed_unix_ms": 1791606667868,
+        "exit_code": 0
+      },
+      "baseline_preflight": {
+        "source": {
+          "sha256": "582b637a107e496f66f249a9288bb88da37d81ce5fb4e26577444c248b59cdd3"
+        },
+        "started_unix_ms": 1791606667869,
+        "pid": 45507,
+        "proof": {
+          "sha256": "d4b4927000366e74dbb7ab980c849df709faf29631ec17caf6bed384c999d72c"
+        },
+        "passed": true,
+        "completed_unix_ms": 1791606695500,
+        "exit_code": 0
+      }
+    },
+    "processes": [
+      {
+        "pid": 44681,
+        "exit_code": 0
+      },
+      {
+        "pid": 45507,
+        "exit_code": 0
+      },
+      {
+        "name": "load",
+        "pid": 46171,
+        "exit_code": 0
+      },
+      {
+        "name": "ha",
+        "pid": 46456,
+        "exit_code": 0
+      }
+    ]
+  },
+  "selected_fault_proof_complete": false,
+  "selected_fault_phase_complete": true
+}

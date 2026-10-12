@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "diagnostic_only": true,
+  "original_ha_terminal_passed": true,
+  "supplement_accepted": false,
+  "global_acceptance": false,
+  "windows": [
+    {
+      "check": "redis-promotion",
+      "batch": 0,
+      "dense_window_sample_count": 10,
+      "dense_window_span_ms": 4214,
+      "completion_selected_background_count": 10,
+      "completion_selected_status_counts": {
+        "503": 1,
+        "200": 9
+      },
+      "overlapping_non_200": [
+        {
+          "status": 503,
+          "requested_offset_ms": -913,
+          "completed_offset_ms": 1433,
+          "requested_before_window": true
+        }
+      ]
+    },
+    {
+      "check": "redis-promotion",
+      "batch": 1,
+      "dense_window_sample_count": 10,
+      "dense_window_span_ms": 2017,
+      "completion_selected_background_count": 5,
+      "completion_selected_status_counts": {
+        "200": 5
+      },
+      "overlapping_non_200": []
+    },
+    {
+      "check": "mongo-election-publication",
+      "batch": 0,
+      "dense_window_sample_count": 10,
+      "dense_window_span_ms": 2122,
+      "completion_selected_background_count": 4,
+      "completion_selected_status_counts": {
+        "200": 4
+      },
+      "overlapping_non_200": []
+    }
+  ],
+  "raw_sha256": "d8230d75cb77b0fa25fe7672399dac3bf05747b2ec0c96c80ff5f66c15287146",
+  "boundary": "The unchanged supplementary completion-based gate rejects a fault request that began before the dense recovery window and finished afterward. This does not prove a newly started post-recovery request failed; rejection is retained without modifying that gate."
+}

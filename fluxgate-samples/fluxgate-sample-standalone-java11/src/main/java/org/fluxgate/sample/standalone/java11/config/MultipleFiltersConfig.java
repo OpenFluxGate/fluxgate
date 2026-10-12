@@ -26,61 +26,41 @@ public class MultipleFiltersConfig {
   private static final Logger log = LoggerFactory.getLogger(MultipleFiltersConfig.class);
 
   /**
-   * RequestContext customizer that extracts rate limit key values from headers.
+   * RequestContext customizer that derives the composite {@code ipUser} rate limit key.
    *
-   * <ul>
-   *   <li><b>X-User-Id</b> - builder.userId() (for PER_USER scope)
-   *   <li><b>X-API-Key</b> - builder.apiKey() (for PER_API_KEY scope)
-   *   <li><b>X-Real-IP</b> - builder.clientIp() (overrides IP for proxy setups)
-   *   <li><b>X-Tenant-Id</b> - builder.attribute("tenantId", ...) (for CUSTOM scope)
-   * </ul>
+   * <p>The identity is <b>not</b> read from client headers here. {@code RequestContextFactory}
+   * already fills the builder from the sources configured under {@code
+   * fluxgate.ratelimit.identity.source} (default {@code PRINCIPAL}: the authenticated principal;
+   * identity headers are ignored) and resolves the client IP with {@code trust-client-ip-header} /
+   * {@code trusted-proxies}. A client-supplied {@code X-User-Id}, {@code X-API-Key} or {@code
+   * X-Real-IP} therefore cannot pick its own bucket.
+   *
+   * <p>This sample has no Spring Security, so by default every caller shares the IP-only key. To
+   * try the per-user composite key locally, opt in explicitly:
+   *
+   * <pre>
+   * FLUXGATE_IDENTITY_SOURCE=HEADERS ./mvnw spring-boot:run   # DEMO ONLY
+   * curl -H "X-User-Id: user-123" "http://localhost:8085/api/test/composite?userId=user-123"
+   * </pre>
+   *
+   * <p>{@code HEADERS} is only safe behind a gateway that authenticates the caller and strips any
+   * incoming {@code X-User-Id}; pair it with {@code fluxgate.ratelimit.trust-client-ip-header} and
+   * {@code fluxgate.ratelimit.trusted-proxies} (see application.yml). The starter logs a warning at
+   * startup when it is enabled.
    */
   @Bean
   public RequestContextCustomizer requestContextCustomizer() {
     return (builder, request) -> {
-      // Set userId for PER_USER scope rules
-      String userId = request.getHeader("X-User-Id");
-      if (userId != null && !userId.isEmpty()) {
-        log.debug("Setting userId from X-User-Id header: {}", userId);
-        builder.userId(userId);
-      }
-
-      // Set apiKey for PER_API_KEY scope rules
-      String apiKey = request.getHeader("X-API-Key");
-      if (apiKey != null && !apiKey.isEmpty()) {
-        log.debug("Setting apiKey from X-API-Key header: {}", apiKey);
-        builder.apiKey(apiKey);
-      }
-
-      // Override client IP from X-Real-IP header (common for nginx proxy)
-      String realIp = request.getHeader("X-Real-IP");
-      if (realIp != null && !realIp.isEmpty()) {
-        log.debug("Overriding client IP from X-Real-IP: {}", realIp);
-        builder.clientIp(realIp);
-      }
-
-      // Add tenant ID for CUSTOM scope with keyStrategyId="tenantId"
-      String tenantId = request.getHeader("X-Tenant-Id");
-      if (tenantId != null) {
-        builder.attribute("tenantId", tenantId);
-      }
-
-      // Add request ID for tracing (not used for rate limiting)
-      String requestId = request.getHeader("X-Request-Id");
-      if (requestId != null) {
-        builder.attribute("requestId", requestId);
-      }
-
-      // Build composite key (IP:userId) for CUSTOM scope with keyStrategyId="ipUser"
+      // userId/clientIp are already resolved by the starter according to identity.source
       String clientIp = builder.build().getClientIp();
+      String userId = builder.build().getUserId();
+
+      // Composite key (IP:userId) for CUSTOM scope with keyStrategyId="ipUser"
       if (userId != null && !userId.isEmpty()) {
         builder.attribute("ipUser", clientIp + ":" + userId);
-        log.debug("Built composite ipUser key: {}:{}", clientIp, userId);
       } else {
         builder.attribute("ipUser", clientIp);
-        log.debug("Built ipUser key (IP only): {}", clientIp);
       }
-
       return builder;
     };
   }

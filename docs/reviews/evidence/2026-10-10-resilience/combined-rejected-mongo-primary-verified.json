@@ -1,0 +1,80 @@
+{
+  "accepted": false,
+  "application_jar_sha256": "b03409f989d8a6b228689bf8daf8880d3b68a1e95b2166b7ae46625e32485a40",
+  "reason": "Original30-second dense recovery gate failed; no retroactive acceptance",
+  "phase": "mongo-election-publication",
+  "exception_class": "RuntimeError",
+  "timestamps": {
+    "rto_budget_started": {
+      "unix_ms": 1791588624276,
+      "utc": "2026-10-09T23:30:24.276Z"
+    },
+    "fault_start": {
+      "unix_ms": 1791588624382,
+      "utc": "2026-10-09T23:30:24.382Z"
+    },
+    "paused_verified": {
+      "unix_ms": 1791588624509,
+      "utc": "2026-10-09T23:30:24.509Z"
+    },
+    "publication_verified": {
+      "unix_ms": 1791588651151,
+      "utc": "2026-10-09T23:30:51.151Z"
+    }
+  },
+  "dense_batches": [
+    {
+      "recovered": false,
+      "consecutive_successes": 1,
+      "background_window_rejected": null
+    }
+  ],
+  "observed": {
+    "completed_requests": 12000,
+    "all_statuses": {
+      "200": 9417,
+      "503": 2583
+    },
+    "omitted_schedules": 0,
+    "latency_ms": {
+      "p50": 5.198243772611022,
+      "p95": 1605.9711850248277,
+      "p99": 4015.7935968600214,
+      "max": 5006.551133934408
+    },
+    "achieved_rps": 99.96389386380635
+  },
+  "last_minute": {
+    "completed_requests": 6000,
+    "all_statuses": {
+      "200": 6000
+    },
+    "omitted_schedules": 0,
+    "latency_ms": {
+      "p50": 5.128829041495919,
+      "p95": 10.047303047031164,
+      "p99": 18.165342044085264,
+      "max": 82.16794789768755
+    },
+    "achieved_rps": 100.0
+  },
+  "all_subprocesses_terminal": true,
+  "raw_sha256": "a2388ff6b0f04328604e130d84e7b6a21f07af08f570c54a9bee926d7b22450d",
+  "failure_sha256": "510075d1fba190e9f23c29cd3948516bd06762f871e156b8d1f871d88c7011e7",
+  "publication": {
+    "elapsedSeconds": 24.775005053,
+    "transientFailureClasses": [
+      "MongoTimeoutException",
+      "MongoTimeoutException",
+      "MongoTimeoutException",
+      "MongoSocketReadTimeoutException",
+      "MongoSocketReadTimeoutException",
+      "MongoSocketReadTimeoutException",
+      "MongoSocketReadTimeoutException",
+      "MongoSocketReadTimeoutException"
+    ],
+    "epochPreserved": true,
+    "majorityReadVerified": true,
+    "idempotentReplay": true
+  }
+}

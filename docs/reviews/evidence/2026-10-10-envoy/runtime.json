@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-10",
+  "context": "kind-fluxgate-enterprise",
+  "namespace": "fluxgate-enterprise",
+  "versions": {
+    "kubernetes": "1.35.0",
+    "envoy_gateway": "1.9.2",
+    "calico": "3.33.0",
+    "java": "21.0.8"
+  },
+  "runtime_image_id": "sha256:4764110aba8f8c8814185e769cc7869c3d235edbc78e34bc64cf7d15ebd6b638",
+  "docker_manifest_id": "sha256:d3bc725a1e22a797a7d7dbd2c5e30a272bb7451b975e4d47b55ce70e4a629095",
+  "jars": [
+    {
+      "file": "fluxgate-envoy-gateway/fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.3.7.jar",
+      "sha256": "6a4f6ccb1c70a473213e70dc8ea370ef395c88bbd0ca23a8781eee41fef15b3d"
+    },
+    {
+      "file": "fluxgate-studio-envoy-hardening/fluxgate-studio-admin-api/target/fluxgate-studio-admin-api-0.0.1-SNAPSHOT.jar",
+      "sha256": "4605e80171a84e7c1036b067a6651c42ae9658b12b50305e834e8f21c786d0e0"
+    }
+  ],
+  "pod_forwards": {
+    "lifecycle": [
+      {
+        "pod": "fluxgate-authz-cccc6d4cc-s48ks",
+        "tls": 18443,
+        "health": 18083
+      },
+      {
+        "pod": "fluxgate-authz-cccc6d4cc-zb7f6",
+        "tls": 18444,
+        "health": 18084
+      }
+    ],
+    "studio_after_outages": [
+      {
+        "pod": "fluxgate-authz-cccc6d4cc-jtr54",
+        "tls": 18443,
+        "health": 18083
+      },
+      {
+        "pod": "fluxgate-authz-cccc6d4cc-m5gfm",
+        "tls": 18444,
+        "health": 18084
+      }
+    ]
+  },
+  "passed_exit_codes": {
+    "full_core_install": 0,
+    "core_spotless": 0,
+    "studio_verify_spotless": 0,
+    "enterprise_setup": 0,
+    "envoy_smoke": 0,
+    "network_policy": 0,
+    "policy_lifecycle": 0,
+    "failure_modes_final": 0,
+    "studio_live_jwt": 0
+  },
+  "logs_are_local_temporary": true
+}

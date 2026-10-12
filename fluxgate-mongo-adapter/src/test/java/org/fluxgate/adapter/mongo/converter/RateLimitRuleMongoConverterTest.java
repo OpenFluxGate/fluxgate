@@ -3,6 +3,8 @@ package org.fluxgate.adapter.mongo.converter;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.Duration;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import org.bson.Document;
@@ -10,12 +12,48 @@ import org.fluxgate.adapter.mongo.model.RateLimitBandDocument;
 import org.fluxgate.adapter.mongo.model.RateLimitRuleDocument;
 import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.OnLimitExceedPolicy;
+import org.fluxgate.core.config.QuotaPeriod;
+import org.fluxgate.core.config.RateLimitAlgorithm;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class RateLimitRuleMongoConverterTest {
+
+  @Test
+  @DisplayName("toBson writes the algorithm always and the other 0.4 band fields only when set")
+  void toBson_writesAlgorithmAlwaysAndOtherBandFieldsOnlyWhenNonDefault() {
+    RateLimitRuleDocument dto =
+        new RateLimitRuleDocument(
+            "rule",
+            "Rule",
+            true,
+            LimitScope.PER_IP,
+            "ip",
+            OnLimitExceedPolicy.REJECT_REQUEST,
+            List.of(
+                new RateLimitBandDocument(60L, 100L, "legacy"),
+                new RateLimitBandDocument(
+                    60L, 100L, "window", "SLIDING_WINDOW", null, "Asia/Seoul", 20)),
+            "rule-set");
+
+    List<Document> bands = RateLimitRuleMongoConverter.toBson(dto).getList("bands", Document.class);
+
+    Document legacy = bands.get(0);
+    assertEquals("TOKEN_BUCKET", legacy.getString("algorithm"));
+    assertFalse(legacy.containsKey("quotaPeriod"));
+    assertFalse(legacy.containsKey("zoneId"));
+    assertFalse(legacy.containsKey("slidingWindowBuckets"));
+
+    Document window = bands.get(1);
+    assertEquals("SLIDING_WINDOW", window.getString("algorithm"));
+    assertEquals("Asia/Seoul", window.getString("zoneId"));
+    assertEquals(20, window.getInteger("slidingWindowBuckets"));
+    assertFalse(window.containsKey("quotaPeriod"));
+  }
 
   @Test
   @DisplayName("Should convert Domain RateLimitRule to DTO RateLimitRuleDocument")
@@ -560,5 +598,200 @@ class RateLimitRuleMongoConverterTest {
 
     // then
     assertTrue(dto.isEnabled(), "Default enabled value should be true");
+  }
+
+  private static Document ruleBson(Document band) {
+    return new Document()
+        .append("id", "r")
+        .append("name", "r")
+        .append("scope", "PER_IP")
+        .append("keyStrategyId", "ip")
+        .append("onLimitExceedPolicy", "REJECT_REQUEST")
+        .append("ruleSetId", "rs")
+        .append("bands", List.of(band));
+  }
+
+  @Test
+  @DisplayName("Numeric band fields are read from Int32, Int64 and integral Double alike")
+  void fromBsonBand_acceptsMixedNumericTypes() {
+    Document int32 = new Document("windowSeconds", 60).append("capacity", 100).append("label", "a");
+    Document int64 =
+        new Document("windowSeconds", 60L).append("capacity", 100L).append("label", "b");
+    Document dbl =
+        new Document("windowSeconds", 60.0)
+            .append("capacity", 100.0)
+            .append("label", "c")
+            .append("slidingWindowBuckets", 12.0);
+
+    for (Document band : List.of(int32, int64, dbl)) {
+      RateLimitBandDocument dto = RateLimitRuleMongoConverter.fromBsonBand(band);
+      assertEquals(60L, dto.getWindowSeconds());
+      assertEquals(100L, dto.getCapacity());
+    }
+    assertEquals(12, RateLimitRuleMongoConverter.fromBsonBand(dbl).getSlidingWindowBuckets());
+  }
+
+  @Test
+  @DisplayName("A priority stored as Int64 or Double is read like an Int32")
+  void fromBson_acceptsNonInt32Priority() {
+    Document band = new Document("windowSeconds", 1).append("capacity", 1).append("label", "x");
+
+    assertEquals(
+        7,
+        RateLimitRuleMongoConverter.fromBson(ruleBson(band).append("priority", 7L)).getPriority());
+    assertEquals(
+        7,
+        RateLimitRuleMongoConverter.fromBson(ruleBson(band).append("priority", 7.0)).getPriority());
+  }
+
+  @Test
+  @DisplayName(
+      "A fractional, non-numeric or out-of-range number is an InvalidRuleDocumentException")
+  void fromBsonBand_rejectsMalformedNumbers() {
+    assertThrows(
+        InvalidRuleDocumentException.class,
+        () ->
+            RateLimitRuleMongoConverter.fromBsonBand(
+                new Document("windowSeconds", 1.5).append("capacity", 1).append("label", "x")));
+    assertThrows(
+        InvalidRuleDocumentException.class,
+        () ->
+            RateLimitRuleMongoConverter.fromBsonBand(
+                new Document("windowSeconds", "60").append("capacity", 1).append("label", "x")));
+    assertThrows(
+        InvalidRuleDocumentException.class,
+        () ->
+            RateLimitRuleMongoConverter.fromBsonBand(
+                new Document("windowSeconds", 60)
+                    .append("capacity", 1)
+                    .append("label", "x")
+                    .append("slidingWindowBuckets", 1L << 40)));
+    assertThrows(
+        InvalidRuleDocumentException.class,
+        () -> RateLimitRuleMongoConverter.fromBsonBand(new Document("capacity", 1)));
+  }
+
+  @Test
+  @DisplayName("Wrong types and unknown enum values are reported, not cast blindly")
+  void fromBson_rejectsWrongTypes() {
+    Document band = new Document("windowSeconds", 1).append("capacity", 1).append("label", "x");
+
+    assertThrows(
+        InvalidRuleDocumentException.class,
+        () -> RateLimitRuleMongoConverter.fromBson(ruleBson(band).append("scope", "PER_GALAXY")));
+    assertThrows(
+        InvalidRuleDocumentException.class,
+        () -> RateLimitRuleMongoConverter.fromBson(ruleBson(band).append("enabled", "yes")));
+    assertThrows(
+        InvalidRuleDocumentException.class,
+        () -> RateLimitRuleMongoConverter.fromBson(ruleBson(band).append("methods", List.of(1))));
+    assertThrows(
+        InvalidRuleDocumentException.class,
+        () -> RateLimitRuleMongoConverter.fromBson(ruleBson(band).append("bands", "none")));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"Z", "UTC", "Etc/UTC", "GMT", "+00:00"})
+  @DisplayName("UTC-equivalent zone ids are omitted on write, like the literal \"UTC\" default")
+  void toBson_omitsUtcEquivalentZone(String zone) {
+    RateLimitRule rule =
+        RateLimitRule.builder("r")
+            .scope(LimitScope.PER_IP)
+            .keyStrategyId("ip")
+            .ruleSetId("rs")
+            .addBand(
+                RateLimitBand.builder(Duration.ofDays(1), 10)
+                    .algorithm(RateLimitAlgorithm.FIXED_WINDOW)
+                    .quotaPeriod(QuotaPeriod.DAILY)
+                    .zoneId(ZoneId.of(zone))
+                    .build())
+            .build();
+
+    Document band =
+        bandOf(RateLimitRuleMongoConverter.toBson(RateLimitRuleMongoConverter.toDto(rule)));
+
+    assertFalse(band.containsKey("zoneId"), "zoneId should be omitted for " + zone);
+  }
+
+  @Test
+  @DisplayName("The core default zone (ZoneOffset.UTC) is not stored as \"Z\"")
+  void toBson_omitsDefaultZone() {
+    RateLimitRule rule =
+        RateLimitRule.builder("r")
+            .scope(LimitScope.PER_IP)
+            .keyStrategyId("ip")
+            .ruleSetId("rs")
+            .addBand(RateLimitBand.builder(Duration.ofSeconds(1), 10).build())
+            .build();
+
+    Document band =
+        bandOf(RateLimitRuleMongoConverter.toBson(RateLimitRuleMongoConverter.toDto(rule)));
+
+    assertFalse(band.containsKey("zoneId"));
+  }
+
+  @Test
+  @DisplayName("A non-UTC zone id is still written as-is")
+  void toBson_keepsNonUtcZone() {
+    RateLimitRuleDocument dto =
+        RateLimitRuleMongoConverter.toDto(
+            RateLimitRule.builder("r")
+                .scope(LimitScope.PER_IP)
+                .keyStrategyId("ip")
+                .ruleSetId("rs")
+                .addBand(
+                    RateLimitBand.builder(Duration.ofDays(1), 10)
+                        .algorithm(RateLimitAlgorithm.FIXED_WINDOW)
+                        .quotaPeriod(QuotaPeriod.DAILY)
+                        .zoneId(ZoneId.of("Asia/Seoul"))
+                        .build())
+                .build());
+
+    assertEquals("Asia/Seoul", bandOf(RateLimitRuleMongoConverter.toBson(dto)).get("zoneId"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"Z", "UTC", "Etc/UTC", "+00:00"})
+  @DisplayName("Stored documents that spell UTC any way load as the ZoneOffset.UTC default")
+  void fromBson_readsEveryUtcSpellingAsZoneOffsetUtc(String zone) {
+    Document band =
+        new Document("windowSeconds", 86400L)
+            .append("capacity", 10L)
+            .append("label", "daily")
+            .append("algorithm", "FIXED_WINDOW")
+            .append("quotaPeriod", "DAILY")
+            .append("zoneId", zone);
+
+    RateLimitBand restored =
+        RateLimitRuleMongoConverter.toDomain(RateLimitRuleMongoConverter.fromBsonBand(band));
+
+    assertSame(ZoneOffset.UTC, restored.getZoneId());
+  }
+
+  @Test
+  @DisplayName("A default band survives toBson -> fromBson -> toDomain unchanged")
+  void defaultBand_roundTripsThroughBson() {
+    RateLimitBand band =
+        RateLimitBand.builder(Duration.ofMinutes(1), 100).label("per-minute").build();
+    RateLimitRule rule =
+        RateLimitRule.builder("r")
+            .scope(LimitScope.PER_IP)
+            .keyStrategyId("ip")
+            .ruleSetId("rs")
+            .addBand(band)
+            .build();
+
+    RateLimitRule restored =
+        RateLimitRuleMongoConverter.toDomain(
+            RateLimitRuleMongoConverter.fromBson(
+                RateLimitRuleMongoConverter.toBson(RateLimitRuleMongoConverter.toDto(rule))));
+
+    assertEquals(band, restored.getBands().get(0));
+    assertSame(ZoneOffset.UTC, restored.getBands().get(0).getZoneId());
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Document bandOf(Document ruleBson) {
+    return ((List<Document>) ruleBson.get("bands")).get(0);
   }
 }

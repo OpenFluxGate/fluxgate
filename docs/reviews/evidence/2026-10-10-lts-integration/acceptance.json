@@ -1,0 +1,388 @@
+{
+  "schema": 1,
+  "decision": "HOLD",
+  "complete": false,
+  "overall_acceptance": false,
+  "score_95_approved": false,
+  "actual_lts_merge_performed": false,
+  "push_performed": false,
+  "code_conflicts": 0,
+  "build_and_tests_passed": true,
+  "current_state_passed": true,
+  "credential_protocol_passed_in_rejected_run": true,
+  "credential_rotation_availability_accepted": true,
+  "fresh_full_credential_progress_run_performed": true,
+  "identities": {
+    "core_build_commit": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
+    "core_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
+    "core_validation_tree": "09573bddec4669789b68f59591f942b603669499",
+    "studio_commit": "0966efbcbef5c9f2f680146450ae3bc3daef91cf",
+    "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+    "studio_jar_sha256": "de3ed6b1e0a7046a18464b0d3e8102aacf7c463dbb1b39bcc0d820bd7895bb77",
+    "source_continuity_paths": [
+      "deploy/resilience-local/tests/test_cold_restart_sentinel.py",
+      "deploy/resilience-local/tests/test_sampler_blocking_workers.py",
+      "deploy/resilience-local/tests/test_sampler_positive_marker.py",
+      "deploy/resilience-local/tests/test_sampler_progress.py",
+      "deploy/resilience-local/verify-credentials.py"
+    ],
+    "core_build_tree": "58288a739e89a7854f316ad4d9c6fca21ac55f53",
+    "boundary": "Historical Java build/execution identities retained. Latest host-relay verifier and state checks have their own committed source and unchanged JARs.",
+    "current_validated_checkout_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "current_validated_checkout_tree": "fa7b3c2bf247d110889a057ebc71a3b2bb79c3f4",
+    "latest_full_experiment_verifier_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "latest_full_experiment_verifier_tree": "fa7b3c2bf247d110889a057ebc71a3b2bb79c3f4",
+    "studio_readme_checkout_commit": "3017925132dadf8d095d9b726625e88495fd97d2"
+  },
+  "retained_ledger_sha256": "11d926938c306e9ea57258f4f455bb6e459d3b09679684d4c7f9c1699c871827",
+  "retained_ledger_boundary": "Frozen after original terminal review, not raw digests collected during original execution.",
+  "selected_profile_stage_index_sha256": "b5b35f0f0b43388c5a64aa8c59ecd25f45644f570f5c888cbcd77d149949ecfb",
+  "proofs": [
+    {
+      "file": "combined-mongo.json",
+      "sha256": "1ee4a52ada9ea7fc11d6d629a98657028e264eeabda116085ecf6ea5e7214a43",
+      "bytes": 4815
+    },
+    {
+      "file": "combined-redis.json",
+      "sha256": "ddf368a121d4beb9f8285db53c3cdee613042d1f9dfa7cf4c0c057050048eafb",
+      "bytes": 4350
+    },
+    {
+      "file": "final-state.json",
+      "sha256": "bf6a14e30161530bcc1e0c405a064b5423d744f0f838229161a0633e7bc4db27",
+      "bytes": 4894
+    },
+    {
+      "file": "ha-window-diagnostic.json",
+      "sha256": "5b0cd2800d8277b4ec97f748dd13ac47fa342b75301e229b3102c2535cd8a99a",
+      "bytes": 1603
+    },
+    {
+      "file": "ha.json",
+      "sha256": "f2c80803eba84e2256784f08511fcfdae3c534a33748aa7e772a6af9ca2d41fd",
+      "bytes": 7279
+    },
+    {
+      "file": "healthy-control.json",
+      "sha256": "af4df55adfbaddc7454a0997e6953544c087a00810a2d92bfdc94c2a52d08e4d",
+      "bytes": 2482
+    },
+    {
+      "file": "load.json",
+      "sha256": "70e473ab421bdeb6d18a48c6d6be64415e02bd4d832c6002a449b0cd1a70bea5",
+      "bytes": 10090
+    },
+    {
+      "file": "maintenance.json",
+      "sha256": "7d1a5ebd9c75d88c703eb868f33c151a3d0c1fa0d6e9420e784a5094d3914292",
+      "bytes": 7041
+    },
+    {
+      "file": "merge-check.json",
+      "sha256": "9c0c783d390b0867c461de31cd4418707456128a7147e812f41069f0e46ada20",
+      "bytes": 2194
+    },
+    {
+      "file": "network.json",
+      "sha256": "b905c4a00a11e5d48ae6d93ad8da06fd0cb57931035bf2c896019bbdcc5627e0",
+      "bytes": 1782
+    },
+    {
+      "file": "node-allocation.json",
+      "sha256": "7ac5ecc1803b054e2aef75a2c29cb3e3d2c35d2d6dc1aec786be0ac17506b0ea",
+      "bytes": 6045
+    },
+    {
+      "file": "rejected-credentials.json",
+      "sha256": "3dadcf9bb9161e26081991a6b0ac84e583cbcd00e7ffd4b2b72468eac0bfee89",
+      "bytes": 4475
+    },
+    {
+      "file": "sampler-causal.json",
+      "sha256": "7a79f9a01a4f7488d62dcea4b3b508be69636ecc1d48b1da782f49e2ff0e6572",
+      "bytes": 8105
+    },
+    {
+      "file": "sampler-controls.json",
+      "sha256": "b29431dc014afbfb31cd419ffdee6ba15169eb60d201111d5cae5e0ae2830917",
+      "bytes": 18562
+    },
+    {
+      "file": "scheduling-diagnostic.json",
+      "sha256": "cd417ac6c07f3f537d3496ffa44fceb807522b02a711d6eddf8d172cd378f7b5",
+      "bytes": 10099
+    },
+    {
+      "file": "tests.json",
+      "sha256": "4d831822e6087abcf747d717971cfd8f7503b7409b0e47c2834050a041069a85",
+      "bytes": 8525
+    },
+    {
+      "file": "worker-sampler.json",
+      "sha256": "3b344389c3374ea84aa93ecb5913b8b55129076be180adf7d3bdf4a1756b0986",
+      "bytes": 16315
+    }
+  ],
+  "blocking_gate": "Local strict credential availability now PASS under declared host/API-forward/owned-relay topology, with zero omitted schedules. Overall enterprise95/production qualification remains HOLD for the listed production limits; prior failed experiments are retained.",
+  "limitations": [
+    "One physical Docker Desktop host, not host/AZ failure qualification.",
+    "Echo backend only; Java/Go/Rust application executions not all tested.",
+    "Explicit Mongo index maintenance was not zero downtime.",
+    "Async AOF, telemetry loss bounds, cross-slot compensation, supported runtime/CVE/least-privilege/storeTLS/off-host backup/soak still require production qualification."
+  ],
+  "historical_failed_healthy_control": {
+    "scheduled": 1803,
+    "exact_200_responses": 1802,
+    "omissions": 1,
+    "pending": 0,
+    "cleanup_verified": true,
+    "terminal_exit": 1,
+    "private_harness_error_after_observation": true
+  },
+  "rejected_full_credential_attempts": 5,
+  "latest_default_healthy_control": {
+    "scenario": "blocking-workers-default-healthy-control",
+    "instrumented": false,
+    "passed": true,
+    "credential_acceptance": false,
+    "scheduled": 1803,
+    "exact_body_200": 1803,
+    "omitted_schedules": 0,
+    "duration_seconds": 180.30467587406747,
+    "interval_ms": 100,
+    "max_inflight": 24,
+    "pending": 0,
+    "drain_complete": true,
+    "cleanup_verified": true,
+    "raw": {
+      "sha256": "a830968301355b11850453ddee45f261003e86497387d052e6fc045ca4b4cb3e",
+      "bytes": 646829
+    },
+    "terminal": {
+      "actual_exit": 0,
+      "witness_valid": true,
+      "source_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
+      "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+      "log": {
+        "sha256": "97d48e7d9ff94d4cde0d69ce2d01010a7baedfb61359745b4dc1d057d992420f",
+        "bytes": 840
+      },
+      "witness": {
+        "sha256": "8748d36f8f6a2c3af0462b1fb3ad232daddd62e31a1519cb9efdabe86f5afc58",
+        "bytes": 7567
+      }
+    },
+    "boundary": "Healthy control only; subsequent full credentials failed under the same default allocation."
+  },
+  "latest_default_credentials": {
+    "attempt": "credentials-workers",
+    "accepted": false,
+    "complete": true,
+    "protocol_passed": true,
+    "availability_passed": false,
+    "scheduled": 3833,
+    "exact_body_200": 3827,
+    "omitted_schedules": 6,
+    "phase_observations": [
+      {
+        "phase": "mtls",
+        "scheduled": 1999,
+        "executed": 1997,
+        "exact_body_200": 1997,
+        "omitted_schedules": 2,
+        "omissions": [
+          {
+            "first_sequence": 1211,
+            "count": 1,
+            "reason": "lateness"
+          },
+          {
+            "first_sequence": 1213,
+            "count": 1,
+            "reason": "lateness"
+          }
+        ],
+        "pending": 0,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 201.81663893163204,
+        "max_service_latency_ms": 323.4045000281185
+      },
+      {
+        "phase": "api-key",
+        "scheduled": 1164,
+        "executed": 1162,
+        "exact_body_200": 1162,
+        "omitted_schedules": 2,
+        "omissions": [
+          {
+            "first_sequence": 310,
+            "count": 1,
+            "reason": "lateness"
+          },
+          {
+            "first_sequence": 312,
+            "count": 1,
+            "reason": "lateness"
+          }
+        ],
+        "pending": 0,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 196.6884310822934,
+        "max_service_latency_ms": 1020.2994579449296
+      },
+      {
+        "phase": "stores",
+        "scheduled": 670,
+        "executed": 668,
+        "exact_body_200": 668,
+        "omitted_schedules": 2,
+        "omissions": [
+          {
+            "first_sequence": 246,
+            "count": 2,
+            "reason": "lateness"
+          }
+        ],
+        "pending": 0,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 116.25446891412139,
+        "max_service_latency_ms": 523.311167024076
+      }
+    ],
+    "raw": {
+      "sha256": "d77623e764dc3055f3ef30cdd7af49a3e8e72ebdbf2bbdea43d0f0f792a5de1c",
+      "bytes": 1657893
+    },
+    "terminal": {
+      "actual_exit": 1,
+      "witness_valid": true,
+      "source_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
+      "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+      "log": {
+        "sha256": "5cbcc916814e398c35d58f55acf1611dd5ac22157cb044bd84880ea27be48786",
+        "bytes": 215
+      },
+      "witness": {
+        "sha256": "92acf95da3e41b0a71c3de878a6c7f3fb32ea07da009cab406973fb14c9e9ec0",
+        "bytes": 7640
+      }
+    },
+    "boundary": "Fourth default-allocation rejection; protocols passed, scheduled arrivals missed. Actual successful requests do not compensate omitted arrivals."
+  },
+  "latest_allocation_credentials": {
+    "protocol_passed": true,
+    "complete": true,
+    "availability_passed": false,
+    "scheduled": 3832,
+    "exact_body_200": 3826,
+    "omissions": 6,
+    "configuration_restored": true,
+    "network_skipped": true
+  },
+  "current_state_evidence": "final-state.json",
+  "one_scheduling_diagnostic": {
+    "attempts": 1,
+    "instrumented": true,
+    "omissions": 0,
+    "interpretation": "inconclusive_no_omission_reproduced",
+    "causal_claim": false,
+    "substitutes_for_full_credentials": false
+  },
+  "repository_layout_cleanup": {
+    "separate_git_repositories": [
+      "fluxgate",
+      "fluxgate-studio"
+    ],
+    "extra_maven_modules_added": 0,
+    "retired_session_worktrees": 12,
+    "branch_references_retained": 12,
+    "ignored_files_archived": 7846,
+    "archive_outside_product_git_repositories": true,
+    "archive_private": true,
+    "retirement_result_sha256": "83f215334bda0decaea595ae4dd7062c3f06aa3f994911f565b10a2bf3a4096b",
+    "ancestry_claimed": false,
+    "exact_historical_aliases_consolidated": 1,
+    "retained_ha_evidence": "docs/reviews/evidence/2026-10-10-resilience/ha-before-graceful.json",
+    "retained_ha_evidence_sha256": "4ddfdd21c8ec5d7bba4dd42acbcc98a03e2085c4db97aa93fd0784e819ffa5e3",
+    "intentional_separations_preserved": [
+      "core and Studio repositories",
+      "Boot2 and Boot3 targets",
+      "EN and KO documents",
+      "different fixture contracts",
+      "rejected runtime evidence"
+    ],
+    "python_caches_excluded_from_git": true,
+    "unproven_sampler_complexity_reverted": true
+  },
+  "latest_full_process_comparison": {
+    "evidence": "worker-sampler.json",
+    "accepted": false,
+    "scheduled": 3861,
+    "exact_body_200": 3860,
+    "omitted_schedules": 1,
+    "protocol_passed": true,
+    "full_protocol_complete": true,
+    "actual_exit": 1,
+    "original_state_check_actual_exit": 1,
+    "later_restored_state_check_actual_exit": 0,
+    "later_restored_state_checks": 19,
+    "implementation_retained": false
+  },
+  "latest_instrumented_full_protocol_diagnostic": {
+    "evidence": "scheduling-diagnostic.json",
+    "scheduled": 3851,
+    "exact_body_200": 3850,
+    "omitted_schedules": 1,
+    "actual_exit": 1,
+    "acceptance_substitute": false
+  },
+  "current_verifier_tests": {
+    "tests": 70,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "source_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "source_sha256": "ad1a177f6a4af77fc39ae164efe0ed6bcac7647e1b0745a2ea08ceaba382afb4",
+    "log": {
+      "sha256": "a8c499a513f5063a5ef2adef88898a1444db087c6e55fe04ce12fe7b6d825ff4",
+      "bytes": 170
+    },
+    "self_test_passed": true,
+    "self_test_log": {
+      "sha256": "c41b6fd6d689a145c93324c901285c78ed77ea98cd3e947e196e9acf74d4a6b0",
+      "bytes": 165
+    },
+    "observed_terminals": {
+      "sha256": "984783214d0c8438e236ae6a331950bfe679eab80b76447d2e25520bb82f6cc3",
+      "bytes": 2561
+    },
+    "boundary": "Fresh root actual0 tests on integrated uncommitted bytes, verified byte-identical to the frozen committed tool map; observed terminal metadata recorded afterward. Java artifacts and previous60/80 runs keep historical identities."
+  },
+  "latest_host_credential_confirmation": {
+    "evidence": "worker-sampler.json",
+    "accepted": true,
+    "source_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "actual_exit": 0,
+    "witness_valid": true,
+    "scheduled": 3829,
+    "exact_body_200": 3829,
+    "omitted_schedules": 0,
+    "protocol_passed": true,
+    "complete": true,
+    "final_state_actual_exit": 0,
+    "final_state_checks": 19,
+    "transport_scope": "Host Python -> loopback Kubernetes API port-forward -> owned relay -> actual Gateway Service -> Envoy -> Java FluxGate -> backend. Privileged observation path; separate ordinary network-policy proof is retained.",
+    "overall_enterprise_acceptance": false
+  },
+  "latest_host_source_merge_check": {
+    "source_commit": "3d1363e52cbed1565867a3559f44d01430c95034",
+    "remote_lts_commit": "7ee6a86101afe5ed5a9d6efb992e470430af046a",
+    "remote_lts_freshly_verified": true,
+    "actual_exit": 0,
+    "conflicts": 0,
+    "merge_performed": false,
+    "push_performed": false,
+    "boundary": "Read-only merge-tree after full credential proof; no LTS integration or deployment performed."
+  }
+}
