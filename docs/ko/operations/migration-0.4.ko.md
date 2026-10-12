@@ -1,6 +1,7 @@
-# 0.4 마이그레이션
+# 0.5.0 마이그레이션
 
-FluxGate 0.3.x에서 올라올 때 무엇이 바뀌는지를, 실제로 부딪히는 순서대로 정리했습니다.
+FluxGate 0.3.x에서 0.5.0으로 올라올 때 무엇이 바뀌는지를, 0.4에서 도입한 변경을 포함해 실제로
+부딪히는 순서대로 정리했습니다.
 
 [< 문서 색인으로](../../README.ko.md) | [English](../../en/operations/migration-0.4.md)
 
@@ -490,37 +491,42 @@ Pub/Sub 리로드를 쓰거나, 429와 503을 다르게 취급하거나, FluxGat
 
 | `fluxgate.mongo.ddl-auto` | 동작 |
 |---------------------------|------|
-| `validate` (기본) | `{ruleSetId: 1, id: 1}` 고유 인덱스가 없으면 기동 실패. 인덱스 이름은 상관없지만 `sparse` 인덱스, `partialFilterExpression`, `simple` 외의 콜레이션은 모든 규칙의 고유성을 보장하지 않으므로 거부됨. 메시지에 `createIndex` 명령과 `ddl-auto=create` 안내가 담김 |
-| `create` | 컬렉션을 만들고 `MongoRateLimitRuleRepository#ensureIndexes()`를 호출해 `ruleSetId_1_id_1_unique`(고유)와 `id_1`을 생성. 중복 `(ruleSetId, id)` 쌍이나 충돌하는 인덱스가 있으면 해당 쌍을 나열한 `IllegalStateException`으로 기동 실패 — 예전에는 경고만 남기고 모호한 룰 세트를 서빙했음 |
+| `validate` (기본) | 복합 인덱스가 있어도 모든 전역 unique `id` 제약을 거부함. 이후 `{ruleSetId: 1, id: 1}` 고유 인덱스를 요구함. 이름은 상관없지만 `sparse`, `partialFilterExpression`, `simple` 외의 콜레이션은 거부됨 |
+| `create` | 컬렉션이 없으면 만들고 `MongoRateLimitRuleRepository#ensureIndexes()`를 호출함. 전역 unique `id` 제약을 먼저 거부한 뒤 `ruleSetId_1_id_1_unique`(고유)와 `id_1`(nonunique 조회)을 생성함. 중복 `(ruleSetId, id)` 쌍이나 충돌하는 인덱스는 기동을 실패시키며, 중복 오류에는 해당 쌍이 표시됨 |
 
-**무엇을 해야 하나.** 기존 배포를 업그레이드하기 전에 룰 컬렉션(`fluxgate.mongo.rule-collection`을
-바꾸지 않았다면 `rate_limit_rules`)에 인덱스를 만드세요:
+**무엇을 해야 하나.** 구버전의 전역 unique `id_1`에는 명시적 이행이 필요합니다. 복합 인덱스만 만들거나
+`ddl-auto=create`로 바꿔도 해결되지 않습니다. 두 기동 모드 모두 인덱스를 삭제하지 않습니다.
+독점 유지보수 구간에서 [LTS Mongo 규칙 ID 이행](../../architecture/lts-mongo-identity-migration.ko.md)
+절차를 따르세요:
 
-```javascript
-db.rate_limit_rules.createIndex(
-  { ruleSetId: 1, id: 1 },
-  { unique: true, name: "ruleSetId_1_id_1_unique" }
-)
-```
+1. 백업을 만들고 검증합니다. 인덱스 정의를 조사하고 활성 정책 포인터와 관련 Redis 카운터를
+   기록합니다. DDL 전에 판정 서비스, 모든 구버전 writer와 동시 스키마·인덱스 관리 작업을 중지합니다.
+   이 구간에는 요청이 불가할 수 있습니다.
+2. 새 어댑터와 별도로 권한을 부여한 유지보수 Mongo 클라이언트에서
+   `new MongoRateLimitRuleRepository(ruleCollection).migrateLegacyGlobalIdConstraint()`를 호출합니다.
+   실제 기존 룰 컬렉션(별도로 설정하지 않았다면 `rate_limit_rules`)과 majority write concern을
+   사용하고, 유지보수 자격증명을 서비스나 로그에 노출하지 않습니다. 메서드는 unique `(ruleSetId, id)`
+   제약을 **먼저** 생성·검증한 뒤 알려진 단순 unique `id_1`만 제거하고 nonunique `id_1` 조회 인덱스를
+   만듭니다. 문서나 ACL은 변경하지 않습니다.
+3. 중복, 알 수 없는 사용자 정의 인덱스나 DDL 오류로 이행이 막히면 writer를 계속 중지하고 운영자
+   검토로 원인을 해결합니다. 사용자 정의 제약은 자동으로 제거하지 않습니다. 재시도는 멱등적이며,
+   구버전 인덱스 제거 뒤 조회 인덱스 생성이 실패해도 검증된 복합 제약이 룰 ID를 보호합니다.
+4. 최종 인덱스 두 개, 문서·ACL 보존, 정책 포인터 동일성과 할당량 보존을 확인합니다. 새 산출물을
+   기동해 시작·readiness·실제 백엔드 응답을 확인한 뒤 트래픽과 새 버전 writer를 재개합니다.
 
-명령이 중복 키 오류로 실패하면 두 문서가 같은 `(ruleSetId, id)` 쌍을 갖고 있다는 뜻입니다. 목록을 뽑아
-여분을 삭제하거나 이름을 바꾼 뒤 다시 실행하세요:
+구버전 JAR로 롤백하는 것만으로 인덱스 이행이 되돌아가지 않습니다. 서로 다른 룰 세트가 같은 ID를
+사용한 뒤에는 전역 고유성 복원에 데이터 조정이 필요합니다. Redis identity 인코딩·카운터 이행과
+정책 epoch·Lua fence 호환성은 별도 문제입니다. 일부 identity는 자동 카운터 이행 없이 키가 바뀌며,
+새 lifecycle로 발행하기 전에 구버전 Lua 호출자를 업그레이드하거나 중지해야 합니다. 연결된 이행
+문서가 이 경계를 설명합니다.
 
-```javascript
-db.rate_limit_rules.aggregate([
-  { $group: { _id: { ruleSetId: "$ruleSetId", id: "$id" }, n: { $sum: 1 } } },
-  { $match: { n: { $gt: 1 } } }
-])
-```
+코드에서는 `(ruleSetId, id)` 오버로드로 옮기고, "다른 룰 세트에 저장해서 이동"하던 부분은 `moveRule`로
+바꾸세요.
 
-또는 인스턴스 하나를 `fluxgate.mongo.ddl-auto=create`로 한 번 기동한 뒤 `validate`로 되돌려도 됩니다.
-standalone 샘플의 기본값은 `validate`이며, `create`를 쓰는 `fluxgate-sample-mongo`가 먼저 만든
-컬렉션에는 인덱스가 이미 있습니다. 코드에서는 `(ruleSetId, id)` 오버로드로 옮기고, "다른 룰 세트에
-저장해서 이동"하던 부분은 `moveRule`로 바꾸세요.
-
-조치가 필요 없지만 새 로그 줄을 설명하는 Mongo 변경이 둘 더 있습니다. BSON 숫자는 관대하게(`int`,
-`long`, `double`) 읽고 알 수 없는 enum 값은 거부합니다. 형식이 잘못된 룰 문서는 룰 세트 전체를
-실패시키지 않고 WARN과 함께 건너뛰며 집계합니다. 룰 문서의 접근 제어를 쓸 때마다(`saveAccessControl`,
+BSON 숫자는 관대하게(`int`, `long`, `double`) 읽고 알 수 없는 enum 값은 거부합니다. 런타임
+`findByRuleSetId`는 형식이 잘못된 룰 문서가 있으면 부분 룰 세트를 적용하는 대신 실패합니다.
+관리용 `findAll` 목록만 잘못된 문서를 WARN과 함께 건너뛰고 `getSkippedDocumentCount()`를 늘립니다.
+런타임 정책에 의존하기 전에 해당 문서를 복구하세요. 룰 문서의 접근 제어를 쓸 때마다(`saveAccessControl`,
 새 규칙, `moveRule`) `aclUpdatedAt` 필드가 추가되며 0.3.x는 이 필드를 무시합니다. `saveAccessControl`이
 중간에 끊겨 접근 제어 사본이 서로 달라지면 닫힌 쪽으로 병합하고(거부 목록은 합집합, 허용 목록은 교집합,
 없는 목록은 빈 목록, WARN 기록), `aclUpdatedAt`도 목록도 없는 문서(예: 0.3.x가 넣은 규칙)는 병합에서

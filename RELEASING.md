@@ -32,7 +32,7 @@ Follow [Semantic Versioning 2.0.0](https://semver.org/).
 Move all items under `## [Unreleased]` to a new section:
 
 ```markdown
-## [0.4.0] – 2026-10-01
+## [0.5.0] – YYYY-MM-DD
 ### Added
 ...
 ### Changed
@@ -47,12 +47,12 @@ Move all items under `## [Unreleased]` to a new section:
 ...
 ```
 
-Remove empty sections. At the bottom, point the `[Unreleased]` link at `v0.4.0...HEAD` and add
-`[0.4.0]: https://github.com/OpenFluxGate/fluxgate/compare/v0.3.7...v0.4.0`.
+Remove empty sections. At the bottom, point the `[Unreleased]` link at `v0.5.0...HEAD` and add
+`[0.5.0]: https://github.com/OpenFluxGate/fluxgate/compare/v0.3.7...v0.5.0`.
 Commit the CHANGELOG update to the release branch:
 
 ```bash
-git commit -am "chore: release 0.4.0 – update CHANGELOG"
+git commit -am "chore: release 0.5.0 – update CHANGELOG"
 ```
 
 ### 3. Bump the Version
@@ -60,8 +60,8 @@ git commit -am "chore: release 0.4.0 – update CHANGELOG"
 Use Maven Versions plugin — do **not** edit pom files manually:
 
 ```bash
-./mvnw versions:set -DnewVersion=0.4.0 -DgenerateBackupPoms=false
-git commit -am "chore(release): bump version to 0.4.0"
+./mvnw versions:set -DnewVersion=0.5.0 -DgenerateBackupPoms=false
+git commit -am "chore(release): bump version to 0.5.0"
 ```
 
 Verify the parent and all child modules show the new version:
@@ -94,13 +94,13 @@ triggers on pushes to branches matching `release/[0-9]+.[0-9]+.[0-9]+` or
 it.
 
 ```bash
-git tag -s v0.4.0 -m "Release 0.4.0"
-git push origin release/0.4.0 v0.4.0
+git tag -s v0.5.0 -m "Release 0.5.0"
+git push origin release/0.5.0 v0.5.0
 ```
 
 Pushing the branch triggers `.github/workflows/release.yml`, which:
 
-1. Derives the version from the branch name (`release/0.4.0` → `0.4.0`) and refuses anything
+1. Derives the version from the branch name (`release/0.5.0` → `0.5.0`) and refuses anything
    that is not `release/X.Y.Z[-qualifier]` (no `SNAPSHOT`).
 2. Verifies that the tag `v<version>` exists and points at the branch HEAD. If the tag is missing
    or points elsewhere, the job fails before anything is built or deployed. This is why the branch
@@ -124,7 +124,7 @@ Pushing the branch triggers `.github/workflows/release.yml`, which:
 
 After the workflow succeeds:
 
-* Open the GitHub Release page for `v0.4.0`.
+* Open the GitHub Release page for `v0.5.0`.
 * Confirm all JARs (core, redis, mongo, boot2-starter, boot3-starter, control-support) are listed.
 * Confirm `bom.json` is attached as a release asset.
 * Confirm the Maven Central listing shows the new version (allow up to 30 minutes
@@ -140,7 +140,7 @@ python3 -c "import json; d=json.load(open('bom.json')); print(d['bomFormat'], d[
 
 ### 8. Post-Release
 
-* Merge the release branch back into `main` through a PR (`release/0.4.0` → `main`). Do not
+* Merge the release branch back into `main` through a PR (`release/0.5.0` → `main`). Do not
   push to `main` directly.
 * Reset the version to the next SNAPSHOT on a branch from the updated `main`, and merge it through
   a PR as well. In the same commit, re-add an empty `## [Unreleased]` heading at the top of
@@ -148,12 +148,12 @@ python3 -c "import json; d=json.load(open('bom.json')); print(d['bomFormat'], d[
 
 ```bash
 git checkout main && git pull
-git checkout -b chore/0.5.0-snapshot
-./mvnw versions:set -DnewVersion=0.5.0-SNAPSHOT -DgenerateBackupPoms=false
+git checkout -b chore/0.6.0-snapshot
+./mvnw versions:set -DnewVersion=0.6.0-SNAPSHOT -DgenerateBackupPoms=false
 # edit CHANGELOG.md: add an empty "## [Unreleased]" heading at the top
-git commit -am "chore: prepare for next development iteration 0.5.0-SNAPSHOT"
-git push origin chore/0.5.0-snapshot
-# open a PR from chore/0.5.0-snapshot into main and merge it
+git commit -am "chore: prepare for next development iteration 0.6.0-SNAPSHOT"
+git push origin chore/0.6.0-snapshot
+# open a PR from chore/0.6.0-snapshot into main and merge it
 ```
 
 * Merge the two PRs back-to-back: between them `main` is at the release version, so nothing else
@@ -168,7 +168,7 @@ git push origin chore/0.5.0-snapshot
 
 If you need to patch a released version while `main` already has unrelated in-progress work:
 
-1. Create a branch from the release tag: `git checkout -b release/0.4.1 v0.4.0`
+1. Create a branch from the release tag: `git checkout -b release/0.5.1 v0.5.0`
 2. Cherry-pick the fix(es): `git cherry-pick <sha>`
 3. Follow steps 2–7 above on that branch. Skip step 8: it resets `main` to the next SNAPSHOT,
    which a patch branch must not do.

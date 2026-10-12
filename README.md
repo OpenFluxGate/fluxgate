@@ -126,12 +126,16 @@ management without restarts.
 - Java 11 with Spring Boot 2.7 is also supported via `fluxgate-spring-boot2-starter`
 - Docker (Path B, to start Redis/MongoDB)
 
-This branch is **0.4.0-SNAPSHOT**, built from source. The published Maven Central release is
-0.3.7; the examples below use the current branch APIs and do not resolve as a released 0.4.0.
+This branch prepares **0.5.0**, including the Envoy authorization service, and is built from
+source. The published Maven Central release is 0.3.7; 0.5.0 has not been published yet.
+The examples below use the current branch APIs and require the source build.
+The Spring compatibility and pending LTS security boundary are documented in the
+[support matrix](GOVERNANCE.md#supported-spring-boot-and-java-matrix) and
+[security policy](SECURITY.md#050-source-preparation).
 Prepare the paired libraries once with Java 21 and Docker running:
 
 ```bash
-git clone --branch feature/lts-1.0.0 https://github.com/OpenFluxGate/openfluxgate-core.git
+git clone --branch feature/lts-0.5.0 https://github.com/OpenFluxGate/openfluxgate-core.git
 cd openfluxgate-core
 export FLUXGATE_M2_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fluxgate-quickstart-m2.XXXXXX")"
 ./mvnw -B -Dmaven.repo.local="$FLUXGATE_M2_DIR" \
@@ -156,7 +160,7 @@ The running app needs no Redis or MongoDB and enforces a 5-requests-per-minute l
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
-    <version>0.4.0-SNAPSHOT</version>
+    <version>0.5.0</version>
 </dependency>
 <dependency>
     <groupId>org.springframework.boot</groupId>
@@ -295,13 +299,13 @@ docker compose -f docker/redis-standalone.yml up -d
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
-    <version>0.4.0-SNAPSHOT</version>
+    <version>0.5.0</version>
 </dependency>
 <!-- Redis rate limiter (Lua-based, atomic) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
-    <version>0.4.0-SNAPSHOT</version>
+    <version>0.5.0</version>
 </dependency>
 ```
 
@@ -341,7 +345,7 @@ Add the MongoDB adapter:
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
-    <version>0.4.0-SNAPSHOT</version>
+    <version>0.5.0</version>
 </dependency>
 ```
 

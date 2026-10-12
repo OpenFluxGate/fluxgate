@@ -31,7 +31,7 @@ docker run -d --name mongodb -p 127.0.0.1:27017:27017 \
 
 > Run `./mvnw -B install -DskipTests` (JDK 21) once from the project root first, or
 > `./mvnw -B install -DskipTests -pl fluxgate-samples/fluxgate-sample-mongo -am` (JDK 17+):
-> the samples depend on the `0.4.0-SNAPSHOT` modules (see [Build Once](../README.md#build-once)).
+> the samples depend on the `0.5.0` modules (see [Build Once](../README.md#build-once)).
 
 ```bash
 ./mvnw spring-boot:run -pl fluxgate-samples/fluxgate-sample-mongo

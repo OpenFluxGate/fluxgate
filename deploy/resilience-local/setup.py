@@ -556,7 +556,7 @@ print('REPLICA_SET_INITIALIZED');'''
         'mongo_statefulset': 'mongo', 'redis_statefulsets': ['redis-' + str(i) for i in range(9)], 'mongo_app_user': 'fluxgate', 'mongo_admin_user': 'admin',
         'mongo_pods': ['mongo-' + str(i) for i in range(3)], 'redis_pods': ['redis-' + str(i) + '-0' for i in range(9)],
         'mongo_selector': 'app=mongo', 'redis_selector': 'app=redis', 'backend_body': 'fluxgate-resilience-ok',
-        'application_jar_file': str(HERE.parents[1] / 'fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.4.0-SNAPSHOT.jar'), 'image': args.image, 'bootstrap_operation_id': operation.read_text()}
+        'application_jar_file': str(HERE.parents[1] / 'fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.5.0.jar'), 'image': args.image, 'bootstrap_operation_id': operation.read_text()}
     private('fixture.json', json.dumps(metadata, indent=2) + '\n')
     # Refresh metadata only: credentials, bootstrap operation and counters stay unchanged on rerun.
     (directory / 'fixture.json').write_text(json.dumps(metadata, indent=2) + '\n')

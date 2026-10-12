@@ -9,7 +9,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.4.0-SNAPSHOT</version>
+        <version>0.5.0</version>
     </parent>
 
     <artifactId>fluxgate-control-support</artifactId>
@@ -22,13 +22,13 @@
         <!--
           Java baseline: this module compiles for Java 11 (root java.version) so the Redis notifier
           is usable from Java 11 control planes. The optional Spring integration below (autoconfigure,
-          AOP, TX) is built against the same Spring Boot 3.3.x / Spring Framework 6.1.x line as
+          AOP, TX) is built against the same Spring Boot 3.5.x / Spring Framework 6.2.x line as
           fluxgate-spring-boot3-starter, so that integration only works on Java 17+ at runtime;
           the plain RedisRuleChangeNotifier has no Spring dependency.
           Keep these three in step with fluxgate-spring-boot3-starter.
         -->
-        <spring-boot.version>3.3.5</spring-boot.version>
-        <spring.version>6.1.14</spring.version>
+        <spring-boot.version>3.5.16</spring-boot.version>
+        <spring.version>6.2.19</spring.version>
         <skipJacocoForPom>false</skipJacocoForPom>
     </properties>
 

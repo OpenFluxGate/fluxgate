@@ -28,6 +28,10 @@ These logs can be collected by log shippers such as **Filebeat** or **Fluent Bit
   Logstash, not on the console.
 - Without a Logstash on `localhost:5044` the `LOGSTASH` appender keeps reconnecting (every 30
   seconds) and logs a warning each time; the file appender is not affected.
+- On shutdown, the TCP appender waits at most five seconds for its pending events, then drops
+  any that could not be sent. This keeps an unavailable optional Logstash from delaying process
+  exit for its default one-minute grace period. The `JSON_FILE` copy remains available to a
+  shipper; this sample's TCP appender does not guarantee delivery.
 
 ---
 

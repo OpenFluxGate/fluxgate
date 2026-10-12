@@ -2,6 +2,7 @@ package org.fluxgate.sample.standalone;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Duration;
@@ -69,5 +70,14 @@ class StandaloneSampleStartupTest {
     // AUTO with Redis enabled but neither a secret nor allow-unsigned falls back to polling.
     assertThat(context.getBean(RuleReloadStrategy.class)).isInstanceOf(PollingReloadStrategy.class);
     mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());
+  }
+
+  @Test
+  void generatesApiDocumentationWithTheShippedControllerAdvice() throws Exception {
+    mockMvc
+        .perform(get("/v3/api-docs"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.openapi").exists())
+        .andExpect(jsonPath("$.paths").isNotEmpty());
   }
 }

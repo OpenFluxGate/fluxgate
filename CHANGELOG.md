@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 0.5.0 release preparation
+
+- The integrated changes previously collected on `feature/lts-1.0.0` target **0.5.0**.
+  This is a pre-1.0 release; the branch name did not establish a 1.0 stability guarantee.
+- Envoy external authorization applies the existing FluxGate engine and Mongo/Redis policy
+  contracts to Java, Go and Rust backends through the gateway.
+- Shared Redis SDK transport dependencies receive public Netty and Lettuce security patches.
+- Mongo identity migration requires an explicit maintenance operation; startup never drops
+  legacy global-ID constraints. Runtime malformed policies fail instead of enforcing a subset.
+- Spring compatibility is separate from upstream OSS security maintenance; the server baseline
+  and LTS support period remain pending, with residual Spring advisories recorded in SECURITY.md.
+- The Java 21 sample generates Swagger against the upgraded Spring line and bounds optional
+  Logstash shutdown waiting, with pending TCP event loss documented.
+
 This release closes the correctness, resilience and wiring gaps found in the
 2026-09-30 review. The headline change is that **the features FluxGate already
 advertised are now actually wired**: a working default handler, live retry and

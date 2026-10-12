@@ -18,7 +18,7 @@ application uses neither database itself: it calls both services with Spring's `
 > This sample has no FluxGate module dependency; it only needs the parent POMs. Run
 > `./mvnw -B install -DskipTests -pl fluxgate-samples/fluxgate-sample-api -am` (JDK 17+) once from
 > the project root first (see [Build Once](../README.md#build-once)). The samples it calls,
-> `fluxgate-sample-mongo` and `fluxgate-sample-redis`, need the `0.4.0-SNAPSHOT` modules.
+> `fluxgate-sample-mongo` and `fluxgate-sample-redis`, need the `0.5.0` modules.
 
 ```bash
 # MongoDB for the Control-plane

@@ -21,7 +21,7 @@ FluxGate is a distributed rate limiting framework for Spring Boot applications. 
 
 ### Build Once
 
-The samples depend on the FluxGate modules at the current `0.4.0-SNAPSHOT` version, which a fresh
+The samples depend on the FluxGate modules at the current `0.5.0` version, which a fresh
 clone does not have in `~/.m2` yet. Install them once from the project root before the first
 `spring-boot:run` (and again after pulling changes to the library modules).
 

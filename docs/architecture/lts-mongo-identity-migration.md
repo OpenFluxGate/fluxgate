@@ -1,6 +1,6 @@
 # LTS Mongo rule identity migration
 
-LTS `0.4.0-SNAPSHOT` identifies a rule by `(ruleSetId, id)`. A legacy unique `id_1` index enforces global IDs and prevents this contract. Both startup CREATE and VALIDATE modes reject that constraint with an explicit migration error. Startup does not remove indexes.
+LTS `0.5.0` identifies a rule by `(ruleSetId, id)`. A legacy unique `id_1` index enforces global IDs and prevents this contract. Both startup CREATE and VALIDATE modes reject that constraint with an explicit migration error. Startup does not remove indexes.
 
 Perform this transition in an exclusive maintenance window:
 

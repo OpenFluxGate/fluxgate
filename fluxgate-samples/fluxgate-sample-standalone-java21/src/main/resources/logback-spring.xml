@@ -33,6 +33,9 @@
     <!-- TCP to Logstash (ELK) -->
     <appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
         <destination>localhost:5044</destination>
+        <!-- Keep an unavailable optional Logstash from delaying JVM shutdown for a minute.
+             Pending TCP events are dropped after this grace period; JSON_FILE retains its copy. -->
+        <shutdownGracePeriod>5 seconds</shutdownGracePeriod>
         <encoder class="net.logstash.logback.encoder.LogstashEncoder">
             <customFields>{"service":"fluxgate-sample","component":"rate-limiter"}</customFields>
         </encoder>

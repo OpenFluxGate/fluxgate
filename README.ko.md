@@ -128,12 +128,16 @@ Limiter로, 첫 데모나 단일 인스턴스 서비스에 적합합니다. **�
 - Java 11 / Spring Boot 2.7도 `fluxgate-spring-boot2-starter`로 지원
 - Docker (경로 B, Redis/MongoDB 시작용)
 
-이 브랜치는 소스에서 빌드하는 **0.4.0-SNAPSHOT**입니다. Maven Central의 공개 릴리스는
-0.3.7이며, 아래 예제의 현재 브랜치 API를 출시된 0.4.0 의존성으로 가져올 수는 없습니다.
+이 브랜치는 Envoy 판정 서비스를 포함한 **0.5.0**을 준비하며 소스에서 빌드합니다.
+Maven Central의 공개 릴리스는 0.3.7이고, 0.5.0은 아직 게시하지 않았습니다.
+아래 예제는 현재 브랜치 API를 사용하므로 먼저 소스 빌드가 필요합니다.
+Spring 호환 범위와 아직 확정하지 않은 LTS 보안 지원 범위는
+[지원 표](GOVERNANCE.md#supported-spring-boot-and-java-matrix)와
+[보안 정책](SECURITY.md#050-source-preparation)에 명시했습니다.
 Java 21과 실행 중인 Docker로 라이브러리를 먼저 준비합니다.
 
 ```bash
-git clone --branch feature/lts-1.0.0 https://github.com/OpenFluxGate/openfluxgate-core.git
+git clone --branch feature/lts-0.5.0 https://github.com/OpenFluxGate/openfluxgate-core.git
 cd openfluxgate-core
 export FLUXGATE_M2_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fluxgate-quickstart-m2.XXXXXX")"
 ./mvnw -B -Dmaven.repo.local="$FLUXGATE_M2_DIR" \
@@ -158,7 +162,7 @@ export FLUXGATE_M2_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fluxgate-quickstart-m2.XXXX
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
-    <version>0.4.0-SNAPSHOT</version>
+    <version>0.5.0</version>
 </dependency>
 <dependency>
     <groupId>org.springframework.boot</groupId>
@@ -296,13 +300,13 @@ docker compose -f docker/redis-standalone.yml up -d
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-spring-boot3-starter</artifactId>
-    <version>0.4.0-SNAPSHOT</version>
+    <version>0.5.0</version>
 </dependency>
 <!-- Redis Rate Limiter (Lua 기반, 원자적) -->
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
-    <version>0.4.0-SNAPSHOT</version>
+    <version>0.5.0</version>
 </dependency>
 ```
 
@@ -341,7 +345,7 @@ Maven 의존성 추가:
 <dependency>
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate-mongo-adapter</artifactId>
-    <version>0.4.0-SNAPSHOT</version>
+    <version>0.5.0</version>
 </dependency>
 ```
 

@@ -1,6 +1,7 @@
-# Migrating to 0.4
+# Migrating to 0.5.0
 
-What changes when you upgrade FluxGate from 0.3.x, in the order you will hit it.
+What changes when you upgrade FluxGate from 0.3.x to 0.5.0, including the changes introduced in 0.4,
+in the order you will hit it.
 
 [< Back to Documentation Index](../../README.md) | [한국어](../../ko/operations/migration-0.4.ko.md)
 
@@ -500,38 +501,45 @@ document of the rule set exists.
 
 | `fluxgate.mongo.ddl-auto` | Behaviour |
 |---------------------------|-----------|
-| `validate` (default) | Fails startup unless a unique index on `{ruleSetId: 1, id: 1}` exists. The index name does not matter, but a `sparse` index, a `partialFilterExpression` or a collation other than `simple` is rejected, because it does not keep every rule unique. The message carries the `createIndex` command and the `ddl-auto=create` hint |
-| `create` | Creates the collection and calls `MongoRateLimitRuleRepository#ensureIndexes()`, which builds `ruleSetId_1_id_1_unique` (unique) and `id_1`. Duplicate `(ruleSetId, id)` pairs or a conflicting index fail startup with an `IllegalStateException` that lists the pairs — it used to log a warning and serve an ambiguous rule set |
+| `validate` (default) | Rejects any global unique `id` constraint, even when the compound index exists. Then requires a unique index on `{ruleSetId: 1, id: 1}`. Its name does not matter, but `sparse`, `partialFilterExpression` and a collation other than `simple` are rejected |
+| `create` | Creates the collection if missing and calls `MongoRateLimitRuleRepository#ensureIndexes()`. It rejects global unique `id` constraints before creating `ruleSetId_1_id_1_unique` (unique) and `id_1` (nonunique lookup). Duplicate `(ruleSetId, id)` pairs or conflicting indexes fail startup; duplicate errors list the affected pairs |
 
-**What to do.** Before upgrading an existing deployment, create the index on the rule collection
-(`rate_limit_rules` unless you set `fluxgate.mongo.rule-collection`):
+**What to do.** A legacy global unique `id_1` requires explicit migration: creating only the compound
+index or switching to `ddl-auto=create` does not resolve it. Neither startup mode removes indexes.
+Follow the [LTS Mongo rule identity migration](../../architecture/lts-mongo-identity-migration.md)
+in an exclusive maintenance window:
 
-```javascript
-db.rate_limit_rules.createIndex(
-  { ruleSetId: 1, id: 1 },
-  { unique: true, name: "ruleSetId_1_id_1_unique" }
-)
-```
+1. Take and verify a backup. Inventory index definitions and record the active policy pointer and
+   relevant Redis counters. Stop authorization deployments, all old-version writers and concurrent
+   schema/index management before DDL; requests can be unavailable during this window.
+2. With the new adapter and a separately privileged maintenance Mongo client, call
+   `new MongoRateLimitRuleRepository(ruleCollection).migrateLegacyGlobalIdConstraint()` against the
+   exact existing rule collection (`rate_limit_rules` unless configured otherwise), using majority
+   write concern. Keep maintenance credentials out of the service and logs. The method creates and
+   verifies the unique `(ruleSetId, id)` constraint **before** removing only the known plain unique
+   `id_1`, then creates the nonunique `id_1` lookup. It does not modify documents or ACLs.
+3. If duplicates, unknown/custom index definitions or DDL errors prevent migration, keep writers
+   stopped and resolve the cause through operator review. Custom constraints are never removed
+   automatically. Retry is idempotent; if lookup creation fails after the legacy drop, the verified
+   compound constraint still protects rule identities.
+4. Verify both final indexes, unchanged documents and ACLs, policy pointer equality and quota
+   preservation. Start the new artifacts, verify startup/readiness and exact backend responses,
+   then reopen traffic and allow new-version writers.
 
-If the command fails with a duplicate key error, two documents share a `(ruleSetId, id)` pair. List them,
-delete or rename the extras, and run it again:
+An old-JAR rollback does not reverse the index migration. After different rule sets reuse an ID,
+restoring global uniqueness requires data reconciliation. Redis identity encoding/counter migration
+and policy epoch/Lua fence compatibility are separate concerns: some identities change keys without
+automatic counter migration, and old Lua callers must be upgraded or stopped before publishing
+through the new lifecycle. The linked migration note covers these boundaries.
 
-```javascript
-db.rate_limit_rules.aggregate([
-  { $group: { _id: { ruleSetId: "$ruleSetId", id: "$id" }, n: { $sum: 1 } } },
-  { $match: { n: { $gt: 1 } } }
-])
-```
+In code, move to the `(ruleSetId, id)` overloads and replace "save into another rule set to move" with
+`moveRule`.
 
-Alternatively start one instance once with `fluxgate.mongo.ddl-auto=create`, then switch back to
-`validate`. The standalone samples default to `validate`; a collection first created by
-`fluxgate-sample-mongo` (which uses `create`) already has the index. In code, move to the
-`(ruleSetId, id)` overloads and replace "save into another rule set to move" with `moveRule`.
-
-Two further Mongo changes need no action but explain new log lines: BSON numbers are read leniently
-(`int`, `long` and `double`) while an unknown enum value is rejected, and a malformed rule document is
-skipped with a WARN (and counted) instead of failing the whole rule set. Rule documents gain an
-`aclUpdatedAt` field whenever their access control is written (`saveAccessControl`, a new rule,
+BSON numbers are read leniently (`int`, `long` and `double`) while an unknown enum value is rejected.
+Runtime `findByRuleSetId` fails on a malformed rule document rather than enforcing a partial rule set.
+Only management `findAll` listing skips malformed documents with a WARN and increments
+`getSkippedDocumentCount()`; repair those documents before relying on the runtime policy. Rule
+documents gain an `aclUpdatedAt` field whenever their access control is written (`saveAccessControl`, a new rule,
 `moveRule`); 0.3.x ignores it. Copies of the access control that diverge after an interrupted
 `saveAccessControl` are merged fail-closed (deny lists united, allow lists intersected, a missing list
 counting as empty, with a WARN), and documents with neither `aclUpdatedAt` nor a list - for example

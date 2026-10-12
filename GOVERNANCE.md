@@ -90,8 +90,8 @@ FluxGate uses [Semantic Versioning 2.0.0](https://semver.org/).
    an element is deprecated in 0.5.0, it will not be removed before 0.6.0, and
    the removal will itself be a CHANGELOG entry under `### Removed`.
 4. In the pre-1.0 (0.x) series, this gives at least one minor-release cycle of
-   warning. After 1.0, the guarantee is at least one minor release in the same
-   major line.
+   warning. After 1.0, deprecated public APIs remain available for the rest of
+   the same major line; removal requires the next major release.
 
 ### Spring Boot 2.7 Starter: Maintenance-Only Mode
 
@@ -110,16 +110,23 @@ It will **not** receive:
 * Updates to match new Spring Boot 2.x releases (there will be none).
 * Dependency upgrades beyond security patches.
 
-Teams are strongly encouraged to migrate to `fluxgate-spring-boot3-starter` on
-Spring Boot 3.2+. The boot2 starter may be removed in a future major release
+Teams should plan a migration to an upstream-maintained Spring line. Boot 3.5
+also reached OSS end-of-life; moving to Boot 3 alone does not restore ongoing
+upstream OSS security maintenance. The boot2 starter may be removed in a future major release
 without further notice beyond the deprecation policy above.
 
 ### Supported Spring Boot and Java Matrix
 
-| FluxGate | Spring Boot | Java | Status |
+This table describes the **0.5.0 source preparation**, not a released LTS contract.
+Compatibility and upstream security maintenance are separate. Server support scope remains
+pending; the [security policy](SECURITY.md#050-source-preparation) records the remaining boundary.
+
+| FluxGate scope | Spring Boot | Java minimum | Status |
 |---|---|---|---|
-| 0.3.x | 3.2–3.3 | 17, 21 | Active (current) |
-| 0.3.x | 2.7 | 11, 17 | Maintenance-only |
+| Core, Mongo and Redis SDK | Not required | 11 | Java 11-compatible library line; the full build uses Java 21 |
+| Boot 2 starter | 2.7.18 / Spring 5.3.39 | 11 | Legacy compatibility; upstream OSS EOL, conditional advisories remain |
+| Boot 3 starter and Spring control integration | 3.5.16 / Spring 6.2.19 | 17 | Legacy compatibility; upstream OSS EOL |
+| Current Envoy authorization server | 3.5.16 / Spring 6.2.19 | 17 | Source preparation; maintained server baseline and residual advisories unresolved |
 
 Java 11 is required to compile the core library and the boot2 starter. Java 17
 is required to run the boot3 starter. Java 21 is required for the sample
@@ -129,6 +136,9 @@ standalone-java21 module.
 
 A release line reaches end-of-life when the corresponding Spring Boot line does
 (see the [Spring Boot support policy](https://spring.io/projects/spring-boot#support)).
+This bounds the supported Spring integration, not the Java-only engine. Keeping a legacy
+compatibility artifact does not extend upstream OSS maintenance. A 0.5.x LTS maintenance period,
+backport scope and EOL date have not yet been committed; they must be recorded before LTS publication.
 EOL will be announced **at least 90 days before the final patch release**,
 giving teams time to plan their migration. The announcement is made in a
 CHANGELOG entry, an update to this table, and a pinned GitHub Discussion post.

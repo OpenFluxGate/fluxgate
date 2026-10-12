@@ -146,7 +146,7 @@ export FLUXGATE_LIVE_CLIENT_CERT="$FLUXGATE_ENTERPRISE_TLS_DIR/client.crt"
 export FLUXGATE_LIVE_CLIENT_KEY="$FLUXGATE_ENTERPRISE_TLS_DIR/client.key"
 export FLUXGATE_LIVE_CA_CERT="$FLUXGATE_ENTERPRISE_TLS_DIR/server-ca.crt"
 RUNTIME_DIR=$(mktemp -d /tmp/fluxgate-live-runtime.XXXXXX)
-unzip -q fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.4.0-SNAPSHOT.jar 'BOOT-INF/lib/*' -d "$RUNTIME_DIR"
+unzip -q fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.5.0.jar 'BOOT-INF/lib/*' -d "$RUNTIME_DIR"
 java -cp "fluxgate-envoy-extauth/target/test-classes:fluxgate-envoy-extauth/target/classes:$RUNTIME_DIR/BOOT-INF/lib/*" org.fluxgate.envoy.EnvoyPolicyLifecycleLiveTest
 
 python3 deploy/envoy-gateway-local/verify-failure-modes.py

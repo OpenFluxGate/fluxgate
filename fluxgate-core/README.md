@@ -51,7 +51,7 @@ Any other store (Hazelcast, a database, ...) needs your own `RateLimiter` implem
 ```
 
 `0.4.0` is the upcoming release (see `[Unreleased]` in [CHANGELOG.md](../CHANGELOG.md)); a build
-from this branch produces `0.4.0-SNAPSHOT`.
+from this branch produces `0.5.0`.
 
 ### Basic Usage
 

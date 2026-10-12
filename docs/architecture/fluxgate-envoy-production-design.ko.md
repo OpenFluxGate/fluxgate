@@ -1,6 +1,6 @@
 # FluxGate × Envoy Gateway: 운영 통합 설계안
 
-2026-10-10 LTS 통합은 `feature/lts-envoy-integration`과 Studio의 `feature/lts-policy-lifecycle`에서 진행한다. 기존 Envoy 구현과 LTS의 코어·어댑터 계약을 함께 사용하며 Maven 좌표는 `0.4.0-SNAPSHOT`이다. 이전 Envoy 브랜치 검증과 이번 통합본 검증은 구분한다. [브라우저 다이어그램](fluxgate-envoy-target.html)은 정상 요청 경로와 판정·저장소 경로를 분리해 보여준다.
+2026-10-10 LTS 통합은 `feature/lts-envoy-integration`과 Studio의 `feature/lts-policy-lifecycle`에서 진행한다. 기존 Envoy 구현과 LTS의 코어·어댑터 계약을 함께 사용하며 Maven 좌표는 `0.5.0`이다. 이전 Envoy 브랜치 검증과 이번 통합본 검증은 구분한다. [브라우저 다이어그램](fluxgate-envoy-target.html)은 정상 요청 경로와 판정·저장소 경로를 분리해 보여준다.
 
 ## 목표와 범위
 

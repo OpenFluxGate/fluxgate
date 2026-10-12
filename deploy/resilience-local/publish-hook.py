@@ -438,7 +438,7 @@ def main():
     parser.add_argument('--deadline', type=int, default=30)
     parser.add_argument('--output', type=Path)
     parser.add_argument('--jar', type=Path, default=Path(__file__).resolve().parents[2] /
-                        'fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.4.0-SNAPSHOT.jar')
+                        'fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.5.0.jar')
     args = parser.parse_args()
     if args.self_check:
         if not __debug__:

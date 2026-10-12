@@ -13,7 +13,7 @@ if [[ ${1:-} == --dry-run ]]; then
 fi
 for command in kubectl openssl docker kind; do command -v "$command" >/dev/null; done
 "${KUBE[@]}" get namespace envoy-gateway-system >/dev/null
-if [[ ! -f "$REPO_DIR/fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.4.0-SNAPSHOT.jar" ]]; then
+if [[ ! -f "$REPO_DIR/fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.5.0.jar" ]]; then
   echo 'Build the current extAuth jar before running setup-enterprise.sh.' >&2
   exit 1
 fi

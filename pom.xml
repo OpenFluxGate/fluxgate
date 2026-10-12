@@ -10,7 +10,7 @@
 
     <groupId>io.github.openfluxgate</groupId>
     <artifactId>fluxgate</artifactId>
-    <version>0.4.0-SNAPSHOT</version>
+    <version>0.5.0</version>
     <packaging>pom</packaging>
 
     <name>FluxGate</name>
@@ -41,19 +41,22 @@
         <!--
           No spring.version here on purpose: the root is the parent of Java 11 modules, and a Spring 6
           default would leak into anything that forgets to override it. Each starter pins its own
-          spring.version (boot2: 5.3.x, boot3: 6.1.x) next to its spring-boot.version.
+          spring.version (boot2: 5.3.x, boot3: 6.2.x) next to its spring-boot.version.
         -->
         <bucket4j.version>8.15.0</bucket4j.version>
         <caffeine.version>3.1.8</caffeine.version>
-        <slf4j.version>2.0.16</slf4j.version>
+        <slf4j.version>2.0.18</slf4j.version>
         <!--
           logback-classic for the tests of fluxgate-core and fluxgate-control-support: the version of
-          the Spring Boot 3.3.x BOM. A property, not a dependencyManagement entry, on purpose: managing
+          the public security-patched 1.5.x line. A property, not a dependencyManagement entry, on purpose: managing
           it here would override the Logback 1.2.x of the Spring Boot 2.7 BOM in the boot2 starter and
           the Java 11 sample.
         -->
-        <logback.version>1.5.11</logback.version>
-        <lettuce.version>6.4.0.RELEASE</lettuce.version>
+        <logback.version>1.5.38</logback.version>
+        <lettuce.version>6.8.2.RELEASE</lettuce.version>
+        <!-- Java 11 SDKs use the patched 4.1 family; the server manages its own family. -->
+        <netty.version>4.1.139.Final</netty.version>
+        <log4j.version>2.25.5</log4j.version>
         <aspectj.version>1.9.22</aspectj.version>
         <!-- Patched Jackson 2.x line shared with Envoy; remains compatible with Java 11. -->
         <jackson.version>2.21.7</jackson.version>
@@ -121,6 +124,21 @@
     <!-- Dependency Management -->
     <dependencyManagement>
         <dependencies>
+            <!-- Keep the Redis SDK transport and logging families on public security patches. -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>${netty.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-bom</artifactId>
+                <version>${log4j.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <!-- Core rate limiting -->
             <dependency>
                 <groupId>com.bucket4j</groupId>

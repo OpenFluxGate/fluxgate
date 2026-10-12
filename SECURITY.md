@@ -4,6 +4,20 @@
 
 Security fixes are applied to the latest released FluxGate line. Projects should upgrade to the newest published version before reporting an issue against an older release.
 
+### 0.5.0 source preparation
+
+`feature/lts-0.5.0` prepares the complete integrated release; it is not a published release or
+a completed LTS support commitment. See the [compatibility matrix](GOVERNANCE.md#supported-spring-boot-and-java-matrix).
+Java 11-compatible transport dependencies receive public security patches, but Spring Boot 2/3
+compatibility does not provide ongoing upstream OSS security support. Spring 5.3.39 and 6.2.19
+still have conditional security advisories, including [CVE-2026-47884](https://spring.io/security/cve-2026-47884/);
+Spring 6.2.19 also has [CVE-2026-47890](https://spring.io/security/cve-2026-47890/).
+
+The maintained server baseline and legacy compatibility scope must be settled before publishing
+0.5.0 as LTS. A clean dependency scan for an SDK subset does not establish security for the
+consumer application's resolved graph or enabled features. No advisory is suppressed to claim
+complete remediation, and commercially supported patches are not included in this OSS build.
+
 ## Reporting a Vulnerability
 
 Do not open a public GitHub issue for a suspected vulnerability. Report it privately through GitHub's private vulnerability reporting for this repository ("Security" tab → "Report a vulnerability"), or contact the maintainers using the security contact listed in the repository profile.

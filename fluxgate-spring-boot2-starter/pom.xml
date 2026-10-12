@@ -9,7 +9,7 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.4.0-SNAPSHOT</version>
+        <version>0.5.0</version>
     </parent>
 
     <artifactId>fluxgate-spring-boot2-starter</artifactId>
@@ -24,7 +24,7 @@
         <maven.compiler.target>11</maven.compiler.target>
         <!-- Spring Boot 2.7.x for Java 11 -->
         <spring-boot.version>2.7.18</spring-boot.version>
-        <spring.version>5.3.31</spring.version>
+        <spring.version>5.3.39</spring.version>
         <skipJacocoForPom>false</skipJacocoForPom>
     </properties>
 
