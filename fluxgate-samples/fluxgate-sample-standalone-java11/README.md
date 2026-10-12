@@ -10,6 +10,12 @@ integration, built for **Java 11 / Spring Boot 2.7** instead of the Java 21 / Bo
 > applications that haven't migrated to Java 17+/Boot 3 yet. It is not a recommendation to stay on
 > Boot 2.7 — treat the starter/sample as a bridge, not a destination.
 
+Micrometer is managed at `1.16.7` by the root POM. This Boot 2 sample uses
+`micrometer-registry-prometheus-simpleclient` to retain the `io.micrometer.prometheus` API
+expected by Boot 2's actuator. Keep the registry and core family aligned when importing another
+BOM, and verify `/actuator/prometheus` after upgrading. This dependency patch does not extend
+Spring Boot 2.7's OSS support period.
+
 ## Overview
 
 This sample showcases:

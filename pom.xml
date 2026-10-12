@@ -57,7 +57,8 @@
         <aspectj.version>1.9.22</aspectj.version>
         <!-- Patched Jackson 2.x line shared with Envoy; remains compatible with Java 11. -->
         <jackson.version>2.21.7</jackson.version>
-        <micrometer.version>1.13.6</micrometer.version>
+        <!-- Public CVE-2026-40984 and CVE-2026-59296 fixes shared with Envoy. -->
+        <micrometer.version>1.16.7</micrometer.version>
         <junit.jupiter.version>5.11.3</junit.jupiter.version>
         <assertj.version>3.26.3</assertj.version>
         <mockito.version>5.14.2</mockito.version>
@@ -189,7 +190,41 @@
 
             <dependency>
                 <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-bom</artifactId>
+                <version>${micrometer.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Explicit core/commons/observation entries also override child Spring Boot BOMs. -->
+            <dependency>
+                <groupId>io.micrometer</groupId>
                 <artifactId>micrometer-core</artifactId>
+                <version>${micrometer.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-commons</artifactId>
+                <version>${micrometer.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-observation</artifactId>
+                <version>${micrometer.version}</version>
+            </dependency>
+            <!-- Boot 3 uses the current registry; Boot 2 uses the legacy simpleclient bridge. -->
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-registry-prometheus</artifactId>
+                <version>${micrometer.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-registry-prometheus-simpleclient</artifactId>
+                <version>${micrometer.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-jakarta9</artifactId>
                 <version>${micrometer.version}</version>
             </dependency>
 

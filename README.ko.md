@@ -883,6 +883,15 @@ FluxGate는 logback 설정을 동봉하지 **않습니다**. MDC를 JSON으로 �
 클래스패스에 `spring-boot-starter-actuator`가 있으면 FluxGate가 Micrometer 기반 메트릭을 자동
 노출합니다.
 
+검토한 소스는 Micrometer `1.16.7`을 사용합니다. 애플리케이션의 Spring Boot BOM이
+전이 의존성 버전을 덮어쓸 수 있으므로 core·observation·commons·registry를 같은 패치 계열로
+맞추세요. `spring-boot-starter-parent`를 사용하면 애플리케이션 properties의
+`micrometer.version`을 지정하고, BOM을 import한다면 선택한 의존성 버전을 명시적으로 관리하세요.
+Boot 3는 `micrometer-registry-prometheus`, Boot 2는 기존 Prometheus API를 유지하는
+`micrometer-registry-prometheus-simpleclient`를 사용합니다.
+[Java 11 샘플](fluxgate-samples/fluxgate-sample-standalone-java11)에서 호환 구성을 확인할 수 있습니다.
+계열을 변경한 뒤 `/actuator/prometheus` 응답을 검증하세요.
+
 Limiter 실패는 `rule_set`, `endpoint`, `action`, `exception` 태그와 함께
 `fluxgate.limiter.failures`로 노출됩니다. 프로덕션에서는 `action=fail_open`이 0이 아닌 경우를
 경보하고, `action=fail_closed`는 의존성 장애 신호로, `action=fallback_in_memory`는 "지금 제한이

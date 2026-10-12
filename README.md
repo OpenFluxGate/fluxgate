@@ -886,6 +886,14 @@ entry are restored when the request completes.
 
 FluxGate automatically exposes Micrometer-based metrics when `spring-boot-starter-actuator` is on the classpath.
 
+The reviewed source uses Micrometer `1.16.7`. An application's Spring Boot BOM can override
+transitive versions: keep Micrometer core, observation, commons and the registry on the same
+patched family. With `spring-boot-starter-parent`, set `micrometer.version` in your application's
+properties; with an imported BOM, explicitly manage the selected artifacts. Boot 3 uses
+`micrometer-registry-prometheus`; Boot 2 uses `micrometer-registry-prometheus-simpleclient`
+to preserve its legacy Prometheus API. The [Java 11 sample](fluxgate-samples/fluxgate-sample-standalone-java11)
+shows that compatibility setup. Verify `/actuator/prometheus` after changing the family.
+
 Limiter failures are exposed through `fluxgate.limiter.failures` with `rule_set`, `endpoint`, `action`, and `exception` tags. Alert on non-zero `action=fail_open` in production, track `action=fail_closed` as a dependency incident signal, and `action=fallback_in_memory` as a "limits are per instance right now" signal.
 
 **Available Metrics:**

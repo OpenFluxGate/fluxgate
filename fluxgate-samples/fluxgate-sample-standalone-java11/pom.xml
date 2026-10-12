@@ -144,7 +144,8 @@
         </dependency>
         <dependency>
             <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-registry-prometheus</artifactId>
+            <!-- Boot 2's actuator uses the legacy io.micrometer.prometheus API. -->
+            <artifactId>micrometer-registry-prometheus-simpleclient</artifactId>
         </dependency>
 
         <!-- Caffeine Cache (for FluxGate rule caching) -->

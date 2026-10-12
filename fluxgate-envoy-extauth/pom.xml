@@ -21,7 +21,7 @@
         <envoy.jackson.version>2.21.7</envoy.jackson.version>
         <envoy.lettuce.version>6.6.0.RELEASE</envoy.lettuce.version>
         <envoy.mongodb.version>5.5.2</envoy.mongodb.version>
-        <envoy.micrometer.version>1.15.12</envoy.micrometer.version>
+        <envoy.micrometer.version>${micrometer.version}</envoy.micrometer.version>
         <envoy.slf4j.version>2.0.18</envoy.slf4j.version>
         <envoy.logback.version>1.5.34</envoy.logback.version>
         <skipJacocoForPom>false</skipJacocoForPom>

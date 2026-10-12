@@ -136,11 +136,10 @@
         </dependency>
 
 
-        <!-- Micrometer for Prometheus metrics (optional) -->
+        <!-- Micrometer for Prometheus metrics (optional) - version managed in the root pom -->
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-core</artifactId>
-            <version>1.9.17</version>
             <optional>true</optional>
         </dependency>
 
