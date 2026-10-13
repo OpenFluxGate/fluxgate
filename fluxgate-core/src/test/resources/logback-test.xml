@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Tests attach their own appenders; keep the console quiet like the slf4j no-op default. -->
+<configuration>
+    <root level="OFF"/>
+</configuration>

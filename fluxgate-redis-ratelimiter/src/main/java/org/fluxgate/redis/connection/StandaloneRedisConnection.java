@@ -1,16 +1,23 @@
 package org.fluxgate.redis.connection;
 
+import io.lettuce.core.ClientOptions;
+import io.lettuce.core.KeyScanCursor;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.ScanArgs;
+import io.lettuce.core.ScanCursor;
 import io.lettuce.core.ScriptOutputType;
+import io.lettuce.core.SocketOptions;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,7 +40,7 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
    * @param redisUri the Redis URI (e.g., "redis://localhost:6379")
    */
   public StandaloneRedisConnection(String redisUri) {
-    this(redisUri, Duration.ofSeconds(5));
+    this(redisUri, RedisUriUtils.DEFAULT_TIMEOUT);
   }
 
   /**
@@ -46,10 +53,15 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
     Objects.requireNonNull(redisUri, "redisUri must not be null");
     Objects.requireNonNull(timeout, "timeout must not be null");
 
-    log.info("Creating standalone Redis connection to: {}", maskPassword(redisUri));
+    log.info("Creating standalone Redis connection to: {}", RedisUriUtils.mask(redisUri));
 
-    RedisURI uri = RedisURI.create(redisUri);
+    RedisURI uri = RedisUriUtils.parse(redisUri);
+    uri.setTimeout(timeout);
     this.redisClient = RedisClient.create(uri);
+    this.redisClient.setOptions(
+        ClientOptions.builder()
+            .socketOptions(SocketOptions.builder().connectTimeout(timeout).build())
+            .build());
     this.redisClient.setDefaultTimeout(timeout);
 
     try {
@@ -58,8 +70,11 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
       log.info("Standalone Redis connection established successfully");
     } catch (Exception e) {
       redisClient.close();
-      throw new RedisConnectionException(
-          "Failed to connect to Redis: " + maskPassword(redisUri), e);
+      throw new org.fluxgate.core.exception.RedisConnectionException(
+          "Failed to connect to Redis",
+          RedisUriUtils.mask(redisUri),
+          e,
+          org.fluxgate.core.exception.RedisConnectionException.Phase.CONNECT);
     }
   }
 
@@ -77,6 +92,19 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
     log.debug("Standalone Redis connection created from existing commands");
   }
 
+  /**
+   * Visible for testing: wraps Lettuce objects that were created elsewhere, so that shutdown
+   * behaviour can be exercised without a Redis server.
+   */
+  StandaloneRedisConnection(
+      RedisClient redisClient,
+      StatefulRedisConnection<String, String> connection,
+      RedisCommands<String, String> commands) {
+    this.redisClient = redisClient;
+    this.connection = connection;
+    this.commands = commands;
+  }
+
   @Override
   public RedisMode getMode() {
     return RedisMode.STANDALONE;
@@ -85,9 +113,11 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
   @Override
   public boolean isConnected() {
     try {
-      return connection != null && connection.isOpen() && "PONG".equals(commands.ping());
+      // connection == null means the commands were supplied from outside and this class does not
+      // own a StatefulRedisConnection to inspect; PING alone is then the whole answer.
+      return (connection == null || connection.isOpen()) && "PONG".equals(commands.ping());
     } catch (Exception e) {
-      log.warn("Connection check failed: {}", e.getMessage());
+      log.warn("Connection check failed", e);
       return false;
     }
   }
@@ -139,6 +169,11 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
   }
 
   @Override
+  public long unlink(String... keys) {
+    return commands.unlink(keys);
+  }
+
+  @Override
   public long sadd(String key, String... members) {
     return commands.sadd(key, members);
   }
@@ -169,6 +204,32 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
   }
 
   @Override
+  public List<String> scanKeys(String pattern, long count) {
+    List<String> keys = new ArrayList<>();
+    scanKeys(pattern, count, keys::addAll);
+    return keys;
+  }
+
+  @Override
+  public void scanKeys(String pattern, long count, Consumer<List<String>> pageConsumer) {
+    Objects.requireNonNull(pattern, "pattern must not be null");
+    Objects.requireNonNull(pageConsumer, "pageConsumer must not be null");
+    if (count <= 0) {
+      throw new IllegalArgumentException("count must be > 0");
+    }
+
+    ScanArgs scanArgs = ScanArgs.Builder.matches(pattern).limit(count);
+    ScanCursor cursor = ScanCursor.INITIAL;
+    do {
+      KeyScanCursor<String> result = commands.scan(cursor, scanArgs);
+      if (!result.getKeys().isEmpty()) {
+        pageConsumer.accept(result.getKeys());
+      }
+      cursor = result;
+    } while (!cursor.isFinished());
+  }
+
+  @Override
   public String flushdb() {
     return commands.flushdb();
   }
@@ -187,17 +248,26 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
   @Override
   public void close() {
     log.info("Closing standalone Redis connection");
+
+    // Independent blocks: a connection that fails to close must not leak the client's Netty
+    // event loop group along with it.
     try {
       if (connection != null) {
         connection.close();
       }
+    } catch (Exception e) {
+      log.warn("Error closing Redis connection", e);
+    }
+
+    try {
       if (redisClient != null) {
         redisClient.shutdown();
       }
-      log.info("Standalone Redis connection closed");
     } catch (Exception e) {
-      log.warn("Error closing Redis connection: {}", e.getMessage());
+      log.warn("Error shutting down Redis client", e);
     }
+
+    log.info("Standalone Redis connection closed");
   }
 
   /**
@@ -207,13 +277,5 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
    */
   public RedisCommands<String, String> getCommands() {
     return commands;
-  }
-
-  private String maskPassword(String uri) {
-    if (uri == null) {
-      return null;
-    }
-    // Mask password in URI for logging
-    return uri.replaceAll("://[^:]+:[^@]+@", "://***:***@");
   }
 }

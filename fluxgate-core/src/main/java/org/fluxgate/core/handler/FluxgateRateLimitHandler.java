@@ -49,6 +49,29 @@ public interface FluxgateRateLimitHandler {
   RateLimitResponse tryConsume(RequestContext context, String ruleSetId);
 
   /**
+   * Attempts to consume the given number of permits from the rate limit bucket.
+   *
+   * <p>The default implementation delegates to {@link #tryConsume(RequestContext, String)} when a
+   * single permit is requested and rejects anything heavier. Library handlers backed by a store
+   * that supports weighted consumption override this form and implement the 2-arg method in terms
+   * of it.
+   *
+   * @param context Request context containing client info (IP, userId, endpoint, etc.)
+   * @param ruleSetId The rule set ID to apply
+   * @param permits Number of permits to consume
+   * @return Rate limit response containing allowed status and metadata
+   * @throws UnsupportedOperationException if more than one permit is requested and this handler
+   *     does not support weighted permits
+   */
+  default RateLimitResponse tryConsume(RequestContext context, String ruleSetId, long permits) {
+    if (permits == 1) {
+      return tryConsume(context, ruleSetId);
+    }
+    throw new UnsupportedOperationException(
+        "Weighted permits are not supported by " + getClass().getName());
+  }
+
+  /**
    * Default handler that always allows requests. Used as fallback when no handler is configured.
    */
   FluxgateRateLimitHandler ALLOW_ALL = (context, ruleSetId) -> RateLimitResponse.allowed(-1, 0);

@@ -13,6 +13,7 @@ package org.fluxgate.core.exception;
  */
 public class InvalidRuleConfigException extends FluxgateConfigurationException {
 
+  /** Id of the rule whose configuration is invalid. */
   private final String ruleId;
 
   /**

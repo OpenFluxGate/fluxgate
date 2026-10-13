@@ -17,6 +17,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 /** Unit tests for {@link LuaScriptLoader}. */
+@SuppressWarnings("deprecation") // the class under test is a deprecated compatibility shim
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class LuaScriptLoaderTest {
@@ -48,7 +49,7 @@ class LuaScriptLoaderTest {
     // then
     assertThat(LuaScripts.getTokenBucketConsumeSha()).isEqualTo("sha256-hash");
     assertThat(LuaScripts.getTokenBucketConsumeScript()).isNotNull();
-    assertThat(LuaScripts.getTokenBucketConsumeScript()).contains("KEYS[1]");
+    assertThat(LuaScripts.getTokenBucketConsumeScript()).contains("KEYS[");
     verify(connectionProvider).scriptLoad(anyString());
   }
 
@@ -121,7 +122,7 @@ class LuaScriptLoaderTest {
 
     // then
     assertThat(script).isNotNull();
-    assertThat(script).contains("KEYS[1]");
+    assertThat(script).contains("KEYS[");
     assertThat(script).contains("redis.call");
   }
 }

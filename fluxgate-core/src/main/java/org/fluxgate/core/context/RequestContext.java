@@ -3,6 +3,7 @@ package org.fluxgate.core.context;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Represents contextual information about the incoming request. This allows custom KeyResolvers and
@@ -13,7 +14,8 @@ import java.util.Map;
  * <ul>
  *   <li>Client identification: IP, userId, apiKey
  *   <li>Request info: endpoint, method
- *   <li>HTTP headers: collected in headers map
+ *   <li>HTTP headers: collected in headers map; header names are case-insensitive (RFC 9110), so
+ *       {@code getHeader("x-tier")} finds a header added as {@code X-Tier}
  *   <li>Custom attributes: extensible key-value pairs
  * </ul>
  */
@@ -37,7 +39,9 @@ public final class RequestContext {
     this.apiKey = builder.apiKey;
     this.endpoint = builder.endpoint;
     this.method = builder.method;
-    this.headers = Collections.unmodifiableMap(new HashMap<>(builder.headers));
+    Map<String, String> headerCopy = newHeaderMap();
+    headerCopy.putAll(builder.headers);
+    this.headers = Collections.unmodifiableMap(headerCopy);
     this.attributes = Collections.unmodifiableMap(new HashMap<>(builder.attributes));
   }
 
@@ -89,7 +93,10 @@ public final class RequestContext {
   /**
    * Returns all HTTP headers collected from the request.
    *
-   * @return unmodifiable map of header names to values
+   * <p>The map compares header names case-insensitively; names that differ only in case are a
+   * single entry (the last value added wins).
+   *
+   * @return unmodifiable, case-insensitive map of header names to values
    */
   public Map<String, String> getHeaders() {
     return headers;
@@ -98,11 +105,11 @@ public final class RequestContext {
   /**
    * Returns a specific HTTP header value.
    *
-   * @param name the header name (case-sensitive as stored)
+   * @param name the header name (case-insensitive)
    * @return the header value, or null if not present
    */
   public String getHeader(String name) {
-    return headers.get(name);
+    return name == null ? null : headers.get(name);
   }
 
   /**
@@ -124,6 +131,11 @@ public final class RequestContext {
     return attributes.get(key);
   }
 
+  /** Header names are case-insensitive; {@code CASE_INSENSITIVE_ORDER} is locale-independent. */
+  private static Map<String, String> newHeaderMap() {
+    return new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+  }
+
   /**
    * Creates a new Builder instance.
    *
@@ -140,7 +152,7 @@ public final class RequestContext {
     private String apiKey;
     private String endpoint;
     private String method;
-    private final Map<String, String> headers = new HashMap<>();
+    private final Map<String, String> headers = newHeaderMap();
     private final Map<String, Object> attributes = new HashMap<>();
 
     /** Creates a new Builder instance. */
@@ -210,12 +222,12 @@ public final class RequestContext {
     /**
      * Adds a single HTTP header.
      *
-     * @param name the header name
+     * @param name the header name, case-insensitive (null names are ignored)
      * @param value the header value (null values are ignored)
      * @return this builder
      */
     public Builder header(String name, String value) {
-      if (value != null) {
+      if (name != null && value != null) {
         this.headers.put(name, value);
       }
       return this;
@@ -224,14 +236,14 @@ public final class RequestContext {
     /**
      * Adds multiple HTTP headers at once.
      *
-     * @param headers map of header names to values (null values are ignored)
+     * @param headers map of header names to values (null names and values are ignored)
      * @return this builder
      */
     public Builder headers(Map<String, String> headers) {
       if (headers != null) {
         headers.forEach(
             (k, v) -> {
-              if (v != null) {
+              if (k != null && v != null) {
                 this.headers.put(k, v);
               }
             });
@@ -314,7 +326,8 @@ public final class RequestContext {
     }
 
     /**
-     * Returns the current headers map (modifiable).
+     * Returns the current headers map (modifiable, case-insensitive on header names, rejects null
+     * names).
      *
      * @return the headers map
      */
@@ -325,11 +338,11 @@ public final class RequestContext {
     /**
      * Returns a specific header value.
      *
-     * @param name the header name
+     * @param name the header name (case-insensitive)
      * @return the header value, or null if not present
      */
     public String getHeader(String name) {
-      return headers.get(name);
+      return name == null ? null : headers.get(name);
     }
 
     /**

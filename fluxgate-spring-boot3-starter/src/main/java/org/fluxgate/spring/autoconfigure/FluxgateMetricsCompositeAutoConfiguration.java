@@ -56,13 +56,14 @@ public class FluxgateMetricsCompositeAutoConfiguration {
    * RateLimitMetricsRecorder. All individual recorders are still available for direct injection by
    * name.
    *
-   * <p>If only one recorder is available, it will be wrapped in a composite for consistency. This
-   * ensures the same behavior regardless of how many recorders are configured.
+   * <p>If only one recorder is available it is returned as is. That instance is then registered
+   * under two bean names, so this definition has no destroy method: the recorder is closed once, by
+   * its own definition, instead of twice.
    *
    * @param recorders all available RateLimitMetricsRecorder beans
    * @return a CompositeMetricsRecorder wrapping all recorders
    */
-  @Bean
+  @Bean(destroyMethod = "")
   @Primary
   public RateLimitMetricsRecorder compositeMetricsRecorder(
       List<RateLimitMetricsRecorder> recorders) {

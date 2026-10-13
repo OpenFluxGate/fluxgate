@@ -13,6 +13,7 @@ package org.fluxgate.core.exception;
  */
 public class MongoConnectionException extends FluxgateConnectionException {
 
+  /** The MongoDB URI that could not be reached. */
   private final String mongoUri;
 
   /**

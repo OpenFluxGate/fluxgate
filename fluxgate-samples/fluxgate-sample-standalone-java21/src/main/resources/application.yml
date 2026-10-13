@@ -10,18 +10,20 @@ fluxgate:
   # MongoDB configuration (uses FluxgateMongoAutoConfiguration)
   mongo:
     enabled: true
-    uri: mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin
+    uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
     rule-collection: rate_limit_rules
     # Optional: Enable event logging by setting event-collection
     event-collection: rate_limit_events
-    # DDL auto mode: validate (default) or create
-    ddl-auto: validate
-  # Redis configuration (uses FluxgateConfig)
+    # DDL auto mode: validate (the library default) or create. create builds the collections and
+    # the unique (ruleSetId, id) index, so the sample starts against a fresh MongoDB.
+    ddl-auto: create
+  # Redis configuration (FluxgateConfig reads fluxgate.redis.uri)
   redis:
     enabled: true
-    uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
-    #uri: redis://localhost:6379
+    uri: redis://localhost:6379
+    # Redis Cluster (docker compose -f docker/redis-cluster.yml up -d):
+    #uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
   # Metrics enable for Prometheus
   metrics:
     enabled: true
@@ -39,23 +41,50 @@ fluxgate:
       failure-threshold: 5
       wait-duration-in-open-state: 30s
       permitted-calls-in-half-open-state: 3
-      fallback: FAIL_OPEN
 
-# Logging
   # Rate limiting behavior configuration
   ratelimit:
     enabled: true
-    # Behavior when no matching rule is found: ALLOW (default) or DENY
-    # DENY: Strict mode - reject requests if no rule exists (fail-closed)
-    # ALLOW: Permissive mode - allow requests if no rule exists
-    missing-rule-behavior: ALLOW
+    # Behavior when no matching rule is found: DENY (default) or ALLOW
+    # DENY: Strict mode - reject requests if no rule exists (fail-closed). Create the rules first
+    #       via POST /api/admin/rules/* (see README).
+    # ALLOW: Permissive mode - DEMO ONLY: an unconfigured rule set silently disables limiting.
+    missing-rule-behavior: ${FLUXGATE_MISSING_RULE_BEHAVIOR:DENY}
+    # Behavior when Redis or the rule store fails: DENY (default, fail-closed) or ALLOW (fail-open).
+    failure-behavior: DENY
+
+    # --- Client identity and IP: DEMO DEFAULTS ARE SAFE, OPT-IN IS EXPLICIT --------------------
+    # Identity headers (X-User-Id / X-API-Key) are NOT trusted by default: PER_USER and
+    # PER_API_KEY scopes use the authenticated principal. This sample has no Spring Security, so
+    # such requests fall back to the client IP. To try the per-user composite key locally you can
+    # opt in with FLUXGATE_IDENTITY_SOURCE=HEADERS - DEMO ONLY: it lets any caller choose its
+    # own bucket unless a gateway authenticates the caller and strips these headers.
+    identity:
+      source: ${FLUXGATE_IDENTITY_SOURCE:PRINCIPAL}
+    # Behind a reverse proxy, read the client IP from a forwarding header only from proxies you
+    # control (IP literals or CIDR blocks); otherwise every caller can forge its own IP bucket.
+    #   FLUXGATE_TRUST_CLIENT_IP_HEADER=true
+    #   fluxgate.ratelimit.trusted-proxies: [10.0.0.0/8]
+    client-ip-header: X-Forwarded-For
+    trust-client-ip-header: ${FLUXGATE_TRUST_CLIENT_IP_HEADER:false}
+    trusted-proxies: ${FLUXGATE_TRUSTED_PROXIES:}
 
   # Hot reload configuration
   reload:
     enabled: true
-    strategy: PUBSUB  # Use Redis Pub/Sub for real-time updates
+    # AUTO (the default) uses Redis Pub/Sub only when a signing secret is set or allow-unsigned is
+    # true; with neither it polls MongoDB for rule changes, so the sample starts with no secret
+    # configured. Set FLUXGATE_RELOAD_SECRET (the control plane's fluxgate.control.secret) for
+    # push-based reload. strategy: PUBSUB refuses to start without a secret unless allow-unsigned
+    # is true.
+    strategy: AUTO
     pubsub:
       channel: fluxgate:rule-reload  # Must match Admin API channel
+      # Shared with the control plane's fluxgate.control.secret (required since 0.4).
+      secret: ${FLUXGATE_RELOAD_SECRET:}
+      # Local demo only: accept unsigned messages while no secret is set. Never in production.
+      # Opt in with FLUXGATE_RELOAD_ALLOW_UNSIGNED=true; the default refuses unsigned messages.
+      allow-unsigned: ${FLUXGATE_RELOAD_ALLOW_UNSIGNED:false}
 
 logging:
   level:
@@ -68,11 +97,11 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,prometheus,metrics,conditions
+        include: health,info,prometheus,metrics
   endpoint:
     health:
-      show-details: always
-      show-components: always
+      show-details: when_authorized
+      show-components: when_authorized
     prometheus:
       enabled: true
 
@@ -95,13 +124,13 @@ spring:
 fluxgate:
   mongo:
     enabled: true
-    uri: mongodb://fluxgate:fluxgate123%23%24@mongodb:27017/fluxgate?authSource=admin
+    # "mongo" and "redis" are the service names in docker/full.yml (docker/mongo.yml, docker/redis-standalone.yml)
+    uri: mongodb://${MONGO_USER:fluxgate}:${MONGO_PASSWORD:fluxgate123}@mongo:27017/fluxgate?authSource=admin
     rule-collection: rate_limit_rules
     event-collection: rate_limit_events
     ddl-auto: create
   redis:
-    uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
-    #uri: redis://redis:6379
+    uri: redis://redis:6379
   resilience:
     retry:
       enabled: true
@@ -111,4 +140,3 @@ fluxgate:
       enabled: true
       failure-threshold: 5
       wait-duration-in-open-state: 30s
-      fallback: FAIL_OPEN

@@ -1,0 +1,689 @@
+{
+  "schema_version": 1,
+  "scenario": "sampler-diagnostic-controls",
+  "diagnostic_only": true,
+  "credential_acceptance": false,
+  "full_credential_rerun_accepted": false,
+  "controls": [
+    {
+      "source_commit": "89927d2f44fb8f5377ba2fcf118f198f7f3b6507",
+      "source_sha256": "9cb3b2899699bc66e7f4395dd1c1181b755fbaf515bed8446796f51163660be4",
+      "duration_seconds": 180.5009878319688,
+      "scheduled": 1804,
+      "samples": 1800,
+      "omitted_schedules": 4,
+      "status_200_exact_count": 1800,
+      "pending": 0,
+      "drain_complete": true,
+      "cpu_delta": {
+        "usage_usec": 6362633,
+        "user_usec": 2953501,
+        "system_usec": 3409132,
+        "nr_periods": 1805,
+        "nr_throttled": 1,
+        "throttled_usec": 11071,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "write_count": 1984,
+      "progress_write_count": 183,
+      "max_write_ms": 162.766166,
+      "max_progress_bytes": 530573,
+      "writes_over_100ms": 3,
+      "max_dispatch_lag_ms": 99.94194400496781,
+      "max_service_latency_ms": 662.6526669133455,
+      "control": "baseline",
+      "diagnostic_only": true,
+      "credential_acceptance": false,
+      "availability_passed": false,
+      "raw_status_counts": {
+        "200": 1800
+      },
+      "all_omissions_lateness": true,
+      "sequence_accounting_verified": true,
+      "cleanup": {
+        "pod_absent": true,
+        "networkpolicy_absent": true,
+        "ownership_checked": true
+      },
+      "cpu_request_millicores": 25,
+      "cpu_limit_millicores": 250,
+      "provenance": {
+        "summary": {
+          "sha256": "7c79c5a94ab429ffeddbaf5d321967f79c77201a3e9d65580110bc0f115062be",
+          "bytes": 1387
+        },
+        "private_raw": {
+          "sha256": "7aa5ecc05fb6179791468538ec57e0127ca462b5e99c52cb7bc3c52afdf72640",
+          "bytes": 835911
+        },
+        "diagnostic_helper": {
+          "sha256": "b45e9765b5143e2113c0fc3d26036e175959664031960e430b80a3ca314b4643",
+          "bytes": 3266
+        }
+      },
+      "terminal_boundary": {
+        "root_observed_exit_code": 1,
+        "independent_terminal_witness": false,
+        "note": "Baseline report preceded a root-observed AttributeError from nonexistent Proof.cleanup; context cleanup remains separately serialized."
+      }
+    },
+    {
+      "source_commit": "4cbbd0ca4dcf669a8ee87f0b608846025885ef7b",
+      "source_sha256": "b99173d51885d4cdc5631826e11465f8934877376806a33478ccdf97b186ce9a",
+      "duration_seconds": 180.39916220796295,
+      "scheduled": 1803,
+      "samples": 1802,
+      "omitted_schedules": 1,
+      "status_200_exact_count": 1802,
+      "pending": 0,
+      "drain_complete": true,
+      "cpu_delta": {
+        "usage_usec": 5292477,
+        "user_usec": 2602794,
+        "system_usec": 2689682,
+        "nr_periods": 1804,
+        "nr_throttled": 1,
+        "throttled_usec": 29777,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "write_count": 185,
+      "progress_write_count": 183,
+      "max_write_ms": 4.404125,
+      "max_progress_bytes": 530659,
+      "writes_over_100ms": 0,
+      "max_dispatch_lag_ms": 130.96683705225587,
+      "max_service_latency_ms": 443.51145904511213,
+      "control": "marker",
+      "diagnostic_only": true,
+      "credential_acceptance": false,
+      "availability_passed": false,
+      "raw_status_counts": {
+        "200": 1802
+      },
+      "all_omissions_lateness": true,
+      "sequence_accounting_verified": true,
+      "cleanup": {
+        "pod_absent": true,
+        "networkpolicy_absent": true,
+        "ownership_checked": true
+      },
+      "cpu_request_millicores": 25,
+      "cpu_limit_millicores": 250,
+      "provenance": {
+        "summary": {
+          "sha256": "30c2a7cf655a94a3d3b294bb8e4591a0ba0a522c07003b1f29bb08896a837714",
+          "bytes": 1212
+        },
+        "private_raw": {
+          "sha256": "85df0d0fa5b86507290436db5d24a48ec265328d04ba6901052062010e85c65d",
+          "bytes": 665702
+        },
+        "diagnostic_helper": {
+          "sha256": "70f70610dac3f54e18397707b5c91cf6645291d783ff5a07310a5bb898fcc0a3",
+          "bytes": 3333
+        }
+      },
+      "terminal_boundary": {
+        "root_observed_exit_code": 0,
+        "independent_terminal_witness": false,
+        "note": "Root-observed diagnostic helper exit; successful execution does not satisfy availability or credential acceptance."
+      }
+    },
+    {
+      "source_commit": "4cbbd0ca4dcf669a8ee87f0b608846025885ef7b",
+      "source_sha256": "b99173d51885d4cdc5631826e11465f8934877376806a33478ccdf97b186ce9a",
+      "duration_seconds": 180.300103666028,
+      "scheduled": 1802,
+      "samples": 1794,
+      "omitted_schedules": 8,
+      "status_200_exact_count": 1784,
+      "pending": 0,
+      "drain_complete": true,
+      "cpu_delta": {
+        "usage_usec": 5371920,
+        "user_usec": 2551325,
+        "system_usec": 2820595,
+        "nr_periods": 1803,
+        "nr_throttled": 3,
+        "throttled_usec": 246139,
+        "nr_bursts": 0,
+        "burst_usec": 0
+      },
+      "write_count": 184,
+      "progress_write_count": 182,
+      "max_write_ms": 25.729958,
+      "max_progress_bytes": 528479,
+      "writes_over_100ms": 0,
+      "max_dispatch_lag_ms": 94.74534913897514,
+      "max_service_latency_ms": 521.2339169811457,
+      "control": "reserved",
+      "diagnostic_only": true,
+      "credential_acceptance": false,
+      "availability_passed": false,
+      "raw_status_counts": {
+        "200": 1784,
+        "503": 10
+      },
+      "all_omissions_lateness": true,
+      "sequence_accounting_verified": true,
+      "cleanup": {
+        "pod_absent": true,
+        "networkpolicy_absent": true,
+        "ownership_checked": true
+      },
+      "cpu_request_millicores": 250,
+      "cpu_limit_millicores": 250,
+      "provenance": {
+        "summary": {
+          "sha256": "a5a4efbe3f3cc8275c97f1e387ceeda05ec372d4a1ce3f5f20b65ecc628068a6",
+          "bytes": 1299
+        },
+        "private_raw": {
+          "sha256": "429bddf09d281449c54766e168df1055e980e50c0e1ba824491b3b0955be0a29",
+          "bytes": 662968
+        },
+        "diagnostic_helper": {
+          "sha256": "6ecaee96c48a5c7ffbb7164770cb21ce7c8e80dd6058da3e26590801a89f2cd8",
+          "bytes": 3690
+        }
+      },
+      "terminal_boundary": {
+        "root_observed_exit_code": 0,
+        "independent_terminal_witness": false,
+        "note": "Root-observed diagnostic helper exit; successful execution does not satisfy availability or credential acceptance."
+      }
+    }
+  ],
+  "cpu_request_experiment": {
+    "only_changed_request_millicores": [
+      25,
+      250
+    ],
+    "limit_millicores": 250,
+    "supports_remediation": false,
+    "observed_result": "Higher-request control still omitted eight schedules and returned ten actual HTTP503 responses."
+  },
+  "host_numeric_observation": {
+    "window_seconds": 10.012,
+    "counter_deltas": {
+      "Compressions": 386864,
+      "Decompressions": 364270,
+      "Pageins": 343,
+      "Pageouts": 145,
+      "Swapins": 28,
+      "Swapouts": 0
+    },
+    "swap_mib": {
+      "total": 21504.0,
+      "used": 20359.31,
+      "free": 1144.69
+    },
+    "provenance": {
+      "sha256": "6ed9fa53c6567403cc124f2eeda566ff4decec348520e4bcb00df824f66e089a",
+      "bytes": 1037
+    },
+    "causal_boundary": "Short host observation demonstrates resource activity; it does not isolate the cause of sampler omissions or HTTP503."
+  },
+  "http503_cause_boundary": {
+    "raw_proven": {
+      "count": 10,
+      "status": 503,
+      "sequences": [
+        223,
+        224,
+        225,
+        226,
+        227,
+        228,
+        229,
+        230,
+        231,
+        232
+      ]
+    },
+    "post_control_java_log_capture": {
+      "immutable_capture_verified": true,
+      "independent_invocation_witness": false,
+      "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+      "both_current_authz_jars_source_asserted_matching": true,
+      "tag_event_count": 60,
+      "tag_line_counts": {
+        "NOREPLICAS": 60,
+        "RedisCommandExecutionException": 40
+      },
+      "time_tagged_events": [
+        {
+          "elapsed_seconds": 22.545,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.546,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.546,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.548,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.548,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.548,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.811,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.811,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.811,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.813,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.813,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.813,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.907,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.907,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.907,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.908,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.908,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.908,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.223,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.223,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.223,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.224,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.224,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.224,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.324,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.324,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.324,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.326,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.326,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.326,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.427,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.427,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.427,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.428,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.428,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.428,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.611,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.611,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.611,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.612,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.612,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.612,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.72,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.72,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.72,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.721,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.721,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 22.721,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.008,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.008,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.008,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.008,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.008,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.008,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.111,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.111,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.111,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.111,
+          "tags": [
+            "NOREPLICAS"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.111,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        },
+        {
+          "elapsed_seconds": 23.112,
+          "tags": [
+            "NOREPLICAS",
+            "RedisCommandExecutionException"
+          ]
+        }
+      ],
+      "provenance": {
+        "safe_companion": {
+          "sha256": "6f17e523db8c3992ffa4b2af25e52f51e4aa138ea5abd130e51223966e080241",
+          "bytes": 7908
+        },
+        "private_capture": {
+          "sha256": "411f22aa6b5f1194e77c808cf61ae2d72582edee2c2266f87cac755689b4d8cb",
+          "bytes": 385071
+        }
+      }
+    },
+    "causal_boundary": "Post-control log tags correlate with actual503 observations. Replica ACK delay and sampler omission root causes remain unproven."
+  },
+  "limits": [
+    "Instrumented controls may perturb timing and are not credential acceptance.",
+    "Baseline helper had a failing terminal boundary after writing its diagnostic report; it is not a terminal PASS.",
+    "Neither positive-marker repair nor CPU-request experiment has demonstrated a zero-omission credential run.",
+    "No PID, process names, node addresses, fixture values, request payloads or credentials are exported."
+  ],
+  "causal_helper_static_review": {
+    "helper_sha256": "9882ede44bbbbb99bc2743bfc3b5f1d3877a37aff99b8c39f46b322e970b4a65",
+    "source_sha256": "b99173d51885d4cdc5631826e11465f8934877376806a33478ccdf97b186ce9a",
+    "offline_instrumentation_compile_passed": true,
+    "summary_secret_marker_not_exported": true,
+    "fixed_arrival_and_capacity_logic_preserved": true,
+    "limits": [
+      "CPU-stat reads before scheduler lock and during omission handling add observer overhead.",
+      "wake_to_lock_ms includes diagnostic CPU reads and cannot be interpreted solely as lock contention.",
+      "Instrumentation timing correlations do not prove causal remediation or credential acceptance."
+    ]
+  }
+}

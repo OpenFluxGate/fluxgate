@@ -1,0 +1,304 @@
+{
+  "result": "PASS",
+  "run": "live-da62cec2-7384-4733-8dfd-b39bfc4d483b",
+  "revision": 11,
+  "counterEpoch": "5ece0f05-9988-4383-b5b3-1827445644be",
+  "assertions": 59,
+  "evidence": [
+    {
+      "step": "audited-reset",
+      "revision": 2,
+      "epoch": "860adf1d-3eb0-4da6-ab3a-14cf88ed21d4"
+    },
+    {
+      "step": "acl-deny",
+      "revision": 3,
+      "epoch": "860adf1d-3eb0-4da6-ab3a-14cf88ed21d4"
+    },
+    {
+      "step": "acl-only-convergence-envoy",
+      "status": 403,
+      "revision": 3
+    },
+    {
+      "step": "acl-only-convergence-pod0",
+      "status": 403,
+      "revision": 3
+    },
+    {
+      "step": "acl-only-convergence-pod1",
+      "status": 403,
+      "revision": 3
+    },
+    {
+      "step": "readiness-pod0",
+      "status": 200,
+      "revision": 3
+    },
+    {
+      "step": "readiness-pod1",
+      "status": 200,
+      "revision": 3
+    },
+    {
+      "step": "acl-restore",
+      "revision": 4,
+      "epoch": "860adf1d-3eb0-4da6-ab3a-14cf88ed21d4"
+    },
+    {
+      "step": "gateway-first",
+      "status": 200,
+      "revision": 4
+    },
+    {
+      "step": "gateway-second",
+      "status": 200,
+      "revision": 4
+    },
+    {
+      "step": "gateway-third-shared-quota",
+      "status": 429,
+      "revision": 4
+    },
+    {
+      "step": "unmask-route-quota",
+      "revision": 5,
+      "epoch": "860adf1d-3eb0-4da6-ab3a-14cf88ed21d4"
+    },
+    {
+      "step": "prove-shared-has-quota",
+      "status": 200,
+      "revision": 5
+    },
+    {
+      "step": "restore-route-quota-with-usage",
+      "revision": 6,
+      "epoch": "860adf1d-3eb0-4da6-ab3a-14cf88ed21d4"
+    },
+    {
+      "step": "route-usage-unmasked-envoy",
+      "status": 429,
+      "revision": 6
+    },
+    {
+      "step": "route-usage-unmasked-pod0",
+      "status": 429,
+      "revision": 6
+    },
+    {
+      "step": "route-usage-unmasked-pod1",
+      "status": 429,
+      "revision": 6
+    },
+    {
+      "step": "metadata",
+      "revision": 7,
+      "epoch": "860adf1d-3eb0-4da6-ab3a-14cf88ed21d4"
+    },
+    {
+      "step": "metadata-keeps-usage-envoy",
+      "status": 429,
+      "revision": 7
+    },
+    {
+      "step": "metadata-keeps-usage-pod0",
+      "status": 429,
+      "revision": 7
+    },
+    {
+      "step": "metadata-keeps-usage-pod1",
+      "status": 429,
+      "revision": 7
+    },
+    {
+      "step": "capacity-down",
+      "revision": 8,
+      "epoch": "860adf1d-3eb0-4da6-ab3a-14cf88ed21d4"
+    },
+    {
+      "step": "capacity-down-envoy",
+      "status": 429,
+      "revision": 8
+    },
+    {
+      "step": "capacity-down-pod0",
+      "status": 429,
+      "revision": 8
+    },
+    {
+      "step": "capacity-down-pod1",
+      "status": 429,
+      "revision": 8
+    },
+    {
+      "step": "capacity-up",
+      "revision": 9,
+      "epoch": "860adf1d-3eb0-4da6-ab3a-14cf88ed21d4"
+    },
+    {
+      "step": "capacity-up-no-free-tokens-envoy",
+      "status": 429,
+      "revision": 9
+    },
+    {
+      "step": "capacity-up-no-free-tokens-pod0",
+      "status": 429,
+      "revision": 9
+    },
+    {
+      "step": "capacity-up-no-free-tokens-pod1",
+      "status": 429,
+      "revision": 9
+    },
+    {
+      "step": "rollback",
+      "revision": 10,
+      "epoch": "860adf1d-3eb0-4da6-ab3a-14cf88ed21d4"
+    },
+    {
+      "step": "rollback-no-free-tokens-envoy",
+      "status": 429,
+      "revision": 10
+    },
+    {
+      "step": "rollback-no-free-tokens-pod0",
+      "status": 429,
+      "revision": 10
+    },
+    {
+      "step": "rollback-no-free-tokens-pod1",
+      "status": 429,
+      "revision": 10
+    },
+    {
+      "step": "CAS-conflict-and-operation-replay",
+      "revision": 10,
+      "epoch": "860adf1d-3eb0-4da6-ab3a-14cf88ed21d4"
+    },
+    {
+      "step": "invalid-snapshot-fails-closed-envoy",
+      "status": 503,
+      "revision": 10
+    },
+    {
+      "step": "invalid-snapshot-fails-closed-pod0",
+      "status": 503,
+      "revision": 10
+    },
+    {
+      "step": "invalid-snapshot-fails-closed-pod1",
+      "status": 503,
+      "revision": 10
+    },
+    {
+      "step": "readiness-pod0",
+      "status": 503,
+      "revision": 10
+    },
+    {
+      "step": "readiness-pod1",
+      "status": 503,
+      "revision": 10
+    },
+    {
+      "step": "exact-snapshot-restored",
+      "revision": 10,
+      "epoch": "860adf1d-3eb0-4da6-ab3a-14cf88ed21d4"
+    },
+    {
+      "step": "readiness-pod0",
+      "status": 200,
+      "revision": 10
+    },
+    {
+      "step": "readiness-pod1",
+      "status": 200,
+      "revision": 10
+    },
+    {
+      "step": "recovered-without-free-tokens-envoy",
+      "status": 429,
+      "revision": 10
+    },
+    {
+      "step": "recovered-without-free-tokens-pod0",
+      "status": 429,
+      "revision": 10
+    },
+    {
+      "step": "recovered-without-free-tokens-pod1",
+      "status": 429,
+      "revision": 10
+    },
+    {
+      "step": "audited-identity-scope-reset",
+      "revision": 11,
+      "epoch": "5ece0f05-9988-4383-b5b3-1827445644be"
+    },
+    {
+      "step": "gateway-raw-user-ignored",
+      "status": 403,
+      "revision": 11
+    },
+    {
+      "step": "pod0-raw-user-ignored",
+      "status": 403,
+      "revision": 11
+    },
+    {
+      "step": "pod0-invalid-key",
+      "status": 403,
+      "revision": 11
+    },
+    {
+      "step": "pod1-raw-user-ignored",
+      "status": 403,
+      "revision": 11
+    },
+    {
+      "step": "pod1-invalid-key",
+      "status": 403,
+      "revision": 11
+    },
+    {
+      "step": "gateway-invalid-key",
+      "status": 403,
+      "revision": 11
+    },
+    {
+      "step": "verified-identity-first",
+      "status": 200,
+      "revision": 11
+    },
+    {
+      "step": "verified-identity-second",
+      "status": 200,
+      "revision": 11
+    },
+    {
+      "step": "verified-identity-quota",
+      "status": 429,
+      "revision": 11
+    },
+    {
+      "step": "pod0-permits-header-ignored",
+      "status": 429,
+      "revision": 11
+    },
+    {
+      "step": "pod1-permits-header-ignored",
+      "status": 429,
+      "revision": 11
+    },
+    {
+      "step": "readiness-pod0",
+      "status": 200,
+      "revision": 11
+    },
+    {
+      "step": "readiness-pod1",
+      "status": 200,
+      "revision": 11
+    }
+  ]
+}

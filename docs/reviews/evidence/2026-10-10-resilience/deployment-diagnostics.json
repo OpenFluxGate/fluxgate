@@ -1,0 +1,54 @@
+{
+  "passed": true,
+  "context": "kind-fluxgate-resilience",
+  "application_jar_sha256": "893ce2fdc1f4b75d6ccabdf7f54ec1cd18e694adfef876dfb649aeb337440d40",
+  "old_uids_replaced": true,
+  "published_pointer_exact_preserved": true,
+  "server_shutdown": "graceful",
+  "shutdown_phase_seconds": 20,
+  "native_prestop_seconds": 10,
+  "pod_termination_grace_seconds": 45,
+  "rollout_seconds": 36.65150450007059,
+  "three_exact_backend_controls": true,
+  "pods": [
+    {
+      "uid": "0cfbedeb-5867-4442-97da-40105ef81cba",
+      "node": "fluxgate-resilience-worker2",
+      "application_jar_sha256": "893ce2fdc1f4b75d6ccabdf7f54ec1cd18e694adfef876dfb649aeb337440d40",
+      "image_id": "sha256:727b858b8bbf1640112b6c1d8d329dca8a6ed0569b04ea643747ad78f7801b4c"
+    },
+    {
+      "uid": "188a90b9-2363-4611-af3d-76bfd263f26a",
+      "node": "fluxgate-resilience-worker",
+      "application_jar_sha256": "893ce2fdc1f4b75d6ccabdf7f54ec1cd18e694adfef876dfb649aeb337440d40",
+      "image_id": "sha256:727b858b8bbf1640112b6c1d8d329dca8a6ed0569b04ea643747ad78f7801b4c"
+    }
+  ],
+  "scope": "Healthy deployment identity, exact published-pointer preservation and three backend controls on the local single-Docker-host fixture.",
+  "provenance": {
+    "root_source_at_invocation": "25f32a8",
+    "terminal_exit_code": 0,
+    "terminal_exit_witness": "Root independently witnessed process 21412 exit 0; export independently checked raw identities and file hashes.",
+    "raw": {
+      "path": "/tmp/fluxgate-resilience-diagnostics-deployment.json",
+      "sha256": "e8afe2ded9e4d11277400712b28a365b23f5dc07ed411f0e7b1e159d3e071de9",
+      "size_bytes": 1183
+    },
+    "log": {
+      "path": "/tmp/fluxgate-resilience-diagnostics-deployment.log",
+      "sha256": "972b4b6931930e8b71bbcbc98ff015ccab76ad31f0d94d417cf9571147d1f4ab",
+      "size_bytes": 137
+    },
+    "deployment_helper": {
+      "path": "/tmp/fluxgate-apply-diagnostics.py",
+      "sha256": "3130d6aa230e5456d1667c1518f3cf932df253458d7de65667bfcaa775adef91",
+      "size_bytes": 3679
+    }
+  },
+  "limits": [
+    "Per-phase shutdown timeout is not a total teardown bound.",
+    "This deployment check does not establish uninterrupted rolling availability.",
+    "Fresh load, HA, credential-rotation and network acceptance on this application artifact remain separate gates.",
+    "No enterprise score or production availability claim is assigned."
+  ]
+}

@@ -33,12 +33,32 @@ class FluxgatePropertiesTest {
     assertThat(properties.getRatelimit().isEnabled()).isTrue();
     assertThat(properties.getRatelimit().isFilterEnabled()).isFalse();
     assertThat(properties.getRatelimit().getDefaultRuleSetId()).isNull();
-    assertThat(properties.getRatelimit().getFilterOrder()).isEqualTo(Integer.MIN_VALUE + 100);
-    assertThat(properties.getRatelimit().getIncludePatterns()).containsExactly("/*");
-    assertThat(properties.getRatelimit().getExcludePatterns()).isEmpty();
+    assertThat(properties.getRatelimit().getFilterOrder()).isNull();
+    assertThat(properties.getRatelimit().getIncludePatterns()).isNull();
+    assertThat(properties.getRatelimit().getExcludePatterns()).isNull();
+    assertThat(properties.getRatelimit().isCaseSensitivePatterns()).isTrue();
     assertThat(properties.getRatelimit().getClientIpHeader()).isEqualTo("X-Forwarded-For");
-    assertThat(properties.getRatelimit().isTrustClientIpHeader()).isTrue();
+    assertThat(properties.getRatelimit().isTrustClientIpHeader()).isFalse();
+    assertThat(properties.getRatelimit().getTrustedProxies()).isEmpty();
+    assertThat(properties.getRatelimit().isCollectHeaders()).isFalse();
+    assertThat(properties.getRatelimit().getHeaderAllowlist()).isEmpty();
+    assertThat(properties.getRatelimit().isLogQueryString()).isFalse();
+    assertThat(properties.getRatelimit().getCostHeader()).isNull();
+    assertThat(properties.getRatelimit().getMaxCost()).isEqualTo(1000);
     assertThat(properties.getRatelimit().isIncludeHeaders()).isTrue();
+    assertThat(properties.getRatelimit().getResponse().isIncludeLegacyHeaders()).isTrue();
+    assertThat(properties.getRatelimit().getResponse().isIncludeStandardHeaders()).isTrue();
+    assertThat(properties.getRatelimit().getResponse().getContentType())
+        .isEqualTo("application/problem+json");
+    assertThat(properties.getRatelimit().getResponse().getBodyTemplate()).isNull();
+    assertThat(properties.getRatelimit().getResponse().getUnavailableBodyTemplate()).isNull();
+    assertThat(properties.getMetrics().isEndpointNormalization()).isTrue();
+    assertThat(properties.getMetrics().getMaxEndpointTags()).isEqualTo(1000);
+    assertThat(properties.getRatelimit().getMissingRuleBehavior())
+        .isEqualTo(FluxgateProperties.MissingRuleBehavior.DENY);
+    assertThat(properties.getRatelimit().getFailureBehavior())
+        .isEqualTo(FluxgateProperties.FailureBehavior.DENY);
+    assertThat(properties.getRatelimit().isAllowWhenLimiterFails()).isFalse();
   }
 
   @Test
@@ -126,6 +146,44 @@ class FluxgatePropertiesTest {
   }
 
   @Test
+  void redisProperties_getEffectiveMode_shouldNotMistakeACommaInThePasswordForACluster() {
+    // A plain contains(",") started the client in cluster mode against a standalone server.
+    FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
+    redis.setMode("auto");
+    redis.setUri("redis://:pa,ss@localhost:6379");
+    assertThat(redis.getEffectiveMode()).isEqualTo("standalone");
+    assertThat(redis.isClusterMode()).isFalse();
+  }
+
+  @Test
+  void redisProperties_getEffectiveMode_shouldDetectClusterFromMultipleSchemesDespiteAPassword() {
+    FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
+    redis.setMode("auto");
+    redis.setUri("redis://:pa,ss@node1:6379,redis://:pa,ss@node2:6379");
+    assertThat(redis.getEffectiveMode()).isEqualTo("cluster");
+    assertThat(redis.isClusterMode()).isTrue();
+  }
+
+  @Test
+  void redisProperties_getEffectiveMode_shouldDetectClusterFromSchemelessNodeList() {
+    FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
+    redis.setMode("auto");
+    redis.setUri("node1:6379,node2:6379");
+    assertThat(redis.getEffectiveMode()).isEqualTo("cluster");
+  }
+
+  @Test
+  void redisProperties_getEffectiveMode_shouldTreatABlankUriAsStandalone() {
+    FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
+    redis.setMode("auto");
+    redis.setUri("   ");
+    assertThat(redis.getEffectiveMode()).isEqualTo("standalone");
+
+    redis.setUri(null);
+    assertThat(redis.getEffectiveMode()).isEqualTo("standalone");
+  }
+
+  @Test
   void redisProperties_getEffectiveMode_shouldReturnStandaloneWhenUriIsNull() {
     FluxgateProperties.RedisProperties redis = new FluxgateProperties.RedisProperties();
     redis.setMode("auto");
@@ -148,6 +206,13 @@ class FluxgatePropertiesTest {
     rateLimit.setClientIpHeader("X-Real-IP");
     rateLimit.setTrustClientIpHeader(false);
     rateLimit.setIncludeHeaders(false);
+    rateLimit.setCaseSensitivePatterns(false);
+    rateLimit.setTrustedProxies(java.util.List.of("10.0.0.0/8"));
+    rateLimit.setCollectHeaders(true);
+    rateLimit.setHeaderAllowlist(java.util.List.of("X-Tenant-Id"));
+    rateLimit.setLogQueryString(true);
+    rateLimit.setCostHeader("X-RateLimit-Cost");
+    rateLimit.setMaxCost(25);
 
     assertThat(rateLimit.isEnabled()).isFalse();
     assertThat(rateLimit.isFilterEnabled()).isTrue();
@@ -158,6 +223,13 @@ class FluxgatePropertiesTest {
     assertThat(rateLimit.getClientIpHeader()).isEqualTo("X-Real-IP");
     assertThat(rateLimit.isTrustClientIpHeader()).isFalse();
     assertThat(rateLimit.isIncludeHeaders()).isFalse();
+    assertThat(rateLimit.isCaseSensitivePatterns()).isFalse();
+    assertThat(rateLimit.getTrustedProxies()).containsExactly("10.0.0.0/8");
+    assertThat(rateLimit.isCollectHeaders()).isTrue();
+    assertThat(rateLimit.getHeaderAllowlist()).containsExactly("X-Tenant-Id");
+    assertThat(rateLimit.isLogQueryString()).isTrue();
+    assertThat(rateLimit.getCostHeader()).isEqualTo("X-RateLimit-Cost");
+    assertThat(rateLimit.getMaxCost()).isEqualTo(25);
   }
 
   @Test
@@ -169,16 +241,16 @@ class FluxgatePropertiesTest {
     // Default values
     assertThat(waitForRefill.isEnabled()).isFalse();
     assertThat(waitForRefill.getMaxWaitTimeMs()).isEqualTo(5000);
-    assertThat(waitForRefill.getMaxConcurrentWaits()).isEqualTo(100);
+    assertThat(waitForRefill.getMaxConcurrentWaits()).isEqualTo(50);
 
     // Set custom values
     waitForRefill.setEnabled(true);
     waitForRefill.setMaxWaitTimeMs(10000);
-    waitForRefill.setMaxConcurrentWaits(50);
+    waitForRefill.setMaxConcurrentWaits(20);
 
     assertThat(waitForRefill.isEnabled()).isTrue();
     assertThat(waitForRefill.getMaxWaitTimeMs()).isEqualTo(10000);
-    assertThat(waitForRefill.getMaxConcurrentWaits()).isEqualTo(50);
+    assertThat(waitForRefill.getMaxConcurrentWaits()).isEqualTo(20);
 
     // Set via parent
     FluxgateProperties.WaitForRefillProperties newWaitForRefill =
@@ -193,10 +265,31 @@ class FluxgatePropertiesTest {
     FluxgateProperties properties = new FluxgateProperties();
     FluxgateProperties.RateLimitProperties rateLimit = properties.getRatelimit();
 
-    // Default should be ALLOW
+    // Default should be DENY
     assertThat(rateLimit.getMissingRuleBehavior())
-        .isEqualTo(FluxgateProperties.MissingRuleBehavior.ALLOW);
-    assertThat(rateLimit.isDenyWhenRuleMissing()).isFalse();
+        .isEqualTo(FluxgateProperties.MissingRuleBehavior.DENY);
+    assertThat(rateLimit.isDenyWhenRuleMissing()).isTrue();
+  }
+
+  @Test
+  void shouldSetFailureBehaviorToAllow() {
+    FluxgateProperties properties = new FluxgateProperties();
+    FluxgateProperties.RateLimitProperties rateLimit = properties.getRatelimit();
+
+    rateLimit.setFailureBehavior(FluxgateProperties.FailureBehavior.ALLOW);
+
+    assertThat(rateLimit.getFailureBehavior()).isEqualTo(FluxgateProperties.FailureBehavior.ALLOW);
+    assertThat(rateLimit.isAllowWhenLimiterFails()).isTrue();
+  }
+
+  @Test
+  void failureBehaviorEnumShouldHaveCorrectValues() {
+    FluxgateProperties.FailureBehavior[] values = FluxgateProperties.FailureBehavior.values();
+
+    assertThat(values).hasSize(2);
+    assertThat(values)
+        .contains(
+            FluxgateProperties.FailureBehavior.ALLOW, FluxgateProperties.FailureBehavior.DENY);
   }
 
   @Test
@@ -403,5 +496,50 @@ class FluxgatePropertiesTest {
       assertThat(properties.getRatelimit().getExcludePatterns())
           .containsExactly("/health", "/metrics");
     }
+  }
+
+  @Test
+  void shouldDefaultTheIdentitySourceToTheClasspathDerivedValue() {
+    // C-4 (0.4): unset means PRINCIPAL whatever the classpath; header identity is opt-in.
+    // The property itself stays null so the auto-configuration can tell "unset" from "explicit".
+    FluxgateProperties.IdentityProperties identity =
+        new FluxgateProperties().getRatelimit().getIdentity();
+
+    assertThat(identity.getSource()).isNull();
+    assertThat(identity.getUserIdHeader()).isEqualTo("X-User-Id");
+    assertThat(identity.getApiKeyHeader()).isEqualTo("X-API-Key");
+  }
+
+  @Test
+  void shouldNotExposeEndpointDetailsInHealthByDefault() {
+    // N-6b: host:port and failure messages are reconnaissance, so they are opt-in.
+    assertThat(new FluxgateProperties().getActuator().getHealth().isIncludeEndpointDetails())
+        .isFalse();
+  }
+
+  @Test
+  void shouldBindTheIdentityBlock() {
+    FluxgateProperties properties = new FluxgateProperties();
+    FluxgateProperties.IdentityProperties identity = properties.getRatelimit().getIdentity();
+
+    identity.setSource(org.fluxgate.spring.filter.IdentitySource.PRINCIPAL);
+    identity.setUserIdHeader("X-Tenant-User");
+    identity.setApiKeyHeader("X-Tenant-Key");
+
+    assertThat(properties.getRatelimit().getIdentity().getSource())
+        .isEqualTo(org.fluxgate.spring.filter.IdentitySource.PRINCIPAL);
+    assertThat(properties.getRatelimit().getIdentity().getUserIdHeader())
+        .isEqualTo("X-Tenant-User");
+    assertThat(properties.getRatelimit().getIdentity().getApiKeyHeader()).isEqualTo("X-Tenant-Key");
+  }
+
+  @Test
+  void pubSubReplayWindowDefaultsToTheStrategyDefaultOfSixtySeconds() {
+    FluxgateProperties properties = new FluxgateProperties();
+
+    assertThat(properties.getReload().getPubsub().getMaxMessageAge())
+        .isEqualTo(java.time.Duration.ofSeconds(60))
+        .isEqualTo(
+            org.fluxgate.spring.reload.strategy.RedisPubSubReloadStrategy.DEFAULT_MAX_MESSAGE_AGE);
   }
 }

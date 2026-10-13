@@ -18,7 +18,10 @@ import java.time.Duration;
  */
 public class FluxgateTimeoutException extends FluxgateException {
 
+  /** The timeout that was exceeded. */
   private final Duration timeout;
+
+  /** Name of the operation that timed out. */
   private final String operation;
 
   /**

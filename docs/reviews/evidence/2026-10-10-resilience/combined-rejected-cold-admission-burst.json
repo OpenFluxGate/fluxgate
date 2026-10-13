@@ -1,0 +1,23 @@
+{
+  "accepted": false,
+  "fault_started": false,
+  "application_jar_sha256": "b03409f989d8a6b228689bf8daf8880d3b68a1e95b2166b7ae46625e32485a40",
+  "reason": "500-request unpaced cold warmup burst exceeds32-perPod decision admission bound; strictwarmuprejects134503",
+  "warmup": {
+    "completed_requests": 500,
+    "all_statuses": {
+      "200": 366,
+      "503": 134
+    },
+    "latency_ms": {
+      "p50": 1924.6782099362463,
+      "p95": 3448.309461120516,
+      "p99": 3732.587752165273,
+      "max": 3863.062084885314
+    },
+    "omitted_schedules": 0
+  },
+  "publisher_cleanup_absence_verified": true,
+  "raw_sha256": "7f2c7be35fd294363a50b978dbf3875f639a315c5ffb83f3a5fe87ff9d035ebd",
+  "warmup_pacing_change_scope": "50at10RPS then500at100RPS; bothmustall200; originalbaseline/fault/final60/quota burstboundsunchanged; no coldstartupSLOclaim"
+}

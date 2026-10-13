@@ -23,6 +23,65 @@ import org.junit.jupiter.api.Test;
 class RateLimitEngineTest {
 
   @Test
+  void snapshotExecutesExactInstanceWithoutReadingProvider() {
+    RateLimitRuleSet snapshot =
+        RateLimitRuleSet.builder("snapshot")
+            .keyResolver((context, rule) -> RateLimitKey.of("identity"))
+            .rules(
+                java.util.List.of(
+                    RateLimitRule.builder("rule")
+                        .addBand(RateLimitBand.builder(java.time.Duration.ofMinutes(1), 10).build())
+                        .build()))
+            .build();
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(
+                id -> {
+                  throw new AssertionError("snapshot must not read provider");
+                })
+            .rateLimiter(
+                (context, policy, permits) -> {
+                  assertThat(policy).isSameAs(snapshot);
+                  assertThat(permits).isEqualTo(2);
+                  return RateLimitResult.allowedWithoutRule();
+                })
+            .build();
+    assertThat(engine.checkUsingSnapshot(snapshot, RequestContext.builder().build(), 2).isAllowed())
+        .isTrue();
+  }
+
+  @Test
+  void snapshotRetainsSingleEncodingForDeniedSpecialCharacterIdentity() {
+    RateLimitKey identity = RateLimitKey.of("user:", "a+1");
+    RateLimitRuleSet snapshot =
+        RateLimitRuleSet.builder("acl")
+            .keyResolver((context, rule) -> identity)
+            .rules(
+                java.util.List.of(
+                    RateLimitRule.builder("rule")
+                        .addBand(RateLimitBand.builder(java.time.Duration.ofMinutes(1), 10).build())
+                        .build()))
+            .accessControl(
+                org.fluxgate.core.config.AccessControl.builder()
+                    .deniedKeys(java.util.Set.of(identity.value()))
+                    .build())
+            .build();
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(id -> Optional.empty())
+            .rateLimiter(
+                (context, policy, permits) -> {
+                  throw new AssertionError("ACL must not consume");
+                })
+            .build();
+    RateLimitResult result =
+        engine.checkUsingSnapshot(snapshot, RequestContext.builder().build(), 1);
+    assertThat(result.getDecisionReason()).isEqualTo(RateLimitResult.DecisionReason.ACCESS_DENIED);
+    assertThat(result.getKey().value()).isEqualTo("denied:" + identity.value());
+    assertThat(identity).isNotEqualTo(RateLimitKey.of("user:", "a_1"));
+  }
+
+  @Test
   void should_delegate_to_rate_limiter_and_return_result() {
     // given
     String ruleSetId = "auth-api-default";
@@ -110,6 +169,85 @@ class RateLimitEngineTest {
     assertThat(limiterCalled.get()).isFalse();
     assertThat(result.isAllowed()).isTrue();
     assertThat(result.getMatchedRule()).isNull();
+  }
+
+  @Test
+  void should_deny_when_rule_set_not_found_and_strategy_deny() {
+    // given
+    RateLimitRuleSetProvider emptyProvider = id -> Optional.empty();
+
+    AtomicBoolean limiterCalled = new AtomicBoolean(false);
+    RateLimiter dummyLimiter =
+        (context, ruleSet, permits) -> {
+          limiterCalled.set(true);
+          throw new IllegalStateException("Should not be called in DENY mode");
+        };
+
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(emptyProvider)
+            .rateLimiter(dummyLimiter)
+            .onMissingRuleSetStrategy(OnMissingRuleSetStrategy.DENY)
+            .build();
+
+    RequestContext context =
+        RequestContext.builder().endpoint("/api/test").method("GET").clientIp("127.0.0.1").build();
+
+    // when
+    RateLimitResult result = engine.check("unknown-rule-set", context);
+
+    // then
+    assertThat(limiterCalled.get()).isFalse();
+    assertThat(result.isAllowed()).isFalse();
+    assertThat(result.getMatchedRule()).isNull();
+    assertThat(result.hasRule()).isFalse();
+    assertThat(result.getNanosToWaitForRefill()).isZero();
+    assertThat(result.getRemainingTokens()).isZero();
+    assertThat(result.getKey().value()).isEqualTo("missing-rule-set:unknown-rule-set");
+  }
+
+  @Test
+  void deny_synthetic_key_keeps_its_prefix_when_the_rule_set_id_is_rewritten() {
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(id -> Optional.empty())
+            .rateLimiter(
+                (context, ruleSet, permits) -> {
+                  throw new IllegalStateException("Should not be called in DENY mode");
+                })
+            .onMissingRuleSetStrategy(OnMissingRuleSetStrategy.DENY)
+            .build();
+
+    RateLimitResult result =
+        engine.check("orders v2", RequestContext.builder().clientIp("127.0.0.1").build());
+
+    assertThat(result.isAllowed()).isFalse();
+    assertThat(result.getKey().value())
+        .isEqualTo(RateLimitKey.of("missing-rule-set:", "orders v2").value())
+        .matches("missing-rule-set:h:orders_v2:[0-9a-f]{16}");
+  }
+
+  @Test
+  void should_throw_when_rate_limiter_returns_null() {
+    // given
+    String ruleSetId = "auth-api-default";
+    StubRuleSetProvider ruleSetProvider = new StubRuleSetProvider(ruleSetId);
+    RateLimiter nullLimiter = (context, ruleSet, permits) -> null;
+
+    RateLimitEngine engine =
+        RateLimitEngine.builder()
+            .ruleSetProvider(ruleSetProvider)
+            .rateLimiter(nullLimiter)
+            .onMissingRuleSetStrategy(OnMissingRuleSetStrategy.THROW)
+            .build();
+
+    RequestContext context =
+        RequestContext.builder().endpoint("/api/test").method("GET").clientIp("127.0.0.1").build();
+
+    // expect - check() never hands a null result to callers
+    assertThatThrownBy(() -> engine.check(ruleSetId, context))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("returned null");
   }
 
   // ---- Test stubs ----

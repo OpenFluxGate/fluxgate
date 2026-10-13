@@ -1,6 +1,14 @@
 package org.fluxgate.redis.script;
 
-/** Container for Lua script content and SHA hashes. */
+/**
+ * Container for Lua script content and SHA hashes.
+ *
+ * @deprecated Use {@link LuaScriptRegistry} instead. The static slots here are process-wide, so two
+ *     {@code RedisTokenBucketStore} instances pointing at different Redis deployments overwrite
+ *     each other's SHA. Nothing inside FluxGate reads this class any more; it is kept only so that
+ *     existing callers keep compiling and will be removed in a future release.
+ */
+@Deprecated(since = "0.4.0", forRemoval = true)
 public final class LuaScripts {
 
   /**

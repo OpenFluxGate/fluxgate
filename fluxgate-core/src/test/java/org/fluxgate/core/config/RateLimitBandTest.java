@@ -3,6 +3,7 @@ package org.fluxgate.core.config;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.Duration;
+import org.fluxgate.core.exception.InvalidRuleConfigException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -230,6 +231,178 @@ class RateLimitBandTest {
 
       // then
       assertTrue(result.contains("label='null'"));
+    }
+  }
+
+  // ==================== Window Validation Tests ====================
+
+  @Nested
+  @DisplayName("Window Validation Tests")
+  class WindowValidationTests {
+
+    @Test
+    @DisplayName("should throw InvalidRuleConfigException when window is zero")
+    void build_shouldThrowWhenWindowIsZero() {
+      // given / when / then
+      InvalidRuleConfigException exception =
+          assertThrows(
+              InvalidRuleConfigException.class,
+              () -> RateLimitBand.builder(Duration.ZERO, 100).build());
+      assertTrue(exception.getMessage().contains("window must be positive"));
+    }
+
+    @Test
+    @DisplayName("should throw InvalidRuleConfigException when window is negative")
+    void build_shouldThrowWhenWindowIsNegative() {
+      // given / when / then
+      assertThrows(
+          InvalidRuleConfigException.class,
+          () -> RateLimitBand.builder(Duration.ofMinutes(1).negated(), 100).build());
+    }
+  }
+
+  // ==================== getKeyLabel Tests ====================
+
+  @Nested
+  @DisplayName("getKeyLabel Tests")
+  class GetKeyLabelTests {
+
+    @Test
+    @DisplayName("getKeyLabel should return the label when it is set")
+    void getKeyLabel_shouldReturnLabel() {
+      // given
+      RateLimitBand band = RateLimitBand.builder(Duration.ofMinutes(1), 100).label("burst").build();
+
+      // when / then
+      assertEquals("burst", band.getKeyLabel());
+    }
+
+    @Test
+    @DisplayName("getKeyLabel should derive a label from capacity and window when unlabelled")
+    void getKeyLabel_shouldDeriveFromConfiguration() {
+      // given
+      RateLimitBand band = RateLimitBand.builder(Duration.ofMinutes(1), 100).build();
+
+      // when / then
+      assertEquals("100-per-60s", band.getKeyLabel());
+    }
+
+    @Test
+    @DisplayName("getKeyLabel should derive a label when the label is blank")
+    void getKeyLabel_shouldDeriveFromConfigurationWhenLabelIsBlank() {
+      // given
+      RateLimitBand band = RateLimitBand.builder(Duration.ofHours(1), 1000).label("  ").build();
+
+      // when / then
+      assertEquals("1000-per-3600s", band.getKeyLabel());
+    }
+
+    @Test
+    @DisplayName("getKeyLabel should differ for two unlabelled bands of different configuration")
+    void getKeyLabel_shouldDifferForDifferentConfiguration() {
+      // given
+      RateLimitBand shortBand = RateLimitBand.builder(Duration.ofSeconds(1), 10).build();
+      RateLimitBand longBand = RateLimitBand.builder(Duration.ofMinutes(1), 100).build();
+
+      // when / then
+      assertNotEquals(shortBand.getKeyLabel(), longBand.getKeyLabel());
+    }
+
+    @Test
+    @DisplayName("getKeyLabel should render a sub-second window in milliseconds")
+    void getKeyLabel_shouldRenderSubSecondWindowInMillis() {
+      // given - truncating to whole seconds rendered both of these as "10-per-0s"
+      RateLimitBand half = RateLimitBand.builder(Duration.ofMillis(500), 10).build();
+      RateLimitBand fifth = RateLimitBand.builder(Duration.ofMillis(200), 10).build();
+
+      // when / then
+      assertEquals("10-per-500ms", half.getKeyLabel());
+      assertEquals("10-per-200ms", fifth.getKeyLabel());
+      assertNotEquals(half.getKeyLabel(), fifth.getKeyLabel());
+    }
+
+    @Test
+    @DisplayName("getKeyLabel should keep a fractional-second window apart from a whole one")
+    void getKeyLabel_shouldRenderFractionalSecondWindowInMillis() {
+      // given - both truncated to "10-per-1s" before
+      RateLimitBand oneSecond = RateLimitBand.builder(Duration.ofSeconds(1), 10).build();
+      RateLimitBand oneAndAHalf = RateLimitBand.builder(Duration.ofMillis(1500), 10).build();
+
+      // when / then
+      assertEquals("10-per-1s", oneSecond.getKeyLabel());
+      assertEquals("10-per-1500ms", oneAndAHalf.getKeyLabel());
+      assertNotEquals(oneSecond.getKeyLabel(), oneAndAHalf.getKeyLabel());
+    }
+
+    @Test
+    @DisplayName("getKeyLabel should fall back to nanoseconds below millisecond precision")
+    void getKeyLabel_shouldRenderSubMillisWindowInNanos() {
+      // given - 1ms and 1.5ms would both render as "10-per-1ms"
+      RateLimitBand oneMilli = RateLimitBand.builder(Duration.ofMillis(1), 10).build();
+      RateLimitBand oneAndAHalfMilli =
+          RateLimitBand.builder(Duration.ofNanos(1_500_000), 10).build();
+
+      // when / then
+      assertEquals("10-per-1ms", oneMilli.getKeyLabel());
+      assertEquals("10-per-1500000ns", oneAndAHalfMilli.getKeyLabel());
+      assertNotEquals(oneMilli.getKeyLabel(), oneAndAHalfMilli.getKeyLabel());
+    }
+
+    @Test
+    @DisplayName("getKeyLabel should keep the second form for every whole-second window")
+    void getKeyLabel_shouldKeepTheSecondsFormForWholeSeconds() {
+      // given - the storage key format must not change for the windows that already worked
+      assertEquals(
+          "3-per-1s", RateLimitBand.builder(Duration.ofSeconds(1), 3).build().getKeyLabel());
+      assertEquals(
+          "100-per-60s", RateLimitBand.builder(Duration.ofSeconds(60), 100).build().getKeyLabel());
+      assertEquals(
+          "1000-per-86400s", RateLimitBand.builder(Duration.ofDays(1), 1000).build().getKeyLabel());
+    }
+  }
+
+  // ==================== Equality Tests ====================
+
+  @Nested
+  @DisplayName("Equality Tests")
+  class EqualityTests {
+
+    @Test
+    @DisplayName("independently built identical bands should be equal")
+    void equals_shouldBeValueBased() {
+      // given
+      RateLimitBand first =
+          RateLimitBand.builder(Duration.ofMinutes(1), 100).label("per-minute").build();
+      RateLimitBand second =
+          RateLimitBand.builder(Duration.ofMinutes(1), 100).label("per-minute").build();
+
+      // when / then
+      assertEquals(first, second);
+      assertEquals(first.hashCode(), second.hashCode());
+    }
+
+    @Test
+    @DisplayName("bands differing in window, capacity or label should not be equal")
+    void equals_shouldDistinguishDifferentFields() {
+      // given
+      RateLimitBand band = RateLimitBand.builder(Duration.ofMinutes(1), 100).label("a").build();
+
+      // when / then
+      assertNotEquals(band, RateLimitBand.builder(Duration.ofMinutes(2), 100).label("a").build());
+      assertNotEquals(band, RateLimitBand.builder(Duration.ofMinutes(1), 200).label("a").build());
+      assertNotEquals(band, RateLimitBand.builder(Duration.ofMinutes(1), 100).label("b").build());
+      assertNotEquals(band, RateLimitBand.builder(Duration.ofMinutes(1), 100).build());
+    }
+
+    @Test
+    @DisplayName("equals should return false for null and other types")
+    void equals_shouldReturnFalseForNullAndOtherTypes() {
+      // given
+      RateLimitBand band = RateLimitBand.builder(Duration.ofMinutes(1), 100).build();
+
+      // when / then
+      assertNotEquals(null, band);
+      assertNotEquals(band, "not-a-band");
     }
   }
 }

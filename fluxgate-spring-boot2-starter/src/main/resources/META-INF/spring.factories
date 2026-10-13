@@ -1,0 +1,25 @@
+# Legacy auto-configuration registration, kept for tooling and backward compatibility.
+#
+# This starter requires Spring Boot 2.7+ - it uses @AutoConfiguration, which is a 2.7 API - so the
+# authoritative registration is META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports.
+# This file is kept because spring.factories is what older tooling, IDE inspections and
+# documentation generators still read, and because Boot 2.7+ deduplicates entries that appear in
+# both files, so keeping it costs nothing. It does NOT make the starter work on Boot 2.0 - 2.6:
+# @AutoConfiguration does not exist there.
+#
+# Both files must list the same nine classes - AutoConfigurationRegistrationTest fails the build
+# otherwise.
+org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
+org.fluxgate.spring.autoconfigure.FluxgateMongoAutoConfiguration,\
+org.fluxgate.spring.autoconfigure.FluxgateRedisAutoConfiguration,\
+org.fluxgate.spring.autoconfigure.FluxgateRateLimiterAutoConfiguration,\
+org.fluxgate.spring.autoconfigure.FluxgateReloadAutoConfiguration,\
+org.fluxgate.spring.autoconfigure.FluxgateMetricsAutoConfiguration,\
+org.fluxgate.spring.autoconfigure.FluxgateMetricsCompositeAutoConfiguration,\
+org.fluxgate.spring.autoconfigure.FluxgateActuatorAutoConfiguration,\
+org.fluxgate.spring.autoconfigure.FluxgateResilienceAutoConfiguration,\
+org.fluxgate.spring.autoconfigure.FluxgateAopExceptionHandlerAutoConfiguration
+
+# Environment post-processors.
+org.springframework.boot.env.EnvironmentPostProcessor=\
+org.fluxgate.spring.actuator.FluxgateHealthStatusEnvironmentPostProcessor

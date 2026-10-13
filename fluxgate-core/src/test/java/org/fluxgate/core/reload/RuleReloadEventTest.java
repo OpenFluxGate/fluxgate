@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -72,5 +73,58 @@ class RuleReloadEventTest {
 
     assertThat(str).contains("ALL");
     assertThat(str).contains("STARTUP");
+  }
+
+  @Test
+  void shouldDefensivelyCopyMetadata() {
+    Map<String, Object> metadata = new HashMap<>();
+    metadata.put("key", "value");
+
+    RuleReloadEvent event =
+        RuleReloadEvent.builder().source(ReloadSource.MANUAL).metadata(metadata).build();
+
+    metadata.put("injected", "after-build");
+
+    assertThat(event.getMetadata()).hasSize(1).containsEntry("key", "value");
+  }
+
+  @Test
+  void shouldRejectMetadataModification() {
+    RuleReloadEvent event =
+        RuleReloadEvent.builder()
+            .source(ReloadSource.MANUAL)
+            .metadata(Map.of("key", "value"))
+            .build();
+
+    assertThatThrownBy(() -> event.getMetadata().put("other", "value"))
+        .isInstanceOf(UnsupportedOperationException.class);
+  }
+
+  @Test
+  void shouldNotBeFullReloadWhenRuleSetIdIsSet() {
+    RuleReloadEvent event = RuleReloadEvent.forRuleSet("my-rule-set", ReloadSource.PUBSUB);
+
+    assertThat(event.isFullReload()).isFalse();
+  }
+
+  @Test
+  void shouldRequireExplicitFlagForFullReloadOfNamedRuleSet() {
+    RuleReloadEvent event =
+        RuleReloadEvent.builder()
+            .ruleSetId("my-rule-set")
+            .source(ReloadSource.PUBSUB)
+            .fullReload(true)
+            .build();
+
+    assertThat(event.isFullReload()).isTrue();
+    assertThat(event.getRuleSetId()).isEqualTo("my-rule-set");
+  }
+
+  @Test
+  void fullReloadFactoryShouldSetTheFlag() {
+    RuleReloadEvent event = RuleReloadEvent.fullReload(ReloadSource.PUBSUB);
+
+    assertThat(event.isFullReload()).isTrue();
+    assertThat(event.getRuleSetId()).isNull();
   }
 }

@@ -1,0 +1,132 @@
+package org.fluxgate.envoy;
+
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+/**
+ * Optional plaintext management listener for health and anonymous aggregates only, not Prometheus.
+ * Restrict access with the management NetworkPolicy; authorization and identity routes are
+ * excluded.
+ */
+@Component
+public final class GatewayHealthServer implements InitializingBean, DisposableBean {
+  private final EnvoyProperties properties;
+  private final AuthzDecisionService service;
+  private final java.util.function.Supplier<MongoTelemetryDispatcher> telemetry;
+  private HttpServer server;
+  private ThreadPoolExecutor executor;
+
+  public GatewayHealthServer(EnvoyProperties properties, AuthzDecisionService service) {
+    this(properties, service, () -> null);
+  }
+
+  @Autowired
+  public GatewayHealthServer(
+      EnvoyProperties properties,
+      AuthzDecisionService service,
+      ObjectProvider<MongoTelemetryDispatcher> telemetry) {
+    this(properties, service, telemetry::getIfAvailable);
+  }
+
+  private GatewayHealthServer(
+      EnvoyProperties properties,
+      AuthzDecisionService service,
+      java.util.function.Supplier<MongoTelemetryDispatcher> telemetry) {
+    this.telemetry = telemetry;
+    this.properties = properties;
+    this.service = service;
+  }
+
+  @Override
+  public void afterPropertiesSet() throws IOException {
+    if (properties.healthPort() != 0) {
+      startServer(properties.healthPort());
+    }
+  }
+
+  synchronized int startServer(int port) throws IOException {
+    if (server != null) {
+      throw new IllegalStateException("Health listener already running");
+    }
+    server = HttpServer.create(new InetSocketAddress(port), 16);
+    executor =
+        new ThreadPoolExecutor(
+            2,
+            2,
+            0,
+            TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(16),
+            task -> {
+              Thread thread = new Thread(task, "fluxgate-health");
+              thread.setDaemon(true);
+              return thread;
+            },
+            new ThreadPoolExecutor.AbortPolicy());
+    server.setExecutor(executor);
+    server.createContext("/", this::handle);
+    server.start();
+    return server.getAddress().getPort();
+  }
+
+  private void handle(HttpExchange exchange) throws IOException {
+    try (exchange) {
+      int status;
+      byte[] body = null;
+      if (!"GET".equals(exchange.getRequestMethod())) {
+        status = 405;
+      } else if ("/diagnostics".equals(exchange.getRequestURI().getPath())) {
+        status = 200;
+        body = service.diagnostics().json().getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+      } else if ("/telemetry".equals(exchange.getRequestURI().getPath())) {
+        status = 200;
+        MongoTelemetryDispatcher writer = telemetry.get();
+        body =
+            (writer == null ? "{\"enabled\":0}" : writer.diagnosticsJson())
+                .getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json");
+      } else if ("/healthz".equals(exchange.getRequestURI().getPath())) {
+        status = 200;
+      } else if ("/readyz".equals(exchange.getRequestURI().getPath())) {
+        try {
+          status =
+              properties.routes().stream().allMatch(route -> service.isReady(route.ruleSetId()))
+                  ? 200
+                  : 503;
+        } catch (RuntimeException e) {
+          status = 503;
+        }
+      } else {
+        status = 404;
+      }
+      exchange.getResponseHeaders().add("Cache-Control", "no-store");
+      exchange.sendResponseHeaders(status, body == null ? -1 : body.length);
+      if (body != null) {
+        exchange.getResponseBody().write(body);
+      }
+    }
+  }
+
+  @Override
+  public synchronized void destroy() {
+    if (server != null) {
+      server.stop(0);
+      server = null;
+    }
+    if (executor != null) {
+      executor.shutdownNow();
+      executor = null;
+    }
+  }
+}

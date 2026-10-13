@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "scenario": "sampler-causal-diagnostic",
+  "diagnostic_only": true,
+  "credential_acceptance": false,
+  "availability_passed": false,
+  "source_commit": "4cbbd0ca4dcf669a8ee87f0b608846025885ef7b",
+  "source_sha256": "b99173d51885d4cdc5631826e11465f8934877376806a33478ccdf97b186ce9a",
+  "summary": {
+    "duration_seconds": 180.4898441650439,
+    "scheduled": 1804,
+    "samples": 1797,
+    "omitted_schedules": 7,
+    "status_counts": {
+      "200": 1797
+    },
+    "all_executed_samples_exact_backend": true,
+    "all_omissions_lateness": true,
+    "sequence_accounting_verified": true,
+    "pending": 0,
+    "worker_failures": 0,
+    "drain_complete": true,
+    "cleanup": {
+      "pod_absent": true,
+      "networkpolicy_absent": true,
+      "ownership_checked": true
+    },
+    "cpu_request_millicores": 25,
+    "cpu_limit_millicores": 250,
+    "cpu_delta": {
+      "usage_usec": 5619199,
+      "user_usec": 2725805,
+      "system_usec": 2893394,
+      "nr_periods": 1805,
+      "nr_throttled": 6,
+      "throttled_usec": 151746
+    }
+  },
+  "omission_cases": [
+    {
+      "arrival": {
+        "sequence": 792,
+        "deadline_elapsed_ms": 79199.99999995343,
+        "sleep_begin_elapsed_ms": 79106.67032701895,
+        "sleep_return_elapsed_ms": 79635.57570218109,
+        "sleep_overrun_ms": 435.5757022276521,
+        "lock_acquired_elapsed_ms": 79635.6478270609,
+        "condition_wait_ms": 0.0014998950064182281,
+        "wake_to_lock_ms": 0.07212487980723381,
+        "lag_judgment_elapsed_ms": 79641.9405771885,
+        "lag_ms": 441.9404100626707,
+        "missed": 4
+      },
+      "neighbor_progress": [
+        {
+          "sequence": 791,
+          "elapsed_ms": 79002.18228506856,
+          "end_elapsed_ms": 79016.68436801992,
+          "sample_count": 790,
+          "bytes": 231913,
+          "snapshot_ms": 0.759667,
+          "json_ms": 9.837958,
+          "write_ms": 3.904458,
+          "full_ms": 14.502083
+        }
+      ],
+      "cpu_delta_between_nearby_samples": {
+        "usage_usec": 106646,
+        "user_usec": 57422,
+        "system_usec": 49224,
+        "nr_periods": 7,
+        "nr_throttled": 1,
+        "throttled_usec": 8551
+      },
+      "cpu_sample_window_elapsed_ms": [
+        79000.7465351373,
+        79641.9405771885
+      ],
+      "mechanism": "Sleep returned after the arrival deadline, followed by negligible Condition wait.",
+      "causal_scope": "Observed late wake accounts for six omissions across these two events; environmental cause remains unproven."
+    },
+    {
+      "arrival": {
+        "sequence": 1004,
+        "deadline_elapsed_ms": 100399.99999990687,
+        "sleep_begin_elapsed_ms": 100300.77450419776,
+        "sleep_return_elapsed_ms": 100604.42946199328,
+        "sleep_overrun_ms": 204.42946208640933,
+        "lock_acquired_elapsed_ms": 100604.91333715618,
+        "condition_wait_ms": 0.0019581057131290436,
+        "wake_to_lock_ms": 0.48387516289949417,
+        "lag_judgment_elapsed_ms": 100604.936379008,
+        "lag_ms": 204.93612927384675,
+        "missed": 2
+      },
+      "neighbor_progress": [],
+      "cpu_delta_between_nearby_samples": {
+        "usage_usec": 67609,
+        "user_usec": 33627,
+        "system_usec": 33981,
+        "nr_periods": 6,
+        "nr_throttled": 1,
+        "throttled_usec": 30669
+      },
+      "cpu_sample_window_elapsed_ms": [
+        100000.60596200638,
+        100604.936379008
+      ],
+      "mechanism": "Sleep returned after the arrival deadline, followed by negligible Condition wait.",
+      "causal_scope": "Observed late wake accounts for six omissions across these two events; environmental cause remains unproven."
+    },
+    {
+      "arrival": {
+        "sequence": 1401,
+        "deadline_elapsed_ms": 140100.00000009313,
+        "sleep_begin_elapsed_ms": 140236.43685504794,
+        "sleep_return_elapsed_ms": 140239.51068799943,
+        "sleep_overrun_ms": 139.51068790629506,
+        "lock_acquired_elapsed_ms": 140239.70818822272,
+        "condition_wait_ms": 0.006792135536670685,
+        "wake_to_lock_ms": 0.1975002232939005,
+        "lag_judgment_elapsed_ms": 140239.77885511704,
+        "lag_ms": 139.77789599448442,
+        "missed": 1
+      },
+      "neighbor_progress": [
+        {
+          "sequence": 1401,
+          "elapsed_ms": 140000.67852111533,
+          "end_elapsed_ms": 140235.8138130512,
+          "sample_count": 1393,
+          "bytes": 409867,
+          "snapshot_ms": 4.718375,
+          "json_ms": 129.441,
+          "write_ms": 100.975917,
+          "full_ms": 235.135292
+        }
+      ],
+      "cpu_delta_between_nearby_samples": {
+        "usage_usec": 75110,
+        "user_usec": 33228,
+        "system_usec": 41883,
+        "nr_periods": 3,
+        "nr_throttled": 1,
+        "throttled_usec": 31510
+      },
+      "cpu_sample_window_elapsed_ms": [
+        140000.3531461116,
+        140239.77885511704
+      ],
+      "mechanism": "Synchronous progress for the preceding arrival kept the scheduler in serialization/write until after the next arrival deadline.",
+      "causal_scope": "Observed scheduler blocking interval accounts for one omission; wall duration includes computation, I/O and possible descheduling."
+    }
+  ],
+  "whole_progress": {
+    "count": 182,
+    "maxima_ms": {
+      "snapshot_ms": 4.718375,
+      "json_ms": 129.441,
+      "write_ms": 100.975917,
+      "full_ms": 235.135292
+    },
+    "max_sort_ms": 4.69625,
+    "max_progress_bytes": 528178,
+    "longest_progress": {
+      "sequence": 1401,
+      "elapsed_ms": 140000.67852111533,
+      "end_elapsed_ms": 140235.8138130512,
+      "sample_count": 1393,
+      "bytes": 409867,
+      "snapshot_ms": 4.718375,
+      "json_ms": 129.441,
+      "write_ms": 100.975917,
+      "full_ms": 235.135292
+    }
+  },
+  "observer_overhead": {
+    "max_cpu_stat_read_ms": 5.062459,
+    "note": "Added CPU-stat reads and timing/list bookkeeping may alter scheduling. wake_to_lock includes observer work; Condition wait is recorded separately."
+  },
+  "host_numeric_observation": {
+    "sample_count": 194,
+    "page_bytes": 16384,
+    "host_observation_seconds": 194.757766916,
+    "counter_deltas": {
+      "Compressions": 4749345,
+      "Decompressions": 4701623,
+      "Swapins": 1183,
+      "Swapouts": 0
+    },
+    "maximum_adjacent_counter_increments": {
+      "Compressions": 161627,
+      "Decompressions": 139229,
+      "Swapins": 164,
+      "Swapouts": 0
+    },
+    "adjacent_sample_interval_seconds_range": [
+      1.002512792,
+      1.027640041
+    ],
+    "free_pages_range": [
+      2538,
+      7325
+    ],
+    "guest_host_clock_offset_bound_established": false,
+    "host_root_cause_proven": false,
+    "boundary": "Host compression/decompression bursts provide correlated resource observations. Guest-host clock offset and drift were not bounded, so exact alignment and host root cause are not asserted."
+  },
+  "provenance": {
+    "numeric_diagnostic": {
+      "sha256": "4dd3eb80b8e1a5ab7d72740a412207f40eedfde0d65fdceceddfc723da6b122d",
+      "bytes": 1069714
+    },
+    "private_raw": {
+      "sha256": "8280c27863d0d9d58d374f0454cc738e9c755b18456fefa4456ebac2e0efd0f9",
+      "bytes": 1700253
+    },
+    "host_numeric_diagnostic": {
+      "sha256": "f2381d42131ac4dbc2d8869790145f66d94181f9456a4825e781cbfac83c00b5",
+      "bytes": 46631
+    },
+    "instrumented_helper": {
+      "sha256": "9882ede44bbbbb99bc2743bfc3b5f1d3877a37aff99b8c39f46b322e970b4a65",
+      "bytes": 10076
+    },
+    "bound_sampler_source": {
+      "sha256": "b99173d51885d4cdc5631826e11465f8934877376806a33478ccdf97b186ce9a",
+      "bytes": 162793
+    }
+  },
+  "offline_forged_accounting_rejections": 8,
+  "limits": [
+    "Not a full credential rotation run or final acceptance.",
+    "Progress blocked one next-arrival deadline; this does not establish that offloading progress resolves the other six omissions.",
+    "Late scheduler wakes are observed; host pressure, guest descheduling and other environmental causes remain unproven.",
+    "No identities, raw requests, credentials, process information or fixture contents are exported."
+  ]
+}

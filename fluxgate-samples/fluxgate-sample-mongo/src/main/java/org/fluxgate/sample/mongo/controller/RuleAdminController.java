@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.fluxgate.adapter.mongo.repository.MongoRateLimitRuleRepository;
 import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.OnLimitExceedPolicy;
 import org.fluxgate.core.config.RateLimitBand;
@@ -22,8 +23,10 @@ import org.springframework.web.bind.annotation.*;
 /**
  * REST API for managing rate limit rules in MongoDB.
  *
- * <p>Uses the {@link RateLimitRuleRepository} interface, allowing for different storage
- * implementations (MongoDB, JDBC, etc.).
+ * <p>A rule is identified by {@code (ruleSetId, id)}: the same rule id may exist in several rule
+ * sets. The single-rule endpoints therefore use {@link MongoRateLimitRuleRepository}'s {@code
+ * (ruleSetId, id)} methods instead of the deprecated id-only ones of {@link
+ * RateLimitRuleRepository}.
  */
 @RestController
 @RequestMapping("/admin/rules")
@@ -32,10 +35,19 @@ public class RuleAdminController {
 
   private static final Logger log = LoggerFactory.getLogger(RuleAdminController.class);
 
-  private final RateLimitRuleRepository ruleRepository;
+  private final MongoRateLimitRuleRepository ruleRepository;
 
+  /**
+   * The starter registers the repository as a {@link RateLimitRuleRepository} bean; this sample
+   * needs the MongoDB implementation for its {@code (ruleSetId, id)} methods.
+   */
   public RuleAdminController(RateLimitRuleRepository ruleRepository) {
-    this.ruleRepository = ruleRepository;
+    if (!(ruleRepository instanceof MongoRateLimitRuleRepository)) {
+      throw new IllegalStateException(
+          "RuleAdminController needs a MongoRateLimitRuleRepository, got "
+              + (ruleRepository == null ? "null" : ruleRepository.getClass().getName()));
+    }
+    this.ruleRepository = (MongoRateLimitRuleRepository) ruleRepository;
   }
 
   @Operation(
@@ -67,35 +79,49 @@ public class RuleAdminController {
   }
 
   @Operation(
-      summary = "Get rule by ID",
-      description = "Retrieves a specific rate limit rule by its ID")
+      summary = "Get a rule",
+      description = "Retrieves one rate limit rule by its rule set id and rule id")
   @ApiResponse(responseCode = "200", description = "Rule found")
   @ApiResponse(responseCode = "404", description = "Rule not found")
-  @GetMapping("/{id}")
-  public ResponseEntity<RateLimitRule> getRuleById(
+  @GetMapping("/{ruleSetId}/{id}")
+  public ResponseEntity<RateLimitRule> getRule(
+      @Parameter(
+              description = "Rule set identifier",
+              required = true,
+              example = "api-gateway-rules")
+          @PathVariable("ruleSetId")
+          String ruleSetId,
       @Parameter(description = "Rule ID", required = true, example = "api-rate-limit-100rpm")
-          @PathVariable
+          @PathVariable("id")
           String id) {
 
-    Optional<RateLimitRule> rule = ruleRepository.findById(id);
+    Optional<RateLimitRule> rule = ruleRepository.findById(ruleSetId, id);
     if (rule.isEmpty()) {
       return ResponseEntity.notFound().build();
     }
     return ResponseEntity.ok(rule.get());
   }
 
-  @Operation(summary = "Delete a rule", description = "Deletes a rate limit rule by its ID")
+  @Operation(
+      summary = "Delete a rule",
+      description = "Deletes one rate limit rule by its rule set id and rule id")
   @ApiResponse(responseCode = "204", description = "Rule deleted successfully")
   @ApiResponse(responseCode = "404", description = "Rule not found")
-  @DeleteMapping("/{id}")
+  @DeleteMapping("/{ruleSetId}/{id}")
   public ResponseEntity<Void> deleteRule(
+      @Parameter(
+              description = "Rule set identifier",
+              required = true,
+              example = "api-gateway-rules")
+          @PathVariable("ruleSetId")
+          String ruleSetId,
       @Parameter(description = "Rule ID", required = true, example = "api-rate-limit-100rpm")
-          @PathVariable
+          @PathVariable("id")
           String id) {
 
-    boolean deleted = ruleRepository.deleteById(id);
+    boolean deleted = ruleRepository.deleteById(ruleSetId, id);
     if (deleted) {
-      log.info("Deleted rule: {}", id);
+      log.info("Deleted rule: ({}, {})", ruleSetId, id);
       return ResponseEntity.noContent().build();
     } else {
       return ResponseEntity.notFound().build();
