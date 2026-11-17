@@ -3,7 +3,7 @@
 > **0.5.0 출시 범위:** Spring Boot 3, Java 11 프레임워크 독립 SDK, Redis 및 Envoy를 포함합니다. Boot 2 starter와 해당 Java 11 샘플은 0.5.0에서 제공하지 않으며, 보안·호환성 검증을 통과한 후 0.5.1 복원을 목표로 합니다. [출시 범위](docs/release-0.5.0-scope.md)를 참고하세요.
 
 [![Java](https://img.shields.io/badge/Java-11%2B-blue.svg)](https://openjdk.org/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.x%20%7C%203.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build](https://github.com/OpenFluxGate/fluxgate/actions/workflows/maven-ci.yml/badge.svg)](https://github.com/OpenFluxGate/fluxgate/actions)
 [![Benchmark](https://img.shields.io/badge/Benchmark-Results-blueviolet.svg)](https://openfluxgate.github.io/fluxgate/benchmark/)

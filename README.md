@@ -3,7 +3,7 @@
 > **0.5.0 release scope:** Spring Boot 3, Java 11 framework-neutral SDKs, Redis and Envoy are included. The Boot 2 starter and its Java 11 sample are not supplied in 0.5.0; their return targets 0.5.1 only after security and compatibility gates pass. See [release scope](docs/release-0.5.0-scope.md).
 
 [![Java](https://img.shields.io/badge/Java-11%2B-blue.svg)](https://openjdk.org/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.x%20%7C%203.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build](https://github.com/OpenFluxGate/fluxgate/actions/workflows/maven-ci.yml/badge.svg)](https://github.com/OpenFluxGate/fluxgate/actions)
 [![Benchmark](https://img.shields.io/badge/Benchmark-Results-blueviolet.svg)](https://openfluxgate.github.io/fluxgate/benchmark/)

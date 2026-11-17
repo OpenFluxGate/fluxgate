@@ -97,9 +97,9 @@ FluxGate uses [Semantic Versioning 2.0.0](https://semver.org/).
 
 **`fluxgate-spring-boot2-starter` is not included in 0.5.0.** Restoration targets 0.5.1 only after security and compatibility checks pass. The maintenance policy below describes the legacy line, not a 0.5.0 support promise.
 
-Spring Boot 2.7 reached OSS end-of-life in November 2023. The boot2 starter is
-kept in this repository as a convenience for teams that have not yet migrated,
-but it will receive:
+Spring Boot 2.7 reached OSS end-of-life in November 2023. The boot2 starter sources are
+preserved in Git history, not in the 0.5.0 release tree. After an independently
+reviewed restoration, its intended maintenance scope is:
 
 * Security fixes for issues in FluxGate's own code.
 * Bug fixes where the fix requires no new Spring or Jakarta API.
@@ -112,8 +112,7 @@ It will **not** receive:
 
 Teams should plan a migration to an upstream-maintained Spring line. Boot 3.5
 also reached OSS end-of-life; moving to Boot 3 alone does not restore ongoing
-upstream OSS security maintenance. The boot2 starter may be removed in a future major release
-without further notice beyond the deprecation policy above.
+upstream OSS security maintenance. Boot 2 restoration is conditional on security remediation, not guaranteed by a target version.
 
 ### Supported Spring Boot and Java Matrix
 
@@ -128,7 +127,7 @@ pending; the [security policy](SECURITY.md#050-source-preparation) records the r
 | Boot 3 starter and Spring control integration | 3.5.16 / Spring 6.2.19 | 17 | Legacy compatibility; upstream OSS EOL |
 | Current Envoy authorization server | 3.5.16 / Spring 6.2.19 | 17 | Source preparation; maintained server baseline and residual advisories unresolved |
 
-Java 11 is required to compile the core library and the boot2 starter. Java 17
+Java 11 is required to compile the framework-neutral SDK modules. Java 17
 is required to run the boot3 starter. Java 21 is required for the sample
 standalone-java21 module.
 
