@@ -2,9 +2,9 @@ name: Java CI with Maven
 
 on:
   push:
-    branches: [ "main", "development/**" ]
+    branches: [ "main", "development/**", "maintenance/**" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "maintenance/**" ]
 
 jobs:
   # Build and test with Java 21 (all modules)
