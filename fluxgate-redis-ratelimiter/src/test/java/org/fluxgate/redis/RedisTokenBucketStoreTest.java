@@ -122,4 +122,27 @@ class RedisTokenBucketStoreTest {
     assertThat(ttl).isGreaterThan(0);
     assertThat(ttl).isLessThanOrEqualTo(66); // 60 seconds + 10% safety margin
   }
+
+  @Test
+  void scanCollectsMatchingKeysAcrossPagesWithoutSelectingOtherNamespaces() {
+    String prefix = "scan-regression:" + java.util.UUID.randomUUID() + ":";
+    java.util.Set<String> expected = new java.util.HashSet<>();
+    String outside = "outside:" + prefix;
+    try {
+      connectionProvider.hset(outside, "field", "value");
+      for (int i = 0; i < 1201; i++) {
+        String key = prefix + i;
+        expected.add(key);
+        connectionProvider.hset(key, "field", "value");
+      }
+      java.util.List<String> found = connectionProvider.keys(prefix + "*");
+      assertThat(found).hasSize(expected.size()).containsExactlyInAnyOrderElementsOf(expected);
+      assertThat(connectionProvider.del(found.toArray(new String[0]))).isEqualTo(1201L);
+      assertThat(connectionProvider.keys(prefix + "*")).isEmpty();
+      assertThat(connectionProvider.exists(outside)).isTrue();
+    } finally {
+      for (String key : expected) connectionProvider.del(key);
+      connectionProvider.del(outside);
+    }
+  }
 }

@@ -9,10 +9,12 @@
     <parent>
         <groupId>io.github.openfluxgate</groupId>
         <artifactId>fluxgate</artifactId>
-        <version>0.3.6</version>
+        <version>0.3.7</version>
+        <relativePath/>
     </parent>
 
     <artifactId>fluxgate-redis-ratelimiter</artifactId>
+    <version>0.3.8</version>
     <packaging>jar</packaging>
 
     <name>FluxGate Redis RateLimiter</name>
@@ -28,7 +30,7 @@
         <dependency>
             <groupId>io.github.openfluxgate</groupId>
             <artifactId>fluxgate-core</artifactId>
-            <version>${project.version}</version>
+            <version>0.3.7</version>
         </dependency>
 
         <!-- Lettuce (Redis client) -->

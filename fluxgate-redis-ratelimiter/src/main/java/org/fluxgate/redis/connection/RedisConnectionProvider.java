@@ -141,7 +141,10 @@ public interface RedisConnectionProvider extends AutoCloseable {
   /**
    * Finds all keys matching the given pattern.
    *
-   * <p>Warning: This operation can be slow on large databases. Use with caution in production.
+   * <p>Built-in providers use incremental SCAN, not the blocking KEYS command, and return distinct
+   * keys. Results are unordered and not an atomic snapshot: concurrent changes may or may not be
+   * observed. All matches are still held in memory. Cluster scans traverse the initial topology
+   * using Lettuce's composite cursor; externally configured replica reads can be stale.
    *
    * @param pattern the pattern to match (e.g., "fluxgate:*")
    * @return list of matching keys

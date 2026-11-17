@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import io.lettuce.core.KeyScanCursor;
+import io.lettuce.core.ScanArgs;
+import io.lettuce.core.ScanCursor;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.util.Arrays;
@@ -185,11 +188,17 @@ class StandaloneRedisConnectionMockTest {
 
   @Test
   void shouldGetKeys() {
-    when(commands.keys("fluxgate:*")).thenReturn(Arrays.asList("fluxgate:key1", "fluxgate:key2"));
+    KeyScanCursor<String> first = page("0", false);
+    KeyScanCursor<String> second = page("73", false, "fluxgate:key1");
+    when(commands.scan(any(ScanCursor.class), any(ScanArgs.class)))
+        .thenReturn(first, second, page("0", true, "fluxgate:key1", "fluxgate:key2"));
 
     List<String> keys = connection.keys("fluxgate:*");
 
     assertThat(keys).containsExactly("fluxgate:key1", "fluxgate:key2");
+    verify(commands).scan(same(first), any(ScanArgs.class));
+    verify(commands).scan(same(second), any(ScanArgs.class));
+    verify(commands, never()).keys(anyString());
   }
 
   @Test
@@ -226,5 +235,31 @@ class StandaloneRedisConnectionMockTest {
   @Test
   void shouldReturnUnderlyingCommands() {
     assertThat(connection.getCommands()).isEqualTo(commands);
+  }
+
+  @Test
+  void keysReturnsEmptyOnlyWhenScanFinishes() {
+    when(commands.scan(any(ScanCursor.class), any(ScanArgs.class))).thenReturn(page("0", true));
+    assertThat(connection.keys("fluxgate:*")).isEmpty();
+    verify(commands, never()).keys(anyString());
+  }
+
+  @Test
+  void keysDoesNotHideScanFailureOrReturnPartialResults() {
+    when(commands.scan(any(ScanCursor.class), any(ScanArgs.class)))
+        .thenReturn(page("12", false, "fluxgate:key1"))
+        .thenThrow(new IllegalStateException("scan unavailable"));
+    assertThatThrownBy(() -> connection.keys("fluxgate:*"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("scan unavailable");
+    verify(commands, never()).keys(anyString());
+  }
+
+  private static KeyScanCursor<String> page(String cursor, boolean finished, String... keys) {
+    KeyScanCursor<String> page = new KeyScanCursor<>();
+    page.setCursor(cursor);
+    page.setFinished(finished);
+    page.getKeys().addAll(Arrays.asList(keys));
+    return page;
   }
 }
