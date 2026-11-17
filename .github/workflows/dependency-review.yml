@@ -2,7 +2,7 @@ name: Dependency Review
 
 on:
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "feature/lts-*" ]
 
 # Least-privilege: read-only, plus pull-requests: write for the summary comment. Pull requests from
 # forks get a read-only token, so the comment is skipped there while the check itself still runs.
