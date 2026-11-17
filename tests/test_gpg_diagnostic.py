@@ -72,13 +72,17 @@ with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as pro
         gpg('--passphrase', password, '--quick-generate-key', 'Disposable regression <test@example.invalid>', 'rsa2048', 'sign', '1d')
         key = gpg('--passphrase', password, '--armor', '--export-secret-keys').decode()
         public = gpg('--armor', '--export').decode()
+        gpg('--faked-system-time', '20200101T000000', '--passphrase', password,
+            '--quick-generate-key', 'Expired regression <expired@example.invalid>', 'rsa2048', 'sign', '1d')
+        expired_key = gpg('--passphrase', password, '--armor', '--export-secret-keys', 'expired@example.invalid').decode()
         cases = [
             ('valid', key, password, True, 'passed'),
-            ('wrong-passphrase', key, 'incorrect', False, 'signing failed'),
+            ('wrong-passphrase', key, 'incorrect', False, 'PASSPHRASE_REJECTED'),
             ('malformed-key', 'not-a-key', password, False, 'import failed'),
             ('missing-key', '', password, False, 'key is missing'),
             ('missing-passphrase', key, '', False, 'passphrase is missing'),
-            ('public-only', public, password, False, 'signing failed'),
+            ('public-only', public, password, False, 'NO_USABLE_SECRET_SIGNING_KEY'),
+            ('expired-key', expired_key, password, False, 'NO_USABLE_SECRET_SIGNING_KEY'),
         ]
         for name, candidate, phrase, success, expected in cases:
             result = subprocess.run(['bash', '-c', script], text=True, capture_output=True,
@@ -87,8 +91,45 @@ with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as pro
             assert (result.returncode == 0) == success, name
             assert expected in output, name
             assert password not in output and 'BEGIN PGP' not in output and 'Disposable' not in output, name
+            allowed = {
+                'GPG signing and verification passed. No publication or Central authentication was attempted.',
+                '::error::GPG signing failed: PASSPHRASE_REJECTED',
+                '::error::GPG signing failed: NO_USABLE_SECRET_SIGNING_KEY',
+                '::error::GPG key import failed.',
+                '::error::GPG private key is missing.',
+                '::error::GPG passphrase is missing.',
+            }
+            assert output.strip() in allowed, name + ': unexpected output (redacted)'
             assert not list(Path(probes).iterdir()), name + ': temp keyring not cleaned'
             print(name + ': PASS')
     finally:
         subprocess.run(['gpgconf', '--homedir', home, '--kill', 'all'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-print('Workflow guards, shell syntax, six synthetic-key cases, and cleanup: PASS')
+print('Workflow guards, shell syntax, seven synthetic-key cases, and cleanup: PASS')
+
+
+# Extract the exact inline classifier: tests do not duplicate its implementation.
+classifier = script.split('classify_signing_failure() {', 1)[1].split('\ngpg_args=', 1)[0]
+classifier = 'classify_signing_failure() {' + classifier
+status_cases = [
+    ('bad-passphrase', '[GNUPG:] BAD_PASSPHRASE SECRET_KEY_ID\n', 'PASSPHRASE_REJECTED'),
+    ('encoded-bad-passphrase', '[GNUPG:] FAILURE sign 67108875\n', 'PASSPHRASE_REJECTED'),
+    ('no-secret-key', '[GNUPG:] NO_SECKEY SECRET_KEY_ID\n', 'NO_USABLE_SECRET_SIGNING_KEY'),
+    ('signer-expired', '[GNUPG:] INV_SGNR 5 SECRET_UID\n', 'SIGNER_EXPIRED'),
+    ('signer-revoked', '[GNUPG:] INV_SGNR 4 SECRET_UID\n', 'SIGNER_REVOKED'),
+    ('wrong-usage', '[GNUPG:] INV_SGNR 3 SECRET_UID\n', 'SIGNER_WRONG_USAGE'),
+    ('unrelated-expiry', '[GNUPG:] KEYEXPIRED 1234\n', 'SIGNING_FAILED_UNCLASSIFIED'),
+    ('unknown', '[GNUPG:] UNKNOWN SECRET_FINGERPRINT\n', 'SIGNING_FAILED_UNCLASSIFIED'),
+    ('malformed-error', '[GNUPG:] FAILURE sign $(echo SECRET_KEY_ID)\n', 'SIGNING_FAILED_UNCLASSIFIED'),
+    ('oversized-error', '[GNUPG:] FAILURE sign 999999999999999999999999999999\n', 'SIGNING_FAILED_UNCLASSIFIED'),
+]
+with tempfile.TemporaryDirectory() as tmp:
+    path = Path(tmp) / 'status'
+    for name, status, expected in status_cases:
+        path.write_text(status)
+        result = subprocess.run(['bash', '-c', 'set -euo pipefail\n' + classifier +
+                                 '\nclassify_signing_failure "$1"', 'classifier', str(path)],
+                                capture_output=True, text=True, timeout=5)
+        assert result.returncode == 0, name
+        assert result.stdout == expected + '\n' and result.stderr == '', name + ': non-allowlisted output'
+        print('status-' + name + ': PASS')
+print('Ten status-code classification and non-disclosure cases: PASS')
