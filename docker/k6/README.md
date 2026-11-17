@@ -48,3 +48,29 @@ node --test docker/k6/tests/verdict.test.cjs
 These mocked tests verify verdict logic, not real k6 execution, Redis behavior,
 performance or production readiness. Run the actual k6 scripts in an isolated
 configured environment before relying on their measurements.
+
+## Isolated filter/Redis verification
+
+`tests/fixture/FilterFixture.java` connects the real Spring Boot 3
+`FluxgateRateLimitFilter` to the real Redis rate limiter, using the Redis sample's
+10-token/60-second rule. Its controller does not consume a second token. Compile
+it against the Redis sample executable jar's extracted `BOOT-INF/classes` and
+`BOOT-INF/lib/*`, then run `fixture.FilterFixture` with that classpath.
+
+Use a new, empty **local-only Redis instance**, disable persistence, and pass
+`--server.address=127.0.0.1`, a free `--server.port`, a matching
+`--fluxgate.redis.uri=redis://127.0.0.1:<isolated-port>`, and
+`--fluxgate.reload.enabled=false`. This fixture does not need MongoDB or rule
+hot reload. Wait for `/api/status`, which does not consume benchmark tokens.
+Set `BASE_URL=http://127.0.0.1:<http-port>/benchmark` for the unchanged scripts.
+For native k6 rather than Docker, redirect only the `/results/` output paths in a
+temporary script copy to a writable directory. Stop both local processes after
+the test. Never point this fixture at an existing Redis deployment.
+
+The Redis sample's ordinary `/api/test` is a **manual rate-limiter endpoint**, not
+this filter fixture. It does not return `X-RateLimit-Remaining` on rejection and
+therefore intentionally fails the accuracy script's header contract. Do not
+remove that check to make the manual endpoint pass.
+
+A reduced stress smoke test can use `VUS=5 ITERATIONS=20`; this is not the default
+one-million-request stress workload or a production capacity measurement.
