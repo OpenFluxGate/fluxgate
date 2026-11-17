@@ -42,23 +42,6 @@ updates:
           - "com.diffplug.spotless:*"
           - "org.jacoco:*"
 
-  # Java 11 / Spring Boot 2.7 starter: no major-version proposals at all, they would raise the
-  # baseline. Minor and patch updates (security fixes) still arrive.
-  - package-ecosystem: maven
-    directory: "/fluxgate-spring-boot2-starter"
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - java
-    commit-message:
-      prefix: "build(deps)"
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major"]
-
   # Local development compose files (docker/*.yml): keeps the pinned service images current.
   - package-ecosystem: docker-compose
     directory: "/docker"

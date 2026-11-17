@@ -1,5 +1,7 @@
 # FluxGate
 
+> **0.5.0 출시 범위:** Spring Boot 3, Java 11 프레임워크 독립 SDK, Redis 및 Envoy를 포함합니다. Boot 2 starter와 해당 Java 11 샘플은 0.5.0에서 제공하지 않으며, 보안·호환성 검증을 통과한 후 0.5.1 복원을 목표로 합니다. [출시 범위](docs/release-0.5.0-scope.md)를 참고하세요.
+
 [![Java](https://img.shields.io/badge/Java-11%2B-blue.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.x%20%7C%203.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -103,7 +105,6 @@ FluxGate가 MongoDB에서 정책을 읽고 Redis에서 사용량을 계산합니
 | **fluxgate-redis-ratelimiter** | Lua 스크립트를 사용한 Redis 기반 분산 Rate Limiter |
 | **fluxgate-mongo-adapter** | 동적 규칙 관리를 위한 MongoDB 어댑터 |
 | **fluxgate-spring-boot3-starter** | Spring Boot 3.x 자동 설정 (Java 17+, jakarta.servlet) |
-| **fluxgate-spring-boot2-starter** | Spring Boot 2.7.x 자동 설정 (Java 11+, `javax.servlet`). 기능은 동일하며 **Spring Boot 2.7.x가 필요합니다** ([README](fluxgate-spring-boot2-starter/README.md)) |
 | **fluxgate-control-support** | 컨트롤 플레인 보조: `@NotifyRuleChange` / `@NotifyFullReload` 와 Redis 규칙 변경 통지기 |
 | **fluxgate-testkit** | 통합 테스트 유틸리티 |
 | **fluxgate-benchmarks** | JMH 벤치마크 (배포되지 않음) |
@@ -125,7 +126,6 @@ Limiter로, 첫 데모나 단일 인스턴스 서비스에 적합합니다. **�
 
 - Java 17+ 및 Maven 3.8+ (경로 A)
 - 기존 Spring Boot 웹 애플리케이션; 아래 예제에 `/api/hello` 컨트롤러를 포함합니다.
-- Java 11 / Spring Boot 2.7도 `fluxgate-spring-boot2-starter`로 지원
 - Docker (경로 B, Redis/MongoDB 시작용)
 
 이 브랜치는 Envoy 판정 서비스를 포함한 **0.5.0**을 준비하며 소스에서 빌드합니다.
@@ -469,7 +469,6 @@ fluxgate:
 | 샘플 | 포트 | 설명 |
 |------|------|------|
 | **fluxgate-sample-standalone-java21** | 8085 | MongoDB + Redis 직접 통합 풀스택. `@RateLimit` 애스펙트 포함 |
-| **fluxgate-sample-standalone-java11** | 8085 | 동일한 스택의 Java 11 / Spring Boot 2.7 버전 |
 | **fluxgate-sample-redis** | 8082 | Redis 백엔드 Rate Limit 서비스 |
 | **fluxgate-sample-mongo** | 8081 | MongoDB 규칙 관리 |
 | **fluxgate-sample-filter** | 8083 | HTTP로 Rate Limit을 조회하는 자동 필터 클라이언트 앱 |

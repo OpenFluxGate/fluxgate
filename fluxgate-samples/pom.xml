@@ -24,7 +24,6 @@
         <module>fluxgate-sample-api</module>
         <module>fluxgate-sample-filter</module>
         <module>fluxgate-sample-standalone-java21</module>
-        <module>fluxgate-sample-standalone-java11</module>
     </modules>
 
     <properties>

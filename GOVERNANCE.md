@@ -95,7 +95,7 @@ FluxGate uses [Semantic Versioning 2.0.0](https://semver.org/).
 
 ### Spring Boot 2.7 Starter: Maintenance-Only Mode
 
-**`fluxgate-spring-boot2-starter` is in maintenance-only mode.**
+**`fluxgate-spring-boot2-starter` is not included in 0.5.0.** Restoration targets 0.5.1 only after security and compatibility checks pass. The maintenance policy below describes the legacy line, not a 0.5.0 support promise.
 
 Spring Boot 2.7 reached OSS end-of-life in November 2023. The boot2 starter is
 kept in this repository as a convenience for teams that have not yet migrated,
@@ -124,7 +124,7 @@ pending; the [security policy](SECURITY.md#050-source-preparation) records the r
 | FluxGate scope | Spring Boot | Java minimum | Status |
 |---|---|---|---|
 | Core, Mongo and Redis SDK | Not required | 11 | Java 11-compatible library line; the full build uses Java 21 |
-| Boot 2 starter | 2.7.18 / Spring 5.3.39 | 11 | Legacy compatibility; upstream OSS EOL, conditional advisories remain |
+| Boot 2 starter | Deferred to 0.5.1 | 11 | Not supplied or supported in 0.5.0; restoration requires security remediation |
 | Boot 3 starter and Spring control integration | 3.5.16 / Spring 6.2.19 | 17 | Legacy compatibility; upstream OSS EOL |
 | Current Envoy authorization server | 3.5.16 / Spring 6.2.19 | 17 | Source preparation; maintained server baseline and residual advisories unresolved |
 
