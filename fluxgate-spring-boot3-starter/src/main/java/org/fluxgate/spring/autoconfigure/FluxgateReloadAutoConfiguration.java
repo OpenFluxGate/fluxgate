@@ -112,6 +112,34 @@ public class FluxgateReloadAutoConfiguration {
     this.properties = properties;
   }
 
+  /** Reject ambiguous consumption retries in the opt-in published epoch mode only. */
+  @Bean
+  public org.springframework.beans.factory.SmartInitializingSingleton
+      publishedEpochTimeoutRetryValidation(
+          ListableBeanFactory beanFactory, org.springframework.core.env.Environment environment) {
+    return () -> {
+      if (!publishedEpochMode()) {
+        return;
+      }
+      boolean configured =
+          Binder.get(environment)
+              .bind("fluxgate.resilience.retry.retry-on-timeout", Boolean.class)
+              .orElse(false);
+      // Match the executor selected for the built-in primary resilient limiter, including @Primary
+      // overrides. A safe property alone does not constrain a custom executor's effective config.
+      org.fluxgate.core.resilience.ResilientExecutor executor =
+          beanFactory
+              .getBeanProvider(org.fluxgate.core.resilience.ResilientExecutor.class)
+              .getIfAvailable();
+      if (configured
+          || (executor != null && executor.getRetryExecutor().getConfig().isRetryOnTimeout())) {
+        throw new IllegalStateException(
+            "PUBLISHED_EPOCH forbids retry-on-timeout: a timed-out consumption may already have"
+                + " executed; a counter revision does not deduplicate repeated consumption");
+      }
+    };
+  }
+
   /** Validate even when cache or reload strategy beans are disabled. */
   @Bean
   public org.springframework.beans.factory.SmartInitializingSingleton
