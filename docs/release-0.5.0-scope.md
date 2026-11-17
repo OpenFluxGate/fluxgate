@@ -29,3 +29,15 @@ Do not bypass protections or claim the old Boot 2 check ran.
 
 Published Maven coordinates are immutable. Once a module's 0.5.0 is published, any content
 change must use a new version, such as 0.5.1; do not overwrite or blindly redeploy 0.5.0.
+
+## 0.5.1 restoration checklist
+
+Restore the Boot 2 starter and its Java 11 sample from `2423129` on a 0.5.1 branch,
+then port intervening shared fixes rather than shipping that historical source unchanged.
+Resolve the full legacy dependency graph, restore both reactor entries and publishing/docs,
+and restore a real Java 11 / Boot 2 compatibility job (including sample startup and integrations).
+Keep the Java 11 SDK lane. Require the restored Boot 2 CI context through an explicitly
+approved protection update before merging; do not replace it with a no-op success job.
+Update this version-specific scope guard to the reviewed 0.5.1 artifact set and add checks
+for the restored module. Dependency Review must retain the same severity and scope coverage.
+Only then may the new Boot 2 artifact and any changed modules be published as 0.5.1.
