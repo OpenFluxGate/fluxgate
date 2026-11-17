@@ -15,3 +15,5 @@ BOOT2_JAVA_HOME=/path/to/jdk11 bash scripts/security/audit-boot2-http-invoker.sh
 한계: mock servlet 컨텍스트이며 실제 네트워크 서버 배포 검사가 아닙니다. 임의 URL 전체, 외부 인프라 활성화, 고객의 부모/자식·지연/동적 컨텍스트, 커스텀 역직렬화, 프록시 및 운영 라우팅은 검증하지 않습니다. 고객의 실제 구성과 서비스 목록에서 별도 점검해야 합니다. Boot3에서는 해당 HttpInvoker 클래스가 제거되어 동일 import 기반 테스트를 적용하지 않으며, 독립 Boot3 호환성·보안 검증을 대체하지 않습니다.
 
 근거: https://github.com/advisories/GHSA-4wrc-f8pq-fpqp 및 https://github.com/spring-projects/spring-framework/issues/24434 .
+
+스크립트는 Python 3을 요구하며 Maven 실행 전에 Java11이 아닌 BOOT2_JAVA_HOME을 거부합니다. 이전 감사 XML을 제거하고 새 보고서의 JVM, 필수 테스트 이름, 실패·오류·스킵 0건을 검증합니다.

@@ -15,3 +15,5 @@ The script records the Maven dependency tree under target/security-evidence. It 
 Limitations: this is a mock-servlet context, not an embedded network-server deployment. It does not enumerate arbitrary URL paths, test enabled external infrastructure, application-owned parent/child or lazy/dynamic contexts, custom deserializers, proxies, or production routing. Consumers must repeat exposure checks against their actual configuration and service inventory. No absence of exploitability is asserted for untested applications. This Boot2-specific test has no equivalent removed HttpInvoker class to import on Boot3; it is not a replacement for the independent Boot3 test/security matrix.
 
 Sources: https://github.com/advisories/GHSA-4wrc-f8pq-fpqp and https://github.com/spring-projects/spring-framework/issues/24434 .
+
+The script requires Python 3, rejects a non-Java-11 BOOT2_JAVA_HOME before Maven, removes the previous audit XML, and verifies the fresh report JVM, required test names and zero failures/errors/skips.
