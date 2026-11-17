@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 0.5.0 SCAN compatibility note
+
+- Built-in Redis providers retain `keys(pattern)` as a source/binary-compatible API, but execute
+  incremental SCAN and return distinct keys instead of issuing blocking KEYS. List-returning APIs
+  still retain all matches in memory; use streaming `scanKeys` for large keyspaces.
+- Custom `RedisConnectionProvider` implementations must implement `scanKeys(pattern, count)` or
+  its streaming overload for bucket resets. The old default fallback to KEYS now throws
+  `UnsupportedOperationException`; this intentional fail-safe behavior avoids unexpectedly
+  blocking production Redis. Implement the list overload too if consumers call it directly.
+- SCAN is not an atomic snapshot, COUNT is a hint, and streaming pages may repeat keys. Cluster
+  iteration preserves Lettuce's composite cursor across the initial primary topology (default
+  ReadFrom); externally supplied commands configured for replica reads can observe stale data.
+  Resets remain best effort under
+  concurrent writes/topology changes; quiesce writers for an exact reset boundary. Delete calls
+  are bounded to 500 keys and returned totals count actual deletions, including possible
+  re-deletions of concurrently recreated keys.
+
 ### 0.5.0 release preparation
 
 - The integrated changes previously collected on `feature/lts-1.0.0` target **0.5.0**.

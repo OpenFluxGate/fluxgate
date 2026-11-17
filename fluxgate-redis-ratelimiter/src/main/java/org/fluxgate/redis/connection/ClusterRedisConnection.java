@@ -15,6 +15,7 @@ import io.lettuce.core.cluster.api.sync.RedisAdvancedClusterCommands;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -284,15 +285,14 @@ public class ClusterRedisConnection implements RedisConnectionProvider {
 
   @Override
   public List<String> keys(String pattern) {
-    // In cluster mode, this scans all nodes
-    return new ArrayList<>(commands.keys(pattern));
+    return scanKeys(pattern, 100L);
   }
 
   @Override
   public List<String> scanKeys(String pattern, long count) {
-    List<String> keys = new ArrayList<>();
+    LinkedHashSet<String> keys = new LinkedHashSet<>();
     scanKeys(pattern, count, keys::addAll);
-    return keys;
+    return new ArrayList<>(keys);
   }
 
   @Override

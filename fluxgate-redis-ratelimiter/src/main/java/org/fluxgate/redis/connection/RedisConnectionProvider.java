@@ -157,7 +157,8 @@ public interface RedisConnectionProvider extends AutoCloseable {
   /**
    * Finds all keys matching the given pattern.
    *
-   * <p>Warning: This operation can be slow on large databases. Use with caution in production.
+   * <p>Built-in providers use SCAN, not the blocking Redis KEYS command. Results are unique but are
+   * not an atomic snapshot. Prefer the streaming overload for large keyspaces.
    *
    * @param pattern the pattern to match (e.g., "fluxgate:*")
    * @return list of matching keys
@@ -167,15 +168,16 @@ public interface RedisConnectionProvider extends AutoCloseable {
   /**
    * Incrementally scans keys matching the given pattern.
    *
-   * <p>Unlike {@link #keys(String)}, this method is safe for production-sized keyspaces because it
-   * uses Redis SCAN semantics instead of blocking the server for a full keyspace scan.
+   * <p>Uses incremental Redis SCAN semantics. Results are not an atomic snapshot: concurrent
+   * additions/removals may or may not be observed. Custom providers must implement SCAN; the
+   * default fails explicitly rather than silently falling back to blocking KEYS.
    *
    * @param pattern the pattern to match (e.g., "fluxgate:*")
    * @param count scan batch size hint
    * @return list of matching keys
    */
   default java.util.List<String> scanKeys(String pattern, long count) {
-    return keys(pattern);
+    throw new UnsupportedOperationException("This provider must implement incremental SCAN");
   }
 
   /**
@@ -185,8 +187,13 @@ public interface RedisConnectionProvider extends AutoCloseable {
    * <p>Unlike {@link #scanKeys(String, long)}, the matching keys are never collected into one list,
    * so a caller that deletes them page by page keeps its memory bounded by the page size however
    * large the keyspace is. The default implementation delegates to {@link #scanKeys(String, long)}
-   * and delivers its result as a single page, so providers written against earlier versions keep
-   * working.
+   * and delivers its result as a single page. Custom providers must implement at least one SCAN
+   * overload; providers implementing only keys no longer support resets.
+   *
+   * <p>Pages may contain duplicates and COUNT is only a hint, not a page-size limit. Consumers must
+   * tolerate duplicates and concurrent changes. In a cluster the built-in provider traverses the
+   * initial primary topology via Lettuce's composite cursor with default ReadFrom. Externally
+   * supplied replica-read commands may observe stale data. Topology changes are not a snapshot.
    *
    * @param pattern the pattern to match (e.g., "fluxgate:*")
    * @param count scan batch size hint

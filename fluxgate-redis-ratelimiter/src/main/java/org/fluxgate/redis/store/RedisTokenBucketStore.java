@@ -880,6 +880,10 @@ public class RedisTokenBucketStore {
    * Unlinks the keys matching {@code pattern} page by page as SCAN returns them, so the keys of a
    * large rule set are never held in memory all at once. Lettuce failures are translated into
    * FluxGate exceptions as for the scripts (see {@code driverFailed}).
+   *
+   * <p>This is a best-effort, non-atomic reset. Concurrent writers may recreate keys and SCAN may
+   * return duplicates. UNLINK counts actual deletions, not scanned entries; a recreated key may be
+   * deleted again. Quiesce writers when an exact reset boundary is required.
    */
   private long scanAndUnlink(String pattern) {
     long[] deleted = {0L};

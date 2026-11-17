@@ -1132,14 +1132,38 @@ class Proof:
     def counter_snapshot(self, identity):
         password = self.read("redis_password_file")
         snapshot = {}
+        roles = {}
         for pod in self.f["redis_pods"]:
-            if not self.redis(pod, ["ROLE"], password).startswith(b"master\n"):
+            role = self.redis(pod, ["ROLE"], password).split(b"\n", 1)[0]
+            require(role in (b"master", b"slave"), "invalid Redis counter ROLE response")
+            roles[pod] = role
+            if role != b"master":
                 continue
-            keys = self.redis(pod, ["KEYS", "fluxgate:bucket:*" + identity + "*"], password)
-            for key in keys.decode().splitlines():
-                if key.startswith("fluxgate:bucket:"):
-                    value = self.redis(pod, ["HGETALL", key], password)
-                    snapshot[key] = hashlib.sha256(value).hexdigest()
+            # SCAN is not a snapshot. Stable comparison requires quiescing matching fixture writers.
+            # Escape identity's glob metacharacters rather than widening its literal scope.
+            literal = re.sub(r'([\\*?\[\]])', r'\\\1', identity)
+            cursor = "0"
+            seen = set()
+            while True:
+                page = self.redis(pod, ["SCAN", cursor, "MATCH",
+                                       "fluxgate:bucket:*" + literal + "*", "COUNT", "100"], password)
+                parts = page.decode().splitlines()
+                require(bool(parts) and parts[0].isdigit(), "invalid Redis counter SCAN response")
+                cursor = parts[0]
+                for key in parts[1:]:
+                    if key.startswith("fluxgate:bucket:") and identity in key and key not in seen:
+                        seen.add(key)
+                        value = self.redis(pod, ["HGETALL", key], password)
+                        require(bool(value) and not value.startswith(b"ERROR "),
+                                "Redis counter disappeared or read failed during SCAN")
+                        redis_hash_contents(value)  # Validate fields before hashing evidence.
+                        snapshot[key] = hashlib.sha256(value).hexdigest()
+                if cursor == "0":
+                    break
+        require(b"master" in roles.values(), "no primary available for Redis counter SCAN")
+        for pod, role in roles.items():
+            require(self.redis(pod, ["ROLE"], password).split(b"\n", 1)[0] == role,
+                    "Redis topology role changed during counter SCAN; retry proof")
         return snapshot
 
     def mongo(self, uri, javascript, expected=True):
@@ -2317,6 +2341,67 @@ def rotation_timeline_self_test():
         require(path.read_text() == saved, "rejected label changed retained evidence")
 
 
+def counter_scan_self_test():
+    proof = Proof.__new__(Proof)
+    proof.f = {"redis_pods": ["primary-a", "replica", "primary-b"]}
+    proof.read = lambda _: "offline-password"
+    calls = []
+    identity = "literal[*]?"
+    key = "fluxgate:bucket:{scope:" + identity + "}:band"
+    def redis(pod, command, password=None):
+        calls.append((pod, command))
+        if command == ["ROLE"]:
+            return b"slave\n" if pod == "replica" else b"master\n"
+        if command[0] == "SCAN":
+            require(pod != "replica", "counter scan visited replica")
+            require(command[3] == r"fluxgate:bucket:*literal\[\*\]\?*", "identity glob not escaped")
+            if command[1] == "0":
+                return b"17"  # Empty page must not terminate cursor iteration.
+            if command[1] == "17":
+                return b"23\n" + key.encode() + b"\n" + key.encode()
+            require(command[1] == "23", "counter scan lost cursor")
+            return b"0\n" + key.encode()
+        if command[0] == "HGETALL":
+            return b"tokens\n1"
+        raise ProofError("unexpected counter command (blocking KEYS forbidden)")
+    proof.redis = redis
+    require(proof.counter_snapshot(identity) == {key: hashlib.sha256(b"tokens\n1").hexdigest()},
+            "counter scan changed snapshot result")
+    require(sum(c[0] == "HGETALL" for _, c in calls) == 2, "duplicate pages were reread")
+    require(sum(c[0] == "SCAN" for _, c in calls) == 6, "not all primary cursors completed")
+    for bad in (b"ERROR MOVED 1 127.0.0.1:7001", b"", b"field"):
+        proof.redis = lambda pod, command, password=None: (bad if command[0] == "HGETALL"
+                                                         else redis(pod, command, password))
+        try:
+            proof.counter_snapshot(identity)
+        except ProofError:
+            pass
+        else:
+            raise ProofError("invalid/disappeared counter accepted as snapshot evidence")
+    for bad in (b"ERROR NOAUTH", b"unknown"):
+        proof.redis = lambda pod, command, password=None: bad
+        try:
+            proof.counter_snapshot(identity)
+        except ProofError:
+            pass
+        else:
+            raise ProofError("invalid ROLE accepted as snapshot evidence")
+    role_reads = {}
+    def changed_role(pod, command, password=None):
+        if command == ["ROLE"]:
+            role_reads[pod] = role_reads.get(pod, 0) + 1
+            if pod == "primary-a" and role_reads[pod] > 1:
+                return b"slave\n"
+        return redis(pod, command, password)
+    proof.redis = changed_role
+    try:
+        proof.counter_snapshot(identity)
+    except ProofError:
+        pass
+    else:
+        raise ProofError("primary role change accepted as stable snapshot evidence")
+
+
 def redis_policy_selection_self_test():
     """Select actual Lua metadata, never bucket counters or revision fences."""
     proof = Proof.__new__(Proof)
@@ -2704,6 +2789,7 @@ def sampler_program_accounting_self_test():
 
 
 def self_test():
+    counter_scan_self_test()
     """Own temporary localhost processes only; no fixture, kube mutations or application dependencies."""
     credential_acceptance_self_test()
     envoy_tls_barrier_self_test()

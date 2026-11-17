@@ -42,6 +42,16 @@ class StandaloneRedisConnectionMockTest {
   }
 
   @Test
+  void legacyProviderMustNotFallBackToBlockingKeys() {
+    RedisConnectionProvider legacy = mock(RedisConnectionProvider.class, CALLS_REAL_METHODS);
+    assertThatThrownBy(() -> legacy.scanKeys("fluxgate:*", 100L))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(() -> legacy.scanKeys("fluxgate:*", 100L, page -> {}))
+        .isInstanceOf(UnsupportedOperationException.class);
+    verify(legacy, never()).keys(anyString());
+  }
+
+  @Test
   void shouldThrowWhenCommandsIsNull() {
     assertThatThrownBy(() -> new StandaloneRedisConnection((RedisCommands<String, String>) null))
         .isInstanceOf(NullPointerException.class)
@@ -190,11 +200,14 @@ class StandaloneRedisConnectionMockTest {
 
   @Test
   void shouldGetKeys() {
-    when(commands.keys("fluxgate:*")).thenReturn(Arrays.asList("fluxgate:key1", "fluxgate:key2"));
+    when(commands.scan(any(ScanCursor.class), any(ScanArgs.class)))
+        .thenReturn(page("7", false, "fluxgate:key1"))
+        .thenReturn(page("0", true, "fluxgate:key1", "fluxgate:key2"));
 
     List<String> keys = connection.keys("fluxgate:*");
 
     assertThat(keys).containsExactly("fluxgate:key1", "fluxgate:key2");
+    verify(commands, never()).keys(anyString());
   }
 
   @Test
@@ -290,6 +303,16 @@ class StandaloneRedisConnectionMockTest {
     connection.scanKeys("fluxgate:bucket:*", 100L, pages::add);
 
     assertThat(pages).containsExactly(List.of("k1"));
+  }
+
+  @Test
+  void scanPreservesCursorObjectAndDoesNotStopOnZeroBeforeFinished() {
+    KeyScanCursor<String> intermediate = page("0", false);
+    when(commands.scan(any(ScanCursor.class), any(ScanArgs.class)))
+        .thenReturn(intermediate)
+        .thenReturn(page("0", true, "last-primary-key"));
+    assertThat(connection.scanKeys("fluxgate:*", 100L)).containsExactly("last-primary-key");
+    verify(commands).scan(same(intermediate), any(ScanArgs.class));
   }
 
   private static KeyScanCursor<String> page(String cursor, boolean finished, String... keys) {

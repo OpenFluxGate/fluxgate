@@ -599,6 +599,37 @@ class RedisTokenBucketStoreMockTest {
     verify(connectionProvider, never()).scanKeys(anyString(), anyLong());
   }
 
+  @Test
+  void resetBoundsDeleteBatchesAndCountsActualDeletionsAcrossDuplicatePages() {
+    List<String> keys = new java.util.ArrayList<>();
+    for (int i = 0; i < 1201; i++) {
+      keys.add("fluxgate:bucket:{a:r:k}:" + i);
+    }
+    java.util.Set<String> existing = new java.util.HashSet<>(keys);
+    doAnswer(
+            invocation -> {
+              java.util.function.Consumer<List<String>> consumer = invocation.getArgument(2);
+              consumer.accept(keys);
+              consumer.accept(keys); // SCAN may return the same keys again.
+              return null;
+            })
+        .when(connectionProvider)
+        .scanKeys(eq("fluxgate:bucket:*"), eq(1000L), any());
+    when(connectionProvider.unlink(any(String[].class)))
+        .thenAnswer(
+            invocation -> {
+              Object[] batch = invocation.getArguments();
+              assertThat(batch.length).isLessThanOrEqualTo(500);
+              long removed = 0;
+              for (Object key : batch) {
+                if (existing.remove(key)) removed++;
+              }
+              return removed;
+            });
+    assertThat(store.deleteAllBuckets()).isEqualTo(1201L);
+    verify(connectionProvider, times(6)).unlink(any(String[].class));
+  }
+
   /** Stubs the paged SCAN to deliver {@code keys} as one page. */
   private void scanPages(String pattern, List<String> keys) {
     doAnswer(
