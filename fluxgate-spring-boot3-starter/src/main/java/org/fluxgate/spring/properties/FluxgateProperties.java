@@ -139,6 +139,13 @@ public class FluxgateProperties implements Validator {
   @Override
   public void validate(Object target, Errors errors) {
     FluxgateProperties props = (FluxgateProperties) target;
+    if (props.getReload().getCounterMode() == ReloadProperties.CounterReloadMode.PUBLISHED_EPOCH
+        && !props.getReload().isEnabled()) {
+      errors.rejectValue(
+          "reload.enabled",
+          "publishedEpochRequiresReload",
+          "PUBLISHED_EPOCH requires reload.enabled=true so startup safeguards run");
+    }
     RedisProperties redisProps = props.getRedis();
     positive(errors, "redis.timeoutMs", "redis.timeout-ms", redisProps.getTimeoutMs());
     positive(errors, "redis.maxBucketTtl", "redis.max-bucket-ttl", redisProps.getMaxBucketTtl());
@@ -1528,6 +1535,26 @@ public class FluxgateProperties implements Validator {
    * </pre>
    */
   public static class ReloadProperties {
+
+    /**
+     * Automatic Redis counter handling. PUBLISHED_EPOCH requires authoritative published policies.
+     */
+    private CounterReloadMode counterMode = CounterReloadMode.LEGACY_RESET;
+
+    public CounterReloadMode getCounterMode() {
+      return counterMode;
+    }
+
+    public void setCounterMode(CounterReloadMode counterMode) {
+      this.counterMode = java.util.Objects.requireNonNull(counterMode, "counterMode");
+    }
+
+    public enum CounterReloadMode {
+      /** Backward-compatible best-effort SCAN reset on every reload. */
+      LEGACY_RESET,
+      /** Preserve quota on refresh; explicit policy reset changes epoch, old keys expire by TTL. */
+      PUBLISHED_EPOCH
+    }
 
     /** Enable rule hot reload feature. */
     private boolean enabled = true;

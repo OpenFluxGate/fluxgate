@@ -82,7 +82,10 @@ jobs:
         run: ./mvnw -B install -DskipTests
 
       - name: Run unit + integration tests with coverage
-        run: ./mvnw -B verify -Predis-cluster-it -Dfluxgate.redis.cluster.require=true
+        run: |
+          ./mvnw -B verify -Predis-cluster-it -Dfluxgate.redis.cluster.require=true
+          python3 -m unittest discover -s .github/tests/sample-startup -p 'test_*.py'
+          python3 .github/scripts/check-sample-startup-tests.py
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@0f8570b1a125f4937846a11fcfa3bcd548bd8c97 # v4.6.0
@@ -182,6 +185,8 @@ jobs:
           # startup test boots it on Spring Boot 2.7 against Testcontainers Redis and MongoDB.
           ./mvnw -B verify -Predis-cluster-it -Dfluxgate.redis.cluster.require=true \
             -pl fluxgate-core,fluxgate-mongo-adapter,fluxgate-redis-ratelimiter,fluxgate-spring-boot2-starter,fluxgate-samples,fluxgate-samples/fluxgate-sample-standalone-java11
+          python3 -m unittest discover -s .github/tests/sample-startup -p 'test_*.py'
+          python3 .github/scripts/check-sample-startup-tests.py
 
       - name: Upload test results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -20,6 +20,17 @@ public interface RateLimitRuleSetProvider {
    */
   Optional<RateLimitRuleSet> findById(String ruleSetId);
 
+  /**
+   * Whether every rule comes from authoritative published snapshots carrying counter revision and
+   * epoch metadata. This capability is not a global stale-writer barrier. Implementations must also
+   * require fresh reads, attach a consistent published revision and epoch to every returned rule,
+   * and never fall back to mutable drafts or legacy providers after a missing snapshot or read
+   * failure. Ordinary mutable or mixed providers must retain the default false.
+   */
+  default boolean usesPublishedCounterEpochs() {
+    return false;
+  }
+
   /** Whether every read must consult the authoritative policy revision rather than a TTL cache. */
   default boolean requiresFreshRead() {
     return false;

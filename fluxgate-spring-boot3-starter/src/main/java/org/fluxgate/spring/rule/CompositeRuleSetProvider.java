@@ -44,6 +44,14 @@ public final class CompositeRuleSetProvider implements RateLimitRuleSetProvider 
   }
 
   @Override
+  public boolean usesPublishedCounterEpochs() {
+    return primary.usesPublishedCounterEpochs()
+        && primary.requiresFreshRead()
+        && delegate.usesPublishedCounterEpochs()
+        && delegate.requiresFreshRead();
+  }
+
+  @Override
   public boolean requiresFreshRead() {
     return primary.requiresFreshRead() || delegate.requiresFreshRead();
   }
