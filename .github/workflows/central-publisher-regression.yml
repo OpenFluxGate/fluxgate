@@ -1,7 +1,8 @@
 name: Central publisher regression
 on:
+  # Always report this check on supported PR bases; path filters can leave required checks pending.
   pull_request:
-    paths: ['pom.xml', '.github/scripts/test-central-publisher.py', '.github/tests/central-publisher/**', '.github/workflows/central-publisher-regression.yml']
+    branches: [main, 'feature/lts-*']
   push:
     branches: [main, feature/lts-0.5.0]
     paths: ['pom.xml', '.github/scripts/test-central-publisher.py', '.github/tests/central-publisher/**', '.github/workflows/central-publisher-regression.yml']
