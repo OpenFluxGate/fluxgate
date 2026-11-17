@@ -1,0 +1,30 @@
+# PR-only tests: no release environment, release secrets, or publication.
+name: GPG diagnostic regression
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gpg-diagnostic.yml'
+      - '.github/workflows/gpg-diagnostic-test.yml'
+      - 'tests/test_gpg_diagnostic.py'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-signing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out PR with no persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned test parser
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/gpg-test-venv"
+          "$RUNNER_TEMP/gpg-test-venv/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
+      - name: Test only disposable synthetic keys
+        shell: bash
+        run: '"$RUNNER_TEMP/gpg-test-venv/bin/python" tests/test_gpg_diagnostic.py'
