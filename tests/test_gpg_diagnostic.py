@@ -1,4 +1,5 @@
 """Offline regression tests. Generates only disposable synthetic keys. Requires PyYAML and GnuPG."""
+import copy
 import os
 from pathlib import Path
 import subprocess
@@ -9,16 +10,55 @@ workflow = Path(__file__).resolve().parents[1] / '.github/workflows/gpg-diagnost
 if not workflow.exists():
     workflow = Path(__file__).with_name('gpg-diagnostic.yml')
 data = yaml.load(workflow.read_text(), Loader=yaml.BaseLoader)
-assert set(data['on']) == {'workflow_dispatch'}
-assert data['permissions'] == {}
-job = data['jobs']['signing-diagnostic']
-assert job['environment'] == 'release'
-assert "github.ref == 'refs/heads/main'" in job['if']
-assert "github.repository == 'OpenFluxGate/fluxgate'" in job['if']
-assert len(job['steps']) == 1
-step = job['steps'][0]
-assert 'uses' not in step
-assert set(step['env']) == {'GPG_PRIVATE_KEY', 'GPG_PASSPHRASE'}
+def validate_guards(config):
+    assert set(config) == {'name', 'on', 'permissions', 'jobs'}
+    assert config['on'] == {'workflow_dispatch': ''}
+    assert config['permissions'] == {}
+    assert set(config['jobs']) == {'signing-diagnostic'}
+    job = config['jobs']['signing-diagnostic']
+    assert set(job) == {'if', 'runs-on', 'environment', 'timeout-minutes', 'steps'}
+    assert job['environment'] == 'release'
+    assert job['runs-on'] == 'ubuntu-24.04'
+    assert job['timeout-minutes'] == '5'
+    expected_guard = (
+        "github.event_name == 'workflow_dispatch' && "
+        "github.ref == 'refs/heads/main' && "
+        "github.repository == 'OpenFluxGate/fluxgate'"
+    )
+    assert job['if'] == expected_guard
+    assert len(job['steps']) == 1
+    step = job['steps'][0]
+    assert set(step) == {'name', 'shell', 'env', 'run'}
+    assert step['shell'] == 'bash'
+    assert step['env'] == {
+        'GPG_PRIVATE_KEY': '${{ secrets.GPG_PRIVATE_KEY }}',
+        'GPG_PASSPHRASE': '${{ secrets.GPG_PASSPHRASE }}',
+    }
+    return step
+
+step = validate_guards(data)
+# These checks guard against accidental broadening, not malicious PR authors
+# who can also edit this test. Trusted review/environment protections remain required.
+mutations = [
+    lambda d: d['jobs']['signing-diagnostic'].__setitem__('if',
+        d['jobs']['signing-diagnostic']['if'] + ' || true'),
+    lambda d: d['on'].__setitem__('pull_request_target', ''),
+    lambda d: d['on'].__setitem__('workflow_dispatch', {'inputs': {'ref': {}}}),
+    lambda d: d['jobs'].__setitem__('extra-job', {}),
+    lambda d: d['jobs']['signing-diagnostic'].__setitem__('permissions', {'contents': 'write'}),
+    lambda d: d['jobs']['signing-diagnostic'].__setitem__('environment', 'unprotected'),
+    lambda d: d['jobs']['signing-diagnostic']['steps'].append({'uses': 'actions/checkout@main'}),
+    lambda d: d['jobs']['signing-diagnostic']['steps'][0]['env'].__setitem__('CENTRAL_TOKEN', 'unused'),
+]
+for mutate in mutations:
+    changed = copy.deepcopy(data)
+    mutate(changed)
+    try:
+        validate_guards(changed)
+    except AssertionError:
+        continue
+    raise AssertionError('Unsafe workflow mutation was accepted')
+print('Eight unsafe workflow mutations rejected: PASS')
 script = step['run']
 subprocess.run(['bash', '-n'], input=script, text=True, check=True)
 
