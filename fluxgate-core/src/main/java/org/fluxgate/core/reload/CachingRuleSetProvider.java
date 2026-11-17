@@ -63,6 +63,11 @@ public class CachingRuleSetProvider implements RateLimitRuleSetProvider, RuleRel
   }
 
   @Override
+  public boolean usesPublishedCounterEpochs() {
+    return delegate.usesPublishedCounterEpochs();
+  }
+
+  @Override
   public boolean requiresFreshRead() {
     return delegate.requiresFreshRead();
   }

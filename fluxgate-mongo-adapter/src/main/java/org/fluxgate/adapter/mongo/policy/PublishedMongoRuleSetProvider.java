@@ -32,6 +32,11 @@ public final class PublishedMongoRuleSetProvider implements RateLimitRuleSetProv
   }
 
   @Override
+  public boolean usesPublishedCounterEpochs() {
+    return true;
+  }
+
+  @Override
   public boolean requiresFreshRead() {
     return true;
   }

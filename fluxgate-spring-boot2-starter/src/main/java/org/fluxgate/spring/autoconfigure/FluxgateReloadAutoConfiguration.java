@@ -112,6 +112,52 @@ public class FluxgateReloadAutoConfiguration {
     this.properties = properties;
   }
 
+  /** Validate even when cache or reload strategy beans are disabled. */
+  @Bean
+  public org.springframework.beans.factory.SmartInitializingSingleton
+      publishedEpochReloadValidation(ListableBeanFactory beanFactory) {
+    return () -> {
+      if (!publishedEpochMode()) {
+        return;
+      }
+      RateLimitRuleSetProvider provider = resolveProvider(beanFactory);
+      if (provider == null
+          || !provider.requiresFreshRead()
+          || !provider.usesPublishedCounterEpochs()) {
+        throw new IllegalStateException(
+            "PUBLISHED_EPOCH requires an authoritative fresh-read published-counter provider;"
+                + " mutable, legacy and mixed providers are unsupported");
+      }
+      if (!properties.getRedis().isEnabled()
+          || properties.getRatelimit().getMode() == FluxgateProperties.RateLimiterMode.IN_MEMORY
+          || properties.getRatelimit().getFallback().getMode()
+              != FluxgateProperties.FallbackMode.NONE
+          || properties.getRatelimit().getFailureBehavior()
+              != FluxgateProperties.FailureBehavior.DENY
+          || properties.getRatelimit().getMissingRuleBehavior()
+              != FluxgateProperties.MissingRuleBehavior.DENY) {
+        throw new IllegalStateException(
+            "PUBLISHED_EPOCH requires Redis, no local fallback, and DENY for failures/missing rules");
+      }
+      for (BucketResetHandler handler :
+          beanFactory.getBeansOfType(BucketResetHandler.class).values()) {
+        if (!(handler instanceof org.fluxgate.core.reload.PublishedEpochResetGuard)) {
+          throw new IllegalStateException(
+              "PUBLISHED_EPOCH does not allow custom or local destructive BucketResetHandler beans");
+        }
+      }
+      log.info(
+          "PUBLISHED_EPOCH reload: automatic Redis bucket scans disabled; authoritative"
+              + " policy reads preserve counters, explicit published resets change epoch."
+              + " Legacy writers and global instantaneous cutover are not supported.");
+    };
+  }
+
+  private boolean publishedEpochMode() {
+    return properties.getReload().getCounterMode()
+        == ReloadProperties.CounterReloadMode.PUBLISHED_EPOCH;
+  }
+
   /**
    * Creates the Caffeine-based rule cache.
    *
@@ -353,6 +399,9 @@ public class FluxgateReloadAutoConfiguration {
   @Conditional(FluxgateRateLimiterAutoConfiguration.NotInMemoryModeCondition.class)
   public BucketResetHandler bucketResetHandler(
       ObjectProvider<RedisTokenBucketStore> tokenBucketStoreProvider) {
+    if (publishedEpochMode()) {
+      return new org.fluxgate.core.reload.PublishedEpochResetGuard();
+    }
     log.info("Creating RedisBucketResetHandler for automatic bucket reset on rule changes");
     // Resolved per reset so a Redis outage at startup does not prevent the handler from existing.
     return new RedisBucketResetHandler(tokenBucketStoreProvider::getObject);
@@ -430,6 +479,7 @@ public class FluxgateReloadAutoConfiguration {
     bucketResetHandlerProvider
         .orderedStream()
         .filter(h -> h instanceof RuleReloadListener)
+        .filter(h -> !publishedEpochMode() || !(h instanceof RedisBucketResetHandler))
         .forEach(
             h -> {
               log.info("Registering {} as reload listener", h.getClass().getSimpleName());
