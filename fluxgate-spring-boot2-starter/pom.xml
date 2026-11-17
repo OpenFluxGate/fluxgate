@@ -24,7 +24,7 @@
         <maven.compiler.target>11</maven.compiler.target>
         <!-- Spring Boot 2.7.x for Java 11 -->
         <spring-boot.version>2.7.18</spring-boot.version>
-        <spring.version>5.3.31</spring.version>
+        <spring.version>6.1.21</spring.version>
         <!-- Lower coverage thresholds for this module due to many excluded auto-config classes -->
         <jacoco.line.coverage>0.75</jacoco.line.coverage>
         <jacoco.branch.coverage>0.65</jacoco.branch.coverage>
