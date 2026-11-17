@@ -1,12 +1,17 @@
 package org.fluxgate.redis.connection;
 
+import io.lettuce.core.KeyScanCursor;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
+import io.lettuce.core.ScanArgs;
+import io.lettuce.core.ScanCursor;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -165,7 +170,17 @@ public class StandaloneRedisConnection implements RedisConnectionProvider {
 
   @Override
   public List<String> keys(String pattern) {
-    return commands.keys(pattern);
+    Objects.requireNonNull(pattern, "pattern must not be null");
+    LinkedHashSet<String> keys = new LinkedHashSet<>();
+    ScanArgs args = ScanArgs.Builder.matches(pattern).limit(1000L);
+    ScanCursor cursor = ScanCursor.INITIAL;
+    do {
+      KeyScanCursor<String> page = commands.scan(cursor, args);
+      keys.addAll(page.getKeys());
+      // Preserve the composite cluster cursor; a node's "0" is not cluster completion.
+      cursor = page;
+    } while (!cursor.isFinished());
+    return new ArrayList<>(keys);
   }
 
   @Override

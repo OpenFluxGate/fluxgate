@@ -207,8 +207,8 @@ public class RedisTokenBucketStore {
    * <p>This is used when rules are changed to reset rate limit state. The pattern matches keys
    * like: {@code fluxgate:{ruleSetId}:*}
    *
-   * <p>Warning: Uses KEYS command which can be slow on large databases. Consider using SCAN in
-   * high-traffic production environments.
+   * <p>Built-in providers enumerate via SCAN. The reset is not atomic under concurrent writes;
+   * quiesce matching writers if an exact reset boundary is required.
    *
    * @param ruleSetId the rule set ID to match
    * @return the number of buckets deleted
@@ -236,7 +236,8 @@ public class RedisTokenBucketStore {
    * <p>This is used when a full reload is triggered to reset all rate limit state. The pattern
    * matches all FluxGate keys: {@code fluxgate:*}
    *
-   * <p>Warning: Uses KEYS command which can be slow on large databases.
+   * <p>Built-in providers enumerate via SCAN. Enumeration still retains all matches in memory and
+   * the reset is not atomic under concurrent writes.
    *
    * @return the number of buckets deleted
    */
