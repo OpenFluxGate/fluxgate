@@ -82,7 +82,7 @@ failures; the release workflow passes it, so a release cannot go out with the cl
 `wrapperSha256Sum` property is not used because macOS's BSD `sha256sum` rejects it.)
 
 All tests must pass. Resolve any failures before tagging. The Redis Cluster tests need a cluster on
-`localhost:7100-7105` (`docker compose -f docker/redis-cluster.yml up -d`); the release workflow
+`localhost:7100-7105` (`docker compose -f docker/infra/redis-cluster.yml up -d`); the release workflow
 starts one itself.
 
 ### 5. Tag and Push the Release Branch

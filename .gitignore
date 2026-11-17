@@ -122,3 +122,6 @@ AGENTS.md
 .claude/
 .omc/
 .omx/
+
+# k6-result
+docker/k6/results

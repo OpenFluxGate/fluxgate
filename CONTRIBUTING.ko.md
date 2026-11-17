@@ -67,14 +67,14 @@ Redis 클러스터 테스트, 샘플 실행이 필요할 때 참고하세요.
 
 | 파일 | 서비스 |
 |---|---|
-| `docker/full.yml` | Redis 독립형, MongoDB, ELK — 권장 |
-| `docker/redis-standalone.yml` | Redis 독립형만 |
-| `docker/redis-cluster.yml` | Redis 클러스터 (노드 3개, 포트 7100-7105) |
-| `docker/mongo.yml` | MongoDB만 |
+| `docker/infra/full.yml` | Redis 독립형, MongoDB, ELK — 권장 |
+| `docker/infra/redis-standalone.yml` | Redis 독립형만 |
+| `docker/infra/redis-cluster.yml` | Redis 클러스터 (노드 3개, 포트 7100-7105) |
+| `docker/infra/mongo.yml` | MongoDB만 |
 
 ```bash
-docker compose -f docker/full.yml up -d
-docker compose -f docker/full.yml ps
+docker compose -f docker/infra/full.yml up -d
+docker compose -f docker/infra/full.yml ps
 ```
 
 ### 환경 변수
@@ -109,9 +109,9 @@ export FLUXGATE_MONGO_DB=fluxgate
 Redis 클러스터 프로필은 실행 중인 클러스터가 필요합니다:
 
 ```bash
-docker compose -f docker/redis-cluster.yml up -d
+docker compose -f docker/infra/redis-cluster.yml up -d
 ./mvnw -pl fluxgate-redis-ratelimiter -am -Predis-cluster-it verify
-docker compose -f docker/redis-cluster.yml down
+docker compose -f docker/infra/redis-cluster.yml down
 ```
 
 ### 문제 해결
@@ -121,7 +121,7 @@ docker compose -f docker/redis-cluster.yml down
 | 통합 테스트가 건너뛰어짐 | Docker가 꺼져 있어 Testcontainers가 시작하지 못한 경우입니다. Docker를 켜고 `./mvnw verify`를 다시 실행하세요. |
 | `docker compose up` 시 `port is already allocated` | 다른 Redis/MongoDB가 `6379`/`27017`을 쓰고 있습니다. 내리거나, compose 없이 Testcontainers가 임의 포트를 쓰게 두세요. |
 | `container name "/redis-cluster-test" is already in use` | 이전 실행의 정지된 컨테이너가 남아 있습니다: `docker rm redis-cluster-test`. |
-| MongoDB `Authentication failed` | 예전 Docker 볼륨이 다른 비밀번호로 만들어진 경우입니다. `docker compose -f docker/mongo.yml down -v`로 초기화하세요 (로컬 데이터 삭제). |
+| MongoDB `Authentication failed` | 예전 Docker 볼륨이 다른 비밀번호로 만들어진 경우입니다. `docker compose -f docker/infra/mongo.yml down -v`로 초기화하세요 (로컬 데이터 삭제). |
 | 모듈이 형제 모듈의 `SNAPSHOT`을 못 찾음 | `-am`을 붙여 의존 모듈을 소스에서 함께 빌드하세요 (`./mvnw test -pl <모듈> -am`). |
 
 ## 변경 사항 만들기

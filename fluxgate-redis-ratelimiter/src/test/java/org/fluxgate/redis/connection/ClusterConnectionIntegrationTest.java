@@ -29,7 +29,7 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
  * <p>Requires Redis Cluster running on localhost:7100-7105, or the nodes named by {@code
  * -Dfluxgate.redis.cluster.uri} (see {@link ClusterTestSupport})
  *
- * <p>Start cluster locally: docker compose -f docker/redis-cluster.yml up -d
+ * <p>Start cluster locally: docker compose -f docker/infra/redis-cluster.yml up -d
  *
  * <p>Run with: mvn -pl fluxgate-redis-ratelimiter -Predis-cluster-it verify
  *

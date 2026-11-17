@@ -22,7 +22,7 @@ fluxgate:
   redis:
     enabled: true
     uri: redis://localhost:6379
-    # Redis Cluster (docker compose -f docker/redis-cluster.yml up -d):
+    # Redis Cluster (docker compose -f docker/infra/redis-cluster.yml up -d):
     #uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102
   # Metrics enable for Prometheus
   metrics:
@@ -124,7 +124,7 @@ spring:
 fluxgate:
   mongo:
     enabled: true
-    # "mongo" and "redis" are the service names in docker/full.yml (docker/mongo.yml, docker/redis-standalone.yml)
+    # "mongo" and "redis" are the service names in docker/infra/full.yml (docker/infra/mongo.yml, docker/infra/redis-standalone.yml)
     uri: mongodb://${MONGO_USER:fluxgate}:${MONGO_PASSWORD:fluxgate123}@mongo:27017/fluxgate?authSource=admin
     rule-collection: rate_limit_rules
     event-collection: rate_limit_events

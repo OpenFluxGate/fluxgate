@@ -366,7 +366,7 @@ Local MongoDB if you want it — this compose file binds the port to `127.0.0.1`
 development only:
 
 ```bash
-docker compose -f ../docker/mongo.yml up -d
+docker compose -f ../docker/infra/mongo.yml up -d
 ```
 
 ### Pointing the tests at a shared database is safe

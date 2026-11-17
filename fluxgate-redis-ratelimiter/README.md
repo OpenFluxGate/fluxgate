@@ -656,7 +656,7 @@ FluxGate splits tests so that a clean checkout tests fully with no infrastructur
 # One class
 ./mvnw verify -pl fluxgate-redis-ratelimiter -Dit.test=TokenBucketConsumeLuaIntegrationTest
 
-# Redis Cluster tests (opt-in profile; expects docker/redis-cluster.yml or localhost:7100-7105)
+# Redis Cluster tests (opt-in profile; expects docker/infra/redis-cluster.yml or localhost:7100-7105)
 ./mvnw verify -pl fluxgate-redis-ratelimiter -am -Predis-cluster-it
 
 # ... in CI: fail instead of skipping when the cluster is unreachable
@@ -698,8 +698,8 @@ Local infrastructure if you want it — these compose files bind every port to `
 labelled local development only:
 
 ```bash
-docker compose -f ../docker/redis-standalone.yml up -d
-docker compose -f ../docker/mongo.yml up -d
+docker compose -f ../docker/infra/redis-standalone.yml up -d
+docker compose -f ../docker/infra/mongo.yml up -d
 ```
 
 ### Pointing the tests at a shared Redis is safe

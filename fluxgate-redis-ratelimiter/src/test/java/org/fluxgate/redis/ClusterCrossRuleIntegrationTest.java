@@ -30,7 +30,7 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
  * profile:
  *
  * <pre>
- * docker compose -p fluxgate-atomicity -f docker/redis-cluster.yml up -d
+ * docker compose -p fluxgate-atomicity -f docker/infra/redis-cluster.yml up -d
  * ./mvnw -pl fluxgate-redis-ratelimiter -Predis-cluster-it verify
  * </pre>
  */

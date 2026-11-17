@@ -246,7 +246,7 @@ test calls `flushdb()` or drops a collection it did not create.
 Local infrastructure, if you want it:
 
 ```bash
-docker compose -f ../docker/redis-standalone.yml -f ../docker/mongo.yml up -d
+docker compose -f ../docker/infra/redis-standalone.yml -f ../docker/infra/mongo.yml up -d
 ```
 
 Those compose files are labelled local development only and bind every port to `127.0.0.1`.

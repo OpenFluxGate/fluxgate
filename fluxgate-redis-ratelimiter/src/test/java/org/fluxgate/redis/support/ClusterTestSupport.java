@@ -5,10 +5,10 @@ import org.junit.jupiter.api.Assumptions;
 /**
  * Resolves the Redis Cluster the {@code redis-cluster-it} tier talks to.
  *
- * <p>Defaults to the cluster of {@code docker/redis-cluster.yml} (ports 7100-7102). Set {@code
- * -Dfluxgate.redis.cluster.uri} or {@code FLUXGATE_REDIS_CLUSTER_URI} to a comma-separated node
- * list to run against a cluster published on other ports, for example when several checkouts run
- * their cluster tests side by side.
+ * <p>Defaults to the cluster of {@code docker/infra/redis-cluster.yml} (ports 7100-7102). Set
+ * {@code -Dfluxgate.redis.cluster.uri} or {@code FLUXGATE_REDIS_CLUSTER_URI} to a comma-separated
+ * node list to run against a cluster published on other ports, for example when several checkouts
+ * run their cluster tests side by side.
  *
  * <p>When no cluster answers, the cluster tests skip themselves - unless {@code
  * -Dfluxgate.redis.cluster.require=true} (or {@code FLUXGATE_REDIS_CLUSTER_REQUIRE=true}) is set,
@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Assumptions;
  */
 public final class ClusterTestSupport {
 
-  /** Node list of the cluster started by {@code docker/redis-cluster.yml}. */
+  /** Node list of the cluster started by {@code docker/infra/redis-cluster.yml}. */
   public static final String DEFAULT_CLUSTER_URI =
       "redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102";
 

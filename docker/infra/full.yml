@@ -9,8 +9,8 @@
 # the integration tests default to redis://localhost:6379 with no credentials.
 #
 # Usage:
-#   docker compose -f docker/full.yml up -d
-#   docker compose -f docker/full.yml down
+#   docker compose -f docker/infra/full.yml up -d
+#   docker compose -f docker/infra/full.yml down
 #
 # Services (all bound to 127.0.0.1):
 #   - MongoDB:       127.0.0.1:27017 (user: fluxgate, password: fluxgate123 - throwaway)

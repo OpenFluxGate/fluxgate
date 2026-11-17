@@ -69,7 +69,7 @@ Or use the compose files (from the project root), which bind every port to `127.
 labelled local development only:
 
 ```bash
-docker compose -f docker/redis-standalone.yml -f docker/mongo.yml up -d
+docker compose -f docker/infra/redis-standalone.yml -f docker/infra/mongo.yml up -d
 ```
 
 ### Run a Sample

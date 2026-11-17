@@ -288,8 +288,8 @@ Content-Type: application/problem+json;charset=UTF-8
 #### B-1. Start Redis
 
 ```bash
-# docker/redis-standalone.yml ships with the project (ports bind to 127.0.0.1 only)
-docker compose -f docker/redis-standalone.yml up -d
+# docker/infra/redis-standalone.yml ships with the project (ports bind to 127.0.0.1 only)
+docker compose -f docker/infra/redis-standalone.yml up -d
 ```
 
 #### B-2. Add dependencies
@@ -335,8 +335,8 @@ fluxgate:
 Skip this step if a programmatic `ruleSetProvider` bean is enough.
 
 ```bash
-# Start MongoDB (credentials match docker/mongo.yml)
-docker compose -f docker/mongo.yml up -d
+# Start MongoDB (credentials match docker/infra/mongo.yml)
+docker compose -f docker/infra/mongo.yml up -d
 ```
 
 Add the MongoDB adapter:
@@ -355,7 +355,7 @@ Add MongoDB config to `application.yml`:
 fluxgate:
   mongo:
     enabled: true
-    # credentials from docker/mongo.yml — change these in any real deployment
+    # credentials from docker/infra/mongo.yml — change these in any real deployment
     uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
     ddl-auto: create        # creates indexes on first start
@@ -489,7 +489,7 @@ sample needs.
 ./mvnw -B install -DskipTests -pl fluxgate-samples/fluxgate-sample-redis,fluxgate-samples/fluxgate-sample-filter -am
 
 # Start infrastructure (local development only; ports bind to 127.0.0.1)
-docker compose -f docker/redis-standalone.yml -f docker/mongo.yml up -d
+docker compose -f docker/infra/redis-standalone.yml -f docker/infra/mongo.yml up -d
 
 # Start rate limit service
 ./mvnw spring-boot:run -pl fluxgate-samples/fluxgate-sample-redis
@@ -518,7 +518,7 @@ All defaults below are the values in `FluxgateProperties` and
 | `fluxgate.redis.fail-fast` | `false` | Fail application startup when Redis is unreachable. Default connects lazily and reconnects in the background |
 | `fluxgate.redis.max-bucket-ttl` | `7d` | Upper bound on a bucket's TTL. Bounds how much Redis memory a forged-identity caller can pin down with a long window |
 | `fluxgate.mongo.enabled` | `false` | Enable the MongoDB adapter |
-| `fluxgate.mongo.uri` | `mongodb://localhost:27017/fluxgate` | MongoDB connection URI. For authenticated instances use `mongodb://user:pass@host:27017/db?authSource=admin` (see Quick Start for the docker/mongo.yml credentials) |
+| `fluxgate.mongo.uri` | `mongodb://localhost:27017/fluxgate` | MongoDB connection URI. For authenticated instances use `mongodb://user:pass@host:27017/db?authSource=admin` (see Quick Start for the docker/infra/mongo.yml credentials) |
 | `fluxgate.mongo.database` | `fluxgate` | MongoDB database name |
 | `fluxgate.mongo.rule-collection` | `rate_limit_rules` | Collection holding rate limit rules |
 | `fluxgate.mongo.event-collection` | _(unset)_ | Collection for rate limit events (optional) |
@@ -683,7 +683,7 @@ db.rate_limit_rules.createIndex({ ruleSetId: 1, id: 1 }, { unique: true, name: "
 fluxgate:
   mongo:
     enabled: true
-    # docker/mongo.yml credentials — change these in any real deployment
+    # docker/infra/mongo.yml credentials — change these in any real deployment
     uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
     rule-collection: my_rate_limit_rules    # Custom collection name

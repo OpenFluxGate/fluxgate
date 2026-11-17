@@ -389,7 +389,7 @@ fluxgate:
   redis:
     enabled: true
     uri: redis://localhost:6379
-    #uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102   # docker/redis-cluster.yml
+    #uri: redis://127.0.0.1:7100,redis://127.0.0.1:7101,redis://127.0.0.1:7102   # docker/infra/redis-cluster.yml
   metrics:
     enabled: true
   resilience:
@@ -462,7 +462,7 @@ alone to unsigned Pub/Sub (local demo only). `strategy: PUBSUB` refuses to start
 ### Docker Profile
 
 For Docker Compose environments (`--spring.profiles.active=docker`; `mongo` and `redis` are the
-service names in `docker/full.yml`):
+service names in `docker/infra/full.yml`):
 
 ```yaml
 spring:

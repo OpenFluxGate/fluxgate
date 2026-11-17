@@ -289,8 +289,8 @@ Content-Type: application/problem+json;charset=UTF-8
 #### B-1. Redis 시작
 
 ```bash
-# docker/redis-standalone.yml이 프로젝트에 포함되어 있습니다 (포트는 127.0.0.1에만 바인딩)
-docker compose -f docker/redis-standalone.yml up -d
+# docker/infra/redis-standalone.yml이 프로젝트에 포함되어 있습니다 (포트는 127.0.0.1에만 바인딩)
+docker compose -f docker/infra/redis-standalone.yml up -d
 ```
 
 #### B-2. 의존성 추가
@@ -335,8 +335,8 @@ fluxgate:
 프로그래매틱 `ruleSetProvider` 빈으로 충분하면 이 단계는 건너뛰세요.
 
 ```bash
-# MongoDB 시작 (credentials는 docker/mongo.yml 기준)
-docker compose -f docker/mongo.yml up -d
+# MongoDB 시작 (credentials는 docker/infra/mongo.yml 기준)
+docker compose -f docker/infra/mongo.yml up -d
 ```
 
 Maven 의존성 추가:
@@ -355,7 +355,7 @@ Maven 의존성 추가:
 fluxgate:
   mongo:
     enabled: true
-    # docker/mongo.yml 자격증명 — 실제 배포에서는 변경하세요
+    # docker/infra/mongo.yml 자격증명 — 실제 배포에서는 변경하세요
     uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
     ddl-auto: create        # 최초 시작 시 인덱스 생성
@@ -487,7 +487,7 @@ JDK는 [Build Once](fluxgate-samples/README.md#build-once)를 참고하세요.
 ./mvnw -B install -DskipTests -pl fluxgate-samples/fluxgate-sample-redis,fluxgate-samples/fluxgate-sample-filter -am
 
 # 인프라 시작 (로컬 개발 전용. 포트는 127.0.0.1에만 바인딩됩니다)
-docker compose -f docker/redis-standalone.yml -f docker/mongo.yml up -d
+docker compose -f docker/infra/redis-standalone.yml -f docker/infra/mongo.yml up -d
 
 # Rate Limit 서비스 시작
 ./mvnw spring-boot:run -pl fluxgate-samples/fluxgate-sample-redis
@@ -516,7 +516,7 @@ curl http://localhost:8083/api/hello
 | `fluxgate.redis.fail-fast` | `false` | Redis 연결 실패 시 기동 실패. 기본값은 지연 연결 + 백그라운드 재연결 |
 | `fluxgate.redis.max-bucket-ttl` | `7d` | 버킷 TTL 상한. 긴 윈도에서 위조 가능한 신원 키가 점유할 수 있는 Redis 메모리를 제한합니다 |
 | `fluxgate.mongo.enabled` | `false` | MongoDB 어댑터 활성화 |
-| `fluxgate.mongo.uri` | `mongodb://localhost:27017/fluxgate` | MongoDB 연결 URI. 인증이 필요한 경우 `mongodb://user:pass@host:27017/db?authSource=admin` 형식 사용 (빠른 시작의 docker/mongo.yml 자격증명 참고) |
+| `fluxgate.mongo.uri` | `mongodb://localhost:27017/fluxgate` | MongoDB 연결 URI. 인증이 필요한 경우 `mongodb://user:pass@host:27017/db?authSource=admin` 형식 사용 (빠른 시작의 docker/infra/mongo.yml 자격증명 참고) |
 | `fluxgate.mongo.database` | `fluxgate` | MongoDB 데이터베이스명 |
 | `fluxgate.mongo.rule-collection` | `rate_limit_rules` | 규칙 컬렉션명 |
 | `fluxgate.mongo.event-collection` | _(미설정)_ | 이벤트 컬렉션명 (선택사항) |
@@ -681,7 +681,7 @@ db.rate_limit_rules.createIndex({ ruleSetId: 1, id: 1 }, { unique: true, name: "
 fluxgate:
   mongo:
     enabled: true
-    # docker/mongo.yml 자격증명 — 실제 배포에서는 변경하세요
+    # docker/infra/mongo.yml 자격증명 — 실제 배포에서는 변경하세요
     uri: mongodb://fluxgate:fluxgate123@localhost:27017/fluxgate?authSource=admin
     database: fluxgate
     rule-collection: my_rate_limit_rules    # 커스텀 컬렉션명

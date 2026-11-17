@@ -68,14 +68,14 @@ We provide Docker Compose files in the `docker/` directory:
 
 | File | Services |
 |---|---|
-| `docker/full.yml` | Redis standalone, MongoDB, ELK — recommended |
-| `docker/redis-standalone.yml` | Redis standalone only |
-| `docker/redis-cluster.yml` | Redis cluster (3 nodes) on ports 7100-7105 |
-| `docker/mongo.yml` | MongoDB only |
+| `docker/infra/full.yml` | Redis standalone, MongoDB, ELK — recommended |
+| `docker/infra/redis-standalone.yml` | Redis standalone only |
+| `docker/infra/redis-cluster.yml` | Redis cluster (3 nodes) on ports 7100-7105 |
+| `docker/infra/mongo.yml` | MongoDB only |
 
 ```bash
-docker compose -f docker/full.yml up -d
-docker compose -f docker/full.yml ps
+docker compose -f docker/infra/full.yml up -d
+docker compose -f docker/infra/full.yml ps
 ```
 
 ### Environment Variables
@@ -110,9 +110,9 @@ export FLUXGATE_MONGO_DB=fluxgate
 The Redis Cluster profile needs a running cluster:
 
 ```bash
-docker compose -f docker/redis-cluster.yml up -d
+docker compose -f docker/infra/redis-cluster.yml up -d
 ./mvnw -pl fluxgate-redis-ratelimiter -am -Predis-cluster-it verify
-docker compose -f docker/redis-cluster.yml down
+docker compose -f docker/infra/redis-cluster.yml down
 ```
 
 ### Troubleshooting
@@ -122,7 +122,7 @@ docker compose -f docker/redis-cluster.yml down
 | Integration tests are skipped | Docker is not running (Testcontainers cannot start). Start Docker and re-run `./mvnw verify`. |
 | `port is already allocated` on `docker compose up` | Another Redis/MongoDB is using `6379`/`27017`. Stop it, or skip the compose files and let Testcontainers pick random ports. |
 | `container name "/redis-cluster-test" is already in use` | A stopped container from an earlier run exists: `docker rm redis-cluster-test`. |
-| MongoDB `Authentication failed` | An old Docker volume was created with a different password. Reset it with `docker compose -f docker/mongo.yml down -v` (deletes local data). |
+| MongoDB `Authentication failed` | An old Docker volume was created with a different password. Reset it with `docker compose -f docker/infra/mongo.yml down -v` (deletes local data). |
 | A module cannot resolve a sibling `SNAPSHOT` | Build with `-am` (`./mvnw test -pl <module> -am`) so dependencies are built from source. |
 
 ## Making Changes
