@@ -120,7 +120,10 @@ public class FluxgateReloadAutoConfiguration {
       if (!publishedEpochMode()) {
         return;
       }
-      RateLimitRuleSetProvider provider = resolveProvider(beanFactory);
+      // Singletons are initialized: follow the runtime injection choice, including @Primary
+      // and a caching wrapper, rather than the delegate selection used while building reload beans.
+      RateLimitRuleSetProvider provider =
+          beanFactory.getBeanProvider(RateLimitRuleSetProvider.class).getIfAvailable();
       if (provider == null
           || !provider.requiresFreshRead()
           || !provider.usesPublishedCounterEpochs()) {

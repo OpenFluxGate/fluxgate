@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 
 import java.util.Optional;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
+import org.fluxgate.core.ratelimiter.RateLimiter;
 import org.fluxgate.core.reload.*;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.fluxgate.redis.store.RedisTokenBucketStore;
@@ -72,6 +73,72 @@ class PublishedEpochReloadTest {
               assertThat(context).doesNotHaveBean(RuleCache.class);
               assertThat(context).doesNotHaveBean(CachingRuleSetProvider.class);
               assertThat(context).hasBean("publishedEpochReloadValidation");
+            });
+  }
+
+  @Test
+  void validatesPrimaryRuntimeProviderInsteadOfNamedReloadDelegate() {
+    contextRunner()
+        .withConfiguration(AutoConfigurations.of(FluxgateRateLimiterAutoConfiguration.class))
+        .withPropertyValues("fluxgate.reload.cache.enabled=false")
+        .withBean(RateLimiter.class, () -> mock(RateLimiter.class))
+        .withBean(
+            "delegateRuleSetProvider", RateLimitRuleSetProvider.class, () -> provider(true, true))
+        .withBean(
+            "runtimeProvider",
+            RateLimitRuleSetProvider.class,
+            () -> provider(false, false),
+            definition -> definition.setPrimary(true))
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(context.getStartupFailure())
+                  .hasStackTraceContaining("authoritative fresh-read published-counter provider");
+            });
+  }
+
+  @Test
+  void compositeRequiresFreshReadsFromEveryPublishedDelegate() {
+    for (CompositeRuleSetProvider composite :
+        new CompositeRuleSetProvider[] {
+          new CompositeRuleSetProvider(provider(true, false), provider(true, true)),
+          new CompositeRuleSetProvider(provider(true, true), provider(true, false))
+        }) {
+      assertThat(composite.requiresFreshRead()).isTrue();
+      assertThat(composite.usesPublishedCounterEpochs()).isFalse();
+      contextRunner()
+          .withPropertyValues("fluxgate.reload.cache.enabled=false")
+          .withBean("delegateRuleSetProvider", RateLimitRuleSetProvider.class, () -> composite)
+          .run(
+              context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasStackTraceContaining("authoritative fresh-read published-counter provider");
+              });
+    }
+    assertThat(
+            new CompositeRuleSetProvider(provider(true, true), provider(true, true))
+                .usesPublishedCounterEpochs())
+        .isTrue();
+  }
+
+  @Test
+  void enabledCacheValidatesPublishedCachingWrapperWithoutCircularResolution() {
+    contextRunner()
+        .withConfiguration(AutoConfigurations.of(FluxgateRateLimiterAutoConfiguration.class))
+        .withPropertyValues("fluxgate.reload.cache.enabled=true", "fluxgate.reload.strategy=AUTO")
+        .withBean(RateLimiter.class, () -> mock(RateLimiter.class))
+        .withBean(
+            "delegateRuleSetProvider", RateLimitRuleSetProvider.class, () -> provider(true, true))
+        .run(
+            context -> {
+              assertThat(context).hasNotFailed();
+              assertThat(context).hasSingleBean(CachingRuleSetProvider.class);
+              RateLimitRuleSetProvider runtimeProvider =
+                  context.getBeanProvider(RateLimitRuleSetProvider.class).getIfAvailable();
+              assertThat(runtimeProvider).isSameAs(context.getBean(CachingRuleSetProvider.class));
+              assertThat(runtimeProvider.usesPublishedCounterEpochs()).isTrue();
+              assertThat(runtimeProvider.requiresFreshRead()).isTrue();
             });
   }
 
