@@ -17,7 +17,7 @@
  */
 
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { check } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
 import { htmlReport } from 'https://raw.githubusercontent.com/benc-uk/k6-reporter/main/dist/bundle.js';
 
@@ -31,6 +31,7 @@ import { htmlReport } from 'https://raw.githubusercontent.com/benc-uk/k6-reporte
 const rateLimitedRequests = new Counter('rate_limited_requests'); // Count of 429 responses
 const successfulRequests = new Counter('successful_requests');    // Count of 200 responses
 const rateLimitAccuracy = new Rate('rate_limit_accuracy');        // Success rate metric
+const errorRequests = new Counter('error_requests');
 const responseTime = new Trend('response_time');                  // Response time distribution
 
 // =============================================================================
@@ -42,6 +43,11 @@ const responseTime = new Trend('response_time');                  // Response ti
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8085';
 const EXPECTED_LIMIT = parseInt(__ENV.EXPECTED_LIMIT) || 10;
 const WINDOW_SECONDS = parseInt(__ENV.WINDOW_SECONDS) || 60;
+
+// This is a fresh-bucket burst test: finish before the first token refill.
+const MAX_BURST_MS = (WINDOW_SECONDS * 1000) / EXPECTED_LIMIT;
+let startedAt;
+http.setResponseCallback(http.expectedStatuses(200, 429));
 
 // =============================================================================
 // Test Options
@@ -71,8 +77,11 @@ export const options = {
     // p(95) = 95th percentile; 95% of requests must be under 500ms
     http_req_duration: ['p(95)<500'],
 
-    // rate > 0.9 means more than 90% must pass
-    rate_limit_accuracy: ['rate>0.9'],
+    // Every response must match the expected fresh-bucket sequence.
+    rate_limit_accuracy: ['rate==1'],
+    checks: ['rate==1'],
+    http_req_failed: ['rate==0'],
+    iterations: [`count==${EXPECTED_LIMIT + 5}`],
   },
 };
 
@@ -82,6 +91,7 @@ export const options = {
 // default function is executed repeatedly by each VU
 
 export default function () {
+  if (startedAt === undefined) startedAt = Date.now();
   // Send HTTP GET request to the test endpoint
   const res = http.get(`${BASE_URL}/api/test`);
 
@@ -96,6 +106,12 @@ export default function () {
   if (isSuccess) {
     successfulRequests.add(1);
   }
+
+  if (!isSuccess && !isRateLimited) errorRequests.add(1);
+
+  const expectedStatus = __ITER < EXPECTED_LIMIT ? 200 : 429;
+  const withinBurst = Date.now() - startedAt < MAX_BURST_MS;
+  rateLimitAccuracy.add(res.status === expectedStatus && withinBurst);
 
   if (isRateLimited) {
     rateLimitedRequests.add(1);
@@ -113,9 +129,7 @@ export default function () {
     'status is 200 or 429': (r) => r.status === 200 || r.status === 429,
   });
 
-  // Small delay between requests (100ms)
-  // sleep() pauses execution; time is in seconds
-  sleep(0.1);
+  // No sleep: a refill would invalidate the fresh-bucket burst expectation.
 }
 
 // =============================================================================
@@ -127,7 +141,12 @@ export function handleSummary(data) {
   // Extract counts from metrics using optional chaining (?.)
   const successful = data.metrics.successful_requests?.values?.count || 0;
   const rateLimited = data.metrics.rate_limited_requests?.values?.count || 0;
-  const total = successful + rateLimited;
+  const errors = data.metrics.error_requests?.values?.count || 0;
+  const total = successful + rateLimited + errors;
+  const accuracy = data.metrics.rate_limit_accuracy?.values?.rate;
+  const checksPassed = data.metrics.checks?.values?.rate === 1;
+  const passed = accuracy === 1 && checksPassed && errors === 0
+    && successful === EXPECTED_LIMIT && rateLimited === 5;
 
   // Print summary to console
   console.log(`\n========== Rate Limit Test Summary ==========`);
@@ -135,7 +154,8 @@ export function handleSummary(data) {
   console.log(`Total Requests: ${total}`);
   console.log(`Successful (200): ${successful}`);
   console.log(`Rate Limited (429): ${rateLimited}`);
-  console.log(`Accuracy: ${successful <= EXPECTED_LIMIT ? 'PASS' : 'FAIL'}`);
+  console.log(`Unexpected errors: ${errors}`);
+  console.log(`Accuracy: ${passed ? 'PASS' : 'FAIL'}`);
   console.log(`==============================================\n`);
 
   // Return object specifying output files

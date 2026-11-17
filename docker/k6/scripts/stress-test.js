@@ -43,6 +43,9 @@ const BASE_URL = __ENV.BASE_URL || 'http://localhost:8085';
 const VUS = parseInt(__ENV.VUS) || 100;           // 100 virtual users
 const ITERATIONS = parseInt(__ENV.ITERATIONS) || 10000; // 10,000 iterations per VU = 1M total
 
+// Intended rate limiting is not an HTTP failure. Unexpected responses still are.
+http.setResponseCallback(http.expectedStatuses(200, 429));
+
 // =============================================================================
 // Test Options
 // =============================================================================
