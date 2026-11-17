@@ -34,8 +34,10 @@ keys. It checks success, incorrect passphrase, malformed/missing key, missing
 passphrase, public-only key, cleanup, workflow guards and Bash syntax. It never
 reads real release secrets and never dispatches the workflow.
 
-Implementation-environment validation: YAML guards and Bash syntax passed. Full
-synthetic-key cases are NOT yet verified: the sandbox rejects gpg-agent Unix
-socket creation (`Operation not permitted`), including the approved escalated
-attempt. Run this test in a suitable local environment before approving the PR.
+Validation: YAML guards, Bash syntax, all six synthetic-key cases, and temporary
+keyring cleanup passed on the GitHub-hosted Ubuntu runner in
+https://github.com/OpenFluxGate/fluxgate/actions/runs/44102798736
+(head afe44fca306a8618ad256535ccd9ce3b3c9f34b9). Local execution was blocked by
+sandbox Unix-socket restrictions; the PR-only regression workflow resolved this
+test-environment limitation without release secrets or the release environment.
 No real-secret diagnostic or publication has been performed.
