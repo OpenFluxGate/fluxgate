@@ -1,5 +1,8 @@
 # Security Policy
 
+> **0.5.0 readiness:** Both Boot 2 and Boot 3 are required; Boot 2 deferral to 0.5.1 is cancelled. Security gates remain unresolved. Earlier SDK-only CI success is not Boot 2 validation. See [release readiness](docs/release-0.5.0-readiness.md).
+
+
 ## Supported Versions
 
 Security fixes are applied to the latest released FluxGate line. Projects should upgrade to the newest published version before reporting an issue against an older release.
@@ -13,12 +16,12 @@ compatibility does not provide ongoing upstream OSS security support. Spring 5.3
 still have conditional security advisories, including [CVE-2026-47884](https://spring.io/security/cve-2026-47884/);
 Spring 6.2.19 also has [CVE-2026-47890](https://spring.io/security/cve-2026-47890/).
 
-The Boot 2 starter and its Java 11 sample are removed from the 0.5.0 release tree and reactor,
-not merely excluded from dependency scanning. Their restoration targets 0.5.1 after the
-Spring 5 security blocker and legacy dependency graph are resolved. Historical sources remain
-in Git commit `2423129`. No dependency-review scope or severity gate is relaxed.
-Modern server/sample logging uses Logback 1.6.5. Java 11 SDK compatibility is tested separately
-and must not be interpreted as Spring Boot 2 support. See [release scope](docs/release-0.5.0-scope.md).
+Modern server and sample logging uses [Logback 1.6.5](https://logback.qos.ch/news.html),
+including the MDC discriminator security fix. The Java 11 / Boot 2 sample retains SLF4J 1.7
+and Logback 1.2.13 for compatibility; that logging line is end of life. Its resolved graph
+also includes legacy Spring Data and SnakeYAML advisories. It is a compatibility example,
+not a security-supported deployment template. Audits include samples as well as SDK/server
+modules; findings in those legacy graphs are not hidden by a clean SDK scan.
 
 The maintained server baseline and legacy compatibility scope must be settled before publishing
 0.5.0 as LTS. A clean dependency scan for an SDK subset does not establish security for the

@@ -1,8 +1,7 @@
-> 0.5.0 scope update: Boot 2 starter and its Java 11 sample are deferred to 0.5.1,
-> conditional on security remediation and compatibility tests. Historical entries below are
-> not a promise of Boot 2 availability in 0.5.0. Redis KEYS removal remains in 0.5.0.
-
 # Changelog
+
+> **0.5.0 readiness:** Both Boot 2 and Boot 3 are required; Boot 2 deferral to 0.5.1 is cancelled. Security gates remain unresolved. Earlier SDK-only CI success is not Boot 2 validation. See [release readiness](docs/release-0.5.0-readiness.md).
+
 
 All notable changes to FluxGate are documented in this file.
 

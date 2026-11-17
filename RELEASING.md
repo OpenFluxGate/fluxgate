@@ -1,8 +1,9 @@
 # FluxGate Release Checklist
 
-This document is for maintainers who are cutting a release.
+> **0.5.0 readiness:** Both Boot 2 and Boot 3 are required; Boot 2 deferral to 0.5.1 is cancelled. Security gates remain unresolved. Earlier SDK-only CI success is not Boot 2 validation. See [release readiness](docs/release-0.5.0-readiness.md).
 
-For 0.5.0, follow [the explicit release scope](docs/release-0.5.0-scope.md). Boot 2 is deferred, not supported by this release.
+
+This document is for maintainers who are cutting a release.
 
 ## Prerequisites
 
@@ -114,12 +115,12 @@ Pushing the branch triggers `.github/workflows/release.yml`, which:
    fail rather than skip when the cluster is unreachable), and the coverage gates.
 4. Signs and deploys (`-Prelease`) to Maven Central via the Sonatype Central Publishing Plugin
    exactly these artifacts: the parent POM `fluxgate`, `fluxgate-core`, `fluxgate-redis-ratelimiter`,
-   `fluxgate-mongo-adapter`, `fluxgate-envoy-extauth`, `fluxgate-spring-boot3-starter` and
-   `fluxgate-control-support`. `fluxgate-testkit`, `fluxgate-benchmarks`, `fluxgate-samples` and
+   `fluxgate-mongo-adapter`, `fluxgate-spring-boot2-starter`, `fluxgate-spring-boot3-starter` and
+   `fluxgate-control-support`, plus `fluxgate-envoy-extauth`. `fluxgate-testkit`, `fluxgate-benchmarks`, `fluxgate-samples` and
    every sample module set `maven.deploy.skip` (directly or through `fluxgate-samples`) and are
    listed in the plugin's `excludeArtifacts` in the root `pom.xml`.
 5. Creates a GitHub Release with auto-generated release notes and attaches the module jars
-   (core, redis-ratelimiter, mongo-adapter, envoy-extauth, boot3-starter, control-support).
+   (core, redis-ratelimiter, mongo-adapter, boot2-starter, boot3-starter, control-support).
 6. Generates the CycloneDX SBOM (`target/bom.json`) and attaches it to the GitHub Release.
 
 ### 6. Verify the GitHub Release
@@ -127,7 +128,7 @@ Pushing the branch triggers `.github/workflows/release.yml`, which:
 After the workflow succeeds:
 
 * Open the GitHub Release page for `v0.5.0`.
-* Confirm all JARs (core, redis, mongo, envoy-extauth, boot3-starter, control-support) are listed.
+* Confirm all JARs (core, redis, mongo, boot2-starter, boot3-starter, control-support) are listed.
 * Confirm `bom.json` is attached as a release asset.
 * Confirm the Maven Central listing shows the new version (allow up to 30 minutes
   for propagation).

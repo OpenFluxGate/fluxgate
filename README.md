@@ -1,9 +1,10 @@
 # FluxGate
 
-> **0.5.0 release scope:** Spring Boot 3, Java 11 framework-neutral SDKs, Redis and Envoy are included. The Boot 2 starter and its Java 11 sample are not supplied in 0.5.0; their return targets 0.5.1 only after security and compatibility gates pass. See [release scope](docs/release-0.5.0-scope.md).
+> **0.5.0 readiness:** Both Boot 2 and Boot 3 are required; Boot 2 deferral to 0.5.1 is cancelled. Security gates remain unresolved. Earlier SDK-only CI success is not Boot 2 validation. See [release readiness](docs/release-0.5.0-readiness.md).
+
 
 [![Java](https://img.shields.io/badge/Java-11%2B-blue.svg)](https://openjdk.org/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-2.7.x%20%7C%203.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build](https://github.com/OpenFluxGate/fluxgate/actions/workflows/maven-ci.yml/badge.svg)](https://github.com/OpenFluxGate/fluxgate/actions)
 [![Benchmark](https://img.shields.io/badge/Benchmark-Results-blueviolet.svg)](https://openfluxgate.github.io/fluxgate/benchmark/)
@@ -103,6 +104,7 @@ Java, Go, Rust, or another language. MongoDB and Redis are not request-forwardin
 | **fluxgate-redis-ratelimiter** | Redis-backed distributed rate limiter with Lua scripts |
 | **fluxgate-mongo-adapter** | MongoDB adapter for dynamic rule management |
 | **fluxgate-spring-boot3-starter** | Spring Boot 3.x auto-configuration (Java 17+, jakarta.servlet) |
+| **fluxgate-spring-boot2-starter** | Spring Boot 2.7.x auto-configuration (Java 11+, `javax.servlet`). Equivalent feature set; **requires Spring Boot 2.7.x** ([README](fluxgate-spring-boot2-starter/README.md)) |
 | **fluxgate-control-support** | Control-plane helpers: `@NotifyRuleChange` / `@NotifyFullReload` and the Redis rule-change notifier |
 | **fluxgate-testkit** | Integration testing utilities |
 | **fluxgate-benchmarks** | JMH benchmarks (not published) |
@@ -124,6 +126,7 @@ management without restarts.
 
 - Java 17+ and Maven 3.8+ (Path A)
 - An existing Spring Boot web application; the example below adds its `/api/hello` controller.
+- Java 11 with Spring Boot 2.7 is also supported via `fluxgate-spring-boot2-starter`
 - Docker (Path B, to start Redis/MongoDB)
 
 This branch prepares **0.5.0**, including the Envoy authorization service, and is built from
@@ -470,6 +473,7 @@ fluxgate:
 | Sample | Port | Description |
 |--------|------|-------------|
 | **fluxgate-sample-standalone-java21** | 8085 | Full stack with direct MongoDB + Redis integration, plus the `@RateLimit` aspect |
+| **fluxgate-sample-standalone-java11** | 8085 | The same stack on Java 11 / Spring Boot 2.7 |
 | **fluxgate-sample-redis** | 8082 | Rate limit service with Redis backend |
 | **fluxgate-sample-mongo** | 8081 | Rule management with MongoDB |
 | **fluxgate-sample-filter** | 8083 | Client app with auto rate limiting filter over HTTP |
