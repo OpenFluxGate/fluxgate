@@ -2613,6 +2613,7 @@ def sampler_contention_self_test():
         exec(sampler_program().rsplit("\nconfig = ", 1)[0], namespace)
         clock = SimpleNamespace(now=0.0)
         holding, attempting, release = threading.Event(), threading.Event(), threading.Event()
+        worker_threads = threading.local()
         result, connections = {}, []
         with tempfile.TemporaryDirectory(prefix="sampler-contention-unit-") as directory:
             stop = Path(directory) / "stop"
@@ -2624,7 +2625,7 @@ def sampler_contention_self_test():
                         if self.scheduler_entries == 2:
                             attempting.set()  # Observe the actual blocked scheduler acquisition.
                     acquired = super().__enter__()
-                    if name.endswith("(worker)") and not holding.is_set():
+                    if getattr(worker_threads, "made_request", False) and not holding.is_set():
                         holding.set()  # Explicit contention; progress I/O no longer owns this lock.
                         require(release.wait(2), "contention lock was not released")
                     return acquired
@@ -2646,7 +2647,7 @@ def sampler_contention_self_test():
                     connections.append(self)
                     self.number = len(connections)
                 def request(self, *args, **kwargs):
-                    pass
+                    worker_threads.made_request = True
                 def getresponse(self):
                     return SimpleNamespace(status=200, read=lambda: b"marker\n")
                 def close(self):
