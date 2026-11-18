@@ -34,11 +34,13 @@ class ClientIpExtractorTest {
     assertThat(composite(first)).isEqualTo(composite(second));
     request.setRemoteAddr("203.0.113.9");
     assertThat(composite(extract(TrustedProxies.of("10.0.0.0/8"))))
-        .isEqualTo(composite("203.0.113.9")).isNotEqualTo(composite(first));
+        .isEqualTo(composite("203.0.113.9"))
+        .isNotEqualTo(composite(first));
   }
 
   private static String composite(String ip) {
-    return CompositeKeyEncoder.encode("ip_user_v1", List.of("ip", "user"), Map.of("ip", ip, "user", "u"));
+    return CompositeKeyEncoder.encode(
+        "ip_user_v1", List.of("ip", "user"), Map.of("ip", ip, "user", "u"));
   }
 
   private String extract(TrustedProxies proxies) {

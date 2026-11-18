@@ -39,8 +39,9 @@ public final class CompositeKeyEncoder {
    *
    * <p>Schema and field names match {@code [a-z][a-z0-9_]{0,31}}. One to eight unique fields are
    * required; the map must have exactly those fields. Values must be nonblank, well-formed Unicode
-   * and at most 1024 UTF-8 bytes each. Invalid input is rejected, never silently replaced or omitted.
-   * Do not mutate the input collections during this call. Treat schema/order changes as migrations.
+   * and at most 1024 UTF-8 bytes each. Invalid input is rejected, never silently replaced or
+   * omitted. Do not mutate the input collections during this call. Treat schema/order changes as
+   * migrations.
    *
    * @param schema application-owned schema identifier (version it when its meaning changes)
    * @param orderedFields ordered field names, not derived from an unordered map
@@ -48,7 +49,8 @@ public final class CompositeKeyEncoder {
    * @return a 47-character value for the CUSTOM attribute, not a complete Redis key
    * @throws IllegalArgumentException if the schema, fields or any value violate the contract
    */
-  public static String encode(String schema, List<String> orderedFields, Map<String, String> values) {
+  public static String encode(
+      String schema, List<String> orderedFields, Map<String, String> values) {
     validateName(schema);
     if (orderedFields == null || orderedFields.isEmpty() || orderedFields.size() > MAX_FIELDS) {
       throw new IllegalArgumentException("Composite key requires 1 to 8 fields");
