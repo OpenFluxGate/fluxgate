@@ -97,6 +97,10 @@ actual Redis writer binary, key format, timestamp units or outstanding token usa
 Passing that check does **not** establish preservation of published 0.3.x counter debt.
 The word "legacy" in that method or epoch is not a version-negotiation mechanism.
 
+## Fenced Java-client rehearsal
+
+A local rehearsal at candidate `2c141f0d` ran official Redis clients 0.3.7 and 0.3.8 against standalone Redis and a stable six-node Cluster. On each switch, the previous account was revoked on every node, and both generations were fenced for 31 seconds for a **single, capacity-3 token bucket with a 30-second full-refill interval**. Two candidate JVMs consumed 2 and 1 permits and the next request was denied. Standalone AOF restart retained the exhausted quota. Rollback used the same fence and recovery interval before admitting an old writer. On Cluster a resident old client returned an error about 60 seconds after its post-revocation request; the candidate took about 5 seconds. Decommission or drain these callers before reopening traffic. Determine a safe interval from the deployed policies and outstanding debt; 31 seconds applies only to this fixture.
+
 ## Required cutover gates
 
 1. **Inventory:** identify the exact deployed artifacts/checksums, all applications and

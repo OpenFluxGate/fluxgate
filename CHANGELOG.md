@@ -53,8 +53,10 @@ advertised are now actually wired**: a working default handler, live retry and
 circuit breaker, honoured filter properties, standard rate limit headers, and a
 multi-band token bucket that is atomic per rule.
 
-Read **[Breaking / Migration](#breaking--migration)** before upgrading: bucket
-keys change shape, so every quota resets once.
+Drain and fence all 0.3.x writers before switching quota state. The two generations use
+independent counters; simultaneous writes or a binary-only downgrade can grant extra permits.
+See the [cutover and rollback procedure](docs/operations/shared-redis-legacy-migration.md)
+and [Breaking / Migration](#breaking--migration).
 
 ### Added
 
@@ -567,7 +569,7 @@ keys change shape, so every quota resets once.
 
 #### Breaking / Migration
 
-1. **Redis bucket keys change layout — every quota resets once.**
+1. **Redis bucket keys change layout and old debt is not carried forward.**
    `fluxgate:{ruleSetId}:{ruleId}:{keyValue}:{bandLabel|default}` becomes
    `fluxgate:bucket:{<ruleSetId>:<ruleId>:<keyValue>}:<bandKeyLabel>`. The
    `{...}` hash tag pins all bands of one rule and key to one cluster slot,
@@ -578,8 +580,8 @@ keys change shape, so every quota resets once.
    `key:<value>`, a custom attribute `custom:<value>`, and `GLOBAL` stays
    `global`. The value after the prefix is sanitised as described in item 30
    (this entry used to describe a plain `_` replacement and a bare SHA-256 hex for
-   long values; superseded by 30). Combined with (1) this is **one** quota reset on
-   upgrade, not two. External tooling that builds FluxGate keys must be updated.
+   long values; superseded by 30). These identity and layout changes affect the same transition.
+   Update external tooling that builds FluxGate keys.
 3. **Bucket hash field renamed** `last_refill_nanos` → `last_refill_micros`. A
    0.3.x bucket is treated as missing and re-initialised full, which is a one-off
    burst allowance. Values are now plain digits, not `1.76e+18`. Any tooling
