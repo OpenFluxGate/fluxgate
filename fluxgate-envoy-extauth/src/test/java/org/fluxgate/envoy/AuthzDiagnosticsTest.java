@@ -27,6 +27,17 @@ import org.fluxgate.core.spi.RateLimitRuleSetProvider;
 import org.junit.jupiter.api.Test;
 
 class AuthzDiagnosticsTest {
+  @org.junit.jupiter.api.BeforeEach
+  void defaultEngineGate() {
+    when(engine.getMigrationAdmissionGate())
+        .thenReturn(org.fluxgate.core.engine.MigrationAdmissionGate.disabled());
+  }
+
+  private void verifyOnlyGateReads(int reads) {
+    verify(engine, times(reads)).getMigrationAdmissionGate();
+    verifyNoMoreInteractions(engine);
+  }
+
   private final RequestContext request =
       RequestContext.builder().clientIp("private-client").build();
   private final RateLimitEngine engine = mock(RateLimitEngine.class);
@@ -69,7 +80,7 @@ class AuthzDiagnosticsTest {
       assertThat(blocked.peak()).isEqualTo(1);
       assertThat(blocked.admissionRejected()).isEqualTo(1);
       verify(provider, times(1)).findById("private-policy");
-      verifyNoInteractions(engine);
+      verifyOnlyGateReads(1);
       release.countDown();
       assertThat(active.get(3, TimeUnit.SECONDS).status()).isEqualTo(200);
       assertThat(service.diagnostics().completed()).isEqualTo(1);
@@ -86,7 +97,8 @@ class AuthzDiagnosticsTest {
     var provider = mock(RateLimitRuleSetProvider.class);
     var service = new AuthzDecisionService(engine, provider, "private-policy", 1);
     assertThat(service.decide("private-policy", request, 0).status()).isEqualTo(503);
-    verifyNoInteractions(provider, engine);
+    verifyNoInteractions(provider);
+    verifyOnlyGateReads(0);
     when(provider.findById("private-policy")).thenReturn(Optional.empty());
     assertThat(service.decide(request).status()).isEqualTo(503);
     var waitRule =
@@ -104,7 +116,7 @@ class AuthzDiagnosticsTest {
                     .keyResolver(new LimitScopeKeyResolver())
                     .build()));
     assertThat(service.decide(request).status()).isEqualTo(503);
-    verifyNoInteractions(engine);
+    verifyOnlyGateReads(2);
     when(provider.findById("private-policy")).thenReturn(Optional.of(snapshot));
     when(engine.checkUsingSnapshot(snapshot, request, 1L))
         .thenReturn(
@@ -170,7 +182,8 @@ class AuthzDiagnosticsTest {
       assertThat(send(client, port, "/diagnostics-extra", "GET").statusCode()).isEqualTo(404);
       assertThat(send(client, port, "/authz/api", "GET").statusCode()).isEqualTo(404);
       assertThat(send(client, port, "/diagnostics", "POST").statusCode()).isEqualTo(405);
-      verifyNoInteractions(provider, engine);
+      verifyNoInteractions(provider);
+      verifyOnlyGateReads(0);
     } finally {
       server.destroy();
     }

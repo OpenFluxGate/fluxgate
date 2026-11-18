@@ -57,12 +57,19 @@ public final class RateLimitEngine {
     DENY
   }
 
+  private final MigrationAdmissionGate migrationAdmissionGate;
+
+  public MigrationAdmissionGate getMigrationAdmissionGate() {
+    return migrationAdmissionGate;
+  }
+
   private final RateLimitRuleSetProvider ruleSetProvider;
   private final RateLimiter rateLimiter;
   private final OnMissingRuleSetStrategy onMissingRuleSetStrategy;
   private final PathPatternMatcher pathMatcher;
 
   private RateLimitEngine(Builder builder) {
+    this.migrationAdmissionGate = Objects.requireNonNull(builder.migrationAdmissionGate);
     this.ruleSetProvider =
         Objects.requireNonNull(builder.ruleSetProvider, "ruleSetProvider must not be null");
     this.rateLimiter = Objects.requireNonNull(builder.rateLimiter, "rateLimiter must not be null");
@@ -113,11 +120,22 @@ public final class RateLimitEngine {
     Objects.requireNonNull(ruleSetId, "ruleSetId must not be null");
     Objects.requireNonNull(context, "context must not be null");
 
-    Optional<RateLimitRuleSet> optionalRuleSet = ruleSetProvider.findById(ruleSetId);
+    migrationAdmissionGate.requireRequest(ruleSetId);
+    Optional<RateLimitRuleSet> optionalRuleSet;
+    try {
+      optionalRuleSet = Objects.requireNonNull(ruleSetProvider.findById(ruleSetId));
+    } catch (RuntimeException e) {
+      if (migrationAdmissionGate.isEnabled())
+        throw new org.fluxgate.core.exception.SnapshotAdmissionDeniedException(e);
+      throw e;
+    }
     if (!optionalRuleSet.isPresent()) {
+      migrationAdmissionGate.requireMissingAllowed();
       return onMissingRuleSet(ruleSetId);
     }
 
+    if (migrationAdmissionGate.isEnabled() && !ruleSetId.equals(optionalRuleSet.get().getId()))
+      throw new org.fluxgate.core.exception.SnapshotAdmissionDeniedException();
     return checkUsingSnapshot(optionalRuleSet.get(), context, permits);
   }
 
@@ -127,6 +145,8 @@ public final class RateLimitEngine {
     Objects.requireNonNull(ruleSet, "ruleSet must not be null");
     Objects.requireNonNull(context, "context must not be null");
     if (permits <= 0) throw new IllegalArgumentException("permits must be > 0");
+
+    migrationAdmissionGate.requireSnapshot(ruleSet);
 
     // ===== access control =====
     AccessControl accessControl = ruleSet.getAccessControl();
@@ -263,6 +283,13 @@ public final class RateLimitEngine {
 
   /** Builder for {@link RateLimitEngine}. */
   public static final class Builder {
+    private MigrationAdmissionGate migrationAdmissionGate = MigrationAdmissionGate.disabled();
+
+    public Builder migrationAdmissionGate(MigrationAdmissionGate gate) {
+      this.migrationAdmissionGate = Objects.requireNonNull(gate);
+      return this;
+    }
+
     private RateLimitRuleSetProvider ruleSetProvider;
     private RateLimiter rateLimiter;
     private OnMissingRuleSetStrategy onMissingRuleSetStrategy = OnMissingRuleSetStrategy.THROW;

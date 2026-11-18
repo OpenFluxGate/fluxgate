@@ -410,7 +410,8 @@ public class FluxgateRateLimiterAutoConfiguration {
         RateLimitEngine.builder()
             .ruleSetProvider(ruleSetProvider)
             .rateLimiter(rateLimiter)
-            .onMissingRuleSetStrategy(strategy);
+            .onMissingRuleSetStrategy(strategy)
+            .migrationAdmissionGate(properties.getMigrationAdmission().toGate());
 
     if (pathMatcher != null) {
       builder.pathMatcher(pathMatcher);
@@ -491,6 +492,34 @@ public class FluxgateRateLimiterAutoConfiguration {
     public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
       return resolveMode(context.getEnvironment()) != RateLimiterMode.IN_MEMORY;
     }
+  }
+
+  /** Validate outside reload configuration so reload.enabled=false cannot remove the guard. */
+  @Bean
+  public org.springframework.beans.factory.SmartInitializingSingleton migrationAdmissionValidation(
+      org.springframework.beans.factory.ListableBeanFactory beanFactory) {
+    var expected = properties.getMigrationAdmission().toGate();
+    return () -> {
+      if (!expected.isEnabled()) return;
+      var engine = beanFactory.getBeanProvider(RateLimitEngine.class).getIfAvailable();
+      if (engine == null || !expected.equals(engine.getMigrationAdmissionGate()))
+        throw new IllegalStateException(
+            "Migration admission requires the selected engine to carry the exact gate");
+      if (properties.getRatelimit().isAllowWhenLimiterFails()
+          || properties.getRatelimit().getFallback().getMode() != FallbackMode.NONE)
+        throw new IllegalStateException(
+            "Migration admission requires failure-behavior=DENY and fallback=NONE");
+      for (org.fluxgate.core.handler.FluxgateRateLimitHandler handler :
+          beanFactory
+              .getBeansOfType(org.fluxgate.core.handler.FluxgateRateLimitHandler.class)
+              .values()) {
+        if (handler.getClass() != org.fluxgate.spring.handler.EngineBackedRateLimitHandler.class
+            || ((org.fluxgate.spring.handler.EngineBackedRateLimitHandler) handler).getEngine()
+                != engine)
+          throw new IllegalStateException(
+              "Migration admission requires engine-backed handlers using the selected engine");
+      }
+    };
   }
 
   /** Matches when retry, the circuit breaker or a fallback limiter is configured. */

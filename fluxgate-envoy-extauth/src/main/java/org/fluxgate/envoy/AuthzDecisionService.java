@@ -130,8 +130,17 @@ public final class AuthzDecisionService {
   }
 
   private Optional<RateLimitRuleSet> readySnapshot(String selectedRuleSetId) {
+    var gate = engine.getMigrationAdmissionGate();
+    gate.requireRequest(selectedRuleSetId);
     return provider
         .findById(selectedRuleSetId)
+        .map(
+            snapshot -> {
+              if (gate.isEnabled() && !selectedRuleSetId.equals(snapshot.getId()))
+                throw new org.fluxgate.core.exception.SnapshotAdmissionDeniedException();
+              gate.requireSnapshot(snapshot);
+              return snapshot;
+            })
         .filter(rs -> !rs.getRules().isEmpty())
         .filter(
             rs ->
