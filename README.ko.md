@@ -727,49 +727,49 @@ RateLimitRule rule = RateLimitRule.builder("api-rule")
 | `PER_API_KEY` | `RequestContext.apiKey` | `key:abc123` |
 | `CUSTOM` | `attributes.get(keyStrategyId)` | `custom:<value>` |
 
-키 값은 단사(injective)로 새니타이즈됩니다. `[A-Za-z0-9._:@-]` 문자만으로 된 256자 이하이고 `h:`로
+키 값은 새니타이즈됩니다. `[A-Za-z0-9._:@-]` 문자만으로 된 256자 이하이고 `h:`로
 시작하지 않는 값은 그대로 두고, 그 밖의 값은 `h:<제한된 값>:<SHA-256 앞 16자리 16진수>`가 되며
-(`a+1`은 `h:a_1:<16 hex>`), 이 형태가 256자를 넘으면(237자를 넘는 값) `h:<64 hex>`가 됩니다. 스코프 접두사는 해시 바깥에 남아(`user:h:<64 hex>`) 서로 다른 두 신원이 버킷을
-공유하는 일이 없습니다. 스코프가 요구하는 값이 없을 때는
-`fluxgate.ratelimit.missing-key-behavior`가 클라이언트 IP 폴백(이때 키는 실제 출처를 반영해 `ip:`
-접두사를 갖습니다)과 요청 거부 중 하나를 결정합니다.
+(`a+1`은 `h:a_1:<16 hex>`), 이 형태가 256자를 넘으면(237자를 넘는 값) `h:<64 hex>`가 됩니다.
+스코프 접두사는 해시 바깥에 남습니다(`user:h:<64 hex>`). 변환된 값은 해시로 구분하지만
+해시 충돌 가능성은 남습니다. 입력을 조합하는 단계에서 이미 발생한 충돌을 새니타이저가 복구하지는 못합니다.
+스코프가 요구하는 값이 없을 때는 `fluxgate.ratelimit.missing-key-behavior`가 클라이언트 IP 폴백
+(이때 키는 실제 출처를 반영해 `ip:` 접두사를 갖습니다)과 요청 거부 중 하나를 결정합니다.
 
 ### 복합 키 예시 (IP + 사용자)
 
-팩토리가 이미 해석한 인증 사용자와 신뢰된 클라이언트 IP를 복합 키에 사용합니다. 이 예시의
-미인증 요청은 IP만 사용합니다. 인증이 필수라면 미인증 요청에 속성을 설정하지 않고
-`missing-key-behavior=REJECT`를 사용하세요.
+`CUSTOM`은 `RequestContext.attributes`에 이미 조합된 값 하나를 읽으며, 개별 구성 요소를
+검증하지 않습니다. 아래 규칙은 애플리케이션이 제공할 `ipUser` 속성을 선택할 뿐이며,
+범용 복합키 인코더를 제공하는 예시는 아닙니다.
 
 ```java
-// CUSTOM 스코프 규칙
 RateLimitRule rule = RateLimitRule.builder("composite-rule")
     .name("IP+User Rate Limit")
     .scope(LimitScope.CUSTOM)
     .keyStrategyId("ipUser")  // context.attributes.get("ipUser") 조회
     .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).build())
     .build();
-
-// RequestContextCustomizer가 복합 키를 만듭니다
-@Bean
-public RequestContextCustomizer requestContextCustomizer() {
-    return (builder, request) -> {
-        String userId = builder.build().getUserId();
-        String clientIp = builder.build().getClientIp();
-
-        // 각 구성 요소에 접두사를 붙여 모호성을 없앱니다: "ip:192.168.1.100:user:user-123"
-        String compositeKey = userId != null
-            ? "ip:" + clientIp + ":user:" + userId
-            : "ip:" + clientIp;
-        builder.attribute("ipUser", compositeKey);
-
-        return builder;
-    };
-}
 ```
 
-멀티 테넌트 시스템에서는 `X-Tenant-Id`를 `RequestContext`에 복사하기 전에 애플리케이션 경계에서
-검증하세요. 안전한 커스텀 키는 테넌트와 주체를 모두 포함해야 하며(예: `tenantId + ":" + userId`),
-그래야 한 테넌트가 다른 테넌트의 버킷을 소모하거나 초기화할 수 없습니다.
+속성을 설정하기 전에 다음 경계를 확인하세요.
+
+- **신뢰된 식별자:** `RequestContextFactory`와 스타터의 공식 `ClientIpExtractor`가 해석한
+  인증 신원과 클라이언트 IP를 재사용합니다. 신뢰할 프록시를 설정하고, 커스터마이저에서 원본
+  forwarded 헤더를 다시 읽거나 추출기를 우회하지 마세요. 테넌트도 `X-Tenant-Id`를 그대로
+  신뢰하지 말고 애플리케이션 경계에서 소속을 검증해야 합니다.
+- **모호하지 않은 조합:** `tenantId + ":" + userId`는 임의 값에 대해 충돌을 방지하지 못합니다.
+  `("a:b", "c")`와 `("a", "b:c")`는 모두 `a:b:c`가 됩니다. 필드 이름을 붙이거나 구분자만
+  바꾸는 것도 일반적인 해결책은 아닙니다. 구성 요소 경계·순서·정규화·길이 제한을 먼저 정의하고
+  검증하세요. IPv6 주소에는 콜론이 있으므로 조용히 제거하면 안 됩니다. 이 안내는 새 인코더를
+  도입하거나 기존 API가 허용하는 문자를 변경하지 않습니다.
+- **구성 요소 누락:** IP와 사용자가 모두 필수라면 두 값이 존재하고 검증되기 전에는 `ipUser`를
+  설정하지 않고, `fluxgate.ratelimit.missing-key-behavior=REJECT`를 구성합니다. IP만 담은
+  폴백 속성도 비어 있지 않으면 유효한 `CUSTOM` 값이므로 이 설정만으로 사용자 누락이 거부되지는
+  않습니다. 누락값을 `"null"`이나 빈 구성 요소로 인코딩하지 마세요. 인증 자체는 애플리케이션의 책임입니다.
+- **호환성:** 조합·인코딩을 바꾸면 다른 버킷 식별자가 되어 새 할당량이 생길 수 있습니다.
+  기존 0.3.x 카운터, 허용·차단 목록, 구버전과 신버전이 혼용되는 호출자를 위한 명시적 전환 계획이
+  필요하며, 범용 자동 카운터 이행은 제공되지 않습니다.
+- **개인정보:** 새니타이즈는 익명화가 아닙니다. 커스텀 속성은 이벤트 기록기에 저장될 수 있으므로
+  재사용 가능한 인증 비밀값을 조합하거나 개인정보를 의도치 않게 노출하지 마세요.
 
 ### RequestContext 커스터마이징
 
