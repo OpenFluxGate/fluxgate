@@ -2,6 +2,9 @@ package org.fluxgate.spring.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.List;
+import java.util.Map;
+import org.fluxgate.core.key.CompositeKeyEncoder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -18,6 +21,26 @@ class ClientIpExtractorTest {
   void setUp() {
     request = new MockHttpServletRequest();
     request.setRemoteAddr("10.0.0.1");
+  }
+
+  @Test
+  void trustedEquivalentIpv6FormsProduceTheSameCompositeIdentity() {
+    request.addHeader(XFF, "2001:db8::1");
+    String first = extract(TrustedProxies.of("10.0.0.0/8"));
+    request.removeHeader(XFF);
+    request.addHeader(XFF, "2001:0db8:0000:0000:0000:0000:0000:0001");
+    String second = extract(TrustedProxies.of("10.0.0.0/8"));
+    assertThat(second).isEqualTo(first);
+    assertThat(composite(first)).isEqualTo(composite(second));
+    request.setRemoteAddr("203.0.113.9");
+    assertThat(composite(extract(TrustedProxies.of("10.0.0.0/8"))))
+        .isEqualTo(composite("203.0.113.9"))
+        .isNotEqualTo(composite(first));
+  }
+
+  private static String composite(String ip) {
+    return CompositeKeyEncoder.encode(
+        "ip_user_v1", List.of("ip", "user"), Map.of("ip", ip, "user", "u"));
   }
 
   private String extract(TrustedProxies proxies) {

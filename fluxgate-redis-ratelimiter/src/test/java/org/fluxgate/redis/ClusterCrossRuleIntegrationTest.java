@@ -10,6 +10,8 @@ import org.fluxgate.core.config.LimitScope;
 import org.fluxgate.core.config.RateLimitAlgorithm;
 import org.fluxgate.core.config.RateLimitBand;
 import org.fluxgate.core.config.RateLimitRule;
+import org.fluxgate.core.context.RequestContext;
+import org.fluxgate.core.key.CompositeKeyEncoder;
 import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.redis.connection.RedisConnectionProvider.RedisMode;
@@ -159,6 +161,49 @@ class ClusterCrossRuleIntegrationTest extends CrossRuleAtomicityContract {
 
     assertThat(result.isAllowed()).isTrue();
     assertThat(redis().hgetall(fwKey).get("count")).isEqualTo("1");
+  }
+
+  @Test
+  void compositeCustomIdentityUsesOneSlotAcrossBandsWithoutMigratingLegacyQuota() {
+    String setId = "composite-" + RUN_ID;
+    RateLimitRule rule =
+        RateLimitRule.builder("composite-rule")
+            .ruleSetId(setId)
+            .scope(LimitScope.CUSTOM)
+            .keyStrategyId("ipUser")
+            .enabled(true)
+            .addBand(RateLimitBand.builder(Duration.ofHours(1), 1).label("tb").build())
+            .addBand(
+                RateLimitBand.builder(Duration.ofHours(1), 1)
+                    .label("fw")
+                    .algorithm(RateLimitAlgorithm.FIXED_WINDOW)
+                    .build())
+            .build();
+    RateLimitRuleSet rules = ruleSet(setId, rule);
+    RedisRateLimiter limiter = new RedisRateLimiter(new RedisTokenBucketStore(redis()));
+    String legacy = "ip:2001:db8::1:user:u";
+    RequestContext old = RequestContext.builder().attribute("ipUser", legacy).build();
+    assertThat(limiter.tryConsume(old, rules, 1).isAllowed()).isTrue();
+    assertThat(limiter.tryConsume(old, rules, 1).isAllowed()).isFalse();
+    String encoded =
+        CompositeKeyEncoder.encode(
+            "ip_user_v1", List.of("ip", "user"), Map.of("ip", "2001:db8::1", "user", "u"));
+    RequestContext current = RequestContext.builder().attribute("ipUser", encoded).build();
+    assertThat(limiter.tryConsume(current, rules, 1).isAllowed()).isTrue();
+    assertThat(limiter.tryConsume(current, rules, 1).isAllowed()).isFalse();
+    String tb = bucketKey(setId, "composite-rule", "custom:" + encoded, "tb");
+    String fw = bucketKey(setId, "composite-rule", "custom:" + encoded, "fw:fw");
+    assertThat(SlotHash.getSlot(tb)).isEqualTo(SlotHash.getSlot(fw));
+    assertThat(redis().hgetall(fw).get("count")).isEqualTo("1");
+    assertThat(limiter.tryConsume(old, rules, 1).isAllowed()).isFalse();
+    String another =
+        CompositeKeyEncoder.encode(
+            "ip_user_v1", List.of("ip", "user"), Map.of("ip", "2001:db8::1", "user", "u:other"));
+    assertThat(
+            limiter
+                .tryConsume(RequestContext.builder().attribute("ipUser", another).build(), rules, 1)
+                .isAllowed())
+        .isTrue();
   }
 
   private static String bucketKey(String ruleSetId, String ruleId, String keyValue, String label) {
