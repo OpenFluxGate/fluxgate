@@ -1,5 +1,16 @@
 # Security Policy
 
+## Integration recommendation and residual risk
+
+For new integrations, prefer Boot 3 over Boot 2; retain Boot 2 for legacy
+compatibility. This does not declare the currently pinned Boot 3 line maintained
+or vulnerability-free. Both paths remain in the 0.5.0 scope. Existing unresolved
+findings, support limitations and mandatory security gates below remain unchanged.
+See the [support policy and consumer checklist](docs/security/spring-support-policy.md)
+([한국어](docs/security/spring-support-policy.ko.md)) for exposure review and evidence boundaries.
+No security exception, dependency change or release approval is granted here.
+
+
 > **0.5.0 readiness:** Both Boot 2 and Boot 3 are required; Boot 2 deferral to 0.5.1 is cancelled. Security gates remain unresolved. Earlier SDK-only CI success is not Boot 2 validation. See [release readiness](docs/release-0.5.0-readiness.md).
 
 
