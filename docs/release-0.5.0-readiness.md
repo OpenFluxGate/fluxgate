@@ -1,5 +1,16 @@
 # 0.5.0 release readiness (not published)
 
+## Integration recommendation and residual risk
+
+For new integrations, prefer Boot 3 over Boot 2; retain Boot 2 for legacy
+compatibility. This does not declare the currently pinned Boot 3 line maintained
+or vulnerability-free. Both paths remain in the 0.5.0 scope. Existing unresolved
+findings, support limitations and mandatory security gates below remain unchanged.
+See the [support policy and consumer checklist](security/spring-support-policy.md)
+([한국어](security/spring-support-policy.ko.md)) for exposure review and evidence boundaries.
+No security exception, dependency change or release approval is granted here.
+
+
 The latest release requirement includes both Spring Boot 2 and Spring Boot 3, Redis KEYS
 removal and the separately released Studio UI fixes. The earlier proposal to defer Boot 2
 to 0.5.1 is cancelled. Both starter sources, the Boot 2 Java 11 sample, reactor entries and
