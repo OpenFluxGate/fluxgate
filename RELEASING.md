@@ -1,6 +1,6 @@
 # FluxGate Release Checklist
 
-> **0.5.0 readiness:** Both Boot 2 and Boot 3 are required; Boot 2 deferral to 0.5.1 is cancelled. Security gates remain unresolved. Earlier SDK-only CI success is not Boot 2 validation. See [release readiness](docs/release-0.5.0-readiness.md).
+> Verify both Boot 2 and Boot 3 on the 0.5.0 candidate. Dependency Review checks the scoped MVC test exceptions, and the release workflow checks their expiry before signing and uploading. [0.5.0 release checks and Spring dependency notice](docs/release-0.5.0-readiness.md)
 
 
 This document is for maintainers who are cutting a release.
