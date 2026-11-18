@@ -23,6 +23,20 @@ import org.mockito.quality.Strictness;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class RedisRateLimiterConfigMockTest {
 
+  @Test
+  void legacyConstructorsRetainCheckedIOExceptionDeclaration() throws Exception {
+    Class<?>[][] signatures = {
+      {String.class},
+      {String.class, Duration.class},
+      {RedisMode.class, java.util.List.class, Duration.class},
+      {RedisConnectionProvider.class}
+    };
+    for (Class<?>[] signature : signatures) {
+      assertThat(RedisRateLimiterConfig.class.getConstructor(signature).getExceptionTypes())
+          .contains(java.io.IOException.class);
+    }
+  }
+
   @Mock private RedisConnectionProvider connectionProvider;
 
   @Test
@@ -34,7 +48,7 @@ class RedisRateLimiterConfigMockTest {
   }
 
   @Test
-  void shouldInitializeWithConnectionProvider() {
+  void shouldInitializeWithConnectionProvider() throws java.io.IOException {
     // given
     when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
     when(connectionProvider.scriptLoad(anyString())).thenReturn("test-sha");
@@ -53,7 +67,7 @@ class RedisRateLimiterConfigMockTest {
   }
 
   @Test
-  void shouldInitializeInClusterMode() {
+  void shouldInitializeInClusterMode() throws java.io.IOException {
     // given
     when(connectionProvider.getMode()).thenReturn(RedisMode.CLUSTER);
     when(connectionProvider.scriptLoad(anyString())).thenReturn("cluster-sha");
@@ -69,7 +83,7 @@ class RedisRateLimiterConfigMockTest {
 
   @Test
   @DisplayName("Scripts are uploaded to the supplied connection on construction")
-  void shouldLoadLuaScriptsOnConstruction() {
+  void shouldLoadLuaScriptsOnConstruction() throws java.io.IOException {
     when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
     when(connectionProvider.scriptLoad(anyString())).thenReturn("test-sha");
 
@@ -80,7 +94,7 @@ class RedisRateLimiterConfigMockTest {
 
   @Test
   @DisplayName("An externally supplied connection is never closed by this config")
-  void shouldNotCloseAnExternallySuppliedConnectionProvider() {
+  void shouldNotCloseAnExternallySuppliedConnectionProvider() throws java.io.IOException {
     // given
     when(connectionProvider.getMode()).thenReturn(RedisMode.STANDALONE);
     when(connectionProvider.scriptLoad(anyString())).thenReturn("test-sha");

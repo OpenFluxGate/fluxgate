@@ -20,6 +20,35 @@ import org.junit.jupiter.api.Test;
 @DisplayName("RateLimitRule Tests")
 class RateLimitRuleTest {
 
+  @Test
+  void legacyTypedAttributeRetainsNullableAndCallerCastContract() {
+    RateLimitRule rule =
+        RateLimitRule.builder("legacy")
+            .addBand(RateLimitBand.builder(Duration.ofSeconds(1), 5).build())
+            .attributes(Map.of("tier", "gold"))
+            .build();
+    String tier = rule.getAttribute("tier", String.class);
+    assertEquals("gold", tier);
+    assertNull(rule.getAttribute("missing", String.class));
+    assertEquals("gold", rule.getAttribute("tier", null));
+    Object unchecked = rule.getAttribute("tier", Integer.class);
+    assertEquals("gold", unchecked);
+    assertThrows(
+        ClassCastException.class,
+        () -> {
+          Integer typed = rule.getAttribute("tier", Integer.class);
+          assertNotNull(typed);
+        });
+    assertEquals(Optional.empty(), rule.getOptionalAttribute("tier", Integer.class));
+  }
+
+  @Test
+  void legacyTypedAttributeRetainsObjectReturnDescriptor() throws Exception {
+    assertEquals(
+        Object.class,
+        RateLimitRule.class.getMethod("getAttribute", String.class, Class.class).getReturnType());
+  }
+
   // Helper method to create a valid band
   private RateLimitBand createBand(Duration window, long capacity) {
     return RateLimitBand.builder(window, capacity).build();
@@ -552,9 +581,11 @@ class RateLimitRuleTest {
               .build();
 
       // when / then — getAttribute now returns Optional<T>
-      assertEquals(Optional.of(Integer.valueOf(5)), rule.getAttribute("maxRetries", Integer.class));
-      assertEquals(Optional.of(Boolean.TRUE), rule.getAttribute("enabled", Boolean.class));
-      assertEquals(Optional.of(Double.valueOf(0.75)), rule.getAttribute("ratio", Double.class));
+      assertEquals(
+          Optional.of(Integer.valueOf(5)), rule.getOptionalAttribute("maxRetries", Integer.class));
+      assertEquals(Optional.of(Boolean.TRUE), rule.getOptionalAttribute("enabled", Boolean.class));
+      assertEquals(
+          Optional.of(Double.valueOf(0.75)), rule.getOptionalAttribute("ratio", Double.class));
     }
 
     @Test
@@ -568,7 +599,7 @@ class RateLimitRuleTest {
               .build();
 
       // when / then — returns Optional.empty() rather than null
-      assertEquals(Optional.empty(), rule.getAttribute("nonExistent", String.class));
+      assertEquals(Optional.empty(), rule.getOptionalAttribute("nonExistent", String.class));
     }
 
     @Test

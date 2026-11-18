@@ -29,7 +29,8 @@ class PolicyCounterLifecycleIntegrationTest {
   private final RequestContext context = RequestContext.builder().endpoint("/api").build();
 
   @Test
-  void malformedFractionalOrOverflowingSlidingCountCannotPartiallyMigrateEarlierBand() {
+  void malformedFractionalOrOverflowingSlidingCountCannotPartiallyMigrateEarlierBand()
+      throws java.io.IOException {
     for (String invalid :
         List.of("malformed", "1.5", "9223372036854775807", "9223372036854775808")) {
       try (RedisRateLimiterConfig config =
@@ -81,7 +82,7 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void capacityMigrationCannotExpireUsageDebtBeforeItRecovers() {
+  void capacityMigrationCannotExpireUsageDebtBeforeItRecovers() throws java.io.IOException {
     try (RedisRateLimiterConfig config =
         new RedisRateLimiterConfig(RedisContainerSupport.redisUri())) {
       RedisTokenBucketStore store =
@@ -121,7 +122,8 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void malformedLaterBucketCannotPartiallyMigrateAnyEarlierStateOrFence() {
+  void malformedLaterBucketCannotPartiallyMigrateAnyEarlierStateOrFence()
+      throws java.io.IOException {
     try (RedisRateLimiterConfig config =
         new RedisRateLimiterConfig(RedisContainerSupport.redisUri())) {
       RedisTokenBucketStore store = config.getTokenBucketStore();
@@ -181,7 +183,8 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void laterRuleDenialLeavesEarlierRuleQuotaIntactWithPublishedRevisions() {
+  void laterRuleDenialLeavesEarlierRuleQuotaIntactWithPublishedRevisions()
+      throws java.io.IOException {
     try (RedisRateLimiterConfig config =
         new RedisRateLimiterConfig(RedisContainerSupport.redisUri())) {
       RedisRateLimiter limiter = new RedisRateLimiter(config.getTokenBucketStore());
@@ -200,7 +203,7 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void staleLaterRuleRefundsEarlierPublishedRuleInCompensationPath() {
+  void staleLaterRuleRefundsEarlierPublishedRuleInCompensationPath() throws java.io.IOException {
     try (RedisRateLimiterConfig config =
         new RedisRateLimiterConfig(RedisContainerSupport.redisUri())) {
       RedisTokenBucketStore store = org.mockito.Mockito.spy(config.getTokenBucketStore());
@@ -230,7 +233,7 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void staleLaterRuleCannotConsumeEarlierRuleInAtomicPath() {
+  void staleLaterRuleCannotConsumeEarlierRuleInAtomicPath() throws java.io.IOException {
     try (RedisRateLimiterConfig config =
         new RedisRateLimiterConfig(RedisContainerSupport.redisUri())) {
       RedisRateLimiter limiter = new RedisRateLimiter(config.getTokenBucketStore());
@@ -262,7 +265,7 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void compensationUsesCurrentCapacityAfterPublicationChangesIt() {
+  void compensationUsesCurrentCapacityAfterPublicationChangesIt() throws java.io.IOException {
     try (RedisRateLimiterConfig config =
         new RedisRateLimiterConfig(RedisContainerSupport.redisUri())) {
       RedisTokenBucketStore store = config.getTokenBucketStore();
@@ -300,7 +303,7 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void decreaseIncreaseAndRollbackPreserveUsageDebt() {
+  void decreaseIncreaseAndRollbackPreserveUsageDebt() throws java.io.IOException {
     try (RedisRateLimiterConfig config =
         new RedisRateLimiterConfig(RedisContainerSupport.redisUri())) {
       RedisRateLimiter limiter = new RedisRateLimiter(config.getTokenBucketStore());
@@ -317,7 +320,7 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void staleRevisionCannotResurrectQuotaAndExplicitEpochCanReset() {
+  void staleRevisionCannotResurrectQuotaAndExplicitEpochCanReset() throws java.io.IOException {
     try (RedisRateLimiterConfig config =
         new RedisRateLimiterConfig(RedisContainerSupport.redisUri())) {
       RedisRateLimiter limiter = new RedisRateLimiter(config.getTokenBucketStore());
@@ -340,7 +343,7 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void versionlessJavaConsumerCannotBypassFence() {
+  void versionlessJavaConsumerCannotBypassFence() throws java.io.IOException {
     try (RedisRateLimiterConfig config =
         new RedisRateLimiterConfig(RedisContainerSupport.redisUri())) {
       String key = "fluxgate:bucket:{" + RUN + "-versionless}:stable";
@@ -355,7 +358,7 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void fixedAndSlidingWindowsRetainCountsAboveDecreasedCapacity() {
+  void fixedAndSlidingWindowsRetainCountsAboveDecreasedCapacity() throws java.io.IOException {
     for (RateLimitAlgorithm algorithm :
         List.of(RateLimitAlgorithm.FIXED_WINDOW, RateLimitAlgorithm.SLIDING_WINDOW)) {
       try (RedisRateLimiterConfig config =
@@ -377,7 +380,7 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void aStaleBandCannotWriteAnyOfTheOtherBandsOrTheirMetadata() {
+  void aStaleBandCannotWriteAnyOfTheOtherBandsOrTheirMetadata() throws java.io.IOException {
     try (RedisRateLimiterConfig config =
         new RedisRateLimiterConfig(RedisContainerSupport.redisUri())) {
       String first = "fluxgate:bucket:{" + RUN + "-atomic}:first";
@@ -455,7 +458,7 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void debtAndMetadataHaveCoordinatedBoundedTtls() {
+  void debtAndMetadataHaveCoordinatedBoundedTtls() throws java.io.IOException {
     try (RedisRateLimiterConfig config =
         new RedisRateLimiterConfig(RedisContainerSupport.redisUri())) {
       String key = "fluxgate:bucket:{" + RUN + "-ttl}:stable";
@@ -495,7 +498,7 @@ class PolicyCounterLifecycleIntegrationTest {
   }
 
   @Test
-  void explicitEpochAndEveryDeclaredMetadataKeyShareTheClusterSlot() {
+  void explicitEpochAndEveryDeclaredMetadataKeyShareTheClusterSlot() throws java.io.IOException {
     try (RedisRateLimiterConfig config =
         new RedisRateLimiterConfig(RedisContainerSupport.redisUri())) {
       String id = RUN + "-slot";

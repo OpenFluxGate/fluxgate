@@ -40,7 +40,7 @@ class ClusterCrossRuleIntegrationTest extends CrossRuleAtomicityContract {
   private static final String CLUSTER_URI = ClusterTestSupport.clusterUri();
 
   @BeforeAll
-  static void setUp() {
+  static void setUp() throws java.io.IOException {
     try {
       connect(CLUSTER_URI);
     } catch (RuntimeException e) {

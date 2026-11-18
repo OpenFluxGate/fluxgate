@@ -34,7 +34,7 @@ class RedisRateLimiterIntegrationTest {
   private static RedisRateLimiter rateLimiter;
 
   @BeforeAll
-  static void setUp() {
+  static void setUp() throws java.io.IOException {
     config = new RedisRateLimiterConfig(RedisContainerSupport.redisUri());
     connectionProvider = config.getConnectionProvider();
     rateLimiter = new RedisRateLimiter(config.getTokenBucketStore());
