@@ -38,6 +38,83 @@ import org.springframework.validation.Validator;
 @ConfigurationProperties(prefix = "fluxgate")
 public class FluxgateProperties implements Validator {
 
+  @NestedConfigurationProperty
+  private MigrationAdmissionProperties migrationAdmission = new MigrationAdmissionProperties();
+
+  public MigrationAdmissionProperties getMigrationAdmission() {
+    return migrationAdmission;
+  }
+
+  public void setMigrationAdmission(MigrationAdmissionProperties value) {
+    migrationAdmission = value;
+  }
+
+  /** Explicit immutable snapshot authorizations; changes require restart. Default off. */
+  public static class MigrationAdmissionProperties {
+    private boolean enabled;
+    private List<SnapshotApproval> approvals = new ArrayList<>();
+
+    public boolean isEnabled() {
+      return enabled;
+    }
+
+    public void setEnabled(boolean value) {
+      enabled = value;
+    }
+
+    public List<SnapshotApproval> getApprovals() {
+      return approvals;
+    }
+
+    public void setApprovals(List<SnapshotApproval> value) {
+      approvals = value;
+    }
+
+    public org.fluxgate.core.engine.MigrationAdmissionGate toGate() {
+      if (!enabled) return org.fluxgate.core.engine.MigrationAdmissionGate.disabled();
+      java.util.Map<String, org.fluxgate.core.engine.MigrationAdmissionGate.Approval> entries =
+          new java.util.HashMap<>();
+      for (SnapshotApproval a : java.util.Objects.requireNonNull(approvals)) {
+        var approved =
+            new org.fluxgate.core.engine.MigrationAdmissionGate.Approval(
+                a.getRevision(), a.getEpoch());
+        if (entries.putIfAbsent(a.getRuleSetId(), approved) != null)
+          throw new IllegalArgumentException("Duplicate migration approval ruleSetId");
+      }
+      return org.fluxgate.core.engine.MigrationAdmissionGate.enabled(entries);
+    }
+  }
+
+  public static class SnapshotApproval {
+    private String ruleSetId;
+    private long revision;
+    private String epoch;
+
+    public String getRuleSetId() {
+      return ruleSetId;
+    }
+
+    public void setRuleSetId(String value) {
+      ruleSetId = value;
+    }
+
+    public long getRevision() {
+      return revision;
+    }
+
+    public void setRevision(long value) {
+      revision = value;
+    }
+
+    public String getEpoch() {
+      return epoch;
+    }
+
+    public void setEpoch(String value) {
+      epoch = value;
+    }
+  }
+
   /** MongoDB configuration for rule storage. */
   @NestedConfigurationProperty private MongoProperties mongo = new MongoProperties();
 

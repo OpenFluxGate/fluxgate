@@ -44,6 +44,11 @@ public class EngineBackedRateLimitHandler implements FluxgateRateLimitHandler {
   private static final String MISSING_RULE_SET_PREFIX = "missing-rule-set:";
 
   private final RateLimitEngine engine;
+
+  public RateLimitEngine getEngine() {
+    return engine;
+  }
+
   private final Set<String> warnedRuleSetIds = ConcurrentHashMap.newKeySet();
 
   /**
@@ -66,6 +71,11 @@ public class EngineBackedRateLimitHandler implements FluxgateRateLimitHandler {
     RateLimitResult result;
     try {
       result = engine.check(ruleSetId, context, permits);
+    } catch (org.fluxgate.core.exception.SnapshotAdmissionDeniedException e) {
+      throw new RateLimiterUnavailableException(
+          "Policy snapshot is not authorized for migration",
+          RateLimiterUnavailableException.UNKNOWN_RETRY_AFTER,
+          e);
     } catch (MissingRateLimitKeyException e) {
       logConfigurationProblem(
           ruleSetId, "no rate limit key could be resolved, rejecting the request", e);
