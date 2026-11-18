@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import stat
 import subprocess
 import tempfile
 import time
@@ -34,6 +35,36 @@ def credential_files(directory):
         'redis_password_file': directory / 'redis-password',
         'redis_uri_file': directory / 'redis-uri',
     }
+
+
+def private(path, value=None):
+    """Publish complete private material once; subsequent setup runs retain the original."""
+    try:
+        existing = path.lstat()
+    except FileNotFoundError:
+        with tempfile.NamedTemporaryFile('w', dir=path.parent, delete=False) as pending:
+            temp_path = Path(pending.name)
+            try:
+                pending.write(value if value is not None else secrets.token_hex(24))
+                pending.close()
+                try:
+                    os.link(temp_path, path)
+                    return path
+                except FileExistsError:
+                    pass  # Another writer published first. Validate and use its file.
+            finally:
+                temp_path.unlink(missing_ok=True)
+        existing = path.lstat()
+    if (not stat.S_ISREG(existing.st_mode) or existing.st_uid != os.getuid()
+            or existing.st_mode & 0o077):
+        raise ValueError(f'{path.name} must be a private regular file owned by the operator')
+    return path
+
+
+def api_verifier(identity, key_file):
+    return {'sha256': hashlib.sha256(key_file.read_bytes()).hexdigest(),
+            'user-id': 'resilience-user', 'api-key-id': identity,
+            'attributes': {'tenant': 'resilience'}}
 
 
 def write_fixture_metadata(directory, metadata):
@@ -333,12 +364,6 @@ def main():
     def apply(resource, sensitive=False):
         return kube(['apply', '-f', '-'], stdin=json.dumps(resource), sensitive=sensitive)
 
-    def private(path, value=None):
-        if not path.exists():
-            path.write_text(value if value is not None else secrets.token_hex(24))
-        path.chmod(0o600)
-        return path
-
     def secret(name, files):
         import base64
         data = {key: base64.b64encode(path.read_bytes()).decode() for key, path in files.items()}
@@ -421,11 +446,11 @@ const conn=new Mongo('mongodb://admin:'+encodeURIComponent(password)+'@127.0.0.1
     mongo_app = private(files['mongo_app_password_file'])
     redis_password = private(files['redis_password_file'])
     mongo_key = private(directory / 'mongo-keyfile', __import__('base64').b64encode(secrets.token_bytes(512)).decode())
-    api_keys = [(private(files['api_key_file']), 'resilience-key'), (private(files['ha_api_key_file']), 'resilience-ha-key'),
-                (private(files['quota_api_key_file']), 'resilience-quota-key')]
     mappings = {'fluxgate': {'envoy': {'api-keys': [
-        {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'user-id': 'resilience-user',
-         'api-key-id': identity, 'attributes': {'tenant': 'resilience'}} for path, identity in api_keys]}}}
+        api_verifier('resilience-key', private(files['api_key_file'])),
+        api_verifier('resilience-ha-key', private(files['ha_api_key_file'])),
+        api_verifier('resilience-quota-key', private(files['quota_api_key_file'])),
+    ]}}}
     api_mapping = private(files['api_key_mapping_file'], json.dumps(mappings))
     mongo_hosts = ','.join(f'mongo-{i}.mongo.{NS}.svc.cluster.local:27017' for i in range(3))
     options = '?replicaSet=rs0&authSource=admin&w=majority&wtimeoutMS=2000&connectTimeoutMS=2000&serverSelectionTimeoutMS=2000&socketTimeoutMS=2000&heartbeatFrequencyMS=2000&waitQueueTimeoutMS=2000&minPoolSize=4&maxConnecting=8'

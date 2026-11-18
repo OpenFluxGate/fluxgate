@@ -65,10 +65,15 @@ def run(args, data=None, check=True, timeout=120, env=None):
 def private_write(path, content):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as stream:
-        stream.write(content.encode() if isinstance(content, str) else content)
-    os.chmod(path, 0o600)
+    # Readers and rollback see the previous complete bytes until the replacement is ready.
+    with tempfile.NamedTemporaryFile("wb", dir=path.parent, delete=False) as pending:
+        temp_path = Path(pending.name)
+        try:
+            pending.write(content.encode() if isinstance(content, str) else content)
+            pending.close()
+            os.replace(temp_path, path)
+        finally:
+            temp_path.unlink(missing_ok=True)
 
 
 def unused_port():
@@ -390,7 +395,7 @@ def sampler_worker(config, stop_path):
 
 def sampler_program(stop_path="/tmp/sampler-stop", started_path="/tmp/sampler-started"):
     """Only the stdlib worker and private writer belong in the nonsecret exec argument."""
-    return ("import http.client,json,os,queue,sys,threading,time\nfrom pathlib import Path\n\n"
+    return ("import http.client,json,os,queue,sys,tempfile,threading,time\nfrom pathlib import Path\n\n"
             + inspect.getsource(private_write) + "\n" + inspect.getsource(sampler_worker)
             + "\nconfig = json.loads(sys.stdin.readline())\n"
             + "private_write(" + repr(str(started_path)) + ", 'yes')\n"
