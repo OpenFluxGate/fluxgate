@@ -741,6 +741,7 @@ class Proof:
 
     def tls_probe_pod(self, pod, ca, cert=None, key=None, path="/healthz", expected=200):
         ctx = ssl.create_default_context(cafile=str(ca))
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         if cert:
             ctx.load_cert_chain(str(cert), str(key))
         with self.forward("pod/" + pod, 8443) as port:
@@ -950,6 +951,7 @@ class Proof:
             return budget
         try:
             ctx = ssl.create_default_context(cafile=str(ca))
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
             ctx.load_cert_chain(str(cert), str(key))
             with self.forward("pod/" + pod, 8443, deadline=deadline) as port:
                 with socket.create_connection(("127.0.0.1", port), timeout=min(8, remaining())) as raw:
@@ -2076,6 +2078,7 @@ def strict_tls_self_test():
                 pass
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.load_cert_chain(str(server_cert), str(server_key))
         context.load_verify_locations(cafile=str(ca))
         context.verify_mode = ssl.CERT_REQUIRED

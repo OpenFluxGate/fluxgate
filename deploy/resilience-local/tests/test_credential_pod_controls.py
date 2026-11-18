@@ -49,6 +49,7 @@ class ApiPodControls(unittest.TestCase):
                 return Handler
             server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), handler(index))
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
             ctx.load_cert_chain(str(cls.proof.work / 'server.crt'), str(server_key))
             ctx.load_verify_locations(cafile=str(ca))
             ctx.verify_mode = ssl.CERT_REQUIRED

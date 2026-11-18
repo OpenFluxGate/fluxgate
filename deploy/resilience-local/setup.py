@@ -20,6 +20,36 @@ NODE_IMAGE = 'kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056
 MONGO_PRESET = {'electionTimeoutMillis': 5000, 'catchUpTimeoutMillis': 2000}
 
 
+def credential_files(directory):
+    """The fixture manifest exposes these file locations to local verification tools."""
+    return {
+        'api_key_file': directory / 'api-key',
+        'ha_api_key_file': directory / 'ha-api-key',
+        'quota_api_key_file': directory / 'quota-api-key',
+        'api_key_mapping_file': directory / 'application-credentials.yml',
+        'mongo_uri_file': directory / 'mongo-uri',
+        'mongo_admin_uri_file': directory / 'mongo-admin-uri',
+        'mongo_admin_password_file': directory / 'mongo-admin-password',
+        'mongo_app_password_file': directory / 'mongo-app-password',
+        'redis_password_file': directory / 'redis-password',
+        'redis_uri_file': directory / 'redis-uri',
+    }
+
+
+def write_fixture_metadata(directory, metadata):
+    # Keep material out of this manifest. Its credential fields are file locations only.
+    locations = {field: str(path) for field, path in credential_files(directory).items()}
+    with tempfile.NamedTemporaryFile('w', dir=directory, delete=False) as pending:
+        temp_path = Path(pending.name)
+        try:
+            json.dump({**metadata, **locations}, pending, indent=2)
+            pending.write('\n')
+            pending.close()
+            os.replace(temp_path, directory / 'fixture.json')
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+
 def preset_config(config):
     expected_hosts = {f'mongo-{i}.mongo.{NS}.svc.cluster.local:27017' for i in range(3)}
     members = config.get('members', [])
@@ -303,8 +333,7 @@ def main():
     def apply(resource, sensitive=False):
         return kube(['apply', '-f', '-'], stdin=json.dumps(resource), sensitive=sensitive)
 
-    def private(name, value=None):
-        path = directory / name
+    def private(path, value=None):
         if not path.exists():
             path.write_text(value if value is not None else secrets.token_hex(24))
         path.chmod(0o600)
@@ -387,21 +416,22 @@ const conn=new Mongo('mongodb://admin:'+encodeURIComponent(password)+'@127.0.0.1
     tls.mkdir(mode=0o700, exist_ok=True)
     server_name = f'fluxgate-authz.{NS}.svc.cluster.local'
     generate_tls(tls, server_name, run)
-    mongo_admin = private('mongo-admin-password')
-    mongo_app = private('mongo-app-password')
-    redis_password = private('redis-password')
-    mongo_key = private('mongo-keyfile', __import__('base64').b64encode(secrets.token_bytes(512)).decode())
-    api_keys = [(private('api-key'), 'resilience-key'), (private('ha-api-key'), 'resilience-ha-key'),
-                (private('quota-api-key'), 'resilience-quota-key')]
+    files = credential_files(directory)
+    mongo_admin = private(files['mongo_admin_password_file'])
+    mongo_app = private(files['mongo_app_password_file'])
+    redis_password = private(files['redis_password_file'])
+    mongo_key = private(directory / 'mongo-keyfile', __import__('base64').b64encode(secrets.token_bytes(512)).decode())
+    api_keys = [(private(files['api_key_file']), 'resilience-key'), (private(files['ha_api_key_file']), 'resilience-ha-key'),
+                (private(files['quota_api_key_file']), 'resilience-quota-key')]
     mappings = {'fluxgate': {'envoy': {'api-keys': [
         {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'user-id': 'resilience-user',
          'api-key-id': identity, 'attributes': {'tenant': 'resilience'}} for path, identity in api_keys]}}}
-    api_mapping = private('application-credentials.yml', json.dumps(mappings))
+    api_mapping = private(files['api_key_mapping_file'], json.dumps(mappings))
     mongo_hosts = ','.join(f'mongo-{i}.mongo.{NS}.svc.cluster.local:27017' for i in range(3))
     options = '?replicaSet=rs0&authSource=admin&w=majority&wtimeoutMS=2000&connectTimeoutMS=2000&serverSelectionTimeoutMS=2000&socketTimeoutMS=2000&heartbeatFrequencyMS=2000&waitQueueTimeoutMS=2000&minPoolSize=4&maxConnecting=8'
-    mongo_uri = private('mongo-uri', f'mongodb://fluxgate:{quote(mongo_app.read_text(), safe="")}@{mongo_hosts}/fluxgate' + options.replace('authSource=admin', 'authSource=fluxgate'))
-    mongo_admin_uri = private('mongo-admin-uri', f'mongodb://admin:{quote(mongo_admin.read_text(), safe="")}@{mongo_hosts}/admin' + options)
-    redis_uri = private('redis-uri', ','.join(f'redis://:{quote(redis_password.read_text(), safe="")}@redis-{i}-0.redis.{NS}.svc.cluster.local:6379' for i in range(3)))
+    mongo_uri = private(files['mongo_uri_file'], f'mongodb://fluxgate:{quote(mongo_app.read_text(), safe="")}@{mongo_hosts}/fluxgate' + options.replace('authSource=admin', 'authSource=fluxgate'))
+    mongo_admin_uri = private(files['mongo_admin_uri_file'], f'mongodb://admin:{quote(mongo_admin.read_text(), safe="")}@{mongo_hosts}/admin' + options)
+    redis_uri = private(files['redis_uri_file'], ','.join(f'redis://:{quote(redis_password.read_text(), safe="")}@redis-{i}-0.redis.{NS}.svc.cluster.local:6379' for i in range(3)))
     apply({'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': NS, 'labels': {'fluxgate.io/environment': 'local-ephemeral'}}})
     secret('fluxgate-mongo-admin', {'mongo-admin-password': mongo_admin, 'mongo-keyfile': mongo_key})
     secret('fluxgate-store-credentials', {'mongo-app-password': mongo_app, 'redis-password': redis_password,
@@ -431,7 +461,7 @@ const conn=new Mongo('mongodb://admin:'+encodeURIComponent(password)+'@127.0.0.1
         rules.append({'id': rule_id, 'name': rule_id, 'enabled': True, 'scope': 'PER_API_KEY', 'keyStrategyId': 'api-key',
                       'onLimitExceedPolicy': 'REJECT_REQUEST', 'ruleSetId': 'resilience-limits', 'priority': 10,
                       'pathPatterns': [path], 'bands': [{'windowSeconds': window, 'capacity': capacity, 'algorithm': 'FIXED_WINDOW' if rule_id == 'load-rule' else 'TOKEN_BUCKET', 'label': 'hourly' if window == 3600 else 'daily'}]})
-    operation = private('bootstrap-operation-id', str(uuid.uuid4()))
+    operation = private(directory / 'bootstrap-operation-id', str(uuid.uuid4()))
     payload = {'ruleSetId': 'resilience-limits', 'operationId': operation.read_text(), 'rules': rules, 'accessControl': {}}
     apply({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'fluxgate-policy-bootstrap', 'namespace': NS},
            'data': {'policy.json': json.dumps(payload)}})
@@ -543,10 +573,7 @@ print('REPLICA_SET_INITIALIZED');'''
     service = json.loads(kube(['-n', 'envoy-gateway-system', 'get', 'services', '-l', owner, '-o', 'json']))['items'][0]['metadata']['name']
     metadata = {'context': CONTEXT, 'namespace': NS, 'kubeconfig': env['KUBECONFIG'], 'gateway_service': service,
         'gateway_namespace': 'envoy-gateway-system', 'gateway_host': 'resilience.local', 'load_path': '/api/load', 'quota_path': '/api/quota',
-        'api_key_file': str(api_keys[0][0]), 'ha_api_key_file': str(api_keys[1][0]), 'ha_api_key_id': 'resilience-ha-key', 'api_key_id': 'resilience-key', 'quota_api_key_file': str(api_keys[2][0]),
-        'api_key_mapping_file': str(api_mapping), 'mongo_uri_file': str(mongo_uri), 'mongo_admin_uri_file': str(mongo_admin_uri),
-        'mongo_admin_password_file': str(mongo_admin), 'mongo_app_password_file': str(mongo_app),
-        'redis_password_file': str(redis_password), 'redis_uri_file': str(redis_uri), 'tls_dir': str(tls), 'server_name': server_name,
+        'ha_api_key_id': 'resilience-ha-key', 'api_key_id': 'resilience-key', 'tls_dir': str(tls), 'server_name': server_name,
         'node_container_names': nodes, 'rule_set_id': 'resilience-limits', 'load_rule_id': 'load-rule', 'quota_rule_id': 'quota-rule',
         'authz_deployment': 'fluxgate-authz', 'authz_service': 'fluxgate-authz', 'authz_tls_secret': 'fluxgate-authz-server-tls',
         'envoy_client_tls_secret': 'fluxgate-envoy-client-tls', 'server_ca_configmap': 'fluxgate-authz-server-ca',
@@ -557,9 +584,7 @@ print('REPLICA_SET_INITIALIZED');'''
         'mongo_pods': ['mongo-' + str(i) for i in range(3)], 'redis_pods': ['redis-' + str(i) + '-0' for i in range(9)],
         'mongo_selector': 'app=mongo', 'redis_selector': 'app=redis', 'backend_body': 'fluxgate-resilience-ok',
         'application_jar_file': str(HERE.parents[1] / 'fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.5.0.jar'), 'image': args.image, 'bootstrap_operation_id': operation.read_text()}
-    private('fixture.json', json.dumps(metadata, indent=2) + '\n')
-    # Refresh metadata only: credentials, bootstrap operation and counters stay unchanged on rerun.
-    (directory / 'fixture.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    write_fixture_metadata(directory, metadata)
     (directory / 'placement.json').write_text(json.dumps({'mongo': mongo_status['members'], 'redis': [
         {'master': m['metadata']['name'], 'master_node': m['spec']['nodeName'], 'replica': r['metadata']['name'], 'replica_node': r['spec']['nodeName']}
         for i, r in enumerate(replicas) for m in [masters[i % 3]]]}, indent=2) + '\n')
