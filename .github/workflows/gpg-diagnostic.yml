@@ -1,0 +1,89 @@
+# Review and merge to trusted main before manual execution.
+# Never add checkout, PR/ref inputs, external actions, uploads, or Maven here.
+# Uses only runner-provided GnuPG. No key IDs, fingerprints, or GPG output logged.
+name: Non-publishing GPG diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  signing-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'OpenFluxGate/fluxgate'
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 5
+    steps:
+      - name: Sign and verify fixed local probe
+        shell: bash
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          fail() { printf '%s\n' "::error::$1"; exit 1; }
+          [[ -n "${GPG_PRIVATE_KEY:-}" ]] || fail 'GPG private key is missing.'
+          [[ -n "${GPG_PASSPHRASE:-}" ]] || fail 'GPG passphrase is missing.'
+          export GNUPGHOME
+          GNUPGHOME=$(mktemp -d)
+          cleanup() {
+            gpgconf --homedir "$GNUPGHOME" --kill all >/dev/null 2>&1 || true
+            rm -rf -- "$GNUPGHOME"
+          }
+          trap cleanup EXIT
+          trap 'exit 1' HUP INT TERM
+          classify_signing_failure() {
+            # Only fixed labels may leave this function. Never print status arguments.
+            local marker code first rest numeric result=SIGNING_FAILED_UNCLASSIFIED
+            local bad_passphrase=0 unavailable=0 expired=0 revoked=0 wrong_usage=0
+            while IFS=' ' read -r marker code first rest; do
+              [[ "$marker" == '[GNUPG:]' ]] || continue
+              case "$code" in
+                BAD_PASSPHRASE|MISSING_PASSPHRASE) bad_passphrase=1 ;;
+                NO_SECKEY|NO_SGNR) unavailable=1 ;;
+                INV_SGNR)
+                  case "$first" in
+                    3) wrong_usage=1 ;;
+                    4) revoked=1 ;;
+                    5) expired=1 ;;
+                    1|9|13) unavailable=1 ;;
+                  esac ;;
+                FAILURE|ERROR)
+                  # libgpg-error: low 16 bits are the error code; 11 = bad passphrase.
+                  # Restrict numeric shape before Bash arithmetic (no evaluated input).
+                  numeric="$rest"
+                  if [[ "$first" == sign || "$first" == pk_sign ]]; then
+                    if [[ "$numeric" =~ ^[0-9]{1,10}$ ]] && (( (10#$numeric & 65535) == 11 )); then
+                      bad_passphrase=1
+                    fi
+                  fi ;;
+              esac
+            done < "$1"
+            # KEYEXPIRED alone is intentionally ignored: it can refer to an unused subkey.
+            if (( bad_passphrase )); then result=PASSPHRASE_REJECTED
+            elif (( revoked )); then result=SIGNER_REVOKED
+            elif (( expired )); then result=SIGNER_EXPIRED
+            elif (( wrong_usage )); then result=SIGNER_WRONG_USAGE
+            elif (( unavailable )); then result=NO_USABLE_SECRET_SIGNING_KEY
+            fi
+            printf '%s\n' "$result"
+          }
+          gpg_args=(--no-options --batch --no-tty --disable-dirmngr --no-auto-key-retrieve)
+          if ! printf '%s' "$GPG_PRIVATE_KEY" | gpg "${gpg_args[@]}" --import >/dev/null 2>&1; then
+            fail 'GPG key import failed.'
+          fi
+          unset GPG_PRIVATE_KEY
+          printf '%s\n' 'FluxGate non-publishing signing diagnostic' > "$GNUPGHOME/probe.txt"
+          if ! gpg "${gpg_args[@]}" --pinentry-mode loopback --passphrase-fd 3 --status-fd 4 \
+            --output "$GNUPGHOME/probe.sig" --detach-sign "$GNUPGHOME/probe.txt" \
+            3<<<"$GPG_PASSPHRASE" 4>"$GNUPGHOME/sign.status" >/dev/null 2>&1; then
+            fail "GPG signing failed: $(classify_signing_failure "$GNUPGHOME/sign.status")"
+          fi
+          unset GPG_PASSPHRASE
+          if ! gpg "${gpg_args[@]}" --verify "$GNUPGHOME/probe.sig" "$GNUPGHOME/probe.txt" >/dev/null 2>&1; then
+            fail 'GPG signature verification failed.'
+          fi
+          printf '%s\n' 'GPG signing and verification passed. No publication or Central authentication was attempted.'

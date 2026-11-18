@@ -730,48 +730,51 @@ label moves that band's bucket, which resets it once.
 | `PER_API_KEY` | `RequestContext.apiKey` | `key:abc123` |
 | `CUSTOM` | `attributes.get(keyStrategyId)` | `custom:<value>` |
 
-Key values are sanitised injectively: a value of at most 256 `[A-Za-z0-9._:@-]` characters that
+Key values are sanitised: a value of at most 256 `[A-Za-z0-9._:@-]` characters that
 does not start with `h:` is kept as is; any other value becomes
 `h:<restricted value>:<16 hex of its SHA-256>` (`a+1` becomes `h:a_1:<16 hex>`), or `h:<64 hex>`
 when that form would exceed 256 characters (a value longer than 237 characters). The scope prefix
-stays outside the hash (`user:h:<64 hex>`), so two different identities never share a bucket. When the value a scope
-needs is missing, `fluxgate.ratelimit.missing-key-behavior` decides between falling back
-to the client IP (the key then carries `ip:`, its real source) and rejecting the request.
+stays outside the hash (`user:h:<64 hex>`). Rewritten values are distinguished by a digest, subject
+to hash collisions. Sanitisation cannot repair a collision introduced while composing the input.
+When the value a scope needs is missing, `fluxgate.ratelimit.missing-key-behavior` decides between
+falling back to the client IP (the key then carries `ip:`, its real source) and rejecting the request.
 
 ### Composite Key Example (IP + User)
 
-The factory already resolves the authenticated user and trusted client IP. Reuse those values
-for a composite key; an anonymous caller in this example uses an IP-only key. If authentication
-is required, omit the attribute for anonymous callers and set `missing-key-behavior=REJECT`.
+`CUSTOM` reads one already-composed value from `RequestContext.attributes`; it does not validate
+the individual components. The rule below only selects the application-supplied `ipUser` attribute.
+It is not a general-purpose composite encoder.
 
 ```java
-// Rule with CUSTOM scope
 RateLimitRule rule = RateLimitRule.builder("composite-rule")
     .name("IP+User Rate Limit")
     .scope(LimitScope.CUSTOM)
     .keyStrategyId("ipUser")  // Looks up context.attributes.get("ipUser")
     .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 10).build())
     .build();
-
-// RequestContextCustomizer builds the composite key
-@Bean
-public RequestContextCustomizer requestContextCustomizer() {
-    return (builder, request) -> {
-        String userId = builder.build().getUserId();
-        String clientIp = builder.build().getClientIp();
-
-        // Prefix each component so they stay unambiguous: "ip:192.168.1.100:user:user-123"
-        String compositeKey = userId != null
-            ? "ip:" + clientIp + ":user:" + userId
-            : "ip:" + clientIp;
-        builder.attribute("ipUser", compositeKey);
-
-        return builder;
-    };
-}
 ```
 
-For multi-tenant systems, validate `X-Tenant-Id` at your application boundary before copying it into `RequestContext`. A safe custom key should include both tenant and subject, for example `tenantId + ":" + userId`, so one tenant cannot consume or reset another tenant's bucket.
+Before supplying that attribute, observe these boundaries:
+
+- **Trusted identity:** reuse the authenticated identity and client IP resolved by
+  `RequestContextFactory` and the starter's `ClientIpExtractor`. Configure trusted proxies;
+  do not re-read raw forwarded headers or bypass the extractor in the customizer. For tenants,
+  verify membership at the application boundary rather than trusting `X-Tenant-Id`.
+- **Unambiguous composition:** `tenantId + ":" + userId` is not collision-safe for arbitrary
+  values: `("a:b", "c")` and `("a", "b:c")` both become `a:b:c`. Labels or a different delimiter
+  alone are not a general fix. Define and test component boundaries, order, normalisation and
+  length limits before use. IPv6 literals contain colons; do not silently strip them. This guide
+  does not introduce a new encoder or change which characters the existing APIs accept.
+- **Missing components:** if IP and user are required, do not set `ipUser` until both are present
+  and validated, and configure `fluxgate.ratelimit.missing-key-behavior=REJECT`. A nonempty
+  IP-only fallback attribute is still a valid `CUSTOM` value, so that setting will not reject
+  it for a missing user. Do not encode missing values as `"null"` or an empty component.
+  Authentication itself remains the application's responsibility.
+- **Compatibility:** changing the composition or encoding creates different bucket identities
+  and may grant fresh quota. Existing 0.3.x counters, allow/deny entries and mixed-version callers
+  need an explicit transition plan; there is no general automatic counter migration.
+- **Privacy:** sanitisation is not anonymisation. Custom attributes can be persisted by event
+  recorders; do not compose reusable credentials or expose personal identifiers unintentionally.
 
 ### RequestContext Customization
 
