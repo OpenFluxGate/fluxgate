@@ -1,6 +1,6 @@
 # FluxGate
 
-> **0.5.0 준비 상태:** Boot 2와 Boot 3 모두 이번 출시 대상입니다. Boot 2의 0.5.1 연기는 취소되었습니다. 보안 차단은 아직 미해결이며 과거 SDK 전용 테스트 성공은 Boot 2 검증 결과가 아닙니다. [출시 검증 상태](docs/release-0.5.0-readiness.md)를 확인하세요.
+> **0.5.0 준비 상태:** Boot 2·3 호환성을 함께 검증하고 있습니다. [출시 준비 상태](docs/release-0.5.0-readiness.ko.md)와 [애플리케이션의 Spring 의존성 확인 방법](docs/release-0.5.0-readiness.ko.md#spring-의존성-안내)을 참조하세요.
 
 
 [![Java](https://img.shields.io/badge/Java-11%2B-blue.svg)](https://openjdk.org/)

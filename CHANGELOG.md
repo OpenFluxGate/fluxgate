@@ -1,6 +1,6 @@
 # Changelog
 
-> **0.5.0 readiness:** Both Boot 2 and Boot 3 are required; Boot 2 deferral to 0.5.1 is cancelled. Security gates remain unresolved. Earlier SDK-only CI success is not Boot 2 validation. See [release readiness](docs/release-0.5.0-readiness.md).
+> **0.5.0 readiness:** The candidate includes Boot 2 and Boot 3. See the [release readiness checks](docs/release-0.5.0-readiness.md) and the [Spring dependency notice for applications](docs/release-0.5.0-readiness.md#spring-dependency-notice).
 
 
 All notable changes to FluxGate are documented in this file.

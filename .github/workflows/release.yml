@@ -127,6 +127,15 @@ jobs:
         # fluxgate.redis.cluster.require=true makes them fail, not skip, when the cluster is unreachable.
         run: ./mvnw -B verify -Predis-cluster-it -Dfluxgate.redis.cluster.require=true
 
+      - name: Check release advisory expiry
+        run: |
+          ./mvnw -B -ntp -pl fluxgate-spring-boot2-starter,fluxgate-spring-boot3-starter \
+            -Prelease -DskipTests -s .github/settings.xml \
+            org.apache.maven.plugins:maven-help-plugin:3.6.0:effective-pom \
+            -Doutput="${RUNNER_TEMP}/release-effective-pom.xml"
+          python3 .github/scripts/check_dependency_advisories.py \
+            --release-effective-pom "${RUNNER_TEMP}/release-effective-pom.xml"
+
       - name: Import GPG key
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
         with:
@@ -142,6 +151,9 @@ jobs:
           # process argument visible to `ps` or to other build plugins.
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
+          # Recheck the UTC deadline immediately before signing and uploading.
+          python3 .github/scripts/check_dependency_advisories.py \
+            --release-effective-pom "${RUNNER_TEMP}/release-effective-pom.xml"
           ./mvnw -B deploy -Prelease -DskipTests \
             -s .github/settings.xml
 

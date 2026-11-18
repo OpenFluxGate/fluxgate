@@ -1,6 +1,6 @@
 # Security Policy
 
-> **0.5.0 readiness:** Both Boot 2 and Boot 3 are required; Boot 2 deferral to 0.5.1 is cancelled. Security gates remain unresolved. Earlier SDK-only CI success is not Boot 2 validation. See [release readiness](docs/release-0.5.0-readiness.md).
+> **0.5.0 readiness:** The candidate includes Boot 2 and Boot 3. See the [release readiness checks](docs/release-0.5.0-readiness.md) and the [Spring dependency notice for applications](docs/release-0.5.0-readiness.md#spring-dependency-notice).
 
 
 ## Supported Versions
@@ -11,10 +11,11 @@ Security fixes are applied to the latest released FluxGate line. Projects should
 
 `feature/lts-0.5.0` prepares the complete integrated release; it is not a published release or
 a completed LTS support commitment. See the [compatibility matrix](GOVERNANCE.md#supported-spring-boot-and-java-matrix).
-Java 11-compatible transport dependencies receive public security patches, but Spring Boot 2/3
-compatibility does not provide ongoing upstream OSS security support. Spring 5.3.39 and 6.2.19
-still have conditional security advisories, including [CVE-2026-47884](https://spring.io/security/cve-2026-47884/);
-Spring 6.2.19 also has [CVE-2026-47890](https://spring.io/security/cve-2026-47890/).
+Java 11-compatible transport dependencies receive public security patches. Upstream security
+support for the Spring versions depends on their respective support lines. The
+[Spring dependency notice](docs/release-0.5.0-readiness.md#spring-dependency-notice)
+lists the advisories, the scope of the CI exceptions, and how to check an application's
+resolved Spring versions.
 
 Modern server and sample logging uses [Logback 1.6.5](https://logback.qos.ch/news.html),
 including the MDC discriminator security fix. The Java 11 / Boot 2 sample retains SLF4J 1.7
@@ -24,9 +25,8 @@ not a security-supported deployment template. Audits include samples as well as 
 modules; findings in those legacy graphs are not hidden by a clean SDK scan.
 
 The maintained server baseline and legacy compatibility scope must be settled before publishing
-0.5.0 as LTS. A clean dependency scan for an SDK subset does not establish security for the
-consumer application's resolved graph or enabled features. No advisory is suppressed to claim
-complete remediation, and commercially supported patches are not included in this OSS build.
+0.5.0 as LTS. Application dependency and configuration checks remain necessary. The OSS build
+uses publicly available Spring dependencies.
 
 ## Reporting a Vulnerability
 
