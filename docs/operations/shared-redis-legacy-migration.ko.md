@@ -144,3 +144,55 @@ epoch가 문자열 `legacy`이면 epoch 접미사를 생략할 뿐, 공식 0.3.x
 
 별도 검증 결과는 정확한 커밋과 함께 관리해야 합니다. 다른 시험이 성공했다는 이유만으로
 이 문서에 남은 릴리스 조건까지 충족한 것으로 간주하지 않습니다.
+
+## 선택적 admission gate 사용 중 정상 정책 발행
+
+이 절차는 `migration-admission.enabled=true`를 명시적으로 선택한 인스턴스에만
+적용됩니다. 기본값 OFF와 기존 동작은 바뀌지 않습니다. gate는 ruleset ID별 정확한
+revision/epoch 한 쌍만 허가합니다. **epoch를 유지하는 정상 발행도 revision이 N에서
+N+1로 바뀌면 기존 허가와 불일치**합니다. 라이브러리 Spring 필터는 이 거부를 503으로
+반환하고 downstream chain과 quota 소비를 실행하지 않습니다.
+
+| 순서 | 중간 상태 | 가용성 영향 |
+| --- | --- | --- |
+| 정책 N+1 먼저 발행 | N 허가 프로세스가 N+1을 조회 | 해당 요청 503 |
+| N+1 허가로 먼저 재시작 | N+1 허가 프로세스가 아직 N을 조회 | 해당 요청 503 |
+| 일부 Pod만 재시작 | Pod마다 승인 revision이 다름 | 조회 snapshot에 따라 일부 요청 503 |
+
+두 revision을 같은 ruleset ID로 함께 등록하면 중복 설정으로 시작에 실패합니다.
+따라서 이 기능은 무중단 rolling publication 프로토콜이 아닙니다. 503은 재시도하면
+바로 해결되는 일시적 quota 초과(429)가 아니라 설정과 snapshot의 불일치일 수 있습니다.
+
+### 운영 검증 전 제안 runbook (별도 변경 승인 필요)
+
+아래 절차는 **실제 운영 rollout으로 검증되지 않은 제안**입니다. Spring context 회귀는
+운영 Pod 재시작·실제 HTTP 서버·서비스 정상성이나 안전한 상태 전환을 증명하지 않습니다.
+Health UP도 그 보장이 아니며 운영 리허설과 별도 승인이 필요합니다.
+
+1. 대상 서비스/모든 Pod, 현재·새 ruleset ID/revision/epoch, 실제 정책 내용과 영향,
+   트래픽 중단 구간, 담당자와 중단·복귀 조건을 승인받습니다. 이 문서나 테스트 성공은
+   운영 변경 승인이나 old writer 차단 증거가 아닙니다.
+2. 필요한 트래픽을 외부에서 drain/차단하고 진행 중 요청을 정리합니다. gate가 이 조치를
+   대신하지 않습니다. 승인 없이 reset을 발행하거나 기존 부채를 버리지 않습니다.
+3. 승인된 정책 발행 결과의 실제 revision/epoch를 확인하고 모든 대상 인스턴스의 허가
+   설정을 그 값으로 맞춥니다. 다음 revision을 추측해서 미리 승인하거나 운영 DB 정책을
+   직접 수정하지 않습니다. **설정 파일 수정만으로 live gate는 변경되지 않습니다.**
+   Pub/Sub나 일반 설정 refresh도 기존 gate를 갱신하지 않습니다.
+   immutable gate를 새로 만드는 프로세스 재시작/재배포가 필요합니다.
+4. 모든 Pod의 적용 tuple, 실제 provider snapshot, 명시적 503 여부와 승인 정책의 정상
+   판정을 확인한 후에만 트래픽을 재개합니다. Envoy readiness는 미승인 snapshot에서
+   false가 되지만, Spring Boot 일반 readiness/프로세스 기동 성공만으로 이 판정이
+   승인됐다고 간주하지 않습니다. 현재 Boot health indicator에는 gate 판정 검사가 없어
+   tuple 불일치 중에도 UP일 수 있습니다. 실제 보호 경로는 승인된 canary/test identity와
+   업무 부작용 없는 요청으로 확인하며, 그 검증도 quota를 소비할 수 있음을 계획에
+   포함합니다. 성공적인 한 요청만으로 모든 Pod 검증을 대체하지 않습니다.
+5. 문제가 있으면 트래픽 차단을 유지합니다. gate OFF, fail-open, 임의 reset으로
+   통과시키지 않습니다. 정책 내용을 되돌리는 발행도 새로운 revision을 만들 수 있으므로
+   실제 rollback publication의 tuple을 다시 확인하고 허가 갱신·모든 Pod 재시작을
+   조율합니다. 오래된 revision/부채를 그대로 복구해도 안전하다고 가정하지 않습니다.
+
+양 starter의 `revisionPublicationRequiresNewContextAndImmutableApproval` 회귀는
+N 허가 → N+1 snapshot의 필터 503/chain 미실행/추가 소비 0 → bound properties만
+변경해도 계속 거부 → 새 Spring context와 N+1 허가에서 정상 통과를 검증합니다.
+Mock HTTP 및 결정적 provider/limiter 시험이며 실제 운영 재시작, Redis 상태 이관,
+다중 Pod drain 또는 무중단 배포의 검증은 아닙니다.
