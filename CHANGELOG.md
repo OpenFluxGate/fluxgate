@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in `CompositeKeyEncoder` for length-framed SHA-256 CUSTOM identities, preserving literal IPv6 input without changing legacy keys. See [encoding and rollout contract](docs/architecture/composite-custom-keys.md).
+
 ### 0.5.0 SCAN compatibility note
 
 - Built-in Redis providers retain `keys(pattern)` as a source/binary-compatible API, but execute
