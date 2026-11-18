@@ -26,9 +26,20 @@ import org.slf4j.LoggerFactory;
  * </table>
  *
  * <p>For CUSTOM scope, the resolver looks up the value from RequestContext attributes using the
- * rule's keyStrategyId as the attribute key. Composite values keep their separator, so a value
- * built as {@code ip:10.0.0.1:user:u-1} resolves to {@code custom:ip:10.0.0.1:user:u-1}; prefix
- * each component when you compose a key yourself so the components stay unambiguous.
+ * rule's keyStrategyId as the attribute key. It treats that value as one string, not as a tuple.
+ * A clean value such as {@code ip:10.0.0.1:user:u-1} resolves to {@code
+ * custom:ip:10.0.0.1:user:u-1}, but this does not guarantee that arbitrary components were composed
+ * unambiguously. Delimiters or component labels alone do not prevent collisions: joining
+ * {@code ("a:b", "c")} and {@code ("a", "b:c")} with a colon yields the same string. Sanitisation
+ * cannot distinguish tuples that already produced identical input strings.
+ *
+ * <p>Applications composing identities must define unambiguous boundaries and validate every
+ * required component before setting the attribute. {@link MissingKeyBehavior#REJECT} rejects a
+ * missing or empty CUSTOM value, not a nonempty value with a missing component (for example an
+ * IP-only fallback when a user id is required). This resolver supplies neither a tuple encoder
+ * nor component validation. Changing an application's composition format changes its rate-limit
+ * identity and can create a fresh quota; existing counters and allow/deny entries need a transition
+ * plan. No new component character restrictions or encoding policy are introduced here.
  *
  * <p>Only the value after the prefix is sanitised and length-limited (see {@link
  * KeyValueSanitizer}), so the prefix is kept even when the value is hashed: a 300-character user id
