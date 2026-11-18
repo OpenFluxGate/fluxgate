@@ -106,7 +106,7 @@ separation and explicit non-migration from a legacy identity.
 
 Run `./mvnw spotless:check` and `./mvnw -pl fluxgate-core -am test`.
 Run the existing CI Java 11/17/21 matrix and
-`./mvnw -pl fluxgate-redis-ratelimiter -am -Predis-cluster-it verify` with an isolated
+`./mvnw -pl fluxgate-redis-ratelimiter -am -Predis-cluster-it -Dfluxgate.redis.cluster.require=true verify` with an isolated
 Cluster. A skipped integration test is not verification. No production or migration
 safety claim follows from unit tests alone. Load, failover and mixed-version rollout
 validation remain separate work.
