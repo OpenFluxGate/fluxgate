@@ -12,10 +12,15 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -65,29 +70,8 @@ class PublishedEpochEndToEndIntegrationTest {
         MongoPolicyRepository repository =
             new MongoPolicyRepository(mongoClient.getDatabase("epoch_e2e"), "rules");
         Document first = publish(repository, 0, 2, true, "initial");
-        PublishedMongoRuleSetProvider published =
-            new PublishedMongoRuleSetProvider(repository, new LimitScopeKeyResolver(), () -> null);
         RedisCommands<String, String> commands = inspection.sync();
-        new ApplicationContextRunner()
-            .withConfiguration(
-                AutoConfigurations.of(
-                    FluxgateRedisAutoConfiguration.class,
-                    FluxgateRateLimiterAutoConfiguration.class,
-                    FluxgateReloadAutoConfiguration.class))
-            .withBean("delegateRuleSetProvider", RateLimitRuleSetProvider.class, () -> published)
-            .withPropertyValues(
-                "fluxgate.reload.counter-mode=PUBLISHED_EPOCH",
-                "fluxgate.redis.enabled=true",
-                "fluxgate.redis.uri=" + redisUri,
-                "fluxgate.ratelimit.mode=REDIS",
-                "fluxgate.ratelimit.fallback.mode=NONE",
-                "fluxgate.ratelimit.failure-behavior=DENY",
-                "fluxgate.ratelimit.missing-rule-behavior=DENY",
-                "fluxgate.reload.strategy=PUBSUB",
-                "fluxgate.reload.cache.enabled=true",
-                "fluxgate.reload.pubsub.channel=" + channel,
-                "fluxgate.reload.pubsub.secret=" + SECRET,
-                "fluxgate.reload.pubsub.backstop-polling-interval=0s")
+        subscriber(repository, redisUri, channel, "PUBLISHED_EPOCH")
             .run(
                 context -> {
                   assertThat(context).hasNotFailed();
@@ -170,6 +154,109 @@ class PublishedEpochEndToEndIntegrationTest {
         redisClient.shutdown();
       }
     }
+  }
+
+  @Test
+  void twoSubscribersProcessSharedRedisNotificationsWithoutScanningInEpochMode() throws Exception {
+    try (GenericContainer<?> mongo = container("mongo:7.0", 27017, 512);
+        GenericContainer<?> redis = container("redis:7-alpine", 6379, 128)) {
+      mongo.start();
+      redis.start();
+      assertLoopback(mongo, 27017);
+      assertLoopback(redis, 6379);
+      String redisUri = "redis://" + redis.getHost() + ":" + redis.getMappedPort(6379);
+      String mongoUri = "mongodb://" + mongo.getHost() + ":" + mongo.getMappedPort(27017);
+      RedisClient client = RedisClient.create(redisUri);
+      try (MongoClient mongoClient = MongoClients.create(mongoUri);
+          StatefulRedisConnection<String, String> connection = client.connect()) {
+        RedisCommands<String, String> commands = connection.sync();
+        Map<String, String> unrelated = new LinkedHashMap<>();
+        for (int i = 0; i < 4096; i++) {
+          unrelated.put("unrelated:" + i, "fixture");
+        }
+        commands.mset(unrelated);
+        MongoPolicyRepository repository =
+            new MongoPolicyRepository(mongoClient.getDatabase("epoch_comparison"), "rules");
+        publish(repository, 0, 3, true, "initial");
+        for (String mode : List.of("LEGACY_RESET", "PUBLISHED_EPOCH")) {
+          String channel = UUID.randomUUID().toString();
+          ApplicationContextRunner runner = subscriber(repository, redisUri, channel, mode);
+          runner.run(
+              first ->
+                  runner.run(
+                      second -> {
+                        assertThat(first).hasNotFailed();
+                        assertThat(second).hasNotFailed();
+                        BlockingQueue<Long> firstSeen = new LinkedBlockingQueue<>();
+                        BlockingQueue<Long> secondSeen = new LinkedBlockingQueue<>();
+                        first
+                            .getBean(RedisPubSubReloadStrategy.class)
+                            .addListener(
+                                event -> firstSeen.add(System.nanoTime()), Integer.MAX_VALUE);
+                        second
+                            .getBean(RedisPubSubReloadStrategy.class)
+                            .addListener(
+                                event -> secondSeen.add(System.nanoTime()), Integer.MAX_VALUE);
+                        await(() -> commands.pubsubNumsub(channel).getOrDefault(channel, 0L) == 2);
+                        Map<String, Long> before = destructiveCalls(commands);
+                        List<Long> latencyMicros = new ArrayList<>();
+                        for (int i = 0; i < 10; i++) {
+                          String message = notice(channel, false, System.currentTimeMillis());
+                          long start = System.nanoTime();
+                          assertThat(commands.publish(channel, message)).isEqualTo(2);
+                          Long firstEnd = firstSeen.poll(10, TimeUnit.SECONDS);
+                          Long secondEnd = secondSeen.poll(10, TimeUnit.SECONDS);
+                          assertThat(firstEnd).isNotNull();
+                          assertThat(secondEnd).isNotNull();
+                          latencyMicros.add(
+                              TimeUnit.NANOSECONDS.toMicros(Math.max(firstEnd, secondEnd) - start));
+                        }
+                        Map<String, Long> after = destructiveCalls(commands);
+                        long scans = after.get("scan") - before.get("scan");
+                        assertThat(after.get("keys")).isEqualTo(before.get("keys"));
+                        if ("PUBLISHED_EPOCH".equals(mode)) {
+                          assertThat(scans).isZero();
+                        } else {
+                          assertThat(scans).isGreaterThanOrEqualTo(20);
+                        }
+                        System.out.printf(
+                            "reload-comparison mode=%s keys=4096 subscribers=2 notices=10 scans=%d latencyMicros=%s%n",
+                            mode, scans, latencyMicros);
+                      }));
+        }
+      } finally {
+        client.shutdown();
+      }
+    }
+  }
+
+  private static ApplicationContextRunner subscriber(
+      MongoPolicyRepository repository, String redisUri, String channel, String mode) {
+    return new ApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(
+                FluxgateRedisAutoConfiguration.class,
+                FluxgateRateLimiterAutoConfiguration.class,
+                FluxgateReloadAutoConfiguration.class))
+        .withBean(
+            "delegateRuleSetProvider",
+            RateLimitRuleSetProvider.class,
+            () ->
+                new PublishedMongoRuleSetProvider(
+                    repository, new LimitScopeKeyResolver(), () -> null))
+        .withPropertyValues(
+            "fluxgate.reload.counter-mode=" + mode,
+            "fluxgate.redis.enabled=true",
+            "fluxgate.redis.uri=" + redisUri,
+            "fluxgate.ratelimit.mode=REDIS",
+            "fluxgate.ratelimit.fallback.mode=NONE",
+            "fluxgate.ratelimit.failure-behavior=DENY",
+            "fluxgate.ratelimit.missing-rule-behavior=DENY",
+            "fluxgate.reload.strategy=PUBSUB",
+            "fluxgate.reload.cache.enabled=true",
+            "fluxgate.reload.pubsub.channel=" + channel,
+            "fluxgate.reload.pubsub.secret=" + SECRET,
+            "fluxgate.reload.pubsub.backstop-polling-interval=0s");
   }
 
   private static void assertLoopback(GenericContainer<?> container, int port) {
