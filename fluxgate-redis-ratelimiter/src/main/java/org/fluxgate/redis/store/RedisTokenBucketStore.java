@@ -904,4 +904,12 @@ public class RedisTokenBucketStore {
     }
     return deleted;
   }
+
+  /**
+   * Legacy lifecycle hook. The connection provider is managed externally and is not closed here,
+   * exactly as in 0.3.8. This store does not implement AutoCloseable.
+   */
+  public void close() {
+    log.debug("RedisTokenBucketStore closed");
+  }
 }

@@ -224,4 +224,12 @@ public final class BucketState {
         + redisTimeMicros
         + '}';
   }
+
+  /** Returns the wait in whole seconds, rounded up without overflowing a positive long. */
+  public long getRetryAfterSeconds() {
+    return nanosToWaitForRefill <= 0
+        ? 0
+        : nanosToWaitForRefill / 1_000_000_000L
+            + (nanosToWaitForRefill % 1_000_000_000L == 0 ? 0 : 1);
+  }
 }

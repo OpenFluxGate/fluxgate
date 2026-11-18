@@ -15,6 +15,16 @@ import org.junit.jupiter.api.Test;
 @DisplayName("BucketState Tests")
 class BucketStateTest {
 
+  @Test
+  void legacyRetryAfterRoundsUpWithoutOverflow() {
+    assertEquals(0, new BucketState(false, 0, 0, 0).getRetryAfterSeconds());
+    assertEquals(1, new BucketState(false, 0, 1, 0).getRetryAfterSeconds());
+    assertEquals(1, new BucketState(false, 0, 1_000_000_000L, 0).getRetryAfterSeconds());
+    assertEquals(2, new BucketState(false, 0, 1_500_000_000L, 0).getRetryAfterSeconds());
+    assertEquals(
+        9_223_372_037L, new BucketState(false, 0, Long.MAX_VALUE, 0).getRetryAfterSeconds());
+  }
+
   // ==================== Factory Method Tests ====================
 
   @Nested

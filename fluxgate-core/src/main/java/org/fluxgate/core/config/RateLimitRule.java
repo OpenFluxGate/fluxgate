@@ -222,20 +222,31 @@ public final class RateLimitRule {
   }
 
   /**
+   * Returns the legacy nullable attribute value. The type argument is retained for source
+   * compatibility; as in 0.3.7, the caller's cast enforces the requested result type. Use {@link
+   * #getOptionalAttribute(String, Class)} for checked optional lookup.
+   */
+  @SuppressWarnings("unchecked")
+  public <T> T getAttribute(String key, Class<T> type) {
+    Object value = attributes.get(key);
+    return value != null ? (T) value : null;
+  }
+
+  /**
    * Returns a specific attribute value cast to the expected type, or {@link Optional#empty()} if
    * not present or the value cannot be cast to {@code type}.
    *
    * <p>A type mismatch is logged at {@code DEBUG} level and never propagates as an exception.
    *
-   * <p>Example: {@code Optional<String> tier = rule.getAttribute("tier", String.class);}
+   * <p>Example: {@code Optional<String> tier = rule.getOptionalAttribute("tier", String.class);}
    *
    * @param key the attribute key
    * @param type the expected type
    * @param <T> the type parameter
    * @return an {@link Optional} containing the cast value, or empty if absent or incompatible
-   * @since 0.4.0
+   * @since 0.5.0
    */
-  public <T> Optional<T> getAttribute(String key, Class<T> type) {
+  public <T> Optional<T> getOptionalAttribute(String key, Class<T> type) {
     Object value = attributes.get(key);
     if (value == null) {
       return Optional.empty();

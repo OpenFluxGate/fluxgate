@@ -55,7 +55,7 @@ class MultiAlgorithmLuaIntegrationTest {
   private static LuaScriptRegistry scripts;
 
   @BeforeAll
-  static void setUp() {
+  static void setUp() throws java.io.IOException {
     config = new RedisRateLimiterConfig(RedisContainerSupport.redisUri());
     redis = config.getConnectionProvider();
     scripts = new LuaScriptRegistry();

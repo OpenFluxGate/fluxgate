@@ -13,7 +13,7 @@ import org.junit.jupiter.api.BeforeAll;
 class RedisRateLimiterCrossRuleIntegrationTest extends CrossRuleAtomicityContract {
 
   @BeforeAll
-  static void setUp() {
+  static void setUp() throws java.io.IOException {
     connect(RedisContainerSupport.redisUri());
   }
 }

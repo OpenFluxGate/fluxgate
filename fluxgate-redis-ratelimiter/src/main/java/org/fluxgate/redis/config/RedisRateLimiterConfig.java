@@ -56,7 +56,7 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
    * @throws org.fluxgate.core.exception.ScriptExecutionException if the Lua scripts cannot be read
    *     or uploaded
    */
-  public RedisRateLimiterConfig(String redisUri) {
+  public RedisRateLimiterConfig(String redisUri) throws java.io.IOException {
     this(redisUri, RedisUriUtils.DEFAULT_TIMEOUT);
   }
 
@@ -68,7 +68,7 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
    * @throws org.fluxgate.core.exception.ScriptExecutionException if the Lua scripts cannot be read
    *     or uploaded
    */
-  public RedisRateLimiterConfig(String redisUri, Duration timeout) {
+  public RedisRateLimiterConfig(String redisUri, Duration timeout) throws java.io.IOException {
     this(redisUri, timeout, null);
   }
 
@@ -101,7 +101,8 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
    * @throws org.fluxgate.core.exception.ScriptExecutionException if the Lua scripts cannot be read
    *     or uploaded
    */
-  public RedisRateLimiterConfig(RedisMode mode, List<String> uris, Duration timeout) {
+  public RedisRateLimiterConfig(RedisMode mode, List<String> uris, Duration timeout)
+      throws java.io.IOException {
     this(mode, uris, timeout, null);
   }
 
@@ -181,7 +182,8 @@ public final class RedisRateLimiterConfig implements AutoCloseable {
    * @throws org.fluxgate.core.exception.ScriptExecutionException if the Lua scripts cannot be read
    *     or uploaded
    */
-  public RedisRateLimiterConfig(RedisConnectionProvider connectionProvider) {
+  public RedisRateLimiterConfig(RedisConnectionProvider connectionProvider)
+      throws java.io.IOException {
     this(connectionProvider, (Duration) null);
   }
 

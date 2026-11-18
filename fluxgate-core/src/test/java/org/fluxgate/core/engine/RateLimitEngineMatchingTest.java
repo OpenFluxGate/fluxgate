@@ -614,7 +614,7 @@ class RateLimitEngineMatchingTest {
               .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
               .addBand(BAND)
               .build();
-      Optional<String> result = r.getAttribute("tier", String.class);
+      Optional<String> result = r.getOptionalAttribute("tier", String.class);
       assertThat(result).hasValue("premium");
     }
 
@@ -629,7 +629,7 @@ class RateLimitEngineMatchingTest {
               .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
               .addBand(BAND)
               .build();
-      Optional<Integer> result = r.getAttribute("tier", Integer.class);
+      Optional<Integer> result = r.getOptionalAttribute("tier", Integer.class);
       assertThat(result).isEmpty();
     }
 
@@ -643,7 +643,7 @@ class RateLimitEngineMatchingTest {
               .onLimitExceedPolicy(OnLimitExceedPolicy.REJECT_REQUEST)
               .addBand(BAND)
               .build();
-      Optional<String> result = r.getAttribute("nonexistent", String.class);
+      Optional<String> result = r.getOptionalAttribute("nonexistent", String.class);
       assertThat(result).isEmpty();
     }
   }

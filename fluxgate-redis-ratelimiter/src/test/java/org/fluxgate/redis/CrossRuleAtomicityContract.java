@@ -53,7 +53,7 @@ abstract class CrossRuleAtomicityContract {
   private static RedisRateLimiterConfig config;
 
   /** Opens the shared config; subclasses call it from {@code @BeforeAll}. */
-  static void connect(String uri) {
+  static void connect(String uri) throws java.io.IOException {
     config = new RedisRateLimiterConfig(uri);
   }
 

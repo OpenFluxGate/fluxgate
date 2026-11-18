@@ -30,7 +30,7 @@ class RedisTokenBucketStoreIntegrationTest {
   private static RedisConnectionProvider connectionProvider;
 
   @BeforeAll
-  static void setUp() {
+  static void setUp() throws java.io.IOException {
     config = new RedisRateLimiterConfig(RedisContainerSupport.redisUri());
     store = config.getTokenBucketStore();
     connectionProvider = config.getConnectionProvider();

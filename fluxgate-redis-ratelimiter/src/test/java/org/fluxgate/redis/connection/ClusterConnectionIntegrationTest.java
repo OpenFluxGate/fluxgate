@@ -49,7 +49,7 @@ class ClusterConnectionIntegrationTest {
   private static RedisTokenBucketStore tokenBucketStore;
 
   @BeforeAll
-  static void setUp() {
+  static void setUp() throws java.io.IOException {
     System.out.println("\n=== Connecting to Redis Cluster ===");
     System.out.println("URI: " + CLUSTER_URI);
 
