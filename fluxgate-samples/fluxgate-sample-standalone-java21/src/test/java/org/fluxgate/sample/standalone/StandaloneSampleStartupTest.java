@@ -1,21 +1,20 @@
 package org.fluxgate.sample.standalone;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;
 import org.fluxgate.core.reload.RuleReloadStrategy;
 import org.fluxgate.spring.reload.strategy.PollingReloadStrategy;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.ApplicationContext;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
@@ -29,8 +28,9 @@ import org.testcontainers.utility.DockerImageName;
  * are pinned so a {@code FLUXGATE_RELOAD_*} variable in the environment cannot change which reload
  * strategy is tested.
  */
-@SpringBootTest
-@AutoConfigureMockMvc
+@SpringBootTest(
+    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+    properties = "server.address=127.0.0.1")
 @Testcontainers(disabledWithoutDocker = true)
 class StandaloneSampleStartupTest {
 
@@ -63,21 +63,35 @@ class StandaloneSampleStartupTest {
 
   @Autowired private ApplicationContext context;
 
-  @Autowired private MockMvc mockMvc;
+  @Autowired private TestRestTemplate http;
 
   @Test
-  void startsWithTheShippedConfiguration() throws Exception {
+  void startsWithTheShippedConfiguration() {
     // AUTO with Redis enabled but neither a secret nor allow-unsigned falls back to polling.
     assertThat(context.getBean(RuleReloadStrategy.class)).isInstanceOf(PollingReloadStrategy.class);
-    mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());
+    assertThat(http.getForEntity("/actuator/health", String.class).getStatusCode())
+        .isEqualTo(HttpStatus.OK);
   }
 
   @Test
-  void generatesApiDocumentationWithTheShippedControllerAdvice() throws Exception {
-    mockMvc
-        .perform(get("/v3/api-docs"))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.openapi").exists())
-        .andExpect(jsonPath("$.paths").isNotEmpty());
+  void generatesApiDocumentationWithTheShippedControllerAdvice() {
+    ResponseEntity<JsonNode> response = http.getForEntity("/v3/api-docs", JsonNode.class);
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody()).isNotNull();
+    assertThat(response.getBody().path("openapi").asText()).isNotEmpty();
+    assertThat(response.getBody().path("paths").size()).isPositive();
+  }
+
+  @Test
+  void multiFilterEndpointIsLimitedByMultiFilterRules() {
+    assertThat(
+            http.postForEntity("/api/admin/rules/multi-filter", null, String.class).getStatusCode())
+        .isEqualTo(HttpStatus.OK);
+    String uri = "/api/test/multi-filter";
+    for (int i = 0; i < 10; i++) {
+      assertThat(http.getForEntity(uri, String.class).getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+    assertThat(http.getForEntity(uri, String.class).getStatusCode())
+        .isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
   }
 }

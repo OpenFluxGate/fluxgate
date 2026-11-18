@@ -31,6 +31,16 @@ auto-configurations and a test fails the build if they diverge.
 > migration is a dependency swap plus the `javax` → `jakarta` import change in your own code, not a
 > FluxGate rewrite.
 
+## Spring 5 HTTP Invoker
+
+The public Spring Web 5.3.39 dependency contains the HTTP Invoker exporter flagged by GHSA-4wrc-f8pq-fpqp. Untrusted callers can reach Java deserialization when an application publishes an HTTP Invoker service. Inventory the deployed application's servlet mappings, Spring contexts, XML and Java configuration, and third-party registrations. Remove unused endpoints, migrate callers to a non-serialization protocol, and restrict access at the service boundary while migrating. The standalone sample checks exporter bean metadata in its running context. Consumers with lazy, dynamic, or application-specific registrations need to inspect their own deployment. The dependency finding remains open. [Spring maintainer guidance](https://github.com/spring-projects/spring-framework/issues/24434) · [Advisory](https://github.com/advisories/GHSA-4wrc-f8pq-fpqp)
+
+Spring Framework 6 removes HTTP Invoker. Prefer the Boot 3 starter when the application supports Java 17 and Jakarta Servlet. Verify the final runtime dependency tree and the application's servlet filters after migration. [Spring Framework 6 release notes](https://github.com/spring-projects/spring-framework/wiki/Spring-Framework-6.0-Release-Notes)
+
+WSO2 documents a fork with remoting classes removed for its named products. HeroDevs documents a separate commercial NES `no-remoting` artifact and identifies its trial as demonstration-only. FluxGate has not qualified either substitute. Before adoption, confirm version alignment and binary compatibility, the vendor's repository access and production redistribution rights, and a written price and support commitment. [WSO2 security assessment](https://security.docs.wso2.com/en/latest/security-announcements/cve-justifications/2025/CVE-2016-1000027/) · [HeroDevs release notes](https://docs.herodevs.com/spring/release-notes/spring-framework-5-3)
+
+[한국어 운영 안내](HTTP-INVOKER.ko.md)
+
 ## Dependency
 
 ```xml

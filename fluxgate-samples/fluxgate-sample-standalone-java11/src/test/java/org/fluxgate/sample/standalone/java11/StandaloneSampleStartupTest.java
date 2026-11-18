@@ -1,21 +1,18 @@
 package org.fluxgate.sample.standalone.java11;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Duration;
 import org.fluxgate.core.reload.RuleReloadStrategy;
 import org.fluxgate.spring.reload.strategy.PollingReloadStrategy;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.context.ApplicationContext;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
@@ -29,8 +26,9 @@ import org.testcontainers.utility.DockerImageName;
  * are pinned so a {@code FLUXGATE_RELOAD_*} variable in the environment cannot change which reload
  * strategy is tested.
  */
-@SpringBootTest
-@AutoConfigureMockMvc
+@SpringBootTest(
+    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+    properties = "server.address=127.0.0.1")
 @Testcontainers(disabledWithoutDocker = true)
 class StandaloneSampleStartupTest {
 
@@ -63,13 +61,24 @@ class StandaloneSampleStartupTest {
 
   @Autowired private ApplicationContext context;
 
-  @Autowired private MockMvc mockMvc;
+  @Autowired private TestRestTemplate http;
 
   @Test
-  void startsWithTheShippedConfiguration() throws Exception {
+  void startsWithTheShippedConfiguration() {
     // AUTO with Redis enabled but neither a secret nor allow-unsigned falls back to polling.
     assertThat(context.getBean(RuleReloadStrategy.class)).isInstanceOf(PollingReloadStrategy.class);
-    mockMvc.perform(get("/actuator/health")).andExpect(status().isOk());
+    assertThat(http.getForEntity("/actuator/health", String.class).getStatusCode())
+        .isEqualTo(HttpStatus.OK);
+  }
+
+  @Test
+  void sampleDoesNotRegisterAnHttpInvokerExporter() {
+    assertThat(
+            context.getBeanNamesForType(
+                org.springframework.remoting.httpinvoker.HttpInvokerServiceExporter.class,
+                true,
+                false))
+        .isEmpty();
   }
 
   /**
@@ -78,8 +87,10 @@ class StandaloneSampleStartupTest {
    * through to {@code apiFilter} would be denied at once ({@code missing-rule-behavior: DENY}).
    */
   @Test
-  void multiFilterEndpointIsLimitedByMultiFilterRules() throws Exception {
-    mockMvc.perform(post("/api/admin/rules/multi-filter")).andExpect(status().isOk());
+  void multiFilterEndpointIsLimitedByMultiFilterRules() {
+    assertThat(
+            http.postForEntity("/api/admin/rules/multi-filter", null, String.class).getStatusCode())
+        .isEqualTo(HttpStatus.OK);
 
     assertTenAllowedThenRejected("/api/test/multi-filter");
   }
@@ -89,16 +100,18 @@ class StandaloneSampleStartupTest {
    * {@code /api/test/composite}.
    */
   @Test
-  void compositeEndpointIsLimitedByCompositeKeyRules() throws Exception {
-    mockMvc.perform(post("/api/admin/rules/composite")).andExpect(status().isOk());
+  void compositeEndpointIsLimitedByCompositeKeyRules() {
+    assertThat(http.postForEntity("/api/admin/rules/composite", null, String.class).getStatusCode())
+        .isEqualTo(HttpStatus.OK);
 
     assertTenAllowedThenRejected("/api/test/composite?userId=alice");
   }
 
-  private void assertTenAllowedThenRejected(String uri) throws Exception {
+  private void assertTenAllowedThenRejected(String uri) {
     for (int i = 0; i < 10; i++) {
-      mockMvc.perform(get(uri)).andExpect(status().isOk());
+      assertThat(http.getForEntity(uri, String.class).getStatusCode()).isEqualTo(HttpStatus.OK);
     }
-    mockMvc.perform(get(uri)).andExpect(status().isTooManyRequests());
+    assertThat(http.getForEntity(uri, String.class).getStatusCode())
+        .isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
   }
 }
