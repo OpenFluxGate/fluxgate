@@ -144,3 +144,53 @@ restart the old fleet.
 
 Track separate validation results against their exact commits. This document does not
 convert other test successes into a guarantee for any of these outstanding release gates.
+
+## Normal policy publication with optional admission enabled
+
+This applies only to explicitly enabled `migration-admission`; the default remains
+OFF. The immutable gate approves one exact rule-set ID/revision/epoch tuple per ID.
+Even an epoch-preserving publication from revision N to N+1 no longer matches the
+old approval. The supplied Spring filter returns 503 without downstream chain
+execution or additional quota consumption for that rejection.
+
+| Order | Intermediate mismatch | Availability impact |
+| --- | --- | --- |
+| Publish N+1 first | N-approved process reads N+1 | Protected request returns 503 |
+| Restart with N+1 approval first | N+1-approved process still reads N | Protected request returns 503 |
+| Restart only some Pods | Different approved revisions across Pods | Some requests may return 503 |
+
+Duplicate rule-set IDs fail startup, so listing both revisions is not supported.
+This is not a zero-downtime rolling-publication protocol. This 503 is not necessarily
+transient quota exhaustion (429) and retrying does not fix configuration mismatch.
+
+### Proposed runbook, not production-validated
+
+The steps below require a separate operational change approval and rehearsal.
+Spring-context tests are not real HTTP-server, Pod rollout, service-health or safe
+state-transition validation. Health UP does not establish any of those properties.
+
+1. Approve the affected services/Pods, current and proposed policy content and
+   tuples, traffic interruption, owners and abort/recovery conditions. The gate
+   neither verifies old-writer exclusion nor authorizes debt abandonment/reset.
+2. Externally drain/block affected traffic and settle in-flight requests. This gate
+   does not perform those actions. Do not publish an unapproved reset.
+3. Verify the actual tuple returned by the authorized publication, update every
+   affected instance's approval, and restart/redeploy to construct a new gate.
+   Do not guess a future revision or directly edit production policy storage.
+   Editing bound properties, Pub/Sub and ordinary refresh do not mutate the gate.
+4. Verify every Pod's configured tuple and actual provider snapshot before resuming
+   traffic. Envoy readiness rejects unapproved snapshots; the current Boot health
+   indicator does not inspect the gate and may remain UP during a mismatch. Use
+   an approved canary/test identity and requests without business side effects on
+   the protected path, accounting for possible quota consumption. One successful
+   request does not verify all Pods.
+5. On failure, retain traffic blocking. Do not bypass the problem by disabling the
+   gate, enabling fail-open or resetting counters. A rollback publication can create
+   another revision: verify its actual tuple, coordinate new approvals and all Pod
+   restarts, and do not assume restoring an old revision/debt is safe.
+
+Both starters' `revisionPublicationRequiresNewContextAndImmutableApproval` tests
+exercise N admission, N+1 filter503/no-chain/no-additional-consumption, continued
+rejection after property mutation, and admission in a newly created context with
+N+1 approval. They use mock HTTP and deterministic provider/limiter fixtures, not
+Redis state migration, real traffic drain, multi-Pod rollout or zero downtime.

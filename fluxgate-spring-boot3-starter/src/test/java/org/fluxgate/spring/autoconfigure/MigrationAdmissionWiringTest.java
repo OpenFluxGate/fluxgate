@@ -96,6 +96,56 @@ class MigrationAdmissionWiringTest {
   }
 
   @Test
+  void revisionPublicationRequiresNewContextAndImmutableApproval() {
+    var snapshot = new java.util.concurrent.atomic.AtomicReference<>(rules("new-epoch", 2));
+    var calls = new AtomicInteger();
+    RateLimitRuleSetProvider provider = id -> Optional.of(snapshot.get());
+    RateLimiter limiter =
+        (c, r, p) -> {
+          calls.incrementAndGet();
+          return RateLimitResult.allowedWithoutRule();
+        };
+    approved(provider, limiter)
+        .run(
+            c -> {
+              assertThat(c).hasNotFailed();
+              assertThat(c.getBean(RateLimitEngine.class).check("orders", REQUEST).isAllowed())
+                  .isTrue();
+              assertThat(calls).hasValue(1);
+              snapshot.set(rules("new-epoch", 3));
+              for (boolean mutateBoundConfiguration : List.of(false, true)) {
+                if (mutateBoundConfiguration) {
+                  c.getBean(FluxgateProperties.class)
+                      .getMigrationAdmission()
+                      .getApprovals()
+                      .get(0)
+                      .setRevision(3);
+                }
+                var response = new MockHttpServletResponse();
+                var chain = new MockFilterChain();
+                c.getBean(FluxgateRateLimitFilter.class)
+                    .doFilter(new MockHttpServletRequest("GET", "/api"), response, chain);
+                assertThat(response.getStatus()).isEqualTo(503);
+                assertThat(chain.getRequest()).isNull();
+                assertThat(calls).hasValue(1);
+              }
+            });
+    approved(provider, limiter)
+        .withPropertyValues("fluxgate.migration-admission.approvals[0].revision=3")
+        .run(
+            c -> {
+              assertThat(c).hasNotFailed();
+              var response = new MockHttpServletResponse();
+              var chain = new MockFilterChain();
+              c.getBean(FluxgateRateLimitFilter.class)
+                  .doFilter(new MockHttpServletRequest("GET", "/api"), response, chain);
+              assertThat(response.getStatus()).isEqualTo(200);
+              assertThat(chain.getRequest()).isNotNull();
+              assertThat(calls).hasValue(2);
+            });
+  }
+
+  @Test
   void legacyAndNewRevisionReturn503WithoutChainOrConsumption() {
     for (var snapshot : List.of(rules("legacy", 2), rules("new-epoch", 3))) {
       var limiter = mock(RateLimiter.class);

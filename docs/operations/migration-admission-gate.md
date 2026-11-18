@@ -57,3 +57,7 @@ One approval per rule-set ID is supported; duplicate IDs are rejected. This is n
 a dual-revision rolling-update protocol. Coordinate publication and instance restarts;
 unapproved Envoy snapshots are not ready. No target Redis identity, global writer
 absence, credential revocation or traffic-drain action is verified or performed.
+
+For publication order, interruption risks and the **not production-validated**
+operational proposal, see the [migration runbook](shared-redis-legacy-migration.md#normal-policy-publication-with-optional-admission-enabled)
+and its [Korean version](shared-redis-legacy-migration.ko.md).
