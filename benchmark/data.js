@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795135560675,
+  "lastUpdate": 1795135836567,
   "repoUrl": "https://github.com/OpenFluxGate/fluxgate",
   "entries": {
     "FluxGate Standalone Benchmark": [
@@ -3602,6 +3602,102 @@ window.BENCHMARK_DATA = {
           {
             "name": "org.fluxgate.testkit.benchmark.MongoEventRecordingBenchmark.recordRejectedEventSingleThread",
             "value": 0.10334608349374994,
+            "unit": "ms/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "41769568+rojae@users.noreply.github.com",
+            "name": "JaeSeong Oh",
+            "username": "rojae"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3b3be156be5b3e3b45f1af7d2bf97683524a510f",
+          "message": "Merge pull request #90 from OpenFluxGate/development/integration-0.5.0-candidate-20261118\n\nintegration: validate combined 0.5.0 and composite identity candidate",
+          "timestamp": "2026-11-20T09:37:03+09:00",
+          "tree_id": "58c2d8bbba5344b1198d274d2380bc6d21c53c01",
+          "url": "https://github.com/OpenFluxGate/fluxgate/commit/3b3be156be5b3e3b45f1af7d2bf97683524a510f"
+        },
+        "date": 1795135835589,
+        "tool": "jmh",
+        "benches": [
+          {
+            "name": "org.fluxgate.benchmark.MongoRuleLoadingBenchmark.findAllRules",
+            "value": 4.736795083002867,
+            "unit": "ops/ms",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.benchmark.MongoRuleLoadingBenchmark.loadRuleSetMultiThread",
+            "value": 4.8591383654086915,
+            "unit": "ops/ms",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.benchmark.MongoRuleLoadingBenchmark.loadRuleSetSingleThread",
+            "value": 2.0984470965165505,
+            "unit": "ops/ms",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.benchmark.MongoRuleLoadingBenchmark.findAllRules",
+            "value": 0.208613860811794,
+            "unit": "ms/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.benchmark.MongoRuleLoadingBenchmark.loadRuleSetMultiThread",
+            "value": 0.833688978399082,
+            "unit": "ms/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.benchmark.MongoRuleLoadingBenchmark.loadRuleSetSingleThread",
+            "value": 0.4756788979721649,
+            "unit": "ms/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.benchmark.MongoEventRecordingBenchmark.recordAllowedEventSingleThread",
+            "value": 1311.4259045695214,
+            "unit": "ops/ms",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.benchmark.MongoEventRecordingBenchmark.recordEventMultiThread",
+            "value": 2045.4007855789278,
+            "unit": "ops/ms",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.benchmark.MongoEventRecordingBenchmark.recordRejectedEventSingleThread",
+            "value": 1282.2707818784988,
+            "unit": "ops/ms",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.benchmark.MongoEventRecordingBenchmark.recordAllowedEventSingleThread",
+            "value": 0.0007670740055719333,
+            "unit": "ms/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.benchmark.MongoEventRecordingBenchmark.recordEventMultiThread",
+            "value": 0.0019160883061924156,
+            "unit": "ms/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.benchmark.MongoEventRecordingBenchmark.recordRejectedEventSingleThread",
+            "value": 0.0007384088365156855,
             "unit": "ms/op",
             "extra": "iterations: 5\nforks: 1\nthreads: 1"
           }
