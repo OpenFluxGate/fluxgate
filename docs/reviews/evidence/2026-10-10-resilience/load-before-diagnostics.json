@@ -1,0 +1,310 @@
+{
+  "phase": "all",
+  "thresholds": {
+    "baseline_rps": 100,
+    "baseline_seconds": 60,
+    "min_achieved_rps": 99,
+    "p95_ms": 100,
+    "p99_ms": 250,
+    "expected_200_fraction": 0.999,
+    "omitted_schedules": 0,
+    "quota_burst": 100,
+    "quota_allowed": 5
+  },
+  "latency_origin": "scheduled arrival, including dispatch/queue delay",
+  "backend_positive_control": {
+    "sequence": -1,
+    "method": "GET",
+    "expected": 200,
+    "status": 200,
+    "received_status": 200,
+    "error": null,
+    "backend_body": true,
+    "body_valid": true,
+    "latency_ms": 234.57195796072483,
+    "service_time_ms": 234.57129206508398,
+    "dispatch_lag_ms": 0.0006658956408500671
+  },
+  "priming": {
+    "target_requests": 50,
+    "planned_requests": 50,
+    "submitted_requests": 50,
+    "completed_requests": 50,
+    "target_rps": 10.0,
+    "achieved_rps": 9.998856958751619,
+    "measurement_seconds": 5,
+    "elapsed_including_drain_seconds": 5.000571585958824,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 50
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 50
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "latency_ms": {
+      "p50": 10.512792970985174,
+      "p95": 17.975750844925642,
+      "p99": 37.994541926309466,
+      "max": 37.994541926309466
+    },
+    "dispatch_lag_ms": {
+      "p95": 1.0442088823765516,
+      "max": 1.8322099931538105
+    }
+  },
+  "warmup": {
+    "target_requests": 500,
+    "planned_requests": 500,
+    "submitted_requests": 500,
+    "completed_requests": 500,
+    "target_rps": 100.0,
+    "achieved_rps": 99.97971989401628,
+    "measurement_seconds": 5,
+    "elapsed_including_drain_seconds": 5.001014210982248,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 500
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 500
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "latency_ms": {
+      "p50": 7.727002026513219,
+      "p95": 18.800626043230295,
+      "p99": 30.787916854023933,
+      "max": 74.31958406232297
+    },
+    "dispatch_lag_ms": {
+      "p95": 0.939209247007966,
+      "max": 3.14371008425951
+    }
+  },
+  "baseline": {
+    "target_requests": 6000,
+    "planned_requests": 6000,
+    "submitted_requests": 6000,
+    "completed_requests": 6000,
+    "target_rps": 100.0,
+    "achieved_rps": 99.98449596901445,
+    "measurement_seconds": 60,
+    "elapsed_including_drain_seconds": 60.009303861064836,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 6000
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 6000
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "passed": true,
+    "latency_ms": {
+      "p50": 5.7893479242920876,
+      "p95": 9.678971022367477,
+      "p99": 25.518213864415884,
+      "max": 164.46804907172918
+    },
+    "dispatch_lag_ms": {
+      "p95": 1.2376410886645317,
+      "max": 33.02850807085633
+    }
+  },
+  "characterization": [
+    {
+      "target_requests": 9000,
+      "planned_requests": 9000,
+      "submitted_requests": 9000,
+      "completed_requests": 9000,
+      "target_rps": 300.0,
+      "achieved_rps": 299.859099397409,
+      "measurement_seconds": 30,
+      "elapsed_including_drain_seconds": 30.014096681028605,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "200": 9000
+      },
+      "request_distributions": {
+        "GET": {
+          "200": 9000
+        }
+      },
+      "expected_status_fraction": 1.0,
+      "classification": "characterization-only-no-performance-pass-claim",
+      "latency_ms": {
+        "p50": 4.557210020720959,
+        "p95": 12.950297677889466,
+        "p99": 102.98421629704535,
+        "max": 270.1993421651423
+      },
+      "dispatch_lag_ms": {
+        "p95": 1.4057210646569729,
+        "max": 88.79217552021146
+      }
+    },
+    {
+      "target_requests": 18000,
+      "planned_requests": 18000,
+      "submitted_requests": 18000,
+      "completed_requests": 18000,
+      "target_rps": 600.0,
+      "achieved_rps": 599.0898507748526,
+      "measurement_seconds": 30,
+      "elapsed_including_drain_seconds": 30.04557659709826,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "200": 18000
+      },
+      "request_distributions": {
+        "GET": {
+          "200": 18000
+        }
+      },
+      "expected_status_fraction": 1.0,
+      "classification": "characterization-only-no-performance-pass-claim",
+      "latency_ms": {
+        "p50": 5.828137043863535,
+        "p95": 24.92612903006375,
+        "p99": 73.40533728711307,
+        "max": 226.6047541052103
+      },
+      "dispatch_lag_ms": {
+        "p95": 1.4852930326014757,
+        "max": 20.6672593485564
+      }
+    }
+  ],
+  "mixed": {
+    "target_requests": 1000,
+    "planned_requests": 1000,
+    "submitted_requests": 1000,
+    "completed_requests": 1000,
+    "target_rps": 100.0,
+    "achieved_rps": 99.97888359134568,
+    "measurement_seconds": 10,
+    "elapsed_including_drain_seconds": 10.002112086862326,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "403": 200,
+      "200": 800
+    },
+    "request_distributions": {
+      "invalid-key": {
+        "403": 200
+      },
+      "OPTIONS": {
+        "200": 200
+      },
+      "GET": {
+        "200": 600
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "passed": true,
+    "latency_ms": {
+      "p50": 4.95200278237462,
+      "p95": 28.16695999354124,
+      "p99": 162.23558504134417,
+      "max": 250.4884577356279
+    },
+    "dispatch_lag_ms": {
+      "p95": 1.1135847307741642,
+      "max": 32.47795975767076
+    }
+  },
+  "quota": {
+    "target_requests": 100,
+    "planned_requests": 100,
+    "submitted_requests": 100,
+    "completed_requests": 100,
+    "target_rps": 100.0,
+    "achieved_rps": 464.0202566317332,
+    "measurement_seconds": 1,
+    "elapsed_including_drain_seconds": 0.21550783305428922,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 5,
+      "429": 95
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 5,
+        "429": 95
+      }
+    },
+    "expected_status_distribution": {
+      "200": 5,
+      "429": 95
+    },
+    "passed": true,
+    "latency_ms": {
+      "p50": 99.02608301490545,
+      "p95": 205.4935828782618,
+      "p99": 206.6936248447746,
+      "max": 208.7910829577595
+    },
+    "dispatch_lag_ms": {
+      "p95": 33.86812494136393,
+      "max": 57.69654083997011
+    }
+  },
+  "result": "PASS",
+  "target": {
+    "context": "kind-fluxgate-resilience",
+    "namespace": "fluxgate-resilience",
+    "gateway_service": "envoy-fluxgate-resilience-fluxgate-resilience-gateway-fc3d80fd",
+    "generator_pod": "fluxgate-load-1fb3721e2b2b",
+    "transport": "in-cluster HTTP/1.1 keepalive"
+  },
+  "raw_sha256": "94eca5ba3114fd23e42b84d34ff89bbd827590dff96c0c0afd3867125de26139",
+  "raw_bytes": 16756428,
+  "process_exit_code": 0,
+  "process_exit_provenance": "Root observed process 10504 exit 0; raw JSON records PASS.",
+  "application_jar_sha256": "b03409f989d8a6b228689bf8daf8880d3b68a1e95b2166b7ae46625e32485a40",
+  "source_sha256_at_export": {
+    "deploy/resilience-local/verify-load.py": "fee294007cd5dc36e16a54e50a9fcf2a2e167cf4af8d3545997934242a5ebd5e"
+  },
+  "provenance_limits": [
+    "Source and local packaged JAR hashes were captured at export; raw load JSON does not itself contain a deployed image digest.",
+    "300/600 RPS are characterization only; no performance SLO or failover PASS is inferred."
+  ],
+  "supersedes": "load-before-admission.json",
+  "superseded": true,
+  "superseded_by": "load.json (diagnostics artifact 893ce2fd)",
+  "archive_note": "Historical guarded artifact proof retained; does not validate the current diagnostics application.",
+  "pre_archive_export_sha256": "94c410730256410bf9acf6cdddb251444b32a0ba375651ce08334969a92afc25"
+}

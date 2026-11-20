@@ -17,9 +17,7 @@ fluxgate:
     # DDL auto mode: validate (default) or create
     ddl-auto: create
   redis:
-    enabled: false
-  ratelimit:
-    filter-enabled: false  # No rate limiting in control-plane
+    enabled: false  # No RateLimiter in control-plane: this sample only manages rules
 
 logging:
   level:

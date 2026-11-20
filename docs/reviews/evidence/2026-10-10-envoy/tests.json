@@ -1,0 +1,76 @@
+{
+  "fluxgate-envoy-gateway": {
+    "modules": {
+      "fluxgate-control-support": {
+        "tests": 52,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "fluxgate-redis-ratelimiter": {
+        "tests": 323,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "fluxgate-core": {
+        "tests": 540,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "fluxgate-mongo-adapter": {
+        "tests": 155,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "fluxgate-spring-boot2-starter": {
+        "tests": 524,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "fluxgate-envoy-extauth": {
+        "tests": 42,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "fluxgate-spring-boot3-starter": {
+        "tests": 530,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "fluxgate-testkit": {
+        "tests": 47,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "total": {
+      "tests": 2213,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "fluxgate-studio-envoy-hardening": {
+    "modules": {
+      "fluxgate-studio-admin-api": {
+        "tests": 197,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "total": {
+      "tests": 197,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  }
+}

@@ -1,0 +1,1212 @@
+{
+  "kind": "ha",
+  "candidate_passed": true,
+  "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+  "source_commit_at_invocation": "3a9a0cffae66a9a3d812f2c0e28e3aa828a1dda4",
+  "terminal_exit_code": 0,
+  "terminal_exit_witness": "Supplied by root in private manifest; exporter does not infer process exit from file existence.",
+  "summary": {
+    "result": "pass",
+    "phase": "all",
+    "context": "kind-fluxgate-resilience",
+    "checks": [
+      {
+        "check": "redis-primary-placement-restoration",
+        "performed": false,
+        "command": null,
+        "placement_restoration_deferred": false,
+        "home_roles_pending": false,
+        "actual_primary_nodes_distinct": true,
+        "before_placements": {
+          "99a0826bb05b50d9292a4d091e5f44934dc88edf": "fluxgate-resilience-control-plane",
+          "ae46077ac840870d94e633c398d4518ead131cbc": "fluxgate-resilience-worker"
+        },
+        "after_placements": {
+          "99a0826bb05b50d9292a4d091e5f44934dc88edf": "fluxgate-resilience-control-plane",
+          "d5ca12747cc77482763e542fc8f4f399c57a61e3": "fluxgate-resilience-worker2",
+          "ae46077ac840870d94e633c398d4518ead131cbc": "fluxgate-resilience-worker"
+        },
+        "policy_exact_preserved": true,
+        "raw_bucket_before": null,
+        "raw_bucket_after": null,
+        "ha_counter_exact_preserved": true,
+        "timestamps": {
+          "started": {
+            "unix_ms": 1791596003459,
+            "utc": "2026-10-10T01:33:23.459Z"
+          },
+          "completed": {
+            "unix_ms": 1791596014575,
+            "utc": "2026-10-10T01:33:34.575Z"
+          }
+        },
+        "shared_restore_elapsed_seconds": 11.116,
+        "automatic_placement_claim": false
+      },
+      {
+        "check": "complete-fixture-restoration",
+        "ready_counts": {
+          "app=mongo": 3,
+          "app=redis": 9,
+          "app=fluxgate-authz": 2,
+          "app=echo": 2,
+          "control-plane=envoy-gateway": 2,
+          "gateway.envoyproxy.io/owning-gateway-namespace=fluxgate-resilience": 2
+        },
+        "mongo_healthy_voters": 3,
+        "redis_primaries": 3,
+        "redis_linked_replicas": 6,
+        "replica_migration_disabled_on_all_members": true,
+        "redis_primary_nodes_distinct": true,
+        "placement_restoration_deferred": false,
+        "restore_seconds": 11.116,
+        "original_route_restored": false
+      },
+      {
+        "check": "baseline"
+      },
+      {
+        "check": "redis-promotion",
+        "timestamps": {},
+        "old_primary_id": "d5ca12747cc77482763e542fc8f4f399c57a61e3",
+        "new_primary_id": "f5ad1646830991b1aa1d9c348bd403c1bd94c9ca",
+        "target_still_paused": true,
+        "final_quota_seconds": 13.594,
+        "recovery_seconds": 11.136,
+        "identity_promotion_seconds": 4.98,
+        "task_state": "PAUSED",
+        "load_key_owned_failed_shard": true,
+        "script_provenance": {
+          "sha1": "e48ca95cd236fa7f92081b7b884178cd29ea0d44",
+          "jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+          "nested_archive": "BOOT-INF/lib/fluxgate-redis-ratelimiter-0.3.7.jar",
+          "resource": "lua/token_bucket_consume.lua",
+          "raw_resource_sha256": "5a254ec254df7a8124d21f549ba27a86f311f9543998b306c36ff453d29a1a27",
+          "loader": "UTF-8 BufferedReader.lines().collect(joining(\"\\n\"))"
+        },
+        "script_exists_old_primary_before_flush": true,
+        "cache_absent_before_promotion": true,
+        "cache_loaded_after_real_request": true,
+        "rpo": "Observed counter preserved; asynchronous replication is not zero-loss consensus",
+        "dense_gateway_summaries": [
+          {
+            "observed_samples": 11,
+            "exact_backend_successes": 10,
+            "transport_error_count": 1,
+            "status_counts": {
+              "ERROR": 1,
+              "200": 10
+            },
+            "first_success_remote_elapsed_seconds": 2.49346,
+            "last_success_remote_elapsed_seconds": 4.604559,
+            "rpc_startup_seconds": 0.437431,
+            "rpc_seconds": 5.050306,
+            "recovered": true
+          }
+        ]
+      },
+      {
+        "check": "redis-primary-placement-restoration",
+        "performed": true,
+        "command": "CLUSTER FAILOVER",
+        "placement_restoration_deferred": false,
+        "home_roles_pending": false,
+        "actual_primary_nodes_distinct": true,
+        "before_placements": {
+          "99a0826bb05b50d9292a4d091e5f44934dc88edf": "fluxgate-resilience-control-plane",
+          "ae46077ac840870d94e633c398d4518ead131cbc": "fluxgate-resilience-worker"
+        },
+        "after_placements": {
+          "99a0826bb05b50d9292a4d091e5f44934dc88edf": "fluxgate-resilience-control-plane",
+          "d5ca12747cc77482763e542fc8f4f399c57a61e3": "fluxgate-resilience-worker2",
+          "ae46077ac840870d94e633c398d4518ead131cbc": "fluxgate-resilience-worker"
+        },
+        "policy_exact_preserved": true,
+        "ha_counter_exact_preserved": true,
+        "timestamps": {
+          "started": {
+            "unix_ms": 1791596032892,
+            "utc": "2026-10-10T01:33:52.892Z"
+          },
+          "completed": {
+            "unix_ms": 1791596049091,
+            "utc": "2026-10-10T01:34:09.091Z"
+          }
+        },
+        "shared_restore_elapsed_seconds": 16.198,
+        "automatic_placement_claim": false
+      },
+      {
+        "check": "complete-fixture-restoration",
+        "ready_counts": {
+          "app=mongo": 3,
+          "app=redis": 9,
+          "app=fluxgate-authz": 2,
+          "app=echo": 2,
+          "control-plane=envoy-gateway": 2,
+          "gateway.envoyproxy.io/owning-gateway-namespace=fluxgate-resilience": 2
+        },
+        "mongo_healthy_voters": 3,
+        "redis_primaries": 3,
+        "redis_linked_replicas": 6,
+        "replica_migration_disabled_on_all_members": true,
+        "redis_primary_nodes_distinct": true,
+        "placement_restoration_deferred": false,
+        "restore_seconds": 16.198,
+        "original_route_restored": false
+      },
+      {
+        "check": "mongo-election-publication",
+        "timestamps": {},
+        "old_primary": "mongo-1",
+        "new_primary": "mongo-0",
+        "target_still_paused": true,
+        "recovery_seconds": 22.412,
+        "publication": {
+          "passed": true,
+          "published": true,
+          "beforeRevision": 16,
+          "revision": 17,
+          "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+          "epochPreserved": true,
+          "majorityReadVerified": true,
+          "idempotentReplay": true,
+          "elapsedSeconds": 17.114701883
+        },
+        "dense_gateway_summaries": [
+          {
+            "observed_samples": 10,
+            "exact_backend_successes": 10,
+            "transport_error_count": 0,
+            "status_counts": {
+              "200": 10
+            },
+            "first_success_remote_elapsed_seconds": 0.117788,
+            "last_success_remote_elapsed_seconds": 2.130481,
+            "rpc_startup_seconds": 1.009093,
+            "rpc_seconds": 3.215093,
+            "recovered": true
+          }
+        ]
+      },
+      {
+        "check": "pod-replacement",
+        "pod": "mongo-2",
+        "namespace": "fluxgate-resilience",
+        "original_uids": [
+          "4f04f749-5528-4cf6-ae73-8c316e3c3bfc",
+          "8c8a545c-8db2-4e72-b8d4-506baac5fe3c",
+          "a948843a-75d5-4738-bbc1-971046af85cf"
+        ],
+        "previous_uid": "4f04f749-5528-4cf6-ae73-8c316e3c3bfc",
+        "replacement_uid": "04609982-45af-4371-a305-d4a20b7fd44b",
+        "controller_uid": "27619a99-bf80-49c8-a83f-6f308c7b00bb",
+        "desired_ready_replicas": 3,
+        "pvc_uids": {},
+        "sentinel_sha256": "bb7ff39919a654fd5373bebd4dd6380aa67fc6fcdba8407fd4749fce6fc56e51",
+        "actual_content_preserved": true,
+        "recovery_seconds": 22.363
+      },
+      {
+        "check": "pod-replacement",
+        "pod": "redis-8-0",
+        "namespace": "fluxgate-resilience",
+        "original_uids": [
+          "9be3b96b-e337-4865-9cbd-7bfe0fc61436"
+        ],
+        "previous_uid": "9be3b96b-e337-4865-9cbd-7bfe0fc61436",
+        "replacement_uid": "75afb733-e9b9-4146-8a47-722393f8511f",
+        "controller_uid": "4f4b26b3-5d30-4620-92e8-c66b3217aa20",
+        "desired_ready_replicas": 1,
+        "pvc_uids": {},
+        "sentinel_sha256": "7f98442ad385182b78923ed967d682b858fa688b54618c6e6af2f93a5aaeacc0",
+        "actual_content_preserved": true,
+        "recovery_seconds": 5.863
+      },
+      {
+        "check": "pod-replacement",
+        "pod": "fluxgate-authz-57bfb49cb-btzrf",
+        "namespace": "fluxgate-resilience",
+        "original_uids": [
+          "be8e7303-2b3f-4dd1-816e-3397f7b3c0f5",
+          "e4758ea3-ffc4-4fd8-a30b-a000d02493de"
+        ],
+        "previous_uid": "e4758ea3-ffc4-4fd8-a30b-a000d02493de",
+        "replacement_uid": "c470924e-5830-4439-9640-7255f9fdd328",
+        "controller_uid": "fc22140d-aa2d-4fb3-bdea-99f80ae2ca37",
+        "desired_ready_replicas": 2,
+        "pvc_uids": {},
+        "mounted_sentinel_path": null,
+        "sentinel_sha256": null,
+        "actual_content_preserved": false,
+        "recovery_seconds": 20.784
+      },
+      {
+        "check": "pod-replacement",
+        "pod": "echo-78477458b7-kcjx6",
+        "namespace": "fluxgate-resilience",
+        "original_uids": [
+          "3338f90b-d695-4fb4-927c-3c58d6e9de4b",
+          "c753b26a-c708-4bbe-bc0a-1ccf480afbb2"
+        ],
+        "previous_uid": "c753b26a-c708-4bbe-bc0a-1ccf480afbb2",
+        "replacement_uid": "ec2c0494-4fc8-4f14-a6b1-35c5d9c4d8fc",
+        "controller_uid": "7f7910d9-29f3-4875-b708-29a4dabf7612",
+        "desired_ready_replicas": 2,
+        "pvc_uids": {},
+        "mounted_sentinel_path": null,
+        "sentinel_sha256": null,
+        "actual_content_preserved": false,
+        "recovery_seconds": 5.869
+      },
+      {
+        "check": "pod-replacement",
+        "pod": "envoy-fluxgate-resilience-fluxgate-resilience-gateway-fc3df8d2w",
+        "namespace": "envoy-gateway-system",
+        "original_uids": [
+          "a913d612-5163-46de-90fb-6b0c87b5915f",
+          "db81208c-27dd-4f84-85ba-a703bf14b0c1"
+        ],
+        "previous_uid": "db81208c-27dd-4f84-85ba-a703bf14b0c1",
+        "replacement_uid": "85e46285-9f78-4a9f-8588-563496f32bfc",
+        "controller_uid": "24c54918-899c-4c0d-8ecf-279b829ea8b2",
+        "desired_ready_replicas": 2,
+        "pvc_uids": {},
+        "mounted_sentinel_path": null,
+        "sentinel_sha256": null,
+        "actual_content_preserved": false,
+        "recovery_seconds": 25.978
+      },
+      {
+        "check": "redis-primary-placement-restoration",
+        "performed": false,
+        "command": null,
+        "placement_restoration_deferred": false,
+        "home_roles_pending": false,
+        "actual_primary_nodes_distinct": true,
+        "before_placements": {
+          "99a0826bb05b50d9292a4d091e5f44934dc88edf": "fluxgate-resilience-control-plane",
+          "ae46077ac840870d94e633c398d4518ead131cbc": "fluxgate-resilience-worker"
+        },
+        "after_placements": {
+          "99a0826bb05b50d9292a4d091e5f44934dc88edf": "fluxgate-resilience-control-plane",
+          "d5ca12747cc77482763e542fc8f4f399c57a61e3": "fluxgate-resilience-worker2",
+          "ae46077ac840870d94e633c398d4518ead131cbc": "fluxgate-resilience-worker"
+        },
+        "policy_exact_preserved": true,
+        "ha_counter_exact_preserved": true,
+        "timestamps": {
+          "started": {
+            "unix_ms": 1791596166881,
+            "utc": "2026-10-10T01:36:06.881Z"
+          },
+          "completed": {
+            "unix_ms": 1791596175285,
+            "utc": "2026-10-10T01:36:15.285Z"
+          }
+        },
+        "shared_restore_elapsed_seconds": 8.404,
+        "automatic_placement_claim": false
+      },
+      {
+        "check": "complete-fixture-restoration",
+        "ready_counts": {
+          "app=mongo": 3,
+          "app=redis": 9,
+          "app=fluxgate-authz": 2,
+          "app=echo": 2,
+          "control-plane=envoy-gateway": 2,
+          "gateway.envoyproxy.io/owning-gateway-namespace=fluxgate-resilience": 2
+        },
+        "mongo_healthy_voters": 3,
+        "redis_primaries": 3,
+        "redis_linked_replicas": 6,
+        "replica_migration_disabled_on_all_members": true,
+        "redis_primary_nodes_distinct": true,
+        "placement_restoration_deferred": false,
+        "restore_seconds": 8.404,
+        "original_route_restored": false
+      },
+      {
+        "check": "worker-stop",
+        "node": "fluxgate-resilience-worker2",
+        "docker_running": false,
+        "old_lease_holder": "envoy-gateway-775c98fbb-2kr2k_9ba2e593-d139-4a8a-92bb-22d2c788f0c3",
+        "new_lease_holder": "envoy-gateway-775c98fbb-2bdhr_73c71c48-b0da-41fd-b9d9-8390e91135be",
+        "lease_recovery_seconds": 17.601,
+        "live_xds_update": true,
+        "recovery_seconds": 56.307
+      },
+      {
+        "check": "redis-primary-placement-restoration",
+        "performed": true,
+        "command": "CLUSTER FAILOVER",
+        "placement_restoration_deferred": false,
+        "home_roles_pending": false,
+        "actual_primary_nodes_distinct": true,
+        "before_placements": {
+          "99a0826bb05b50d9292a4d091e5f44934dc88edf": "fluxgate-resilience-control-plane",
+          "ae46077ac840870d94e633c398d4518ead131cbc": "fluxgate-resilience-worker"
+        },
+        "after_placements": {
+          "99a0826bb05b50d9292a4d091e5f44934dc88edf": "fluxgate-resilience-control-plane",
+          "d5ca12747cc77482763e542fc8f4f399c57a61e3": "fluxgate-resilience-worker2",
+          "ae46077ac840870d94e633c398d4518ead131cbc": "fluxgate-resilience-worker"
+        },
+        "policy_exact_preserved": true,
+        "ha_counter_exact_preserved": true,
+        "timestamps": {
+          "started": {
+            "unix_ms": 1791596234492,
+            "utc": "2026-10-10T01:37:14.492Z"
+          },
+          "completed": {
+            "unix_ms": 1791596303882,
+            "utc": "2026-10-10T01:38:23.882Z"
+          }
+        },
+        "shared_restore_elapsed_seconds": 69.549,
+        "automatic_placement_claim": false
+      },
+      {
+        "check": "complete-fixture-restoration",
+        "ready_counts": {
+          "app=mongo": 3,
+          "app=redis": 9,
+          "app=fluxgate-authz": 2,
+          "app=echo": 2,
+          "control-plane=envoy-gateway": 2,
+          "gateway.envoyproxy.io/owning-gateway-namespace=fluxgate-resilience": 2
+        },
+        "mongo_healthy_voters": 3,
+        "redis_primaries": 3,
+        "redis_linked_replicas": 6,
+        "replica_migration_disabled_on_all_members": true,
+        "redis_primary_nodes_distinct": true,
+        "placement_restoration_deferred": false,
+        "restore_seconds": 69.549,
+        "original_route_restored": true
+      },
+      {
+        "check": "mongo-no-quorum-publication",
+        "publication": {
+          "passed": true,
+          "beforeRevision": 17,
+          "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+          "published": null,
+          "commitStatus": "unknown",
+          "requiresRecoveryResolution": true,
+          "attempts": 13,
+          "availabilityFailureClasses": [
+            "MongoWriteConcernException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException"
+          ],
+          "elapsedSeconds": 31.041125806
+        },
+        "bounded_seconds": 31.514,
+        "guarantee": "Active publication blocked; previously committed reads need not be unavailable"
+      },
+      {
+        "check": "mongo-no-quorum-majority-resolution",
+        "observation": {
+          "passed": true,
+          "beforeRevision": 17,
+          "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+          "published": null,
+          "commitStatus": "unknown",
+          "requiresRecoveryResolution": true,
+          "attempts": 13,
+          "availabilityFailureClasses": [
+            "MongoWriteConcernException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException"
+          ],
+          "elapsedSeconds": 31.041125806
+        },
+        "resolution": {
+          "passed": true,
+          "published": false,
+          "revision": 17,
+          "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+          "snapshotId": "e8a105ec-ea69-43b0-8da3-ea4278670b4e",
+          "commitStatus": "not-published-after-majority-recovery",
+          "majorityCommitBarrier": true,
+          "majorityReadVerified": true
+        },
+        "active_pointer_unchanged": true
+      },
+      {
+        "check": "redis-min-replicas-write-guard",
+        "primary": "redis-2-0",
+        "paused_replicas": [
+          "redis-5-0",
+          "redis-8-0"
+        ],
+        "exact_error": "NOREPLICAS Not enough good replicas to write.",
+        "real_gateway_status": 503
+      },
+      {
+        "check": "redis-shard-unavailable",
+        "paused_members": [
+          "redis-2-0",
+          "redis-5-0",
+          "redis-8-0"
+        ],
+        "real_gateway_status": 503
+      },
+      {
+        "check": "redis-primary-placement-restoration",
+        "performed": true,
+        "command": "CLUSTER FAILOVER",
+        "placement_restoration_deferred": false,
+        "home_roles_pending": false,
+        "actual_primary_nodes_distinct": true,
+        "before_placements": {
+          "530555b5eb32a70c1a8a7aa8331d90f9461b3454": "fluxgate-resilience-control-plane",
+          "99a0826bb05b50d9292a4d091e5f44934dc88edf": "fluxgate-resilience-control-plane",
+          "ae46077ac840870d94e633c398d4518ead131cbc": "fluxgate-resilience-worker"
+        },
+        "after_placements": {
+          "99a0826bb05b50d9292a4d091e5f44934dc88edf": "fluxgate-resilience-control-plane",
+          "d5ca12747cc77482763e542fc8f4f399c57a61e3": "fluxgate-resilience-worker2",
+          "ae46077ac840870d94e633c398d4518ead131cbc": "fluxgate-resilience-worker"
+        },
+        "policy_exact_preserved": true,
+        "ha_counter_exact_preserved": true,
+        "timestamps": {
+          "started": {
+            "unix_ms": 1791596366940,
+            "utc": "2026-10-10T01:39:26.940Z"
+          },
+          "completed": {
+            "unix_ms": 1791596383187,
+            "utc": "2026-10-10T01:39:43.187Z"
+          }
+        },
+        "shared_restore_elapsed_seconds": 16.4,
+        "automatic_placement_claim": false
+      },
+      {
+        "check": "complete-fixture-restoration",
+        "ready_counts": {
+          "app=mongo": 3,
+          "app=redis": 9,
+          "app=fluxgate-authz": 2,
+          "app=echo": 2,
+          "control-plane=envoy-gateway": 2,
+          "gateway.envoyproxy.io/owning-gateway-namespace=fluxgate-resilience": 2
+        },
+        "mongo_healthy_voters": 3,
+        "redis_primaries": 3,
+        "redis_linked_replicas": 6,
+        "replica_migration_disabled_on_all_members": true,
+        "redis_primary_nodes_distinct": true,
+        "placement_restoration_deferred": false,
+        "restore_seconds": 16.4,
+        "original_route_restored": false
+      },
+      {
+        "check": "publication-probe-cleanup",
+        "passed": true,
+        "pod_absent": true,
+        "network_policy_absent": true,
+        "resources": [
+          {
+            "kind": "networkpolicy",
+            "name": "fluxgate-publication-f99c143cebad4a3b93877c710db700bd-egress",
+            "uid": "8af53270-43ae-47dd-9395-ce74987b5dd2",
+            "absent": true
+          },
+          {
+            "kind": "networkpolicy",
+            "name": "fluxgate-publication-f99c143cebad4a3b93877c710db700bd-ingress",
+            "uid": "4e22fae2-c241-42b4-bef2-886166098564",
+            "absent": true
+          },
+          {
+            "kind": "pod",
+            "name": "fluxgate-publication-f99c143cebad4a3b93877c710db700bd",
+            "uid": "e7bf3aad-cbdb-4a15-82c8-76131343798d",
+            "absent": true
+          }
+        ]
+      },
+      {
+        "check": "owned-probe-resource-cleanup",
+        "kind": "pod",
+        "name": "ha-probe-6079001d",
+        "uid": "2fd3af7d-358c-46e5-984d-2019d866c118",
+        "absent": true
+      },
+      {
+        "check": "owned-probe-resource-cleanup",
+        "kind": "secret",
+        "name": "ha-probe-6079001d-key",
+        "uid": "e922520f-6704-4fa2-8ddd-5022d4a6110b",
+        "absent": true
+      },
+      {
+        "check": "owned-probe-resource-cleanup",
+        "kind": "networkpolicy",
+        "name": "ha-probe-6079001d-egress",
+        "uid": "2eb5b169-05b7-4afe-9dc2-1f1c846eb51c",
+        "absent": true
+      }
+    ],
+    "limits": [
+      "Single Docker Desktop host only",
+      "AOF everysec and asynchronous replication retain nonzero RPO risk",
+      "Local PVCs do not prove off-host backup recovery"
+    ],
+    "phase_complete": true,
+    "complete": true
+  },
+  "dropped_unknown_or_disallowed_paths": [
+    ".checks[].actual_redis_shard_placement",
+    ".checks[].after_topology",
+    ".checks[].authz_processes_unchanged",
+    ".checks[].before_placements.d5ca12747cc77482763e542fc8f4f399c57a61e3",
+    ".checks[].before_placements.f5ad1646830991b1aa1d9c348bd403c1bd94c9ca",
+    ".checks[].before_topology",
+    ".checks[].bucket_key",
+    ".checks[].cluster_info",
+    ".checks[].continuous_outage_samples",
+    ".checks[].dense_gateway_batches",
+    ".checks[].initial_setup_placement",
+    ".checks[].mounted_sentinel_path",
+    ".checks[].observation.attemptTimings",
+    ".checks[].observation.operationId",
+    ".checks[].policy",
+    ".checks[].publication.attemptTimings",
+    ".checks[].publication.checksum",
+    ".checks[].publication.operationId",
+    ".checks[].publication.snapshotId",
+    ".checks[].publication.transientFailureClasses",
+    ".checks[].pvc_uids.data-mongo-2",
+    ".checks[].pvc_uids.data-redis-8-0",
+    ".checks[].raw_after_promotion",
+    ".checks[].raw_before",
+    ".checks[].raw_bucket_after",
+    ".checks[].raw_bucket_before",
+    ".checks[].raw_exhausted",
+    ".checks[].reconciled_header",
+    ".checks[].redis",
+    ".checks[].redis_shard_placement",
+    ".checks[].replica_repairs",
+    ".checks[].resolution.operationId",
+    ".checks[].script_provenance.jar_file",
+    ".checks[].sustained_gateway",
+    ".checks[].timestamps.fault_start",
+    ".checks[].timestamps.paused_verified",
+    ".checks[].timestamps.policy_and_traffic_verified",
+    ".checks[].timestamps.publication_verified",
+    ".checks[].timestamps.quota_verified",
+    ".checks[].timestamps.rto_budget_started",
+    ".checks[].timestamps.sustained_gateway_recovered"
+  ],
+  "provenance": {
+    "raw": {
+      "path": "ha.json",
+      "sha256": "474f728877b0fe6e1262d538aa152f6b4774785cbb71e61d38abd1105d05d8c7",
+      "size_bytes": 162783
+    },
+    "log": {
+      "path": "fluxgate-resilience-ha-async-final.log",
+      "sha256": "04487cdfa23c7bc8b734481616f445b80be0d8a45cf775fdac6d5effdb3c0053",
+      "size_bytes": 802
+    },
+    "jar": {
+      "path": "fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.3.7.jar",
+      "sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+      "size_bytes": 32917143
+    },
+    "tools": [
+      {
+        "path": "deploy/resilience-local/verify-ha.py",
+        "loaded_sha256": "582b637a107e496f66f249a9288bb88da37d81ce5fb4e26577444c248b59cdd3",
+        "current_at_export": {
+          "path": "deploy/resilience-local/verify-ha.py",
+          "sha256": "582b637a107e496f66f249a9288bb88da37d81ce5fb4e26577444c248b59cdd3",
+          "size_bytes": 80274
+        },
+        "current_equals_loaded": true
+      },
+      {
+        "path": "deploy/resilience-local/publish-hook.py",
+        "loaded_sha256": "5c42fbfea761d66fd9e389d880b4f1e07f5eaf305fbf3fdc47f923690e06b7d3",
+        "current_at_export": {
+          "path": "deploy/resilience-local/publish-hook.py",
+          "sha256": "5c42fbfea761d66fd9e389d880b4f1e07f5eaf305fbf3fdc47f923690e06b7d3",
+          "size_bytes": 31550
+        },
+        "current_equals_loaded": true
+      }
+    ],
+    "attachments": [
+      {
+        "path": "fluxgate-resilience-ha-async-telemetry-observation.json",
+        "sha256": "54bf646774f1b7ff7de0aad683b3482ee9fd97a79867f08feb87c13278aeb693",
+        "size_bytes": 619
+      }
+    ],
+    "run_witness": {
+      "path": "fluxgate-resilience-ha-async-final-witness.json",
+      "sha256": "976945f58ead3db6ba699603cb277001f0d3268fcbad954c9dce2ddb4a5e5844",
+      "size_bytes": 6307
+    }
+  },
+  "limits": [
+    "Dropped fields require schema review if material to acceptance; the exporter does not repair or infer absent proof.",
+    "No raw samples, payloads, credentials, arbitrary messages or score are exported.",
+    "Historical successes and failures must remain separate artifacts; this tool never overwrites files.",
+    "Recorded scenario reviewed before this local repository export; no production rollout or certification."
+  ],
+  "run_artifact_identity": {
+    "name": "ha-async-final",
+    "before_authz": [
+      {
+        "pod": "fluxgate-authz-57bfb49cb-zmzjc",
+        "uid": "be8e7303-2b3f-4dd1-816e-3397f7b3c0f5",
+        "node": "fluxgate-resilience-worker2",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      },
+      {
+        "pod": "fluxgate-authz-57bfb49cb-btzrf",
+        "uid": "e4758ea3-ffc4-4fd8-a30b-a000d02493de",
+        "node": "fluxgate-resilience-worker",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      }
+    ],
+    "after_authz": [
+      {
+        "pod": "fluxgate-authz-57bfb49cb-zmzjc",
+        "uid": "be8e7303-2b3f-4dd1-816e-3397f7b3c0f5",
+        "node": "fluxgate-resilience-worker2",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      },
+      {
+        "pod": "fluxgate-authz-57bfb49cb-4rpbl",
+        "uid": "c470924e-5830-4439-9640-7255f9fdd328",
+        "node": "fluxgate-resilience-worker",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      }
+    ],
+    "source_commit_at_invocation": "3a9a0cffae66a9a3d812f2c0e28e3aa828a1dda4",
+    "replacement_scope": "full_ha_one_authz",
+    "started": {
+      "utc": "2026-10-10T01:33:21.243837+00:00",
+      "unix_ms": 1791596001244,
+      "monotonic_ns": 1933851297681708
+    },
+    "terminal": {
+      "utc": "2026-10-10T01:39:51.699323+00:00",
+      "unix_ms": 1791596391699,
+      "monotonic_ns": 1934241743528333
+    },
+    "witness_valid": true
+  },
+  "anonymous_ha_verification_supplement": {
+    "checks": [
+      {
+        "source_check_index": 0,
+        "check": "redis-primary-placement-restoration",
+        "operator_role_restoration_performed": false,
+        "replica_reparent_repair_count": 0,
+        "topology_member_count": 9,
+        "primary_count": 3,
+        "replica_count": 6,
+        "direct_shard_families": [
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          },
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          },
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          }
+        ],
+        "primary_node_count": 3,
+        "policy_exact_preserved": true,
+        "counter_exact_preserved": true,
+        "automatic_placement_claim": false,
+        "all_nine_canonical_topology_consensus_separately_recorded": false
+      },
+      {
+        "source_check_index": 1,
+        "check": "complete-fixture-restoration",
+        "shard_families": [
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          },
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          },
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          }
+        ],
+        "all_nine_cluster_health_source_asserted": true,
+        "all_six_direct_replication_links_online_source_asserted": true,
+        "migration_disabled_all_nine": true,
+        "linked_replica_count": 6,
+        "healthy_mongo_voters": 3
+      },
+      {
+        "source_check_index": 3,
+        "check": "redis-promotion",
+        "phase_milestones": {
+          "rto_budget_started": {
+            "unix_ms": 1791596019075,
+            "utc": "2026-10-10T01:33:39.075Z"
+          },
+          "fault_start": {
+            "unix_ms": 1791596019182,
+            "utc": "2026-10-10T01:33:39.182Z"
+          },
+          "paused_verified": {
+            "unix_ms": 1791596019312,
+            "utc": "2026-10-10T01:33:39.312Z"
+          },
+          "sustained_gateway_recovered": {
+            "unix_ms": 1791596030211,
+            "utc": "2026-10-10T01:33:50.211Z"
+          },
+          "quota_verified": {
+            "unix_ms": 1791596032669,
+            "utc": "2026-10-10T01:33:52.669Z"
+          }
+        },
+        "reported_recovery_seconds": 11.136,
+        "budget_start_to_final_verification_seconds": 13.594,
+        "dense_recovery_windows": [
+          {
+            "consecutive_successes": 10,
+            "success_window_count": 10,
+            "success_window_span_seconds": 2.205,
+            "success_window_exact_200_backend_route_controls": true,
+            "background_window_sample_count": 5,
+            "background_window_all_200": true,
+            "process_cleanup": {
+              "passed": true,
+              "process_absent": true,
+              "group_absent": true,
+              "issue_count": 0
+            }
+          }
+        ],
+        "same_authz_processes_source_asserted": true,
+        "authz_process_count": 2,
+        "quota": {
+          "tokens_before": 1,
+          "tokens_after_promotion": 1,
+          "tokens_after_exhaustion": 0,
+          "last_refill_metadata_unchanged": true,
+          "last_token_status_source_asserted": 200,
+          "exhausted_status_source_asserted": 429
+        },
+        "no_authz_restart_source_asserted": true
+      },
+      {
+        "source_check_index": 4,
+        "check": "redis-primary-placement-restoration",
+        "operator_role_restoration_performed": true,
+        "replica_reparent_repair_count": 0,
+        "topology_member_count": 9,
+        "primary_count": 3,
+        "replica_count": 6,
+        "direct_shard_families": [
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          },
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          },
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          }
+        ],
+        "primary_node_count": 3,
+        "policy_exact_preserved": true,
+        "counter_exact_preserved": true,
+        "automatic_placement_claim": false,
+        "all_nine_canonical_topology_consensus_separately_recorded": false
+      },
+      {
+        "source_check_index": 5,
+        "check": "complete-fixture-restoration",
+        "shard_families": [
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          },
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          },
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          }
+        ],
+        "all_nine_cluster_health_source_asserted": true,
+        "all_six_direct_replication_links_online_source_asserted": true,
+        "migration_disabled_all_nine": true,
+        "linked_replica_count": 6,
+        "healthy_mongo_voters": 3
+      },
+      {
+        "source_check_index": 6,
+        "check": "mongo-election-publication",
+        "phase_milestones": {
+          "rto_budget_started": {
+            "unix_ms": 1791596052923,
+            "utc": "2026-10-10T01:34:12.923Z"
+          },
+          "fault_start": {
+            "unix_ms": 1791596053083,
+            "utc": "2026-10-10T01:34:13.083Z"
+          },
+          "paused_verified": {
+            "unix_ms": 1791596053223,
+            "utc": "2026-10-10T01:34:13.223Z"
+          },
+          "publication_verified": {
+            "unix_ms": 1791596071993,
+            "utc": "2026-10-10T01:34:31.993Z"
+          },
+          "sustained_gateway_recovered": {
+            "unix_ms": 1791596075336,
+            "utc": "2026-10-10T01:34:35.336Z"
+          },
+          "policy_and_traffic_verified": {
+            "unix_ms": 1791596076580,
+            "utc": "2026-10-10T01:34:36.580Z"
+          }
+        },
+        "reported_recovery_seconds": 22.412,
+        "budget_start_to_final_verification_seconds": 23.657,
+        "dense_recovery_windows": [
+          {
+            "consecutive_successes": 10,
+            "success_window_count": 10,
+            "success_window_span_seconds": 2.026,
+            "success_window_exact_200_backend_route_controls": true,
+            "background_window_sample_count": 4,
+            "background_window_all_200": true,
+            "process_cleanup": {
+              "passed": true,
+              "process_absent": true,
+              "group_absent": true,
+              "issue_count": 0
+            }
+          }
+        ]
+      },
+      {
+        "source_check_index": 7,
+        "check": "pod-replacement",
+        "role": "mongo",
+        "previous_uid_replaced": true,
+        "pvc": {
+          "claim_count": 1,
+          "before_uid_count": 1,
+          "after_uid_equality_source_asserted": true,
+          "after_uid_map_separately_recorded": false,
+          "mounted_content_hash_preserved": true,
+          "before_uids_anonymous": [
+            "c49121e9-472b-4a89-bffa-63e22badac35"
+          ]
+        }
+      },
+      {
+        "source_check_index": 8,
+        "check": "pod-replacement",
+        "role": "redis",
+        "previous_uid_replaced": true,
+        "pvc": {
+          "claim_count": 1,
+          "before_uid_count": 1,
+          "after_uid_equality_source_asserted": true,
+          "after_uid_map_separately_recorded": false,
+          "mounted_content_hash_preserved": true,
+          "before_uids_anonymous": [
+            "6d706346-e2f3-440e-8739-1d1fe0ee9941"
+          ]
+        }
+      },
+      {
+        "source_check_index": 9,
+        "check": "pod-replacement",
+        "role": "authz",
+        "previous_uid_replaced": true,
+        "pvc": {
+          "claim_count": 0,
+          "before_uid_count": 0,
+          "after_uid_equality_source_asserted": true,
+          "after_uid_map_separately_recorded": false,
+          "mounted_content_hash_preserved": false,
+          "before_uids_anonymous": []
+        }
+      },
+      {
+        "source_check_index": 10,
+        "check": "pod-replacement",
+        "role": "backend",
+        "previous_uid_replaced": true,
+        "pvc": {
+          "claim_count": 0,
+          "before_uid_count": 0,
+          "after_uid_equality_source_asserted": true,
+          "after_uid_map_separately_recorded": false,
+          "mounted_content_hash_preserved": false,
+          "before_uids_anonymous": []
+        }
+      },
+      {
+        "source_check_index": 11,
+        "check": "pod-replacement",
+        "role": "envoy",
+        "previous_uid_replaced": true,
+        "pvc": {
+          "claim_count": 0,
+          "before_uid_count": 0,
+          "after_uid_equality_source_asserted": true,
+          "after_uid_map_separately_recorded": false,
+          "mounted_content_hash_preserved": false,
+          "before_uids_anonymous": []
+        }
+      },
+      {
+        "source_check_index": 12,
+        "check": "redis-primary-placement-restoration",
+        "operator_role_restoration_performed": false,
+        "replica_reparent_repair_count": 0,
+        "topology_member_count": 9,
+        "primary_count": 3,
+        "replica_count": 6,
+        "direct_shard_families": [
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          },
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          },
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          }
+        ],
+        "primary_node_count": 3,
+        "policy_exact_preserved": true,
+        "counter_exact_preserved": true,
+        "automatic_placement_claim": false,
+        "all_nine_canonical_topology_consensus_separately_recorded": false
+      },
+      {
+        "source_check_index": 13,
+        "check": "complete-fixture-restoration",
+        "shard_families": [
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          },
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          },
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          }
+        ],
+        "all_nine_cluster_health_source_asserted": true,
+        "all_six_direct_replication_links_online_source_asserted": true,
+        "migration_disabled_all_nine": true,
+        "linked_replica_count": 6,
+        "healthy_mongo_voters": 3
+      },
+      {
+        "source_check_index": 15,
+        "check": "redis-primary-placement-restoration",
+        "operator_role_restoration_performed": true,
+        "replica_reparent_repair_count": 0,
+        "topology_member_count": 9,
+        "primary_count": 3,
+        "replica_count": 6,
+        "direct_shard_families": [
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          },
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          },
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          }
+        ],
+        "primary_node_count": 3,
+        "policy_exact_preserved": true,
+        "counter_exact_preserved": true,
+        "automatic_placement_claim": false,
+        "all_nine_canonical_topology_consensus_separately_recorded": false
+      },
+      {
+        "source_check_index": 16,
+        "check": "complete-fixture-restoration",
+        "shard_families": [
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          },
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          },
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          }
+        ],
+        "all_nine_cluster_health_source_asserted": true,
+        "all_six_direct_replication_links_online_source_asserted": true,
+        "migration_disabled_all_nine": true,
+        "linked_replica_count": 6,
+        "healthy_mongo_voters": 3
+      },
+      {
+        "source_check_index": 21,
+        "check": "redis-primary-placement-restoration",
+        "operator_role_restoration_performed": true,
+        "replica_reparent_repair_count": 0,
+        "topology_member_count": 9,
+        "primary_count": 3,
+        "replica_count": 6,
+        "direct_shard_families": [
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          },
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          },
+          {
+            "direct_replica_count": 2,
+            "member_count": 3
+          }
+        ],
+        "primary_node_count": 3,
+        "policy_exact_preserved": true,
+        "counter_exact_preserved": true,
+        "automatic_placement_claim": false,
+        "all_nine_canonical_topology_consensus_separately_recorded": false
+      },
+      {
+        "source_check_index": 22,
+        "check": "complete-fixture-restoration",
+        "shard_families": [
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          },
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          },
+          {
+            "member_count": 3,
+            "distinct_node_count": 3
+          }
+        ],
+        "all_nine_cluster_health_source_asserted": true,
+        "all_six_direct_replication_links_online_source_asserted": true,
+        "migration_disabled_all_nine": true,
+        "linked_replica_count": 6,
+        "healthy_mongo_voters": 3
+      }
+    ],
+    "evidence_boundaries": [
+      "Source-asserted fields completed under the terminal passing HA process; they were not separately serialized observations.",
+      "No raw requests, policy payloads, bucket keys, Redis member IDs, Pod IDs, PVC names, credentials or server addresses are included.",
+      "All-nine canonical topology consensus is not independently recorded in this run when no replica reparent targets existed.",
+      "Wall-clock milestone durations supplement, and do not replace, source monotonic deadline assertions."
+    ],
+    "source_mapping": {
+      "dense_window": "checks[].dense_gateway_batches[].success_window and rpc_diagnostics.process_cleanup",
+      "background_window": "checks[].continuous_outage_samples where completed_unix_ms >= success_window[0].requested_unix_ms",
+      "pvc_before": "checks[pod-replacement].pvc_uids",
+      "pvc_after_assertion": "verify-ha.py:720 after UID equality; 723-725 persisted mounted sentinel hash",
+      "quota_status_assertions": "verify-ha.py:983-986 actual 200 then 429 before the original deadline",
+      "topology_families": "checks[redis-primary-placement-restoration].after_topology primary references",
+      "all_nine_health_and_direct_links": "verify-ha.py:831-845 full_restore terminal assertions"
+    },
+    "raw_ha_sha256": "474f728877b0fe6e1262d538aa152f6b4774785cbb71e61d38abd1105d05d8c7",
+    "loaded_verify_ha_sha256": "582b637a107e496f66f249a9288bb88da37d81ce5fb4e26577444c248b59cdd3",
+    "original_staged_sha256": "27e4fc186a5ee3af7b0ccca2ebfe92ca8e1b52e3dfc4719fd5c6dd828c53b86a",
+    "offline_validation": {
+      "forged_window_rejected": true,
+      "forged_background_503_rejected": true,
+      "forged_process_cleanup_rejected": true,
+      "forged_quota_reset_rejected": true,
+      "forged_direct_replica_link_rejected": true,
+      "loaded_source_sha_matches_terminal_witness": true
+    }
+  },
+  "independent_gate_review": {
+    "passed": true,
+    "roles": [
+      "architect",
+      "enterprise-review"
+    ],
+    "scope": "Recorded local scenario and gate-critical anonymous export; production approval is separate."
+  },
+  "staging_source_sha256": "71e50bab8607787f91e185f79b97fe4cb252df43b3f3d658b2c9a601da7ed36c"
+}

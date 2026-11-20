@@ -1,0 +1,334 @@
+{
+  "result": "REJECTED",
+  "raw_result": "FAIL",
+  "passed": false,
+  "complete": false,
+  "all_requested_phases_observed": true,
+  "phase": "all",
+  "process_exit_code": 1,
+  "process_exit_provenance": "Root witnessed terminal session 82328 exit 1.",
+  "failure_scope": "Baseline violates original success-fraction and latency gates; no cause is inferred.",
+  "thresholds": {
+    "baseline_rps": 100,
+    "baseline_seconds": 60,
+    "min_achieved_rps": 99,
+    "p95_ms": 100,
+    "p99_ms": 250,
+    "expected_200_fraction": 0.999,
+    "omitted_schedules": 0,
+    "quota_burst": 100,
+    "quota_allowed": 5
+  },
+  "latency_origin": "scheduled arrival, including dispatch/queue delay",
+  "backend_positive_control": {
+    "sequence": -1,
+    "method": "GET",
+    "expected": 200,
+    "status": 200,
+    "received_status": 200,
+    "error": null,
+    "backend_body": true,
+    "body_valid": true,
+    "latency_ms": 23.675624979659915,
+    "service_time_ms": 23.67508294992149,
+    "dispatch_lag_ms": 0.0005420297384262085
+  },
+  "priming": {
+    "target_requests": 50,
+    "planned_requests": 50,
+    "submitted_requests": 50,
+    "completed_requests": 50,
+    "target_rps": 10.0,
+    "achieved_rps": 9.998380090861437,
+    "measurement_seconds": 5,
+    "elapsed_including_drain_seconds": 5.00081008579582,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 50
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 50
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "latency_ms": {
+      "p50": 11.754667852073908,
+      "p95": 33.11387589201331,
+      "p99": 257.74762500077486,
+      "max": 257.74762500077486
+    },
+    "dispatch_lag_ms": {
+      "p95": 1.5244169626384974,
+      "max": 2.4946259800344706
+    }
+  },
+  "warmup": {
+    "target_requests": 500,
+    "planned_requests": 500,
+    "submitted_requests": 500,
+    "completed_requests": 500,
+    "target_rps": 100.0,
+    "achieved_rps": 99.98135593536765,
+    "measurement_seconds": 5,
+    "elapsed_including_drain_seconds": 5.000932377064601,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 500
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 500
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "latency_ms": {
+      "p50": 6.937335012480617,
+      "p95": 13.183209113776684,
+      "p99": 28.50783313624561,
+      "max": 64.98000002466142
+    },
+    "dispatch_lag_ms": {
+      "p95": 0.8024589624255896,
+      "max": 1.5397511888295412
+    }
+  },
+  "baseline": {
+    "target_requests": 6000,
+    "planned_requests": 6000,
+    "submitted_requests": 6000,
+    "completed_requests": 6000,
+    "target_rps": 100.0,
+    "achieved_rps": 99.89770012983664,
+    "measurement_seconds": 60,
+    "elapsed_including_drain_seconds": 60.06144277798012,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 5972,
+      "503": 28
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 5972,
+        "503": 28
+      }
+    },
+    "expected_status_fraction": 0.9953333333333333,
+    "passed": false,
+    "latency_ms": {
+      "p50": 27.747551910579205,
+      "p95": 576.1419720947742,
+      "p99": 1039.7719801403582,
+      "max": 1644.0890959929675
+    },
+    "dispatch_lag_ms": {
+      "p95": 14.661857159808278,
+      "max": 140.76048508286476
+    }
+  },
+  "characterization": [
+    {
+      "target_requests": 9000,
+      "planned_requests": 9000,
+      "submitted_requests": 8463,
+      "completed_requests": 8463,
+      "target_rps": 300.0,
+      "achieved_rps": 281.9672931476888,
+      "measurement_seconds": 30,
+      "elapsed_including_drain_seconds": 30.014119387837127,
+      "omitted_schedules": 537,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "200": 7433,
+        "503": 1030
+      },
+      "request_distributions": {
+        "GET": {
+          "200": 7433,
+          "503": 1030
+        }
+      },
+      "expected_status_fraction": 0.8258888888888889,
+      "classification": "characterization-only-no-performance-pass-claim",
+      "latency_ms": {
+        "p50": 54.0629168972373,
+        "p95": 2451.2294225860387,
+        "p99": 2965.5804221984,
+        "max": 3826.3279220554978
+      },
+      "dispatch_lag_ms": {
+        "p95": 1918.1294615846127,
+        "max": 2293.311880901456
+      },
+      "omission_reasons": {
+        "pending-limit": 537
+      }
+    },
+    {
+      "target_requests": 18000,
+      "planned_requests": 18000,
+      "submitted_requests": 16043,
+      "completed_requests": 16043,
+      "target_rps": 600.0,
+      "achieved_rps": 533.791488674051,
+      "measurement_seconds": 30,
+      "elapsed_including_drain_seconds": 30.054806680884212,
+      "omitted_schedules": 1957,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "200": 14441,
+        "503": 1602
+      },
+      "request_distributions": {
+        "GET": {
+          "200": 14441,
+          "503": 1602
+        }
+      },
+      "expected_status_fraction": 0.8022777777777778,
+      "classification": "characterization-only-no-performance-pass-claim",
+      "latency_ms": {
+        "p50": 16.594555228948593,
+        "p95": 1498.1727157719433,
+        "p99": 1954.4164692051709,
+        "max": 2757.206758717075
+      },
+      "dispatch_lag_ms": {
+        "p95": 1127.0489690359682,
+        "max": 1504.9456332344562
+      },
+      "omission_reasons": {
+        "pending-limit": 1957
+      }
+    }
+  ],
+  "mixed": {
+    "target_requests": 1000,
+    "planned_requests": 1000,
+    "submitted_requests": 1000,
+    "completed_requests": 1000,
+    "target_rps": 100.0,
+    "achieved_rps": 99.98141299720588,
+    "measurement_seconds": 10,
+    "elapsed_including_drain_seconds": 10.00185904582031,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "403": 200,
+      "200": 800
+    },
+    "request_distributions": {
+      "invalid-key": {
+        "403": 200
+      },
+      "OPTIONS": {
+        "200": 200
+      },
+      "GET": {
+        "200": 600
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "passed": true,
+    "latency_ms": {
+      "p50": 5.2097938023507595,
+      "p95": 18.289541825652122,
+      "p99": 40.89279193431139,
+      "max": 85.51087812520564
+    },
+    "dispatch_lag_ms": {
+      "p95": 1.7670828383415937,
+      "max": 22.970128105953336
+    }
+  },
+  "quota": {
+    "target_requests": 100,
+    "planned_requests": 100,
+    "submitted_requests": 100,
+    "completed_requests": 100,
+    "target_rps": 100.0,
+    "achieved_rps": 770.9538036655247,
+    "measurement_seconds": 1,
+    "elapsed_including_drain_seconds": 0.12970945797860622,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "429": 95,
+      "200": 5
+    },
+    "request_distributions": {
+      "GET": {
+        "429": 95,
+        "200": 5
+      }
+    },
+    "expected_status_distribution": {
+      "200": 5,
+      "429": 95
+    },
+    "passed": true,
+    "latency_ms": {
+      "p50": 91.66583302430809,
+      "p95": 114.57908293232322,
+      "p99": 120.09737500920892,
+      "max": 120.17004191875458
+    },
+    "dispatch_lag_ms": {
+      "p95": 32.12012513540685,
+      "max": 42.715542018413544
+    }
+  },
+  "target": {
+    "context": "kind-fluxgate-resilience",
+    "namespace": "fluxgate-resilience",
+    "gateway_service": "envoy-fluxgate-resilience-fluxgate-resilience-gateway-fc3d80fd",
+    "generator_pod": "fluxgate-load-d730513fadda",
+    "transport": "in-cluster HTTP/1.1 keepalive"
+  },
+  "application_jar_sha256": "31d4b361db424392517ff11b40a62a54f0d0736b4b5f02837159c82cbf14b97a",
+  "reported_root_commit_at_invocation": "d0b5038",
+  "load_source_sha256_at_reported_commit": "fee294007cd5dc36e16a54e50a9fcf2a2e167cf4af8d3545997934242a5ebd5e",
+  "raw_files": {
+    "parsed_rejected_json": {
+      "file": "fluxgate-resilience-load-drained-final-rejected.json",
+      "sha256": "d54b8a5e720c866db868c5981bdfeefbb87fc23ead83f10f642d94b23105658c",
+      "bytes": 15881606
+    },
+    "process_log": {
+      "file": "fluxgate-resilience-load-drained-final.log",
+      "sha256": "d54b8a5e720c866db868c5981bdfeefbb87fc23ead83f10f642d94b23105658c",
+      "bytes": 15881606
+    }
+  },
+  "parsed_json_matches_log_object": true,
+  "limits": [
+    "The previous load.json passing run is historical and is not overwritten or credited to this application build.",
+    "300/600 RPS results retain overload 503s and omitted schedules; they are characterization only, not SLO passes.",
+    "Mixed traffic and exact five-success/ninety-five-quota responses passed in this run but do not rescue the failed baseline.",
+    "No failure cause is attributed from these observations; subsequent repairs require fresh validation with unchanged acceptance gates."
+  ]
+}

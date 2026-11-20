@@ -27,10 +27,9 @@ class FluxgateMetricsTest {
     // when
     metrics.recordRequest("test-rule", "/api/test", true, Duration.ofMillis(100));
 
-    // then
-    Counter totalCounter = registry.find("fluxgate.requests.total").counter();
-    assertThat(totalCounter).isNotNull();
-    assertThat(totalCounter.count()).isEqualTo(1.0);
+    // then - there is no separate .total counter: it would collide with fluxgate.requests under
+    // Prometheus naming. Sum fluxgate.requests over the result tag instead.
+    assertThat(registry.find("fluxgate.requests.total").counter()).isNull();
 
     Counter allowedCounter = registry.find("fluxgate.requests").tag("result", "allowed").counter();
     assertThat(allowedCounter).isNotNull();
@@ -118,7 +117,7 @@ class FluxgateMetricsTest {
     metrics.recordAllowed("rule:with:colons", "/api/test?param=value");
 
     // then - should not throw, special chars are sanitized
-    Counter counter = registry.find("fluxgate.requests.total").counter();
+    Counter counter = registry.find("fluxgate.requests").tag("result", "allowed").counter();
     assertThat(counter).isNotNull();
   }
 
@@ -128,7 +127,7 @@ class FluxgateMetricsTest {
     metrics.recordAllowed("rule1", null);
 
     // then
-    Counter counter = registry.find("fluxgate.requests.total").counter();
+    Counter counter = registry.find("fluxgate.requests").tag("result", "allowed").counter();
     assertThat(counter).isNotNull();
   }
 
@@ -138,7 +137,7 @@ class FluxgateMetricsTest {
     metrics.recordAllowed("rule1", "");
 
     // then
-    Counter counter = registry.find("fluxgate.requests.total").counter();
+    Counter counter = registry.find("fluxgate.requests").tag("result", "allowed").counter();
     assertThat(counter).isNotNull();
   }
 
@@ -150,5 +149,86 @@ class FluxgateMetricsTest {
     // then - should use "unknown" as fallback
     Counter counter = registry.find("fluxgate.requests").tag("rule_set", "unknown").counter();
     assertThat(counter).isNotNull();
+  }
+
+  @Test
+  void shouldRecordLimiterFailureAction() {
+    // when
+    metrics.recordLimiterFailure(
+        "api-limits", "/api/users", "fail_closed", new IllegalStateException("Redis down"));
+
+    // then
+    Counter counter =
+        registry
+            .find("fluxgate.limiter.failures")
+            .tag("rule_set", "api-limits")
+            .tag("endpoint", "/api/users")
+            .tag("action", "fail_closed")
+            .tag("exception", "IllegalStateException")
+            .counter();
+    assertThat(counter).isNotNull();
+    assertThat(counter.count()).isEqualTo(1.0);
+  }
+
+  @Test
+  void shouldCollapseEndpointsBeyondTheTagCapIntoOneSeries() {
+    // N-13: the endpoint tag was unbounded, so a caller inventing paths grew the registry and the
+    // Prometheus scrape without limit.
+    FluxgateMetrics bounded = new FluxgateMetrics(registry, 2);
+
+    bounded.recordAllowed("test-rule", "/api/aaa");
+    bounded.recordAllowed("test-rule", "/api/aab");
+    bounded.recordAllowed("test-rule", "/api/aac");
+    bounded.recordAllowed("test-rule", "/api/aad");
+
+    assertThat(registry.find("fluxgate.requests").counters()).hasSize(3);
+    assertThat(registry.find("fluxgate.requests").tag("endpoint", "other").counter().count())
+        .isEqualTo(2.0);
+  }
+
+  @Test
+  void shouldShareTheEndpointTagBudgetAcrossMeters() {
+    FluxgateMetrics bounded = new FluxgateMetrics(registry, 1);
+
+    bounded.recordAllowed("test-rule", "/api/aaa");
+    bounded.recordLimiterFailure(
+        "test-rule", "/api/aab", "fail_closed", new IllegalStateException());
+
+    assertThat(registry.find("fluxgate.limiter.failures").counter().getId().getTag("endpoint"))
+        .isEqualTo("other");
+  }
+
+  @Test
+  void shouldNormalizeLimiterFailureEndpointsLikeTheRecorder() {
+    metrics.recordLimiterFailure(
+        "api-limits", "/api/users/12345", "fail_open", new IllegalStateException());
+
+    assertThat(registry.find("fluxgate.limiter.failures").counter().getId().getTag("endpoint"))
+        .isEqualTo("/api/users/{id}");
+  }
+
+  @Test
+  void shouldShareTheRecordersBudgetWhenBuiltFromIt() {
+    MicrometerMetricsRecorder recorder = new MicrometerMetricsRecorder(registry, true, true, 1);
+    FluxgateMetrics shared = new FluxgateMetrics(registry, recorder);
+
+    recorder.recordDuration("rules", "/api/aaa", "GET", java.time.Duration.ofMillis(1));
+    shared.recordLimiterFailure("rules", "/api/aab", "fail_open", new IllegalStateException());
+
+    assertThat(registry.find("fluxgate.limiter.failures").counter().getId().getTag("endpoint"))
+        .isEqualTo("other");
+  }
+
+  @Test
+  void shouldOmitTheEndpointTagWhenTheRecorderDoesNotIncludeIt() {
+    MicrometerMetricsRecorder recorder = new MicrometerMetricsRecorder(registry, false, true, 10);
+    FluxgateMetrics shared = new FluxgateMetrics(registry, recorder);
+
+    shared.recordLimiterFailure("rules", "/api/aab", "fail_open", new IllegalStateException());
+    shared.recordAllowed("rules", "/api/aab");
+
+    assertThat(registry.find("fluxgate.limiter.failures").counter().getId().getTag("endpoint"))
+        .isNull();
+    assertThat(registry.find("fluxgate.requests").counter().getId().getTag("endpoint")).isNull();
   }
 }

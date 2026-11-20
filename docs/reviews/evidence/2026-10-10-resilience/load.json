@@ -1,0 +1,338 @@
+{
+  "phase": "all",
+  "thresholds": {
+    "baseline_rps": 100,
+    "baseline_seconds": 60,
+    "min_achieved_rps": 99,
+    "p95_ms": 100,
+    "p99_ms": 250,
+    "expected_200_fraction": 0.999,
+    "omitted_schedules": 0,
+    "quota_burst": 100,
+    "quota_allowed": 5
+  },
+  "latency_origin": "scheduled arrival, including dispatch/queue delay",
+  "backend_positive_control": {
+    "method": "GET",
+    "expected": 200,
+    "status": 200,
+    "received_status": 200,
+    "error": null,
+    "body_valid": true,
+    "latency_ms": 33.40995800681412
+  },
+  "priming": {
+    "target_requests": 50,
+    "planned_requests": 50,
+    "submitted_requests": 50,
+    "completed_requests": 50,
+    "target_rps": 10.0,
+    "achieved_rps": 9.997544848719224,
+    "measurement_seconds": 5,
+    "elapsed_including_drain_seconds": 5.001227877102792,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 50
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 50
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "latency_ms": {
+      "p50": 10.103459004312754,
+      "p95": 21.19704312644899,
+      "p99": 262.5449171755463,
+      "max": 262.5449171755463
+    },
+    "dispatch_lag_ms": {
+      "p95": 1.294085057452321,
+      "max": 2.116335090249777
+    }
+  },
+  "warmup": {
+    "target_requests": 500,
+    "planned_requests": 500,
+    "submitted_requests": 500,
+    "completed_requests": 500,
+    "target_rps": 100.0,
+    "achieved_rps": 99.97025213181206,
+    "measurement_seconds": 5,
+    "elapsed_including_drain_seconds": 5.0014878360088915,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 500
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 500
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "latency_ms": {
+      "p50": 8.494291920214891,
+      "p95": 16.952376114204526,
+      "p99": 33.813416957855225,
+      "max": 51.07933399267495
+    },
+    "dispatch_lag_ms": {
+      "p95": 0.954875024035573,
+      "max": 3.116000909358263
+    }
+  },
+  "baseline": {
+    "target_requests": 6000,
+    "planned_requests": 6000,
+    "submitted_requests": 6000,
+    "completed_requests": 6000,
+    "target_rps": 100.0,
+    "achieved_rps": 99.98428006467934,
+    "measurement_seconds": 60,
+    "elapsed_including_drain_seconds": 60.009433444123715,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 6000
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 6000
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "latency_ms": {
+      "p50": 6.608046125620604,
+      "p95": 18.407263094559312,
+      "p99": 58.24650195427239,
+      "max": 320.4188831150532
+    },
+    "dispatch_lag_ms": {
+      "p95": 1.6327660996466875,
+      "max": 49.60439610294998
+    },
+    "passed": true
+  },
+  "mixed": {
+    "target_requests": 1000,
+    "planned_requests": 1000,
+    "submitted_requests": 1000,
+    "completed_requests": 1000,
+    "target_rps": 100.0,
+    "achieved_rps": 99.98029092489463,
+    "measurement_seconds": 10,
+    "elapsed_including_drain_seconds": 10.001971296034753,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "403": 200,
+      "200": 800
+    },
+    "request_distributions": {
+      "invalid-key": {
+        "403": 200
+      },
+      "OPTIONS": {
+        "200": 200
+      },
+      "GET": {
+        "200": 600
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "latency_ms": {
+      "p50": 5.465713096782565,
+      "p95": 11.025335174053907,
+      "p99": 100.37100384943187,
+      "max": 226.25212906859815
+    },
+    "dispatch_lag_ms": {
+      "p95": 0.9095859713852406,
+      "max": 9.085587924346328
+    },
+    "passed": true
+  },
+  "quota": {
+    "target_requests": 100,
+    "planned_requests": 100,
+    "submitted_requests": 100,
+    "completed_requests": 100,
+    "target_rps": 100.0,
+    "achieved_rps": 517.4377582452727,
+    "measurement_seconds": 1,
+    "elapsed_including_drain_seconds": 0.19325995910912752,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "429": 95,
+      "200": 5
+    },
+    "request_distributions": {
+      "GET": {
+        "429": 95,
+        "200": 5
+      }
+    },
+    "latency_ms": {
+      "p50": 99.20320915989578,
+      "p95": 179.75862510502338,
+      "p99": 182.78937507420778,
+      "max": 186.6369592025876
+    },
+    "dispatch_lag_ms": {
+      "p95": 25.59066703543067,
+      "max": 30.608917120844126
+    },
+    "passed": true,
+    "expected_status_distribution": {
+      "200": 5,
+      "429": 95
+    }
+  },
+  "characterization": [
+    {
+      "target_requests": 9000,
+      "planned_requests": 9000,
+      "submitted_requests": 9000,
+      "completed_requests": 9000,
+      "target_rps": 300.0,
+      "achieved_rps": 299.8232011935292,
+      "measurement_seconds": 30,
+      "elapsed_including_drain_seconds": 30.01769030606374,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "200": 9000
+      },
+      "request_distributions": {
+        "GET": {
+          "200": 9000
+        }
+      },
+      "expected_status_fraction": 1.0,
+      "latency_ms": {
+        "p50": 4.668717039749026,
+        "p95": 16.86116843484342,
+        "p99": 71.53921900317073,
+        "max": 182.62400664389133
+      },
+      "dispatch_lag_ms": {
+        "p95": 1.3836333528161049,
+        "max": 51.98467732407153
+      },
+      "classification": "characterization-only-no-performance-pass-claim"
+    },
+    {
+      "target_requests": 18000,
+      "planned_requests": 18000,
+      "submitted_requests": 18000,
+      "completed_requests": 18000,
+      "target_rps": 600.0,
+      "achieved_rps": 599.0794401162269,
+      "measurement_seconds": 30,
+      "elapsed_including_drain_seconds": 30.04609872191213,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "200": 17961,
+        "503": 39
+      },
+      "request_distributions": {
+        "GET": {
+          "200": 17961,
+          "503": 39
+        }
+      },
+      "expected_status_fraction": 0.9978333333333333,
+      "latency_ms": {
+        "p50": 5.08454698137939,
+        "p95": 50.143792759627104,
+        "p99": 217.0555447228253,
+        "max": 720.6062108743936
+      },
+      "dispatch_lag_ms": {
+        "p95": 2.092295093461871,
+        "max": 67.05500325188041
+      },
+      "classification": "characterization-only-no-performance-pass-claim"
+    }
+  ],
+  "result": "PASS",
+  "application_jar_sha256": "893ce2fdc1f4b75d6ccabdf7f54ec1cd18e694adfef876dfb649aeb337440d40",
+  "source_at_invocation": "25f32a8",
+  "terminal_exit_code": 0,
+  "terminal_exit_provenance": "Root witnessed process 73928 exit 0; export independently recomputed all seven phase reports from retained samples.",
+  "independent_recomputation": {
+    "reports_checked": [
+      "priming",
+      "warmup",
+      "baseline",
+      "mixed",
+      "quota",
+      "characterization-300.0",
+      "characterization-600.0"
+    ],
+    "status_and_method_counts": true,
+    "sample_accounting_and_unique_sequences": true,
+    "transport_and_body_errors": true,
+    "nearest_rank_latency_and_dispatch_percentiles": true,
+    "achieved_rate_and_expected_fraction": true
+  },
+  "provenance": {
+    "raw": {
+      "path": "/tmp/fluxgate-resilience-load-observed-final.json",
+      "sha256": "761b13c821cb30253cbaa5ba7b0778a9050d0fc0a6758631e6a8bf89ad878c32",
+      "size_bytes": 16758635
+    },
+    "log": {
+      "path": "/tmp/fluxgate-resilience-load-observed-final.log",
+      "sha256": "761b13c821cb30253cbaa5ba7b0778a9050d0fc0a6758631e6a8bf89ad878c32",
+      "size_bytes": 16758635
+    },
+    "wrapper_log": {
+      "path": "/tmp/fluxgate-resilience-load-observed-wrapper.log",
+      "sha256": "57bbb0e489a8da1ff6c85088682bc21c0a70f1bf6d5ff329c0426cf7730f95d6",
+      "size_bytes": 52
+    },
+    "observation_helper": {
+      "path": "/tmp/fluxgate-observe-load.py",
+      "sha256": "b58e2a2b15e0d7ba26982d2c8a097c53d210a52e17645713980b2be040d69040",
+      "size_bytes": 4027
+    },
+    "load_tool": {
+      "path": "/Users/jaeseoh/Documents/workspace/openfluxgate/fluxgate-envoy-gateway/deploy/resilience-local/verify-load.py",
+      "sha256": "fee294007cd5dc36e16a54e50a9fcf2a2e167cf4af8d3545997934242a5ebd5e",
+      "size_bytes": 40343,
+      "source_commit_verified": "25f32a8"
+    }
+  },
+  "limits": [
+    "100 RPS for 60 seconds is the baseline SLO gate.",
+    "300 and 600 RPS phases are characterization only; 600 RPS includes 39 responses with status 503.",
+    "This healthy load run does not establish load during failover or credential rotation.",
+    "Single-Docker-host local proof; no production capacity, HA or enterprise score claim."
+  ]
+}

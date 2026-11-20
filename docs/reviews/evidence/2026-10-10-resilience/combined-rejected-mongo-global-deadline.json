@@ -1,0 +1,68 @@
+{
+  "result": "REJECTED",
+  "complete": false,
+  "process_exit": 1,
+  "phase": "mongo-election-publication",
+  "reason": "Actual metadata publication and idempotency completed, but total publication plus Gateway recovery exceeded unchanged30s acceptance. Helper elapsed time alone is not global RTO.",
+  "publication": [
+    {
+      "passed": true,
+      "published": true,
+      "operationId": "resilience-15d208bfc9ea4f56a09c572833523a37",
+      "beforeRevision": 2,
+      "revision": 3,
+      "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+      "snapshotId": "261dabc0-ffe8-4b24-a9f2-23fd67885a1c",
+      "checksum": "8c7076e13e77f246cd5b63d0c4715e38c44edf07267b4d8897484c9710952585",
+      "epochPreserved": true,
+      "majorityReadVerified": true,
+      "idempotentReplay": true,
+      "elapsedSeconds": 29.66049418,
+      "transientFailureClasses": [
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoTimeoutException",
+        "MongoSocketReadTimeoutException",
+        "MongoSocketReadTimeoutException",
+        "MongoSocketReadTimeoutException",
+        "MongoSocketReadTimeoutException"
+      ]
+    }
+  ],
+  "fault_timestamps": {
+    "rto_budget_started": {
+      "unix_ms": 1791585152539,
+      "utc": "2026-10-09T22:32:32.539Z"
+    },
+    "fault_start": {
+      "unix_ms": 1791585152658,
+      "utc": "2026-10-09T22:32:32.658Z"
+    },
+    "paused_verified": {
+      "unix_ms": 1791585152776,
+      "utc": "2026-10-09T22:32:32.776Z"
+    },
+    "publication_verified": {
+      "unix_ms": 1791585183950,
+      "utc": "2026-10-09T22:33:03.950Z"
+    }
+  },
+  "private_artifact_hashes": {
+    "summary.json": "e72195f12b11a5b112037a4c65b3eb6177e8889e974b503f40f98f91d68cdcfc",
+    "publication-helper-cleanup-state.json": "502d040d2fb32ebc998153579d92748f54d96c8f0317b9198da79ddbaa4ee47b",
+    "raw-load.json": "2b4602b9e21eba319e0be14f370fe3025f09724865fbd6982bb1c75b7944a801",
+    "ha.log": "0711fca32bb83f56d9588c0fb6b9c0083421889abbc61fcb696d440f0e110f0a",
+    "publisher-cleanup.json": "bcee1fa542dd5bb01ea37bd4de67d9bce71058c4fac53450f990df9796dabb1b",
+    "publication-helper-state.json": "6fa0b9510bf2421b1d6b9ebc9ea5d6dfa161e95db21ecbc1806762a04b0a7544",
+    "publisher-cleanup.log": "7089e6a45ca8af8db9170ba92bfc9a1c8d16ad50b0cd8eb0425e2fc48b5b99b4",
+    "readiness.json": "a7cb27527ca64ff9c49b3b4e3e7b337a6b17df098e544cf2975b9c95afc17392",
+    "prepare.log": "478a04c8f251ba205615693ce0f55787fa71e1d6558026d6e71ff46259e41d38",
+    "load.log": "2b4602b9e21eba319e0be14f370fe3025f09724865fbd6982bb1c75b7944a801",
+    "ha/publisher-cleanup.json": "bcee1fa542dd5bb01ea37bd4de67d9bce71058c4fac53450f990df9796dabb1b",
+    "ha/publication-f5588c290a2d4d4aba45916ab3ee5621.json": "16e4e1291575c62e14793d20fe8ac852e9069abe9f9d150643406bd6cdff8a28",
+    "ha/progress.json": "d78a964b84512c07eb6abaaa05fb9dcc6ab3575ab176b145bbe66d2251074968",
+    "ha/failure.json": "61a89e6feb55ed73ecbb187cd5b53905398906b05e776759686fd6c1cc812e9b"
+  },
+  "next_configuration_change": "Explicit Mongo Java5.0.1 heartbeatFrequencyMS=2000; monitoring option does not guarantee overall deadline."
+}

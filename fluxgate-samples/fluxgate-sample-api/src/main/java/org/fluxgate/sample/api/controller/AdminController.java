@@ -4,6 +4,10 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Duration;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -80,13 +84,20 @@ public class AdminController {
       summary = "Delete a rule from MongoDB",
       description = "Deletes a rate limit rule via Control-plane")
   @ApiResponse(responseCode = "204", description = "Rule deleted successfully")
-  @DeleteMapping("/rules/{id}")
+  @DeleteMapping("/rules/{ruleSetId}/{id}")
   public ResponseEntity<Void> deleteRule(
-      @Parameter(description = "Rule ID", required = true) @PathVariable String id) {
+      @Parameter(description = "Rule set identifier", required = true) @PathVariable("ruleSetId")
+          String ruleSetId,
+      @Parameter(description = "Rule ID", required = true) @PathVariable("id") String id) {
 
-    log.info("Deleting rule via Control-plane: {}", id);
+    log.info("Deleting rule ({}, {}) via Control-plane", ruleSetId, id);
 
-    controlPlaneClient.delete().uri("/admin/rules/{id}", id).retrieve().toBodilessEntity();
+    // a rule is identified by (ruleSetId, id): the same id may exist in several rule sets
+    controlPlaneClient
+        .delete()
+        .uri("/admin/rules/{ruleSetId}/{id}", ruleSetId, id)
+        .retrieve()
+        .toBodilessEntity();
 
     return ResponseEntity.noContent().build();
   }
@@ -98,6 +109,10 @@ public class AdminController {
       description =
           "Fetches rules from MongoDB and registers them as a RuleSet in Redis Data-plane")
   @ApiResponse(responseCode = "200", description = "Rules synced successfully")
+  @ApiResponse(responseCode = "400", description = "No rules found in MongoDB for the rule set")
+  @ApiResponse(
+      responseCode = "422",
+      description = "First band of the first rule has no positive capacity and window")
   @PostMapping("/sync")
   public ResponseEntity<Map<String, Object>> syncRulesToRedis(
       @Parameter(description = "Rule set ID to sync", example = "api-gateway-rules")
@@ -127,13 +142,29 @@ public class AdminController {
     @SuppressWarnings("unchecked")
     List<Map<String, Object>> bands = (List<Map<String, Object>>) firstRule.get("bands");
 
-    long capacity = 10; // default
-    long windowSeconds = 60; // default
+    Long capacity = null;
+    Long windowSeconds = null;
 
     if (bands != null && !bands.isEmpty()) {
       Map<String, Object> firstBand = bands.get(0);
-      capacity = ((Number) firstBand.getOrDefault("capacity", 10)).longValue();
-      windowSeconds = ((Number) firstBand.getOrDefault("windowSeconds", 60)).longValue();
+      capacity = parseCapacity(firstBand.get("capacity"));
+      windowSeconds = parseWindowSeconds(firstBand);
+    }
+
+    if (capacity == null || windowSeconds == null || capacity <= 0 || windowSeconds <= 0) {
+      log.warn(
+          "Skipping sync for ruleSetId {}: first band of first rule has no positive "
+              + "capacity ({}) or window ({})",
+          ruleSetId,
+          capacity,
+          windowSeconds);
+      return ResponseEntity.unprocessableEntity()
+          .body(
+              Map.of(
+                  "error",
+                  "First rule has no band with a positive capacity and window",
+                  "ruleSetId",
+                  ruleSetId));
     }
 
     // 3. Register RuleSet in Redis (Data-plane)
@@ -182,5 +213,40 @@ public class AdminController {
             .body(new ParameterizedTypeReference<>() {});
 
     return ResponseEntity.ok(response);
+  }
+
+  /**
+   * Reads the window of a serialized {@code RateLimitBand}. Jackson writes the {@code Duration}
+   * property {@code window} either as seconds (possibly decimal, e.g. {@code 60.000000000}) or as
+   * an ISO-8601 string ({@code PT1M}); {@code windowSeconds} is accepted for compatibility.
+   *
+   * @return window in seconds (fractions rounded up on both paths, so {@code 0.5} and {@code
+   *     PT0.5S} both give 1), or null if absent or unparsable
+   */
+  static Long parseWindowSeconds(Map<String, Object> band) {
+    Long seconds = toSeconds(band.get("window"));
+    return seconds != null ? seconds : toSeconds(band.get("windowSeconds"));
+  }
+
+  static Long parseCapacity(Object value) {
+    if (value instanceof Number) {
+      return ((Number) value).longValue();
+    }
+    return null;
+  }
+
+  private static Long toSeconds(Object value) {
+    try {
+      if (value instanceof Number) {
+        return new BigDecimal(value.toString()).setScale(0, RoundingMode.CEILING).longValueExact();
+      }
+      if (value instanceof String) {
+        Duration window = Duration.parse(((String) value).trim());
+        return window.getNano() > 0 ? window.getSeconds() + 1 : window.getSeconds();
+      }
+    } catch (ArithmeticException | DateTimeParseException | NumberFormatException e) {
+      return null;
+    }
+    return null;
   }
 }

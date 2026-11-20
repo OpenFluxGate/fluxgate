@@ -1,0 +1,47 @@
+{
+  "passed": true,
+  "actual_process_exit": 0,
+  "witness_valid": true,
+  "requests": [
+    {
+      "path": "/api/quota",
+      "status": 429,
+      "backend_success_body": false
+    },
+    {
+      "path": "/api/%71uota",
+      "status": 429,
+      "backend_success_body": false
+    },
+    {
+      "path": "/api/q%75ota",
+      "status": 429,
+      "backend_success_body": false
+    },
+    {
+      "path": "/api/quo%74a",
+      "status": 429,
+      "backend_success_body": false
+    },
+    {
+      "path": "/api/%71%75%6fta",
+      "status": 429,
+      "backend_success_body": false
+    },
+    {
+      "path": "/api/quota",
+      "status": 429,
+      "backend_success_body": false
+    }
+  ],
+  "owned_forward_stopped": true,
+  "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+  "source_commit_at_invocation": "bd6003e5cdca2dcdd1e51c7f17167b3b18626ced",
+  "raw_sha256": "949a6eebcff3aa823d54642d96e476832123eb0c277733b595ba27733ce1e6bd",
+  "witness_sha256": "ea95d17331d7c92d0496808b42c8a8c8c66bc6f9c77facb357d5147c1b74a176",
+  "probe_source_sha256": "6720d99ec0545aae485f936317ec103362593a1e4765c55f2bbe52247e055b9f",
+  "limits": [
+    "Read-only GET requests through the selected live Gateway with an already exhausted HA identity. Does not establish every possible backend decoding contract."
+  ],
+  "primary_source": "https://raw.githubusercontent.com/envoyproxy/gateway/v1.9.2/internal/xds/translator/listener.go"
+}

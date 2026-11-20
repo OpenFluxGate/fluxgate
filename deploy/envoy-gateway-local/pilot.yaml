@@ -1,0 +1,209 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fluxgate-pilot
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongo-seed
+  namespace: fluxgate-pilot
+data:
+  seed.js: |
+    const rules = db.getSiblingDB('fluxgate');
+    rules.createCollection('rate_limit_rules');
+    rules.createCollection('rate_limit_events');
+    rules.rate_limit_rules.insertMany([
+      {id:'route-quota', name:'Route quota', enabled:true, scope:'GLOBAL', keyStrategyId:'global', onLimitExceedPolicy:'REJECT_REQUEST', ruleSetId:'default-limits', priority:20, pathPatterns:['/api/**'], bands:[{windowSeconds:NumberLong(60), capacity:NumberLong(3), label:'per-minute'}]},
+      {id:'shared-quota', name:'Shared quota', enabled:true, scope:'GLOBAL', keyStrategyId:'global', onLimitExceedPolicy:'REJECT_REQUEST', ruleSetId:'default-limits', priority:10, pathPatterns:['/api/**'], bands:[{windowSeconds:NumberLong(60), capacity:NumberLong(2), label:'per-minute'}]}
+    ]);
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo
+  namespace: fluxgate-pilot
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: mongo}
+  template:
+    metadata:
+      labels: {app: mongo}
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:7
+          env:
+            - name: MONGO_INITDB_DATABASE
+              value: fluxgate
+          ports: [{containerPort: 27017}]
+          readinessProbe:
+            tcpSocket: {port: 27017}
+            periodSeconds: 3
+          volumeMounts:
+            - {name: mongo-data, mountPath: /data/db}
+            - {name: mongo-seed, mountPath: /docker-entrypoint-initdb.d/seed.js, subPath: seed.js}
+      volumes:
+        - name: mongo-data
+          emptyDir: {}
+        - name: mongo-seed
+          configMap: {name: mongo-seed}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: fluxgate-pilot
+spec:
+  selector: {app: mongo}
+  ports: [{port: 27017, targetPort: 27017}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: fluxgate-pilot
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          ports: [{containerPort: 6379}]
+          readinessProbe:
+            tcpSocket: {port: 6379}
+            periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: fluxgate-pilot
+spec:
+  selector: {app: redis}
+  ports: [{port: 6379, targetPort: 6379}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fluxgate-authz
+  namespace: fluxgate-pilot
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: fluxgate-authz}
+  template:
+    metadata:
+      labels: {app: fluxgate-authz}
+    spec:
+      containers:
+        - name: authz
+          image: fluxgate-envoy-extauth:local
+          imagePullPolicy: Never
+          env:
+            - name: FLUXGATE_REDIS_URI
+              value: redis://redis.fluxgate-pilot.svc.cluster.local:6379
+            - name: FLUXGATE_MONGO_URI
+              value: mongodb://mongo.fluxgate-pilot.svc.cluster.local:27017/fluxgate
+            - name: FLUXGATE_RULE_SET_ID
+              value: default-limits
+          ports: [{containerPort: 8080}]
+          readinessProbe:
+            httpGet: {path: /healthz, port: 8080}
+            periodSeconds: 3
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fluxgate-authz
+  namespace: fluxgate-pilot
+spec:
+  selector: {app: fluxgate-authz}
+  ports: [{port: 8080, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo
+  namespace: fluxgate-pilot
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: echo}
+  template:
+    metadata:
+      labels: {app: echo}
+    spec:
+      containers:
+        - name: echo
+          image: hashicorp/http-echo:1.0.0
+          args: ["-listen=:5678", "-text=fluxgate-pilot-ok"]
+          ports: [{containerPort: 5678}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: fluxgate-pilot
+spec:
+  selector: {app: echo}
+  ports: [{port: 5678, targetPort: 5678}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: eg
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: fluxgate-gateway
+  namespace: fluxgate-pilot
+spec:
+  gatewayClassName: eg
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces: {from: Same}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: pilot
+  namespace: fluxgate-pilot
+spec:
+  parentRefs: [{name: fluxgate-gateway}]
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /api}
+      backendRefs: [{name: echo, port: 5678}]
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: pilot-authz
+  namespace: fluxgate-pilot
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: pilot
+  extAuth:
+    failOpen: false
+    statusOnError: 503
+    http:
+      path: /authz
+      backendRefs: [{name: fluxgate-authz, port: 8080}]

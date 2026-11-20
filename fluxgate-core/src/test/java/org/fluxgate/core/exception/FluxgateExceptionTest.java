@@ -1,18 +1,3 @@
-/*
- * Copyright 2024 the original author or authors.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package org.fluxgate.core.exception;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -127,11 +112,46 @@ class FluxgateExceptionTest {
   class RedisConnectionTests {
 
     @Test
-    @DisplayName("should be retryable")
-    void shouldBeRetryable() {
+    @DisplayName("should not be retryable when the failure phase is unknown")
+    void shouldNotBeRetryableWhenPhaseUnknown() {
       RedisConnectionException exception = new RedisConnectionException("Redis connection failed");
+      RedisConnectionException withCause =
+          new RedisConnectionException("failed", new RuntimeException());
+      RedisConnectionException withUri =
+          new RedisConnectionException("failed", "redis://***@h:6379", new RuntimeException());
 
-      assertThat(exception.isRetryable()).isTrue();
+      // the command may already have run on Redis; retrying a consume could charge twice
+      assertThat(exception.getPhase()).isEqualTo(RedisConnectionException.Phase.UNKNOWN);
+      assertThat(exception.isRetryable()).isFalse();
+      assertThat(withCause.isRetryable()).isFalse();
+      assertThat(withUri.isRetryable()).isFalse();
+    }
+
+    @Test
+    @DisplayName("should be retryable only for connect-phase failures")
+    void shouldBeRetryableOnlyInConnectPhase() {
+      RedisConnectionException connect =
+          new RedisConnectionException(
+              "connect failed", "redis://h:6379", null, RedisConnectionException.Phase.CONNECT);
+      RedisConnectionException command =
+          new RedisConnectionException(
+              "EVALSHA failed", new RuntimeException(), RedisConnectionException.Phase.COMMAND);
+
+      assertThat(connect.isRetryable()).isTrue();
+      assertThat(connect.getPhase()).isEqualTo(RedisConnectionException.Phase.CONNECT);
+      assertThat(connect.getRedisUri()).isEqualTo("redis://h:6379");
+      assertThat(command.isRetryable()).isFalse();
+      assertThat(command.getPhase()).isEqualTo(RedisConnectionException.Phase.COMMAND);
+    }
+
+    @Test
+    @DisplayName("a null phase is treated as unknown")
+    void nullPhaseIsUnknown() {
+      RedisConnectionException.Phase noPhase = null;
+      assertThat(new RedisConnectionException("x", new RuntimeException(), noPhase).getPhase())
+          .isEqualTo(RedisConnectionException.Phase.UNKNOWN);
+      assertThat(new RedisConnectionException("x", "redis://h", null, noPhase).isRetryable())
+          .isFalse();
     }
 
     @Test
@@ -204,12 +224,28 @@ class FluxgateExceptionTest {
   class RateLimitExecutionTests {
 
     @Test
-    @DisplayName("should be retryable")
-    void shouldBeRetryable() {
+    @DisplayName("should not be retryable by default")
+    void shouldNotBeRetryableByDefault() {
       RateLimitExecutionException exception =
           new RateLimitExecutionException("execution failed", new RuntimeException());
+      RateLimitExecutionException withContext =
+          new RateLimitExecutionException("execution failed", "rs", "k", new RuntimeException());
 
-      assertThat(exception.isRetryable()).isTrue();
+      // the evaluation may already have consumed tokens, so retrying could charge twice
+      assertThat(exception.isRetryable()).isFalse();
+      assertThat(withContext.isRetryable()).isFalse();
+    }
+
+    @Test
+    @DisplayName("should be retryable when the caller opts in")
+    void shouldBeRetryableWhenOptedIn() {
+      assertThat(
+              new RateLimitExecutionException("failed", new RuntimeException(), true).isRetryable())
+          .isTrue();
+      assertThat(
+              new RateLimitExecutionException("failed", "rs", "k", new RuntimeException(), true)
+                  .isRetryable())
+          .isTrue();
     }
 
     @Test
@@ -231,12 +267,25 @@ class FluxgateExceptionTest {
   class ScriptExecutionTests {
 
     @Test
-    @DisplayName("should be retryable")
-    void shouldBeRetryable() {
+    @DisplayName("should not be retryable by default")
+    void shouldNotBeRetryableByDefault() {
       ScriptExecutionException exception =
           new ScriptExecutionException("script failed", new RuntimeException());
+      ScriptExecutionException withScript =
+          new ScriptExecutionException("script failed", "token_bucket.lua", new RuntimeException());
 
-      assertThat(exception.isRetryable()).isTrue();
+      // a failed script may already have written its keys, so retrying could charge twice
+      assertThat(exception.isRetryable()).isFalse();
+      assertThat(withScript.isRetryable()).isFalse();
+    }
+
+    @Test
+    @DisplayName("should be retryable when the caller opts in, e.g. for NOSCRIPT")
+    void shouldBeRetryableWhenOptedIn() {
+      assertThat(
+              new ScriptExecutionException("NOSCRIPT", "token_bucket.lua", null, true)
+                  .isRetryable())
+          .isTrue();
     }
 
     @Test

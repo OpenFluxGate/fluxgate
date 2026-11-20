@@ -1,0 +1,64 @@
+{
+  "accepted": false,
+  "fault_started": true,
+  "application_jar_sha256": "b03409f989d8a6b228689bf8daf8880d3b68a1e95b2166b7ae46625e32485a40",
+  "original_rto_seconds": 30,
+  "reason": "Publication became verified at global27.907seconds; ten dense exact-body successes did not fit unchanged30secondgate",
+  "priming": {
+    "completed_requests": 50,
+    "all_statuses": {
+      "200": 50
+    },
+    "omitted_schedules": 0
+  },
+  "paced_warmup": {
+    "completed_requests": 500,
+    "all_statuses": {
+      "200": 500
+    },
+    "omitted_schedules": 0
+  },
+  "observation": {
+    "completed_requests": 12000,
+    "all_statuses": {
+      "200": 9272,
+      "503": 2728
+    },
+    "omitted_schedules": 0,
+    "achieved_rps": 99.96581685050066,
+    "latency_ms": {
+      "p50": 9.28508979268372,
+      "p95": 2004.2785189580172,
+      "p99": 2184.6190139185637,
+      "max": 4131.688107037917
+    }
+  },
+  "last_minute": {
+    "completed_requests": 6000,
+    "all_statuses": {
+      "200": 5989,
+      "503": 11
+    },
+    "omitted_schedules": 0,
+    "achieved_rps": 100.0,
+    "latency_ms": {
+      "p50": 7.607414154335856,
+      "p95": 332.93207990936935,
+      "p99": 703.5471128765494,
+      "max": 1357.5579200405627
+    }
+  },
+  "publisher_cleanup_absence_verified": true,
+  "raw_sha256": "bbcb160eb37cc96d55b17fa18d693cca1da734c1c9fa534fed4fa3702682ac53",
+  "ha_failure_sha256": "3566ce10a57ccc03cfda277f2045608be9d8d76c1bed7e634aa57b8a2e35a848",
+  "cpu_observer_sha256": "7e024a478f17caf9058bbb45bef11108fb73f8049ca5ef03d030fdae444a1fc1",
+  "observed_mongo_milestones": {
+    "fault_utc": "2026-10-09T23:15:45.971Z",
+    "election_started_after_fault_seconds": 10.222,
+    "elected_after_fault_seconds": 10.239,
+    "write_ready_after_fault_seconds": 20.271,
+    "publication_verified_after_fault_seconds": 27.631
+  },
+  "cpu_observation_scope": "Five-second cgroup counter samples: elected Mongo primary0.007to0.020cores withzeroobservedthrottling during catchup; helper peak0.174cores. CPUincrease notsupported; hostIO/threadblocking notexcluded.",
+  "next_experiment": "Explicit local election5000ms/catchup2000ms preset preserves majority reads/writes and originalgates; no pass implied."
+}

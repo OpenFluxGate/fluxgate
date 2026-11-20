@@ -1,0 +1,422 @@
+{
+  "passed": false,
+  "process_exit": 1,
+  "reason": "Actual post-fault replica migration redistributed replicas1/2/3; bounded180second restoration rejected the fixture. Protocol fault checks are diagnostic partial evidence only.",
+  "progress": {
+    "checks": [
+      {
+        "check": "baseline",
+        "policy": {
+          "revision": "2",
+          "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+          "snapshotId": "28518dd4-d2be-4b06-9b8f-53224cc65712",
+          "checksum": "68cfbaf9e29e6be52a5b82422dd09ab663b1181f7bb9740d206207cc59fc5255",
+          "operationId": "resilience-7027ca03247342d0bdd847dc769e9772",
+          "rules": [
+            {
+              "id": "load-rule",
+              "name": "Resilience metadata proof resilience-7027ca03247342d0bdd847dc769e9772",
+              "enabled": true,
+              "scope": "PER_API_KEY",
+              "keyStrategyId": "api-key",
+              "onLimitExceedPolicy": "REJECT_REQUEST",
+              "ruleSetId": "resilience-limits",
+              "priority": 10,
+              "pathPatterns": [
+                "/api/load"
+              ],
+              "bands": [
+                {
+                  "windowSeconds": {
+                    "high": 0,
+                    "low": 3600,
+                    "unsigned": false
+                  },
+                  "capacity": {
+                    "high": 0,
+                    "low": 10000000,
+                    "unsigned": false
+                  },
+                  "algorithm": "FIXED_WINDOW",
+                  "label": "hourly"
+                }
+              ]
+            },
+            {
+              "id": "quota-rule",
+              "name": "quota-rule",
+              "enabled": true,
+              "scope": "PER_API_KEY",
+              "keyStrategyId": "api-key",
+              "onLimitExceedPolicy": "REJECT_REQUEST",
+              "ruleSetId": "resilience-limits",
+              "priority": 10,
+              "pathPatterns": [
+                "/api/quota"
+              ],
+              "bands": [
+                {
+                  "windowSeconds": {
+                    "high": 0,
+                    "low": 86400,
+                    "unsigned": false
+                  },
+                  "capacity": {
+                    "high": 0,
+                    "low": 5,
+                    "unsigned": false
+                  },
+                  "algorithm": "TOKEN_BUCKET",
+                  "label": "daily"
+                }
+              ]
+            }
+          ],
+          "accessControl": {}
+        },
+        "redis": {
+          "d7b8e2835ab6edfc1fa2c1da6269d33d2f314262": {
+            "pod": "redis-3-0",
+            "flags": [
+              "slave"
+            ],
+            "primary": "99a0826bb05b50d9292a4d091e5f44934dc88edf",
+            "slots": []
+          },
+          "caa8c31e2d651e8cd1944fc82dfae94ff57784d6": {
+            "pod": "redis-4-0",
+            "flags": [
+              "slave"
+            ],
+            "primary": "ae46077ac840870d94e633c398d4518ead131cbc",
+            "slots": []
+          },
+          "d5ca12747cc77482763e542fc8f4f399c57a61e3": {
+            "pod": "redis-2-0",
+            "flags": [
+              "slave"
+            ],
+            "primary": "530555b5eb32a70c1a8a7aa8331d90f9461b3454",
+            "slots": []
+          },
+          "ae46077ac840870d94e633c398d4518ead131cbc": {
+            "pod": "redis-1-0",
+            "flags": [
+              "master"
+            ],
+            "primary": "-",
+            "slots": [
+              "5461-10922"
+            ]
+          },
+          "5262fa48591539d3e262da81c9932788a5cbb3c6": {
+            "pod": "redis-6-0",
+            "flags": [
+              "slave"
+            ],
+            "primary": "99a0826bb05b50d9292a4d091e5f44934dc88edf",
+            "slots": []
+          },
+          "c3c50a890a9231b2cb163907ec60b598854b6660": {
+            "pod": "redis-7-0",
+            "flags": [
+              "slave"
+            ],
+            "primary": "ae46077ac840870d94e633c398d4518ead131cbc",
+            "slots": []
+          },
+          "f5ad1646830991b1aa1d9c348bd403c1bd94c9ca": {
+            "pod": "redis-8-0",
+            "flags": [
+              "slave"
+            ],
+            "primary": "530555b5eb32a70c1a8a7aa8331d90f9461b3454",
+            "slots": []
+          },
+          "99a0826bb05b50d9292a4d091e5f44934dc88edf": {
+            "pod": "redis-0-0",
+            "flags": [
+              "myself",
+              "master"
+            ],
+            "primary": "-",
+            "slots": [
+              "0-5460"
+            ]
+          },
+          "530555b5eb32a70c1a8a7aa8331d90f9461b3454": {
+            "pod": "redis-5-0",
+            "flags": [
+              "master"
+            ],
+            "primary": "-",
+            "slots": [
+              "10923-16383"
+            ]
+          }
+        },
+        "placement": {
+          "mongo": [
+            {
+              "_id": 0,
+              "name": "mongo-0.mongo.fluxgate-resilience.svc.cluster.local:27017",
+              "health": 1,
+              "state": 1,
+              "stateStr": "PRIMARY",
+              "uptime": 389,
+              "optime": {
+                "ts": {
+                  "$timestamp": "7694772495940845574"
+                },
+                "t": {
+                  "high": 0,
+                  "low": 1,
+                  "unsigned": false
+                }
+              },
+              "optimeDate": "2026-10-09T20:47:13.000Z",
+              "lastAppliedWallTime": "2026-10-09T20:47:13.324Z",
+              "lastDurableWallTime": "2026-10-09T20:47:13.324Z",
+              "syncSourceHost": "",
+              "syncSourceId": -1,
+              "infoMessage": "Could not find member to sync from",
+              "electionTime": {
+                "$timestamp": "7694772491645878273"
+              },
+              "electionDate": "2026-10-09T20:47:12.000Z",
+              "configVersion": 1,
+              "configTerm": 1,
+              "self": true,
+              "lastHeartbeatMessage": ""
+            },
+            {
+              "_id": 1,
+              "name": "mongo-1.mongo.fluxgate-resilience.svc.cluster.local:27017",
+              "health": 1,
+              "state": 2,
+              "stateStr": "SECONDARY",
+              "uptime": 12,
+              "optime": {
+                "ts": {
+                  "$timestamp": "7694772448696205313"
+                },
+                "t": {
+                  "high": -1,
+                  "low": -1,
+                  "unsigned": false
+                }
+              },
+              "optimeDurable": {
+                "ts": {
+                  "$timestamp": "7694772448696205313"
+                },
+                "t": {
+                  "high": -1,
+                  "low": -1,
+                  "unsigned": false
+                }
+              },
+              "optimeDate": "2026-10-09T20:47:02.000Z",
+              "optimeDurableDate": "2026-10-09T20:47:02.000Z",
+              "lastAppliedWallTime": "2026-10-09T20:47:13.324Z",
+              "lastDurableWallTime": "2026-10-09T20:47:13.324Z",
+              "lastHeartbeat": "2026-10-09T20:47:12.751Z",
+              "lastHeartbeatRecv": "2026-10-09T20:47:13.755Z",
+              "pingMs": {
+                "high": 0,
+                "low": 0,
+                "unsigned": false
+              },
+              "lastHeartbeatMessage": "",
+              "syncSourceHost": "",
+              "syncSourceId": -1,
+              "infoMessage": "",
+              "configVersion": 1,
+              "configTerm": 1
+            },
+            {
+              "_id": 2,
+              "name": "mongo-2.mongo.fluxgate-resilience.svc.cluster.local:27017",
+              "health": 1,
+              "state": 2,
+              "stateStr": "SECONDARY",
+              "uptime": 12,
+              "optime": {
+                "ts": {
+                  "$timestamp": "7694772448696205313"
+                },
+                "t": {
+                  "high": -1,
+                  "low": -1,
+                  "unsigned": false
+                }
+              },
+              "optimeDurable": {
+                "ts": {
+                  "$timestamp": "7694772448696205313"
+                },
+                "t": {
+                  "high": -1,
+                  "low": -1,
+                  "unsigned": false
+                }
+              },
+              "optimeDate": "2026-10-09T20:47:02.000Z",
+              "optimeDurableDate": "2026-10-09T20:47:02.000Z",
+              "lastAppliedWallTime": "2026-10-09T20:47:13.324Z",
+              "lastDurableWallTime": "2026-10-09T20:47:13.324Z",
+              "lastHeartbeat": "2026-10-09T20:47:12.750Z",
+              "lastHeartbeatRecv": "2026-10-09T20:47:13.755Z",
+              "pingMs": {
+                "high": 0,
+                "low": 0,
+                "unsigned": false
+              },
+              "lastHeartbeatMessage": "",
+              "syncSourceHost": "",
+              "syncSourceId": -1,
+              "infoMessage": "",
+              "configVersion": 1,
+              "configTerm": 1
+            }
+          ],
+          "redis": [
+            {
+              "master": "redis-0-0",
+              "master_node": "fluxgate-resilience-control-plane",
+              "replica": "redis-3-0",
+              "replica_node": "fluxgate-resilience-worker"
+            },
+            {
+              "master": "redis-1-0",
+              "master_node": "fluxgate-resilience-worker",
+              "replica": "redis-4-0",
+              "replica_node": "fluxgate-resilience-worker2"
+            },
+            {
+              "master": "redis-2-0",
+              "master_node": "fluxgate-resilience-worker2",
+              "replica": "redis-5-0",
+              "replica_node": "fluxgate-resilience-control-plane"
+            },
+            {
+              "master": "redis-0-0",
+              "master_node": "fluxgate-resilience-control-plane",
+              "replica": "redis-6-0",
+              "replica_node": "fluxgate-resilience-worker2"
+            },
+            {
+              "master": "redis-1-0",
+              "master_node": "fluxgate-resilience-worker",
+              "replica": "redis-7-0",
+              "replica_node": "fluxgate-resilience-control-plane"
+            },
+            {
+              "master": "redis-2-0",
+              "master_node": "fluxgate-resilience-worker2",
+              "replica": "redis-8-0",
+              "replica_node": "fluxgate-resilience-worker"
+            }
+          ]
+        }
+      },
+      {
+        "check": "mongo-no-quorum-publication",
+        "publication": {
+          "passed": true,
+          "operationId": "resilience-18773ab340ba4b1e8cb9116bc430f07a",
+          "beforeRevision": 2,
+          "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+          "published": null,
+          "commitStatus": "unknown",
+          "requiresRecoveryResolution": true,
+          "attempts": 12,
+          "availabilityFailureClasses": [
+            "MongoSocketReadTimeoutException",
+            "MongoWriteConcernException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException"
+          ],
+          "elapsedSeconds": 30.745570681
+        },
+        "bounded_seconds": 31.615,
+        "guarantee": "Active publication blocked; previously committed reads need not be unavailable"
+      },
+      {
+        "check": "mongo-no-quorum-majority-resolution",
+        "observation": {
+          "passed": true,
+          "operationId": "resilience-18773ab340ba4b1e8cb9116bc430f07a",
+          "beforeRevision": 2,
+          "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+          "published": null,
+          "commitStatus": "unknown",
+          "requiresRecoveryResolution": true,
+          "attempts": 12,
+          "availabilityFailureClasses": [
+            "MongoSocketReadTimeoutException",
+            "MongoWriteConcernException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException",
+            "MongoTimeoutException"
+          ],
+          "elapsedSeconds": 30.745570681
+        },
+        "resolution": {
+          "passed": true,
+          "published": false,
+          "operationId": "resilience-18773ab340ba4b1e8cb9116bc430f07a",
+          "revision": 2,
+          "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+          "snapshotId": "28518dd4-d2be-4b06-9b8f-53224cc65712",
+          "commitStatus": "not-published-after-majority-recovery",
+          "majorityCommitBarrier": true,
+          "majorityReadVerified": true
+        },
+        "active_pointer_unchanged": true
+      },
+      {
+        "check": "redis-min-replicas-write-guard",
+        "primary": "redis-5-0",
+        "paused_replicas": [
+          "redis-2-0",
+          "redis-8-0"
+        ],
+        "exact_error": "NOREPLICAS Not enough good replicas to write.",
+        "cluster_info": "cluster_state:ok\ncluster_slots_assigned:16384\ncluster_slots_ok:16384\ncluster_slots_pfail:0\ncluster_slots_fail:0\ncluster_known_nodes:9\ncluster_size:3\ncluster_current_epoch:7\ncluster_my_epoch:7\ncluster_stats_messages_ping_sent:12818\ncluster_stats_messages_pong_sent:12796\ncluster_stats_messages_meet_sent:1\ncluster_stats_messages_fail_sent:8\ncluster_stats_messages_auth-req_sent:16\ncluster_stats_messages_update_sent:3\ncluster_stats_messages_sent:25642\ncluster_stats_messages_ping_received:12778\ncluster_stats_messages_pong_received:12806\ncluster_stats_messages_fail_received:7\ncluster_stats_messages_auth-req_received:2\ncluster_stats_messages_auth-ack_received:4\ncluster_stats_messages_update_received:8\ncluster_stats_messages_received:25605\ntotal_cluster_links_buffer_limit_exceeded:0",
+        "real_gateway_status": 503
+      },
+      {
+        "check": "redis-shard-unavailable",
+        "paused_members": [
+          "redis-5-0",
+          "redis-2-0",
+          "redis-8-0"
+        ],
+        "cluster_info": "cluster_state:fail\ncluster_slots_assigned:16384\ncluster_slots_ok:10923\ncluster_slots_pfail:0\ncluster_slots_fail:5461\ncluster_known_nodes:9\ncluster_size:3\ncluster_current_epoch:7\ncluster_my_epoch:1\ncluster_stats_messages_ping_sent:12921\ncluster_stats_messages_pong_sent:13052\ncluster_stats_messages_fail_sent:40\ncluster_stats_messages_auth-ack_sent:3\ncluster_stats_messages_update_sent:3\ncluster_stats_messages_sent:26019\ncluster_stats_messages_ping_received:13048\ncluster_stats_messages_pong_received:12893\ncluster_stats_messages_meet_received:4\ncluster_stats_messages_fail_received:10\ncluster_stats_messages_auth-req_received:4\ncluster_stats_messages_received:25959\ntotal_cluster_links_buffer_limit_exceeded:0",
+        "real_gateway_status": 503
+      }
+    ]
+  },
+  "raw_sha256": {
+    "publication-recovery-resolution.json": "00387c8f2062bda1a91cf3e4364d77ff0749a79878b69964c0c3e5de5d8023bb",
+    "publication-f6db6a3138404e34b95e0efca03d55b3.json": "21161a1f404be5834b62e20e156e66ce602825fcb41587bab6508761b6ca5d09",
+    "pending-result.json": "0f6085f9d5c9ff4936625f4f8baa25434460a61648b3673d0dfe04c95c9b5a39",
+    "progress.json": "18d06ec3f7820fec3d12af6156d74cccaf74d745e6594010235d2a8bb64dcf65"
+  }
+}

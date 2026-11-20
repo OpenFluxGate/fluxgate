@@ -1,0 +1,73 @@
+{
+  "passed": false,
+  "complete": false,
+  "diagnostic_only": true,
+  "reason": "Redis promoted in 4.973s, but the configured 30s circuit-breaker open interval prolonged serving failure beyond the unchanged 30s RTO under 100RPS. The gateway preset now retains enabled fail-closed circuit breaking with a5s open interval.",
+  "promotion_seconds": 4.973,
+  "counter_preserved": true,
+  "fault_timestamps": {
+    "rto_budget_started": {
+      "unix_ms": 1791583967560,
+      "utc": "2026-10-09T22:12:47.560Z"
+    },
+    "fault_start": {
+      "unix_ms": 1791583967688,
+      "utc": "2026-10-09T22:12:47.688Z"
+    },
+    "paused_verified": {
+      "unix_ms": 1791583967810,
+      "utc": "2026-10-09T22:12:47.810Z"
+    }
+  },
+  "raw_proofs": {
+    "summary.json": {
+      "sha256": "00074667e36dd7d16de5b80f220361b23f442aba7b4f4ef5e291073fcc2a45e2",
+      "bytes": 1490
+    },
+    "raw-load.json": {
+      "sha256": "112ddccec064df518e3981c4c89261b13dd55bd2eeaa94fdb7bfa8bb95249152",
+      "bytes": 8506952
+    },
+    "ha/failure.json": {
+      "sha256": "b11b34f792c1dad7cc99e758b41401c7e0ca0c4ee10d5e0ff4e339e25db274ce",
+      "bytes": 15882
+    }
+  },
+  "warmup": {
+    "target_requests": 500,
+    "planned_requests": 500,
+    "submitted_requests": 500,
+    "completed_requests": 500,
+    "target_rps": 100.0,
+    "achieved_rps": 99.98312362810688,
+    "measurement_seconds": 5,
+    "elapsed_including_drain_seconds": 5.000843961024657,
+    "omitted_schedules": 0,
+    "unaccounted_schedules": 0,
+    "worker_failures": 0,
+    "transport_errors": 0,
+    "unexpected_body_responses": 0,
+    "all_statuses": {
+      "200": 500
+    },
+    "request_distributions": {
+      "GET": {
+        "200": 500
+      }
+    },
+    "expected_status_fraction": 1.0,
+    "latency_ms": {
+      "p50": 17.309874994680285,
+      "p95": 180.25433411821723,
+      "p99": 335.0528762675822,
+      "max": 445.88995911180973
+    },
+    "dispatch_lag_ms": {
+      "p95": 3.2851260621100664,
+      "max": 19.117875955998898
+    },
+    "schedule_start_unix_ms": 1791583953384.1694,
+    "schedule_end_unix_ms": 1791583958384.1694,
+    "clock_unix_offset_seconds": 1790353654.4502518
+  }
+}

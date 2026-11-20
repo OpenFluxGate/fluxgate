@@ -124,7 +124,8 @@ public class TestController {
    *
    * <ul>
    *   <li>curl http://localhost:8085/api/test/composite (uses IP only)
-   *   <li>curl -H "X-User-Id: user-123" http://localhost:8085/api/test/composite (uses IP:user-123)
+   *   <li>curl -H "X-User-Id: user-123" http://localhost:8085/api/test/composite (uses IP:user-123;
+   *       requires identity.source=HEADERS, demo only)
    * </ul>
    *
    * <p>Different users from the same IP have separate rate limits.
@@ -135,7 +136,7 @@ public class TestController {
       description =
           "Rate-limited to 10 requests per minute per IP+User combination. "
               + "Uses 'composite-key-rules' rule set with CUSTOM scope. "
-              + "Provide X-User-Id header to set user identifier. "
+              + "Provide X-User-Id header to set user identifier (requires identity.source=HEADERS, demo only). "
               + "Call POST /api/admin/rules/composite first to create rules.")
   @ApiResponses({
     @ApiResponse(responseCode = "200", description = "Request allowed"),
@@ -202,15 +203,10 @@ public class TestController {
     return ResponseEntity.ok(response);
   }
 
+  // Forwarding headers are client-controlled; only the starter's trusted-proxies handling may
+  // honour
+  // them. This sample uses the socket address.
   private String getClientIp(HttpServletRequest request) {
-    String xForwardedFor = request.getHeader("X-Forwarded-For");
-    if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
-      return xForwardedFor.split(",")[0].trim();
-    }
-    String xRealIp = request.getHeader("X-Real-IP");
-    if (xRealIp != null && !xRealIp.isEmpty()) {
-      return xRealIp;
-    }
     return request.getRemoteAddr();
   }
 }

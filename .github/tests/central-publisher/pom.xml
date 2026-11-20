@@ -1,0 +1,18 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>invalid.local.fluxgate</groupId>
+  <artifactId>central-offline-proof</artifactId>
+  <version>0.0.0-proof</version>
+  <packaging>pom</packaging>
+  <dependencies>
+    <dependency><groupId>org.sonatype.central</groupId><artifactId>central-publishing-maven-plugin</artifactId><version>0.12.0</version></dependency>
+  </dependencies>
+  <build><plugins><plugin>
+    <groupId>org.sonatype.central</groupId><artifactId>central-publishing-maven-plugin</artifactId><version>0.12.0</version><extensions>true</extensions>
+    <configuration>
+      <autoPublish>true</autoPublish><waitUntil>published</waitUntil>
+      <skipUpload>true</skipUpload><ignorePublishedComponents>false</ignorePublishedComponents>
+      <centralBaseUrl>http://127.0.0.1:1</centralBaseUrl>
+    </configuration>
+  </plugin></plugins></build>
+</project>

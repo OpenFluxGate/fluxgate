@@ -2,7 +2,7 @@
 
 이 문서는 FluxGate를 이해하기 위해 필요한 기반 지식을 설명합니다.
 
-[< 아키텍처 개요로 돌아가기](README.ko.md)
+[< 아키텍처 개요로 돌아가기](README.ko.md) | [English](../../en/architecture/base-knowledge.md)
 
 ---
 
@@ -307,38 +307,58 @@ EVALSHA (빠름) ← FluxGate 사용
 ### 2.5 FluxGate의 Token Bucket Lua 스크립트
 
 ```lua
--- token_bucket_consume.lua (간략화)
+-- token_bucket_consume.lua를 TOKEN_BUCKET 대역 하나로 줄인 간략판.
+-- 실제 스크립트는 한 규칙의 모든 대역을 한 호출로 받고(KEYS[1..n], 같은 해시 태그),
+-- 하나라도 쓰기 전에 전부 검사하며, SLIDING_WINDOW·FIXED_WINDOW도 처리합니다.
+-- ARGV[1] = permits, ARGV[2] = max_bucket_ttl_seconds, 이어서 대역마다:
+-- capacity, window_micros, algorithm_code, buckets_or_zero, window_end_or_zero
 
-local bucket_key = KEYS[1]
-local capacity = tonumber(ARGV[1])
-local window_nanos = tonumber(ARGV[2])
-local permits = tonumber(ARGV[3])
+local key            = KEYS[1]
+local permits        = tonumber(ARGV[1])
+local max_ttl        = tonumber(ARGV[2])
+local capacity       = tonumber(ARGV[3])
+local window_micros  = tonumber(ARGV[4])
 
--- Redis 서버 시간 사용 (클럭 드리프트 방지)
-local time_info = redis.call('TIME')
-local now_nanos = time_info[1] * 1000000000 + time_info[2] * 1000
+-- Redis 서버 시간 사용 (애플리케이션 노드 간 클럭 드리프트 방지)
+local time_info  = redis.call('TIME')
+local now_micros = tonumber(time_info[1]) * 1000000 + tonumber(time_info[2])
+local ttl = math.min(max_ttl, math.max(1, math.ceil(window_micros / 1000000 * 1.1)))
 
--- 현재 상태 읽기
-local data = redis.call('HMGET', bucket_key, 'tokens', 'last_refill')
-local tokens = tonumber(data[1]) or capacity
-local last_refill = tonumber(data[2]) or now_nanos
-
--- 토큰 리필 계산 (정수 연산만 사용)
-local elapsed = now_nanos - last_refill
-local refill = math.floor((elapsed * capacity) / window_nanos)
-tokens = math.min(capacity, tokens + refill)
-
--- 소비 시도
-if tokens >= permits then
-    tokens = tokens - permits
-    redis.call('HMSET', bucket_key, 'tokens', tokens, 'last_refill', now_nanos)
-    redis.call('EXPIRE', bucket_key, 86400)  -- TTL 설정
-    return {1, tokens, 0}  -- 허용
-else
-    local wait = math.ceil((permits - tokens) * window_nanos / capacity)
-    return {0, tokens, wait}  -- 거부
+-- 현재 상태 읽기. 버킷이 없으면 가득 찬 상태로 시작
+local data        = redis.call('HMGET', key, 'tokens', 'last_refill_micros')
+local tokens      = tonumber(data[1])
+local last_refill = tonumber(data[2])
+if tokens == nil or last_refill == nil then
+    tokens, last_refill = capacity, now_micros
 end
+
+-- 정수 토큰만 리필. 시각은 그 토큰만큼만 전진하므로
+-- 1토큰 미만의 나머지는 다음 호출로 이월됩니다
+local elapsed = math.min(math.max(0, now_micros - last_refill), window_micros)
+local to_add  = math.floor(elapsed * capacity / window_micros)
+if to_add > 0 then
+    last_refill = last_refill + math.floor(to_add * window_micros / capacity)
+end
+tokens = math.min(capacity, tokens + to_add)
+if tokens >= capacity then last_refill = now_micros end
+
+if tokens < permits then
+    -- 거부: 아무것도 쓰지 않고, 이미 있는 버킷의 TTL만 갱신
+    redis.call('EXPIRE', key, ttl)
+    local wait = math.ceil((permits - tokens) * window_micros / capacity)
+    return {0, tokens, wait}
+end
+
+tokens = tokens - permits
+redis.call('HMSET', key, 'tokens', string.format('%.0f', tokens),
+                         'last_refill_micros', string.format('%.0f', last_refill))
+redis.call('EXPIRE', key, ttl)   -- min(max-bucket-ttl, max(1, ceil(window × 1.1)))
+return {1, tokens, 0}
 ```
+
+반환값은 여기서 줄였습니다. 실제 스크립트는 8개 값(허용 여부, 거부 대역, 남은 양, 대기 시간,
+리셋 시각, 한도, 기준 대역, Redis 시각)을 돌려줍니다. 전체 계약은
+[Lua 스크립트 흐름](README.ko.md#lua-스크립트-흐름)과 `fluxgate-redis-ratelimiter/README.md`를 참고하세요.
 
 ---
 
@@ -367,7 +387,7 @@ EVALSHA "a1b2c3..." → NOSCRIPT 에러!
 │                        Redis Server                          │
 │                                                              │
 │   ┌─────────────────────────────────────────────────────┐   │
-│   │              Channel: "fluxgate:reload"              │   │
+│   │              Channel: "fluxgate:rule-reload"         │   │
 │   └─────────────────────────────────────────────────────┘   │
 │         ▲                    │                              │
 │         │ PUBLISH            │ 메시지 전달                   │
@@ -388,12 +408,12 @@ EVALSHA "a1b2c3..." → NOSCRIPT 에러!
 
 **Publisher (메시지 발행)**
 ```bash
-PUBLISH fluxgate:reload '{"ruleSetId": "api-limits", "action": "RELOAD"}'
+PUBLISH fluxgate:rule-reload '{"ruleSetId": "api-limits", "action": "RELOAD"}'
 ```
 
 **Subscriber (메시지 구독)**
 ```bash
-SUBSCRIBE fluxgate:reload
+SUBSCRIBE fluxgate:rule-reload
 # 메시지가 오면 자동으로 수신
 ```
 
@@ -405,7 +425,7 @@ Admin이 규칙 변경
        ▼
 ┌─────────────────────┐
 │ PUBLISH 메시지 발행  │
-│ Channel: reload     │
+│ Channel: rule-reload│
 └─────────────────────┘
        │
        ▼ Redis가 모든 구독자에게 전달
@@ -430,8 +450,9 @@ Instance 1  Instance 2  Instance 3
 # FluxGate 설정
 fluxgate:
   reload:
-    strategy: REDIS_PUBSUB   # 또는 POLLING
-    polling-interval: 30s    # POLLING일 때 사용
+    strategy: PUBSUB         # 또는 POLLING
+    polling:
+      interval: 30s          # POLLING일 때 사용
 ```
 
 ---
@@ -725,7 +746,7 @@ public class FluxgateRateLimitFilter implements Filter {
         } else {
             httpResponse.setStatus(429);  // Too Many Requests
             httpResponse.setHeader("Retry-After",
-                String.valueOf(result.getRetryAfterMs() / 1000));
+                String.valueOf(result.getRetryAfterMillis() / 1000));
             httpResponse.getWriter().write("Rate limit exceeded");
         }
     }
@@ -839,10 +860,10 @@ FluxGate는 **Token Bucket**을 선택했습니다:
 4. **Multi-Band 지원** (10/초 + 100/분 + 1000/시간)
 
 ```java
-RateLimitRule.builder()
-    .addBand(10, Duration.ofSeconds(1))    // 초당 10개
-    .addBand(100, Duration.ofMinutes(1))   // 분당 100개
-    .addBand(1000, Duration.ofHours(1))    // 시간당 1000개
+RateLimitRule rule = RateLimitRule.builder("multi-band")
+    .addBand(RateLimitBand.builder(Duration.ofSeconds(1), 10).build())    // 초당 10개
+    .addBand(RateLimitBand.builder(Duration.ofMinutes(1), 100).build())   // 분당 100개
+    .addBand(RateLimitBand.builder(Duration.ofHours(1), 1000).build())    // 시간당 1000개
     .build();
 ```
 

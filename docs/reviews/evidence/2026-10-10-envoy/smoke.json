@@ -1,0 +1,16 @@
+{
+  "gateway_statuses": [
+    200,
+    200,
+    429
+  ],
+  "mtls_health": 200,
+  "missing_client_certificate": {
+    "http": "000",
+    "curl_exit": 56
+  },
+  "published_policy_readiness": 200,
+  "plaintext_authz": 404,
+  "mtls_health_after_negative": 200,
+  "network_policy_enforcement": "requires separate verify-network-policy.sh evidence"
+}

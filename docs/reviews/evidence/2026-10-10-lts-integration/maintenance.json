@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "scenario": "lts-maintenance-transition",
+  "passed": true,
+  "source_commit": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
+  "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+  "old_application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+  "evidence": {
+    "quiesce_record": {
+      "sha256": "b2c9cc5834d0767a9446136a8309a0740fec01c2166ad521072f2592c9622d4c",
+      "bytes": 1152
+    },
+    "migration_record": {
+      "sha256": "158b7e3dcd7337f3fdf4c523e60ca865bf1701fe2761e04c638445cbef14799f",
+      "bytes": 3723
+    },
+    "deployment_record": {
+      "sha256": "4dd67151e6eb71e35785cc387193804d83060e6f8fc2a187321dbee97f76aff5",
+      "bytes": 1394
+    },
+    "deployment_verified": {
+      "sha256": "4dd67151e6eb71e35785cc387193804d83060e6f8fc2a187321dbee97f76aff5",
+      "bytes": 1394
+    },
+    "deployment_terminal_witness": {
+      "sha256": "980f4d2561cc98d412ca9362e6fb195e758c22d48009418da886c5e6956bef05",
+      "bytes": 6444
+    },
+    "private_backup": {
+      "sha256": "44fd8ce09c51e933b76424243b2561fa77d39ecadaaff61ac8a80e28113a227a",
+      "bytes": 46487
+    },
+    "baseline": {
+      "sha256": "afcc154d96536128ed5617c806b20f4e5a5389cb620191fdae4a80ccdba855bf",
+      "bytes": 735
+    },
+    "quiesce_helper": {
+      "sha256": "2867c0dbb280fd443a427e02a2eac58a123e85f1f8e951281938a6c8d30a5494",
+      "bytes": 4151
+    },
+    "initial_rejected_helper": {
+      "sha256": "1170491f0fa861a3cab48c90ad80c4cb9011ef1a9dd0277e6017c503d0b4b61a",
+      "bytes": 21430
+    },
+    "corrected_migration_helper": {
+      "sha256": "ad4e01b1cc336ff789c2837ba15bd51237b023574c2227e722645b7261a61c36",
+      "bytes": 22490
+    },
+    "deployment_checker": {
+      "sha256": "eed7b85c380753815bb4a263889378b8b54ff9d54a2a834face965594e83a674",
+      "bytes": 2132
+    },
+    "initial_rejected_log": {
+      "sha256": "318aabfd5784bf1144ef5984603ea4ae5350fcbff202d46a3297e543ccd3d661",
+      "bytes": 51
+    },
+    "corrected_migration_log": {
+      "sha256": "617d9a547062aeb2abb0f571b3674f8745f5d2728b9ece76e3a595daa5ffc439",
+      "bytes": 115
+    },
+    "quiesce_log": {
+      "sha256": "eb3caa092b397ef3f049c75e86f428047072602819c2d9d228493e50aa993a0a",
+      "bytes": 118
+    },
+    "deployment_checker_log": {
+      "sha256": "e4041150f530acca46d3c88f71e8513090cc1a6e72cbb2bc09f7d858d62bce74",
+      "bytes": 96
+    },
+    "envelope_regression": {
+      "sha256": "564eaf642c4e8842bb235fbd735b18d52d06a42a43101a264f51f90a14c2ef89",
+      "bytes": 401
+    },
+    "initial_rejected_probe_state": {
+      "sha256": "0d3b1ae0cfd9599ce1dd2fac49d0659985b51045ffc856b966326474c06cc023",
+      "bytes": 1180
+    }
+  },
+  "quiesce": {
+    "desired": 0,
+    "ready": 0,
+    "authz_pod_count": 0,
+    "exclusive_namespace_writer_guard": true,
+    "published_policy_and_protected_counter_preserved": true
+  },
+  "migration": {
+    "backup_verified_before_ddl": true,
+    "read_concern": "majority",
+    "write_concern": "majority",
+    "write_timeout_ms": 15000,
+    "document_and_acl_preserved": true,
+    "published_pointer_and_revision_indexes_preserved": true,
+    "unrelated_indexes_preserved": true,
+    "second_invocation_idempotent": true,
+    "authz_absent_before_and_after": true,
+    "owned_probe_and_two_network_policies_cleaned": true,
+    "before_known_index": {
+      "name": "id_1",
+      "key": [
+        [
+          "id",
+          1
+        ]
+      ],
+      "unique": true
+    },
+    "final_known_indexes": [
+      {
+        "name": "id_1",
+        "key": [
+          [
+            "id",
+            1
+          ]
+        ],
+        "unique": false
+      },
+      {
+        "name": "ruleSetId_1_id_1_unique",
+        "key": [
+          [
+            "ruleSetId",
+            1
+          ],
+          [
+            "id",
+            1
+          ]
+        ],
+        "unique": true
+      }
+    ],
+    "scopes": [
+      {
+        "collection": "rate_limit_rules",
+        "document_count": 0,
+        "document_sha256": "eeb85c2675888473ec64b7580aa0c76c6fd6b2bd51828870286ef202ad89dae2",
+        "acl_document_count": 0,
+        "acl_sha256": "eeb85c2675888473ec64b7580aa0c76c6fd6b2bd51828870286ef202ad89dae2",
+        "before_index_sha256": "1027de86f5baf766e0208f15578dadd9336d0e2ffaa5474479bb83ecb7921fb8",
+        "after_index_sha256": "16640ec45cec32426e19bd77b0a8281e44284ef1ace1177c3c503a626d12d430",
+        "before_index_count": 4
+      },
+      {
+        "collection": "rate_limit_rules_policies",
+        "document_count": 1,
+        "document_sha256": "f1b256c10284b7a25a8eaeda480a494eff357edb26dd0b8579fc150ce0ede976",
+        "acl_document_count": 0,
+        "acl_sha256": "eeb85c2675888473ec64b7580aa0c76c6fd6b2bd51828870286ef202ad89dae2",
+        "before_index_sha256": "7113a2b825325d43a1375cef58f901359960675bc3969f18edae25385733acc5",
+        "after_index_sha256": "7113a2b825325d43a1375cef58f901359960675bc3969f18edae25385733acc5",
+        "before_index_count": 1
+      },
+      {
+        "collection": "rate_limit_rules_revisions",
+        "document_count": 22,
+        "document_sha256": "75ea9936af2e404c3c55e58acb9546140d17e4c06bc0fdc51e2f8ca07306313c",
+        "acl_document_count": 22,
+        "acl_sha256": "17b025bc71bde46ca2b0ff67bb91a4fa8c3632dc9b2dfa018b5c83c9dd4fca58",
+        "before_index_sha256": "c9a73f10adf3a74aa4a8a4bc79906f8b458af8f22f579b13aaee3995291c12a8",
+        "after_index_sha256": "c9a73f10adf3a74aa4a8a4bc79906f8b458af8f22f579b13aaee3995291c12a8",
+        "before_index_count": 4
+      }
+    ]
+  },
+  "deployment": {
+    "new_pod_count": 2,
+    "old_uids_replaced": true,
+    "both_jars_match": true,
+    "published_pointer_and_counter_preserved": true,
+    "authorized_backend_status": 200,
+    "exhausted_quota_status": 429,
+    "zero_downtime_claim": false,
+    "independent_terminal_witness_valid": true,
+    "terminal_exit_code": 0
+  },
+  "execution_boundaries": {
+    "quiesce_and_migration_exit_zero": "Observed by root PTY execution; not independently captured by a terminal wrapper.",
+    "post_deployment": "Independently terminal-witnessed read-only deployment checker."
+  },
+  "initial_attempt": {
+    "accepted": false,
+    "exception_class": "ValueError",
+    "ddl_reached": false,
+    "backup_created": false,
+    "reason": "EXTENDED BSON envelope numeric wrappers rejected by Python integer metadata validation; canonical BSON strings retained during envelope correction.",
+    "owned_probe_cleanup_recorded": true
+  },
+  "offline_forged_rejections": 13,
+  "limits": [
+    "Exclusive root scheduling and workload snapshots do not lock out external administrators or non-Pod clients.",
+    "Backup contains the fixed rules, pointer and revision collections; DDL touches only the rules collection.",
+    "This is an explicitly quiesced local maintenance transition, with no zero downtime claim.",
+    "Final exact index definitions are assertions from the bound packaged-Java migration proof, not an additional post-rollout index capture."
+  ]
+}

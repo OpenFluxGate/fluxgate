@@ -41,6 +41,30 @@ class RedisRuleChangeNotifierTest {
   }
 
   @Test
+  void shouldAcceptASigningSecret() {
+    RedisRuleChangeNotifier notifier =
+        new RedisRuleChangeNotifier(
+            "redis://localhost:6379",
+            "channel",
+            Duration.ofSeconds(5),
+            "source",
+            "unit-test-only-secret");
+
+    assertThat(notifier).isNotNull();
+    notifier.close();
+  }
+
+  @Test
+  void shouldTreatABlankSecretAsAbsent() {
+    RedisRuleChangeNotifier notifier =
+        new RedisRuleChangeNotifier(
+            "redis://localhost:6379", "channel", Duration.ofSeconds(5), "source", "   ");
+
+    assertThat(notifier).isNotNull();
+    notifier.close();
+  }
+
+  @Test
   void shouldDetectClusterMode() {
     // Cluster mode is detected by comma-separated URIs
     RedisRuleChangeNotifier notifier =
@@ -50,6 +74,24 @@ class RedisRuleChangeNotifierTest {
     // Should not throw - cluster mode detected
     assertThat(notifier).isNotNull();
     notifier.close();
+  }
+
+  @Test
+  void aCommaInTheCredentialsIsNotACluster() throws Exception {
+    assertThat(isCluster("redis://:pa,ss@localhost:6379")).isFalse();
+    assertThat(isCluster("redis://:pa,ss@n1:6379,redis://:pa,ss@n2:6379")).isTrue();
+  }
+
+  private static boolean isCluster(String uri) throws Exception {
+    RedisRuleChangeNotifier notifier =
+        new RedisRuleChangeNotifier(uri, "channel", Duration.ofSeconds(5), "source");
+    try {
+      java.lang.reflect.Field field = RedisRuleChangeNotifier.class.getDeclaredField("isCluster");
+      field.setAccessible(true);
+      return field.getBoolean(notifier);
+    } finally {
+      notifier.close();
+    }
   }
 
   @Test

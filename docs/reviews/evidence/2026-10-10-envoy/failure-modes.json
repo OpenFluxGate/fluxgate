@@ -1,0 +1,78 @@
+{
+  "result": "pass",
+  "context": "kind-fluxgate-enterprise",
+  "checks": [
+    {
+      "check": "echo-healthy-before-failures",
+      "status": 200
+    },
+    {
+      "check": "healthy-baseline",
+      "method": "GET",
+      "status": 429,
+      "elapsed_ms": 408
+    },
+    {
+      "check": "redis-paused-fail-closed",
+      "method": "GET",
+      "status": 503,
+      "elapsed_ms": 2025
+    },
+    {
+      "check": "redis-paused-fail-closed",
+      "method": "OPTIONS",
+      "status": 503,
+      "elapsed_ms": 2077
+    },
+    {
+      "check": "redis-recovered",
+      "method": "GET",
+      "status": 429,
+      "elapsed_ms": 33
+    },
+    {
+      "check": "mongo-task-paused",
+      "state": "PAUSED"
+    },
+    {
+      "check": "mongo-paused-fail-closed",
+      "method": "GET",
+      "status": 503,
+      "elapsed_ms": 4038
+    },
+    {
+      "check": "mongo-paused-fail-closed",
+      "method": "OPTIONS",
+      "status": 503,
+      "elapsed_ms": 2012
+    },
+    {
+      "check": "mongo-recovered",
+      "method": "GET",
+      "status": 429,
+      "elapsed_ms": 289
+    },
+    {
+      "check": "authz-unavailable-fail-closed",
+      "method": "GET",
+      "status": 500,
+      "elapsed_ms": 3
+    },
+    {
+      "check": "authz-unavailable-fail-closed",
+      "method": "OPTIONS",
+      "status": 500,
+      "elapsed_ms": 2
+    },
+    {
+      "check": "authz-recovered-with-existing-policy",
+      "method": "GET",
+      "status": 429,
+      "elapsed_ms": 190
+    },
+    {
+      "check": "echo-healthy-after-failures",
+      "status": 200
+    }
+  ]
+}

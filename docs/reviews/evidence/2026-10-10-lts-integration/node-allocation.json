@@ -1,0 +1,203 @@
+{
+  "schema": 1,
+  "scenario": "owned-node-cpu-allocation-qualification",
+  "passed": false,
+  "overall_acceptance": false,
+  "score_95_approved": false,
+  "source_commit": "f90a4ee1ef1520edfda5dc9291bbdaa82f9b7c4c",
+  "source_sha256": "ea1fe97c1238e3cd5c110fd7ea8809e67d1a79b4b9f28ec1997929a767aa6a34",
+  "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+  "parent_actual_exit": 1,
+  "parent_progress": {
+    "sha256": "a23dd24c056c30afaa9ffd5dcca1b69c4ae4754f561da802476332ee3f628a64",
+    "bytes": 7678
+  },
+  "predeclared_identity": {
+    "sha256": "72944966680d2c723593a79a8f92401738e54ddaee4d269f5b6533ee62277be2",
+    "bytes": 4562
+  },
+  "helper": {
+    "sha256": "e95af0f57053de796f4c30bc38f6568d77b681963501601526d16f7230436b7b",
+    "bytes": 12918
+  },
+  "helper_test_log": {
+    "sha256": "f41f027eb8de778295ce32988da832be6619310d72b84bd0c842ca544e1496d2",
+    "bytes": 112
+  },
+  "allocation_helper_simulated_tests": 13,
+  "allocation": {
+    "owned_nodes": 3,
+    "before_weight": 100,
+    "during_weight": 313,
+    "restored_weight": 100,
+    "docker_cpu_shares_metadata_unchanged": 0,
+    "original_config_restored": true,
+    "pod_resources_unchanged": true,
+    "sampler_cpu_request": "25m",
+    "sampler_cpu_limit": "250m",
+    "redis_min_replicas_to_write": 1,
+    "redis_max_lag_seconds": 1,
+    "redis_aof": "everysec",
+    "redis_replica_migration": false,
+    "healthy_attempts": 1,
+    "credential_attempts": 1,
+    "docker_vm_vcpu_count": 6,
+    "same_vm_cpu_parent_verified": true
+  },
+  "healthy": {
+    "scheduled": 1803,
+    "executed": 1803,
+    "exact_body_200": 1803,
+    "statuses": {
+      "200": 1803
+    },
+    "omitted_schedules": 0,
+    "omissions": [],
+    "interval_ms": 100,
+    "max_inflight": 24,
+    "duration_seconds": 180.30472579109482,
+    "pending": 0,
+    "request_and_reporter_drain_complete": true,
+    "cleanup_verified": true,
+    "max_dispatch_lag_ms": 32.385991187766194,
+    "max_service_latency_ms": 156.2369999010116,
+    "passed": true,
+    "raw": {
+      "sha256": "f9380590fa3583fc971084b5c9ec3c1f54ced2a3328ee79a5f79909817661eab",
+      "bytes": 647177
+    },
+    "terminal": {
+      "actual_child_exit": 0,
+      "terminal_witness_valid": true,
+      "raw_log": {
+        "sha256": "df140e8b2d40b0b2f8ef537f37363353ce735fe3fee8c2281def48bc063c2195",
+        "bytes": 885
+      },
+      "witness": {
+        "sha256": "eca6ae88c9fb5100844c863bede7edfa48464d22e92b4058b3d3f1ad91233e54",
+        "bytes": 7564
+      }
+    },
+    "instrumented": false
+  },
+  "credentials": {
+    "passed": false,
+    "complete": true,
+    "protocol_passed": true,
+    "rotation_availability_passed": false,
+    "final_acceptance_passed": false,
+    "phases": {
+      "mtls": {
+        "scheduled": 2015,
+        "executed": 2011,
+        "exact_body_200": 2011,
+        "statuses": {
+          "200": 2011
+        },
+        "omitted_schedules": 4,
+        "omissions": [
+          {
+            "first_sequence": 584,
+            "count": 4,
+            "reason": "lateness"
+          }
+        ],
+        "interval_ms": 100,
+        "max_inflight": 24,
+        "duration_seconds": 201.5060398420319,
+        "pending": 0,
+        "request_and_reporter_drain_complete": true,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 61.47256912663579,
+        "max_service_latency_ms": 903.7464170251042
+      },
+      "api-key": {
+        "scheduled": 1142,
+        "executed": 1142,
+        "exact_body_200": 1142,
+        "statuses": {
+          "200": 1142
+        },
+        "omitted_schedules": 0,
+        "omissions": [],
+        "interval_ms": 100,
+        "max_inflight": 24,
+        "duration_seconds": 114.20302900997922,
+        "pending": 0,
+        "request_and_reporter_drain_complete": true,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 14.172174036502838,
+        "max_service_latency_ms": 660.5944589246064
+      },
+      "stores": {
+        "scheduled": 675,
+        "executed": 673,
+        "exact_body_200": 673,
+        "statuses": {
+          "200": 673
+        },
+        "omitted_schedules": 2,
+        "omissions": [
+          {
+            "first_sequence": 80,
+            "count": 2,
+            "reason": "lateness"
+          }
+        ],
+        "interval_ms": 100,
+        "max_inflight": 24,
+        "duration_seconds": 67.51123457308859,
+        "pending": 0,
+        "request_and_reporter_drain_complete": true,
+        "cleanup_verified": true,
+        "max_dispatch_lag_ms": 38.39162806980312,
+        "max_service_latency_ms": 721.1712501011789
+      }
+    },
+    "raw": {
+      "sha256": "97925134ef3a31500f967431bbca52e590ab6a9cbd86497f514183ac928344b4",
+      "bytes": 1656686
+    },
+    "terminal": {
+      "actual_child_exit": 1,
+      "terminal_witness_valid": true,
+      "raw_log": {
+        "sha256": "0187a1319a082b306a676754ea248fe144b49d25603cecb3d1a869163c575240",
+        "bytes": 218
+      },
+      "witness": {
+        "sha256": "2aa142531c842aeea4f9022f58a29b371d9bcce14df00af936d06d38e9bbf9f0",
+        "bytes": 7643
+      }
+    }
+  },
+  "network": null,
+  "final_state": {
+    "passed": true,
+    "read_only": true,
+    "checks": 19,
+    "raw": {
+      "sha256": "d4f6b49448cfa928570727a740158deeb0b53dc9f588ac8e2fa0c166a6230601",
+      "bytes": 13589
+    },
+    "terminal": {
+      "actual_child_exit": 0,
+      "terminal_witness_valid": true,
+      "raw_log": {
+        "sha256": "d4f6b49448cfa928570727a740158deeb0b53dc9f588ac8e2fa0c166a6230601",
+        "bytes": 13589
+      },
+      "witness": {
+        "sha256": "c473e67d3a2d3b5389e8f4a27db750becc461f0fe915a91bc158f6cbffce3d2b",
+        "bytes": 7550
+      }
+    }
+  },
+  "default_environment_full_credentials_passed": false,
+  "cpu_cause_proven": false,
+  "limitations": [
+    "Relative CPU allocation experiment; does not increase CPUcapacity or prove causality.",
+    "Default-allocation full credential failure is retained, never reclassified.",
+    "Single DockerVM, not host/AZ fault qualification."
+  ]
+}

@@ -1,0 +1,341 @@
+{
+  "schema_version": 1,
+  "profile": "load",
+  "profile_passed": true,
+  "global_acceptance": false,
+  "global_complete": false,
+  "credential_acceptance": false,
+  "source_commit_at_invocation": "d4c4d88367343498df949cc8e07fbb2443fd20d0",
+  "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+  "independent_terminal_exit_code": 0,
+  "independent_terminal_witness_valid": true,
+  "provenance": {
+    "raw": {
+      "sha256": "c1c2509bd2c139cd871b27e9bfd92364cdc5ad8eee2362c18661c5b002abf801",
+      "bytes": 16775273
+    },
+    "log": {
+      "sha256": "c1c2509bd2c139cd871b27e9bfd92364cdc5ad8eee2362c18661c5b002abf801",
+      "bytes": 16775273
+    },
+    "witness": {
+      "sha256": "08405a64a4e844298f7d3a7a4df3bff6e9c9b8f017333328fcffb9e353dc715e",
+      "bytes": 6508
+    },
+    "exporter_stage": {
+      "sha256": "1e8f0c2a40143692e8cc7f98cf6562ee8cd27e5847a64e71d97b10f0993b7c3d",
+      "bytes": 13824
+    },
+    "manifest": {
+      "sha256": "219d8b4d6a2c6171a738f5a0155064652fc55b2a7ef70139ebb03c0d4d9fa6bf",
+      "bytes": 925
+    }
+  },
+  "limits": [
+    "Specific terminal-passing profile only; global credential availability remains rejected.",
+    "Private identities, paths and free-form strings were removed from the projected summary. Inspect bound private raw proof for omitted detail."
+  ],
+  "private_selected_stage_sha256": "01b71f1c62a1867c3b062b30ca3e7a9275053aac4fd13fba48064fb4133355ba",
+  "summary": {
+    "phase": "all",
+    "thresholds": {
+      "baseline_rps": 100,
+      "baseline_seconds": 60,
+      "min_achieved_rps": 99,
+      "p95_ms": 100,
+      "p99_ms": 250,
+      "expected_200_fraction": 0.999,
+      "omitted_schedules": 0,
+      "quota_burst": 100,
+      "quota_allowed": 5
+    },
+    "backend_positive_control": {
+      "sequence": -1,
+      "expected": 200,
+      "status": 200,
+      "received_status": 200,
+      "body_valid": true,
+      "latency_ms": 291.14779201336205,
+      "scheduled_unix_ms": 1791606314564.6943,
+      "completed_unix_ms": 1791606314855.842,
+      "service_time_ms": 291.14720900543034,
+      "dispatch_lag_ms": 0.0005830079317092896
+    },
+    "priming": {
+      "target_requests": 50,
+      "planned_requests": 50,
+      "submitted_requests": 50,
+      "completed_requests": 50,
+      "target_rps": 10.0,
+      "achieved_rps": 9.99897460305036,
+      "measurement_seconds": 5,
+      "elapsed_including_drain_seconds": 5.000512751052156,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "200": 50
+      },
+      "request_distributions": {
+        "GET": {
+          "200": 50
+        }
+      },
+      "expected_status_fraction": 1.0,
+      "latency_ms": {
+        "p50": 8.410459151491523,
+        "p95": 14.502584235742688,
+        "p99": 18.719791900366545,
+        "max": 18.719791900366545
+      },
+      "dispatch_lag_ms": {
+        "p95": 1.4490000903606415,
+        "max": 2.3709170054644346
+      },
+      "schedule_start_unix_ms": 1791606315107.3345,
+      "schedule_end_unix_ms": 1791606320107.3345,
+      "clock_unix_offset_seconds": 1790353654.6390736
+    },
+    "warmup": {
+      "target_requests": 500,
+      "planned_requests": 500,
+      "submitted_requests": 500,
+      "completed_requests": 500,
+      "target_rps": 100.0,
+      "achieved_rps": 99.9831353076068,
+      "measurement_seconds": 5,
+      "elapsed_including_drain_seconds": 5.000843376852572,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "200": 500
+      },
+      "request_distributions": {
+        "GET": {
+          "200": 500
+        }
+      },
+      "expected_status_fraction": 1.0,
+      "latency_ms": {
+        "p50": 5.250959889963269,
+        "p95": 8.697082987055182,
+        "p99": 17.11766584776342,
+        "max": 50.867874873802066
+      },
+      "dispatch_lag_ms": {
+        "p95": 1.4994998928159475,
+        "max": 1.9852099940180779
+      },
+      "schedule_start_unix_ms": 1791606320358.1475,
+      "schedule_end_unix_ms": 1791606325358.1475,
+      "clock_unix_offset_seconds": 1790353654.6390736
+    },
+    "baseline": {
+      "target_requests": 6000,
+      "planned_requests": 6000,
+      "submitted_requests": 6000,
+      "completed_requests": 6000,
+      "target_rps": 100.0,
+      "achieved_rps": 99.97733620406736,
+      "measurement_seconds": 60,
+      "elapsed_including_drain_seconds": 60.013601360144094,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "200": 6000
+      },
+      "request_distributions": {
+        "GET": {
+          "200": 6000
+        }
+      },
+      "expected_status_fraction": 1.0,
+      "latency_ms": {
+        "p50": 3.9181390311568975,
+        "p95": 6.595292128622532,
+        "p99": 12.322672177106142,
+        "max": 154.68234103173018
+      },
+      "dispatch_lag_ms": {
+        "p95": 1.0961401276290417,
+        "max": 13.436523033306003
+      },
+      "schedule_start_unix_ms": 1791606325609.5908,
+      "schedule_end_unix_ms": 1791606385609.5908,
+      "clock_unix_offset_seconds": 1790353654.6390736,
+      "passed": true
+    },
+    "characterization": [
+      {
+        "target_requests": 9000,
+        "planned_requests": 9000,
+        "submitted_requests": 9000,
+        "completed_requests": 9000,
+        "target_rps": 300.0,
+        "achieved_rps": 299.8630224336363,
+        "measurement_seconds": 30,
+        "elapsed_including_drain_seconds": 30.013704013777897,
+        "omitted_schedules": 0,
+        "unaccounted_schedules": 0,
+        "worker_failures": 0,
+        "transport_errors": 0,
+        "unexpected_body_responses": 0,
+        "all_statuses": {
+          "200": 8970,
+          "503": 30
+        },
+        "request_distributions": {
+          "GET": {
+            "200": 8970,
+            "503": 30
+          }
+        },
+        "expected_status_fraction": 0.9966666666666667,
+        "latency_ms": {
+          "p50": 3.1412597745656967,
+          "p95": 32.46475709602237,
+          "p99": 780.0832572393119,
+          "max": 1237.0778815820813
+        },
+        "dispatch_lag_ms": {
+          "p95": 2.158218761906028,
+          "max": 499.5465064421296
+        },
+        "schedule_start_unix_ms": 1791606385886.315,
+        "schedule_end_unix_ms": 1791606415886.315,
+        "clock_unix_offset_seconds": 1790353654.6390736
+      },
+      {
+        "target_requests": 18000,
+        "planned_requests": 18000,
+        "submitted_requests": 18000,
+        "completed_requests": 18000,
+        "target_rps": 600.0,
+        "achieved_rps": 599.4582992515843,
+        "measurement_seconds": 30,
+        "elapsed_including_drain_seconds": 30.027109512826428,
+        "omitted_schedules": 0,
+        "unaccounted_schedules": 0,
+        "worker_failures": 0,
+        "transport_errors": 0,
+        "unexpected_body_responses": 0,
+        "all_statuses": {
+          "200": 18000
+        },
+        "request_distributions": {
+          "GET": {
+            "200": 18000
+          }
+        },
+        "expected_status_fraction": 1.0,
+        "latency_ms": {
+          "p50": 3.155045909807086,
+          "p95": 10.36246307194233,
+          "p99": 36.5782615263015,
+          "max": 198.4068830497563
+        },
+        "dispatch_lag_ms": {
+          "p95": 1.4264688361436129,
+          "max": 43.569091241806746
+        },
+        "schedule_start_unix_ms": 1791606416167.476,
+        "schedule_end_unix_ms": 1791606446167.476,
+        "clock_unix_offset_seconds": 1790353654.6390736
+      }
+    ],
+    "mixed": {
+      "target_requests": 1000,
+      "planned_requests": 1000,
+      "submitted_requests": 1000,
+      "completed_requests": 1000,
+      "target_rps": 100.0,
+      "achieved_rps": 99.97628474403173,
+      "measurement_seconds": 10,
+      "elapsed_including_drain_seconds": 10.002372088143602,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "403": 200,
+        "200": 800
+      },
+      "request_distributions": {
+        "invalid-key": {
+          "403": 200
+        },
+        "OPTIONS": {
+          "200": 200
+        },
+        "GET": {
+          "200": 600
+        }
+      },
+      "expected_status_fraction": 1.0,
+      "latency_ms": {
+        "p50": 3.1520859338343143,
+        "p95": 5.231625167652965,
+        "p99": 9.529627161100507,
+        "max": 18.61337712034583
+      },
+      "dispatch_lag_ms": {
+        "p95": 1.003919169306755,
+        "max": 6.378333084285259
+      },
+      "schedule_start_unix_ms": 1791606446479.68,
+      "schedule_end_unix_ms": 1791606456479.68,
+      "clock_unix_offset_seconds": 1790353654.6390736,
+      "passed": true
+    },
+    "quota": {
+      "target_requests": 100,
+      "planned_requests": 100,
+      "submitted_requests": 100,
+      "completed_requests": 100,
+      "target_rps": 100.0,
+      "achieved_rps": 399.8229438334617,
+      "measurement_seconds": 1,
+      "elapsed_including_drain_seconds": 0.25011070910841227,
+      "omitted_schedules": 0,
+      "unaccounted_schedules": 0,
+      "worker_failures": 0,
+      "transport_errors": 0,
+      "unexpected_body_responses": 0,
+      "all_statuses": {
+        "429": 95,
+        "200": 5
+      },
+      "request_distributions": {
+        "GET": {
+          "429": 95,
+          "200": 5
+        }
+      },
+      "latency_ms": {
+        "p50": 182.8033342026174,
+        "p95": 217.93666714802384,
+        "p99": 218.75058417208493,
+        "max": 225.0337922014296
+      },
+      "dispatch_lag_ms": {
+        "p95": 16.551459208130836,
+        "max": 20.336000015959144
+      },
+      "expected_status_distribution": {
+        "200": 5,
+        "429": 95
+      },
+      "passed": true
+    },
+    "result": "PASS"
+  }
+}

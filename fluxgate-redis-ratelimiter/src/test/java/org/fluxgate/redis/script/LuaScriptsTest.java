@@ -7,6 +7,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /** Unit tests for {@link LuaScripts}. */
+@SuppressWarnings("deprecation") // the class under test is a deprecated compatibility shim
 class LuaScriptsTest {
 
   @BeforeEach

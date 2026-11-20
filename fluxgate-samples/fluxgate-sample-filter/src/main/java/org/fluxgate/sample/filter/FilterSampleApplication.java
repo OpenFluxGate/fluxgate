@@ -24,13 +24,15 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  *
  * <ul>
  *   <li><b>HttpRateLimitHandler</b> (current) - Calls external FluxGate API server
- *   <li><b>RedisRateLimitHandler</b> (commented) - Direct Redis access
+ *   <li><b>EngineBackedRateLimitHandler</b> - the starter's default handler, registered
+ *       automatically for direct Redis access (see README)
  * </ul>
  *
  * <p>Prerequisites:
  *
  * <ul>
- *   <li>FluxGate API server running at configured URL (default: http://localhost:8080)
+ *   <li>A rate limit check API at {@code fluxgate.api.url}: application.yml points it at {@code
+ *       fluxgate-sample-redis} on http://localhost:8082
  * </ul>
  *
  * <p>Run with:
@@ -42,9 +44,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * <p>Test endpoints:
  *
  * <ul>
- *   <li>GET /api/hello - Rate limited endpoint
- *   <li>GET /api/users - Rate limited endpoint
- *   <li>GET /health - NOT rate limited (excluded pattern)
+ *   <li>GET /api/hello, /api/users, /api/stats - Rate limited endpoints
+ *   <li>GET /api/users/{id} - NOT rate limited ({@code /api/*} matches one segment only)
+ *   <li>GET /health, /ready - NOT rate limited
  * </ul>
  */
 @SpringBootApplication

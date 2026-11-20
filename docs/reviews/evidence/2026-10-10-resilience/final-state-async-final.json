@@ -1,0 +1,645 @@
+{
+  "kind": "final-state",
+  "candidate_passed": true,
+  "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+  "source_commit_at_invocation": "00c1da4d272d0c17861346406eaebe41ec4bbafb",
+  "terminal_exit_code": 0,
+  "terminal_exit_witness": "Supplied by root in private manifest; exporter does not infer process exit from file existence.",
+  "summary": {
+    "read_only": true,
+    "passed": true,
+    "started_unix_ms": 1791599019293,
+    "checks": [
+      {
+        "check": "namespace-ownership",
+        "uid": "d0d69b54-a8d5-456d-a248-a257d3488534",
+        "owned_local_ephemeral": true
+      },
+      {
+        "check": "kind-nodes",
+        "node": "fluxgate-resilience-control-plane",
+        "node_uid": "db2d8dc0-bf47-40ed-9a18-20f0c27f0fb6",
+        "docker_running": true,
+        "kind_label_verified": true,
+        "containerd_task_count": 31,
+        "paused_tasks": 0
+      },
+      {
+        "check": "kind-nodes",
+        "node": "fluxgate-resilience-worker",
+        "node_uid": "396fbba5-537a-4912-bbe9-34ac8f0f94d0",
+        "docker_running": true,
+        "kind_label_verified": true,
+        "containerd_task_count": 26,
+        "paused_tasks": 0
+      },
+      {
+        "check": "kind-nodes",
+        "node": "fluxgate-resilience-worker2",
+        "node_uid": "45200440-68dc-435a-91ea-30149275ea57",
+        "docker_running": true,
+        "kind_label_verified": true,
+        "containerd_task_count": 28,
+        "paused_tasks": 0
+      },
+      {
+        "check": "ready-workloads",
+        "role": "authz",
+        "ready_count": 2,
+        "pods": [
+          {
+            "name": "fluxgate-authz-7f8f75fb8d-g2ss6",
+            "uid": "fc712fcc-4272-4846-8393-4af6d4a1ca0b",
+            "node": "fluxgate-resilience-worker",
+            "image_ids": [
+              "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+            ]
+          },
+          {
+            "name": "fluxgate-authz-7f8f75fb8d-j9smj",
+            "uid": "f9d7aaa6-5162-4727-8f41-8f0267772510",
+            "node": "fluxgate-resilience-worker2",
+            "image_ids": [
+              "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+            ]
+          }
+        ]
+      },
+      {
+        "check": "ready-workloads",
+        "role": "echo",
+        "ready_count": 2,
+        "pods": [
+          {
+            "name": "echo-78477458b7-6b2tg",
+            "uid": "ec2c0494-4fc8-4f14-a6b1-35c5d9c4d8fc",
+            "node": "fluxgate-resilience-worker",
+            "image_ids": []
+          },
+          {
+            "name": "echo-78477458b7-rtlwl",
+            "uid": "3338f90b-d695-4fb4-927c-3c58d6e9de4b",
+            "node": "fluxgate-resilience-worker2",
+            "image_ids": []
+          }
+        ]
+      },
+      {
+        "check": "ready-workloads",
+        "role": "controller",
+        "ready_count": 2,
+        "pods": [
+          {
+            "name": "envoy-gateway-775c98fbb-2bdhr",
+            "uid": "759d9376-22d2-4d04-bf07-c9c3149d50c7",
+            "node": "fluxgate-resilience-worker",
+            "image_ids": []
+          },
+          {
+            "name": "envoy-gateway-775c98fbb-2kr2k",
+            "uid": "9a0879d5-22f9-4d32-bc30-233aacc7772e",
+            "node": "fluxgate-resilience-worker2",
+            "image_ids": []
+          }
+        ]
+      },
+      {
+        "check": "ready-workloads",
+        "role": "envoy",
+        "ready_count": 2,
+        "pods": [
+          {
+            "name": "envoy-fluxgate-resilience-fluxgate-resilience-gateway-fc3dmv2wn",
+            "uid": "f307e782-099c-47ed-a1c2-ab95da2a4270",
+            "node": "fluxgate-resilience-worker",
+            "image_ids": []
+          },
+          {
+            "name": "envoy-fluxgate-resilience-fluxgate-resilience-gateway-fc3dzdwn2",
+            "uid": "d89b4f04-4b15-47e1-a0cd-8a93fbf54e54",
+            "node": "fluxgate-resilience-worker2",
+            "image_ids": []
+          }
+        ]
+      },
+      {
+        "check": "ready-workloads",
+        "role": "mongo",
+        "ready_count": 3,
+        "pods": [
+          {
+            "name": "mongo-0",
+            "uid": "8c8a545c-8db2-4e72-b8d4-506baac5fe3c",
+            "node": "fluxgate-resilience-worker2",
+            "image_ids": []
+          },
+          {
+            "name": "mongo-1",
+            "uid": "a948843a-75d5-4738-bbc1-971046af85cf",
+            "node": "fluxgate-resilience-worker",
+            "image_ids": []
+          },
+          {
+            "name": "mongo-2",
+            "uid": "04609982-45af-4371-a305-d4a20b7fd44b",
+            "node": "fluxgate-resilience-control-plane",
+            "image_ids": []
+          }
+        ]
+      },
+      {
+        "check": "ready-workloads",
+        "role": "redis",
+        "ready_count": 9,
+        "pods": [
+          {
+            "name": "redis-0-0",
+            "uid": "575a982c-2bb6-4a46-9d01-825333d42b19",
+            "node": "fluxgate-resilience-control-plane",
+            "image_ids": []
+          },
+          {
+            "name": "redis-1-0",
+            "uid": "d20ee451-1b3c-4313-b352-804cf5c07fe4",
+            "node": "fluxgate-resilience-worker",
+            "image_ids": []
+          },
+          {
+            "name": "redis-2-0",
+            "uid": "acf94552-d125-4719-9cc5-310bfd1740ef",
+            "node": "fluxgate-resilience-worker2",
+            "image_ids": []
+          },
+          {
+            "name": "redis-3-0",
+            "uid": "21b9f314-a09c-45cc-9777-af0280c4d96f",
+            "node": "fluxgate-resilience-worker",
+            "image_ids": []
+          },
+          {
+            "name": "redis-4-0",
+            "uid": "ec489f98-8b11-4a8a-a40b-794b2dc2088d",
+            "node": "fluxgate-resilience-worker2",
+            "image_ids": []
+          },
+          {
+            "name": "redis-5-0",
+            "uid": "6cee5000-89ee-4154-8d53-399819f70a4f",
+            "node": "fluxgate-resilience-control-plane",
+            "image_ids": []
+          },
+          {
+            "name": "redis-6-0",
+            "uid": "25516516-1f12-43b5-9911-a6074ec96029",
+            "node": "fluxgate-resilience-worker2",
+            "image_ids": []
+          },
+          {
+            "name": "redis-7-0",
+            "uid": "59e97f97-cb74-4403-8ff9-a6e71f11ddc6",
+            "node": "fluxgate-resilience-control-plane",
+            "image_ids": []
+          },
+          {
+            "name": "redis-8-0",
+            "uid": "75afb733-e9b9-4146-8a47-722393f8511f",
+            "node": "fluxgate-resilience-worker",
+            "image_ids": []
+          }
+        ]
+      },
+      {
+        "check": "authz-artifact",
+        "pod_uid": "fc712fcc-4272-4846-8393-4af6d4a1ca0b",
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+        "matches_local_target": true
+      },
+      {
+        "check": "authz-artifact",
+        "pod_uid": "f9d7aaa6-5162-4727-8f41-8f0267772510",
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+        "matches_local_target": true
+      },
+      {
+        "check": "controller-lease",
+        "holder_identity": "envoy-gateway-775c98fbb-2bdhr_73c71c48-b0da-41fd-b9d9-8390e91135be",
+        "lease_uid": "e40ad485-6a0b-48c8-b233-5b04bfe8a546"
+      },
+      {
+        "check": "mongo-majority-state",
+        "healthy_voters": 3,
+        "primary_count": 1,
+        "secondary_count": 2,
+        "election_timeout_ms": 5000,
+        "catchup_timeout_ms": 2000,
+        "majority_policy_metadata": {
+          "counterEpoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+          "checksum": "24590a4d28eb66823485de61b1615749cbe6925cd00ca8ae63048d2e822fd563"
+        }
+      },
+      {
+        "check": "redis-topology",
+        "members": 9,
+        "cluster_ok_all": true,
+        "home_primaries_distinct_nodes": true,
+        "migration_disabled_all": true,
+        "shards": [
+          {
+            "home_primary": "redis-0-0",
+            "members": [
+              "redis-0-0",
+              "redis-3-0",
+              "redis-6-0"
+            ],
+            "nodes": [
+              "fluxgate-resilience-control-plane",
+              "fluxgate-resilience-worker",
+              "fluxgate-resilience-worker2"
+            ],
+            "two_direct_online_replicas": true
+          },
+          {
+            "home_primary": "redis-2-0",
+            "members": [
+              "redis-2-0",
+              "redis-5-0",
+              "redis-8-0"
+            ],
+            "nodes": [
+              "fluxgate-resilience-worker2",
+              "fluxgate-resilience-control-plane",
+              "fluxgate-resilience-worker"
+            ],
+            "two_direct_online_replicas": true
+          },
+          {
+            "home_primary": "redis-1-0",
+            "members": [
+              "redis-1-0",
+              "redis-4-0",
+              "redis-7-0"
+            ],
+            "nodes": [
+              "fluxgate-resilience-worker",
+              "fluxgate-resilience-worker2",
+              "fluxgate-resilience-control-plane"
+            ],
+            "two_direct_online_replicas": true
+          }
+        ]
+      },
+      {
+        "check": "pvc-bindings",
+        "bound_count": 12,
+        "bindings": [
+          {
+            "claim": "data-mongo-0",
+            "claim_uid": "1e0fea16-ea36-469e-a901-e0dc4e521850",
+            "pv_uid": "c8d47983-74e5-40c5-aa8e-4947c86e785c"
+          },
+          {
+            "claim": "data-mongo-1",
+            "claim_uid": "1c1b2dcb-4625-470e-9b77-2c8015754eec",
+            "pv_uid": "a5e769a6-90d9-4b1e-9ece-a29d0336bf9a"
+          },
+          {
+            "claim": "data-mongo-2",
+            "claim_uid": "c49121e9-472b-4a89-bffa-63e22badac35",
+            "pv_uid": "14d7508d-ca3b-4e37-be63-762340a6a3d3"
+          },
+          {
+            "claim": "data-redis-0-0",
+            "claim_uid": "a6fcdcaf-ee02-4edf-b552-f9deb40a315a",
+            "pv_uid": "fa92d303-9106-473d-a8f4-f01e5bbbd87e"
+          },
+          {
+            "claim": "data-redis-1-0",
+            "claim_uid": "9ba004a6-c1b4-4b39-9266-df6638324b71",
+            "pv_uid": "7679c9c6-03d9-4ece-92da-75ff243c1eab"
+          },
+          {
+            "claim": "data-redis-2-0",
+            "claim_uid": "3d40626b-a85d-4d25-bc4f-5b36e54db709",
+            "pv_uid": "adfacbb5-2c58-4500-85e3-c6370af90c43"
+          },
+          {
+            "claim": "data-redis-3-0",
+            "claim_uid": "285424d5-ab96-43bb-9df7-9c7584fba694",
+            "pv_uid": "25bbce3c-11a6-4574-b77f-9218982c86b7"
+          },
+          {
+            "claim": "data-redis-4-0",
+            "claim_uid": "37aeabb3-d3a4-4147-a330-7c2f620ddf85",
+            "pv_uid": "56cf4133-2adf-4339-85d4-7d4b229eebbe"
+          },
+          {
+            "claim": "data-redis-5-0",
+            "claim_uid": "2c621113-ca42-4263-83d7-0f2c635834e8",
+            "pv_uid": "50fc4b7c-85c2-4145-9c99-734b821c5c3e"
+          },
+          {
+            "claim": "data-redis-6-0",
+            "claim_uid": "95b09695-15d2-4a20-b6d4-b5e531a7e529",
+            "pv_uid": "6025471e-ce53-423b-b3c1-2f4e3df1c96f"
+          },
+          {
+            "claim": "data-redis-7-0",
+            "claim_uid": "7b87b840-97e1-4678-9038-5c5e7b8f3d7b",
+            "pv_uid": "16bf30d0-5343-4638-ad83-b4d089019411"
+          },
+          {
+            "claim": "data-redis-8-0",
+            "claim_uid": "6d706346-e2f3-440e-8739-1d1fe0ee9941",
+            "pv_uid": "7eb69e14-9325-488c-ad74-bb0e80637eed"
+          }
+        ]
+      },
+      {
+        "check": "owned-probe-absence",
+        "residual_owned_resources": 0
+      },
+      {
+        "check": "route-proof-header-absence",
+        "route_uid": "6d4e1f8a-7bed-417e-99ae-2673acfd64bb",
+        "temporary_controller_proof_header_absent": true
+      },
+      {
+        "check": "default-context-preserved",
+        "before": "kind-fluxgate-eg",
+        "after": "kind-fluxgate-eg",
+        "unchanged": true
+      }
+    ],
+    "completed_unix_ms": 1791599023255
+  },
+  "dropped_unknown_or_disallowed_paths": [
+    ".checks[].majority_policy_metadata.revision",
+    ".checks[].pods[].image_ids[]",
+    ".limits"
+  ],
+  "provenance": {
+    "raw": {
+      "path": "fluxgate-resilience-final-state-async-final.json",
+      "sha256": "af2d8e1e0b6b2ad59ab88f1f991c218488f3a1f191888acc4a20ffe022261bc0",
+      "size_bytes": 13589
+    },
+    "log": {
+      "path": "fluxgate-resilience-final-state-async-final.json",
+      "sha256": "af2d8e1e0b6b2ad59ab88f1f991c218488f3a1f191888acc4a20ffe022261bc0",
+      "size_bytes": 13589
+    },
+    "jar": {
+      "path": "fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.3.7.jar",
+      "sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+      "size_bytes": 32917143
+    },
+    "tools": [
+      {
+        "path": "fluxgate-resilience-final-state.py",
+        "loaded_sha256": "e076823a48a3b4680a19757f0671cbb925fea06f835882d62ca634e841909726",
+        "current_at_export": {
+          "path": "fluxgate-resilience-final-state.py",
+          "sha256": "e076823a48a3b4680a19757f0671cbb925fea06f835882d62ca634e841909726",
+          "size_bytes": 11312
+        },
+        "current_equals_loaded": true
+      }
+    ],
+    "attachments": [
+      {
+        "path": "fluxgate-resilience-final-state-async-final-witness.json",
+        "sha256": "d95473f6677ded02f129dc2bcce4e1f8547f02f7cea400e3ac7ffd26c939c8b5",
+        "size_bytes": 6442
+      }
+    ],
+    "run_witness": {
+      "path": "fluxgate-resilience-final-state-async-final-witness.json",
+      "sha256": "d95473f6677ded02f129dc2bcce4e1f8547f02f7cea400e3ac7ffd26c939c8b5",
+      "size_bytes": 6442
+    }
+  },
+  "limits": [
+    "Dropped fields require schema review if material to acceptance; the exporter does not repair or infer absent proof.",
+    "No raw samples, payloads, credentials, arbitrary messages or score are exported.",
+    "Historical successes and failures must remain separate artifacts; this tool never overwrites files."
+  ],
+  "run_artifact_identity": {
+    "name": "final-state-async-final",
+    "before_authz": [
+      {
+        "pod": "fluxgate-authz-7f8f75fb8d-j9smj",
+        "uid": "f9d7aaa6-5162-4727-8f41-8f0267772510",
+        "node": "fluxgate-resilience-worker2",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      },
+      {
+        "pod": "fluxgate-authz-7f8f75fb8d-g2ss6",
+        "uid": "fc712fcc-4272-4846-8393-4af6d4a1ca0b",
+        "node": "fluxgate-resilience-worker",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      }
+    ],
+    "after_authz": [
+      {
+        "pod": "fluxgate-authz-7f8f75fb8d-j9smj",
+        "uid": "f9d7aaa6-5162-4727-8f41-8f0267772510",
+        "node": "fluxgate-resilience-worker2",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      },
+      {
+        "pod": "fluxgate-authz-7f8f75fb8d-g2ss6",
+        "uid": "fc712fcc-4272-4846-8393-4af6d4a1ca0b",
+        "node": "fluxgate-resilience-worker",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      }
+    ],
+    "source_commit_at_invocation": "00c1da4d272d0c17861346406eaebe41ec4bbafb",
+    "replacement_scope": "no_authz_replacement",
+    "started": {
+      "utc": "2026-10-10T02:23:39.239917+00:00",
+      "unix_ms": 1791599019240,
+      "monotonic_ns": 1936869269713041
+    },
+    "terminal": {
+      "utc": "2026-10-10T02:23:43.260291+00:00",
+      "unix_ms": 1791599023260,
+      "monotonic_ns": 1936873289725625
+    },
+    "witness_valid": true
+  },
+  "final_state_supplement": {
+    "majority_revision": 18,
+    "counter_epoch": "9d359218-d276-4e95-84ac-7d71d739d44a",
+    "snapshot_checksum": "24590a4d28eb66823485de61b1615749cbe6925cd00ca8ae63048d2e822fd563",
+    "captured_image_digests": [
+      {
+        "role": "authz",
+        "pod_uid": "fc712fcc-4272-4846-8393-4af6d4a1ca0b",
+        "image_digests": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ]
+      },
+      {
+        "role": "authz",
+        "pod_uid": "f9d7aaa6-5162-4727-8f41-8f0267772510",
+        "image_digests": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ]
+      },
+      {
+        "role": "echo",
+        "pod_uid": "ec2c0494-4fc8-4f14-a6b1-35c5d9c4d8fc",
+        "image_digests": [
+          "sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186"
+        ]
+      },
+      {
+        "role": "echo",
+        "pod_uid": "3338f90b-d695-4fb4-927c-3c58d6e9de4b",
+        "image_digests": [
+          "sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186"
+        ]
+      },
+      {
+        "role": "controller",
+        "pod_uid": "759d9376-22d2-4d04-bf07-c9c3149d50c7",
+        "image_digests": [
+          "sha256:9d67017c442a70e6ae9f1a358e6c80eb653c67c2e40823d9a991e0daf37ba926"
+        ]
+      },
+      {
+        "role": "controller",
+        "pod_uid": "9a0879d5-22f9-4d32-bc30-233aacc7772e",
+        "image_digests": [
+          "sha256:9d67017c442a70e6ae9f1a358e6c80eb653c67c2e40823d9a991e0daf37ba926"
+        ]
+      },
+      {
+        "role": "envoy",
+        "pod_uid": "f307e782-099c-47ed-a1c2-ab95da2a4270",
+        "image_digests": [
+          "sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4",
+          "sha256:9d67017c442a70e6ae9f1a358e6c80eb653c67c2e40823d9a991e0daf37ba926"
+        ]
+      },
+      {
+        "role": "envoy",
+        "pod_uid": "d89b4f04-4b15-47e1-a0cd-8a93fbf54e54",
+        "image_digests": [
+          "sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4",
+          "sha256:9d67017c442a70e6ae9f1a358e6c80eb653c67c2e40823d9a991e0daf37ba926"
+        ]
+      },
+      {
+        "role": "mongo",
+        "pod_uid": "8c8a545c-8db2-4e72-b8d4-506baac5fe3c",
+        "image_digests": [
+          "sha256:1f995ad6fdb93244a1addab1b58f934a0bc2f5643c38e02f5e9d7f0c7d227a7b"
+        ]
+      },
+      {
+        "role": "mongo",
+        "pod_uid": "a948843a-75d5-4738-bbc1-971046af85cf",
+        "image_digests": [
+          "sha256:1f995ad6fdb93244a1addab1b58f934a0bc2f5643c38e02f5e9d7f0c7d227a7b"
+        ]
+      },
+      {
+        "role": "mongo",
+        "pod_uid": "04609982-45af-4371-a305-d4a20b7fd44b",
+        "image_digests": [
+          "sha256:1f995ad6fdb93244a1addab1b58f934a0bc2f5643c38e02f5e9d7f0c7d227a7b"
+        ]
+      },
+      {
+        "role": "redis",
+        "pod_uid": "575a982c-2bb6-4a46-9d01-825333d42b19",
+        "image_digests": [
+          "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+        ]
+      },
+      {
+        "role": "redis",
+        "pod_uid": "d20ee451-1b3c-4313-b352-804cf5c07fe4",
+        "image_digests": [
+          "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+        ]
+      },
+      {
+        "role": "redis",
+        "pod_uid": "acf94552-d125-4719-9cc5-310bfd1740ef",
+        "image_digests": [
+          "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+        ]
+      },
+      {
+        "role": "redis",
+        "pod_uid": "21b9f314-a09c-45cc-9777-af0280c4d96f",
+        "image_digests": [
+          "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+        ]
+      },
+      {
+        "role": "redis",
+        "pod_uid": "ec489f98-8b11-4a8a-a40b-794b2dc2088d",
+        "image_digests": [
+          "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+        ]
+      },
+      {
+        "role": "redis",
+        "pod_uid": "6cee5000-89ee-4154-8d53-399819f70a4f",
+        "image_digests": [
+          "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+        ]
+      },
+      {
+        "role": "redis",
+        "pod_uid": "25516516-1f12-43b5-9911-a6074ec96029",
+        "image_digests": [
+          "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+        ]
+      },
+      {
+        "role": "redis",
+        "pod_uid": "59e97f97-cb74-4403-8ff9-a6e71f11ddc6",
+        "image_digests": [
+          "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+        ]
+      },
+      {
+        "role": "redis",
+        "pod_uid": "75afb733-e9b9-4146-8a47-722393f8511f",
+        "image_digests": [
+          "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+        ]
+      }
+    ],
+    "all_nine_canonical_topology_dumps_separately_recorded": false,
+    "limits": [
+      "Sequential current healthy-state snapshot; not a failure recovery, uninterrupted rotation, load SLO or production HA proof.",
+      "Redis health and direct replica links verified for all members; a canonical topology was captured from one member rather than nine separately recorded dumps."
+    ],
+    "raw_sha256": "af2d8e1e0b6b2ad59ab88f1f991c218488f3a1f191888acc4a20ffe022261bc0"
+  },
+  "independent_gate_review": {
+    "passed": true,
+    "roles": [
+      "architect"
+    ],
+    "scope": "Actual terminal local scenario and complete gate-critical export; production approval is separate."
+  },
+  "staging_source_sha256": "92222070f2099e536252d4f65ab66e5dc9c4d873a3445d393d2ddffa5fca0199"
+}

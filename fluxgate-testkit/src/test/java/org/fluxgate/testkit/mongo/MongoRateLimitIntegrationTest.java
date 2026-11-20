@@ -6,7 +6,6 @@ import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoDatabase;
-import com.mongodb.client.model.Filters;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
@@ -25,6 +24,7 @@ import org.fluxgate.core.ratelimiter.RateLimitResult;
 import org.fluxgate.core.ratelimiter.RateLimitRuleSet;
 import org.fluxgate.core.ratelimiter.RateLimiter;
 import org.fluxgate.core.spi.RateLimitRuleSetProvider;
+import org.fluxgate.testkit.support.MongoContainerSupport;
 import org.junit.jupiter.api.*;
 
 /**
@@ -35,22 +35,6 @@ import org.junit.jupiter.api.*;
  * metrics adapter are exercised.
  */
 class MongoRateLimitIntegrationTest {
-
-  private static final String DEFAULT_MONGO_URI =
-      "mongodb://fluxgate:fluxgate123%23%24@localhost:27017/fluxgate?authSource=admin";
-  private static final String DEFAULT_DB_NAME = "fluxgate";
-
-  private static final String MONGO_URI =
-      System.getProperty(
-          "fluxgate.mongo.uri",
-          System.getenv().getOrDefault("FLUXGATE_MONGO_URI", DEFAULT_MONGO_URI));
-
-  private static final String DB_NAME =
-      System.getProperty(
-          "fluxgate.mongo.db", System.getenv().getOrDefault("FLUXGATE_MONGO_DB", DEFAULT_DB_NAME));
-
-  private static final String RULE_COLLECTION = "rate_limit_rules";
-  private static final String METRIC_COLLECTION = "rate_limit_events";
 
   private static final String RULE_SET_ID = "mongo-per-ip-5s-100";
   private static final String RULE_ID = "rule-per-ip-5s-100";
@@ -66,16 +50,14 @@ class MongoRateLimitIntegrationTest {
 
   @BeforeEach
   void setUp() {
-    System.out.println("> Connecting to MongoDB: " + MONGO_URI);
+    client = MongoClients.create(MongoContainerSupport.mongoUri());
+    database = client.getDatabase(MongoContainerSupport.databaseName());
 
-    client = MongoClients.create(MONGO_URI);
-    database = client.getDatabase(DB_NAME);
-    ruleCollection = database.getCollection(RULE_COLLECTION);
-    metricCollection = database.getCollection(METRIC_COLLECTION);
-
-    System.out.println("> Cleaning test collections...");
-    ruleCollection.deleteMany(Filters.eq("ruleSetId", RULE_SET_ID));
-    metricCollection.deleteMany(new Document());
+    // Collections of this test's own, so a shared MongoDB keeps its data
+    ruleCollection =
+        database.getCollection(MongoContainerSupport.uniqueCollectionName("rate_limit_rules"));
+    metricCollection =
+        database.getCollection(MongoContainerSupport.uniqueCollectionName("rate_limit_events"));
 
     System.out.println("> Inserting rule set document into Mongo...");
     insertRuleSetDocument();
@@ -89,7 +71,13 @@ class MongoRateLimitIntegrationTest {
 
   @AfterEach
   void tearDown() {
-    System.out.println("> Closing MongoDB connection.");
+    System.out.println("> Dropping this test's collections and closing MongoDB connection.");
+    if (ruleCollection != null) {
+      ruleCollection.drop();
+    }
+    if (metricCollection != null) {
+      metricCollection.drop();
+    }
     if (client != null) {
       client.close();
     }

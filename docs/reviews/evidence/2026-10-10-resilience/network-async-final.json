@@ -1,0 +1,2584 @@
+{
+  "kind": "network",
+  "candidate_passed": true,
+  "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+  "source_commit_at_invocation": "bd6003e5cdca2dcdd1e51c7f17167b3b18626ced",
+  "terminal_exit_code": 0,
+  "terminal_exit_witness": "Supplied by root in private manifest; exporter does not infer process exit from file existence.",
+  "summary": {
+    "context": "kind-fluxgate-resilience",
+    "namespace": "fluxgate-resilience",
+    "control_not_selected_by_gateway_service": true,
+    "control_scope": "Operator-created Gateway-namespace policy-identity TCP control; not an actual Envoy client. Requires operator namespace access; does not prove an untrusted caller can create Pods there.",
+    "gateway_target_port": 10080,
+    "backend_listener_port": 5678,
+    "phases": [
+      {
+        "phase": "default-deny-egress",
+        "passed": true,
+        "identity_verified_before": true,
+        "identity_verified_after": true,
+        "gateway_after": {
+          "gateway": {
+            "status": 200,
+            "exact_backend_body": true,
+            "passed": true
+          },
+          "passed": true
+        },
+        "identity_verified_at_phase_end": true,
+        "runtime_policies_unchanged": true
+      },
+      {
+        "phase": "destination-ingress",
+        "passed": true,
+        "identity_verified_before": true,
+        "identity_verified_after": true,
+        "gateway_after": {
+          "gateway": {
+            "status": 200,
+            "exact_backend_body": true,
+            "passed": true
+          },
+          "passed": true
+        },
+        "identity_verified_at_phase_end": true,
+        "runtime_policies_unchanged": true
+      }
+    ],
+    "runtime_policies_unchanged": true,
+    "passed": true,
+    "cleanup_verified": true
+  },
+  "dropped_unknown_or_disallowed_paths": [
+    ".captured_identity",
+    ".expected_positive_control_ids",
+    ".gateway_policy_identity_control_pod",
+    ".phases[].gateway_after.cases",
+    ".phases[].gateway_after.dns",
+    ".phases[].gateway_after.phase",
+    ".phases[].negative_probe",
+    ".phases[].positive_controls_after",
+    ".phases[].positive_controls_before",
+    ".probe_pod"
+  ],
+  "provenance": {
+    "raw": {
+      "path": "fluxgate-resilience-network-async-final.json",
+      "sha256": "97ec182c0c58db0f1f4439b3787caeceb091add045516629ee7a43f2ab6d85d8",
+      "size_bytes": 104145
+    },
+    "log": {
+      "path": "fluxgate-resilience-network-async-final.log",
+      "sha256": "93b8e23265963f4df6c843b454c941d9bbcad0899e72ac4efe8b3e9340f9f212",
+      "size_bytes": 20
+    },
+    "jar": {
+      "path": "fluxgate-envoy-extauth/target/fluxgate-envoy-extauth-0.3.7.jar",
+      "sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed",
+      "size_bytes": 32917143
+    },
+    "tools": [
+      {
+        "path": "deploy/resilience-local/verify-network.py",
+        "loaded_sha256": "f1b0f94c5f628fa65de8057571eeb402173ab1ce45add6a4287faa08be99d7e1",
+        "current_at_export": {
+          "path": "deploy/resilience-local/verify-network.py",
+          "sha256": "f1b0f94c5f628fa65de8057571eeb402173ab1ce45add6a4287faa08be99d7e1",
+          "size_bytes": 30647
+        },
+        "current_equals_loaded": true
+      }
+    ],
+    "attachments": [
+      {
+        "path": "fluxgate-resilience-network-async-final-witness.json",
+        "sha256": "4fb91c5880cfa887ed8b6aea190217e2caa0e60bfe466cc4b34df0ae97033691",
+        "size_bytes": 6226
+      }
+    ],
+    "run_witness": {
+      "path": "fluxgate-resilience-network-async-final-witness.json",
+      "sha256": "4fb91c5880cfa887ed8b6aea190217e2caa0e60bfe466cc4b34df0ae97033691",
+      "size_bytes": 6226
+    }
+  },
+  "limits": [
+    "Dropped fields require schema review if material to acceptance; the exporter does not repair or infer absent proof.",
+    "No raw samples, payloads, credentials, arbitrary messages or score are exported.",
+    "Historical successes and failures must remain separate artifacts; this tool never overwrites files.",
+    "Recorded scenario reviewed before this local repository export; no production rollout or certification."
+  ],
+  "run_artifact_identity": {
+    "name": "network-async-final",
+    "before_authz": [
+      {
+        "pod": "fluxgate-authz-6485685b74-t2rgg",
+        "uid": "acbf9a80-8ef8-4ca9-b582-7b1d9ba168bd",
+        "node": "fluxgate-resilience-worker",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      },
+      {
+        "pod": "fluxgate-authz-6485685b74-54nkc",
+        "uid": "f00fd691-63a0-4a58-a780-b7399b507f1e",
+        "node": "fluxgate-resilience-worker2",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      }
+    ],
+    "after_authz": [
+      {
+        "pod": "fluxgate-authz-6485685b74-t2rgg",
+        "uid": "acbf9a80-8ef8-4ca9-b582-7b1d9ba168bd",
+        "node": "fluxgate-resilience-worker",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      },
+      {
+        "pod": "fluxgate-authz-6485685b74-54nkc",
+        "uid": "f00fd691-63a0-4a58-a780-b7399b507f1e",
+        "node": "fluxgate-resilience-worker2",
+        "image_ids": [
+          "sha256:285e5dc5393cbe269a6718ebdf2538da9a3ec9e6ee0ded30c66fb00e1ce4db7f"
+        ],
+        "application_jar_sha256": "0d156e080d774577b81e3dc7ded31d42f53f77bab849576b19ddd74d064deeed"
+      }
+    ],
+    "source_commit_at_invocation": "bd6003e5cdca2dcdd1e51c7f17167b3b18626ced",
+    "replacement_scope": "no_authz_replacement",
+    "started": {
+      "utc": "2026-10-10T02:06:34.236647+00:00",
+      "unix_ms": 1791597994236,
+      "monotonic_ns": 1935844242253458
+    },
+    "terminal": {
+      "utc": "2026-10-10T02:08:39.909858+00:00",
+      "unix_ms": 1791598119909,
+      "monotonic_ns": 1935969912259250
+    },
+    "witness_valid": true
+  },
+  "anonymous_network_verification_supplement": {
+    "phases": [
+      {
+        "phase": "default-deny-egress",
+        "negative_case_count": 16,
+        "negative_timeout_denials": [
+          {
+            "address_identity": "address-01",
+            "target_role": "backend",
+            "port": 5678,
+            "target_kind": "service",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-02",
+            "target_role": "authz",
+            "port": 8443,
+            "target_kind": "service",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.003
+          },
+          {
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.003
+          },
+          {
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-15",
+            "target_role": "authz-management",
+            "port": 8081,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-16",
+            "target_role": "authz-management",
+            "port": 8081,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.003
+          }
+        ],
+        "positive_control_count_each_side": 58,
+        "positive_controls_before": [
+          {
+            "control_identity": "control-01",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-02",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-03",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-04",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-05",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-06",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-07",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-08",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-09",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-10",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-11",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-12",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-13",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-14",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-15",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-16",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-17",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-18",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-19",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-20",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-21",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-22",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-23",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-24",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-25",
+            "address_identity": "address-17",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-26",
+            "address_identity": "address-18",
+            "target_role": "authz-management",
+            "port": 8081,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-27",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-28",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-29",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-30",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-31",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-32",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-33",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-34",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-35",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-36",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-37",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-38",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-39",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-40",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-41",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-42",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-43",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-44",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-45",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-46",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-47",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-48",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-49",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-50",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-51",
+            "address_identity": "address-17",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-52",
+            "address_identity": "address-18",
+            "target_role": "authz-management",
+            "port": 8081,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-53",
+            "address_identity": "address-01",
+            "target_role": "backend",
+            "port": 5678,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-54",
+            "address_identity": "address-02",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-55",
+            "address_identity": "address-19",
+            "target_role": "backend",
+            "port": 5678,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-56",
+            "address_identity": "address-20",
+            "target_role": "backend",
+            "port": 5678,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-57",
+            "address_identity": "address-21",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-58",
+            "address_identity": "address-22",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          }
+        ],
+        "positive_controls_after": [
+          {
+            "control_identity": "control-01",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-02",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-03",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-04",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-05",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-06",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-07",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-08",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-09",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-10",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-11",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-12",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-13",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-14",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-15",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-16",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-17",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-18",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-19",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-20",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-21",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-22",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-23",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-24",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-25",
+            "address_identity": "address-17",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-26",
+            "address_identity": "address-18",
+            "target_role": "authz-management",
+            "port": 8081,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-27",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-28",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-29",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-30",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-31",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-32",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-33",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-34",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-35",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-36",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-37",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-38",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-39",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-40",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-41",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-42",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-43",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-44",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-45",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-46",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-47",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-48",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-49",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-50",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-51",
+            "address_identity": "address-17",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-52",
+            "address_identity": "address-18",
+            "target_role": "authz-management",
+            "port": 8081,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-53",
+            "address_identity": "address-01",
+            "target_role": "backend",
+            "port": 5678,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-54",
+            "address_identity": "address-02",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-55",
+            "address_identity": "address-19",
+            "target_role": "backend",
+            "port": 5678,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-56",
+            "address_identity": "address-20",
+            "target_role": "backend",
+            "port": 5678,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-57",
+            "address_identity": "address-21",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-58",
+            "address_identity": "address-22",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          }
+        ],
+        "dns_resolved_before_count": 5,
+        "dns_resolved_after_count": 5,
+        "gateway_before_and_after_status": 200,
+        "gateway_before_and_after_exact_backend_body": true,
+        "captured_target_identity_equal_before_after_and_phase_end_source_asserted": true,
+        "runtime_NetworkPolicy_resourceVersions_unchanged_source_asserted": true
+      },
+      {
+        "phase": "destination-ingress",
+        "negative_case_count": 32,
+        "negative_timeout_denials": [
+          {
+            "address_identity": "address-01",
+            "target_role": "backend",
+            "port": 5678,
+            "target_kind": "service",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-02",
+            "target_role": "authz",
+            "port": 8443,
+            "target_kind": "service",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.003
+          },
+          {
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.003
+          },
+          {
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.004
+          },
+          {
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.003
+          },
+          {
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "headless-service-endpoint",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-19",
+            "target_role": "backend",
+            "port": 5678,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-20",
+            "target_role": "backend",
+            "port": 5678,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-21",
+            "target_role": "authz",
+            "port": 8443,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.003
+          },
+          {
+            "address_identity": "address-15",
+            "target_role": "authz-management",
+            "port": 8081,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-22",
+            "target_role": "authz",
+            "port": 8443,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.003
+          },
+          {
+            "address_identity": "address-16",
+            "target_role": "authz-management",
+            "port": 8081,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.003
+          },
+          {
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.003
+          },
+          {
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.003
+          },
+          {
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.002
+          },
+          {
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.001
+          },
+          {
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "target_kind": "pod",
+            "connected": false,
+            "error_class": "TimeoutError",
+            "passed": true,
+            "elapsed_seconds": 2.003
+          }
+        ],
+        "positive_control_count_each_side": 58,
+        "positive_controls_before": [
+          {
+            "control_identity": "control-01",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-02",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-03",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-04",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-05",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-06",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-07",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-08",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-09",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-10",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-11",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-12",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-13",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-14",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-15",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-16",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-17",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-18",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-19",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-20",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-21",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-22",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-23",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-24",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-25",
+            "address_identity": "address-17",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-26",
+            "address_identity": "address-18",
+            "target_role": "authz-management",
+            "port": 8081,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-27",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-28",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-29",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-30",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-31",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-32",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-33",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-34",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-35",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-36",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-37",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-38",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-39",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-40",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-41",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-42",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-43",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-44",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-45",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-46",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-47",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-48",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-49",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-50",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-51",
+            "address_identity": "address-17",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-52",
+            "address_identity": "address-18",
+            "target_role": "authz-management",
+            "port": 8081,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-53",
+            "address_identity": "address-01",
+            "target_role": "backend",
+            "port": 5678,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-54",
+            "address_identity": "address-02",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-55",
+            "address_identity": "address-19",
+            "target_role": "backend",
+            "port": 5678,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-56",
+            "address_identity": "address-20",
+            "target_role": "backend",
+            "port": 5678,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-57",
+            "address_identity": "address-21",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-58",
+            "address_identity": "address-22",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          }
+        ],
+        "positive_controls_after": [
+          {
+            "control_identity": "control-01",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-02",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-03",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-04",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-05",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-06",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-07",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-08",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-09",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-10",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-11",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-12",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-13",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-14",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-15",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-16",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-17",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-18",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-19",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-20",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-21",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-22",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-23",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-24",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-25",
+            "address_identity": "address-17",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-26",
+            "address_identity": "address-18",
+            "target_role": "authz-management",
+            "port": 8081,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-27",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-28",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-29",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-30",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-31",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-32",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-33",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-34",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-35",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-36",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-37",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-38",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-39",
+            "address_identity": "address-03",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-40",
+            "address_identity": "address-04",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-41",
+            "address_identity": "address-05",
+            "target_role": "mongo",
+            "port": 27017,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-42",
+            "address_identity": "address-06",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-43",
+            "address_identity": "address-07",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-44",
+            "address_identity": "address-08",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-45",
+            "address_identity": "address-09",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-46",
+            "address_identity": "address-10",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-47",
+            "address_identity": "address-11",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-48",
+            "address_identity": "address-12",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-49",
+            "address_identity": "address-13",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-50",
+            "address_identity": "address-14",
+            "target_role": "redis",
+            "port": 6379,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-51",
+            "address_identity": "address-17",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-52",
+            "address_identity": "address-18",
+            "target_role": "authz-management",
+            "port": 8081,
+            "source_scope": "authz-workload",
+            "passed": true
+          },
+          {
+            "control_identity": "control-53",
+            "address_identity": "address-01",
+            "target_role": "backend",
+            "port": 5678,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-54",
+            "address_identity": "address-02",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-55",
+            "address_identity": "address-19",
+            "target_role": "backend",
+            "port": 5678,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-56",
+            "address_identity": "address-20",
+            "target_role": "backend",
+            "port": 5678,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-57",
+            "address_identity": "address-21",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          },
+          {
+            "control_identity": "control-58",
+            "address_identity": "address-22",
+            "target_role": "authz",
+            "port": 8443,
+            "source_scope": "operator-created-Gateway-policy-identity-control",
+            "passed": true
+          }
+        ],
+        "dns_resolved_before_count": 5,
+        "dns_resolved_after_count": 5,
+        "gateway_before_and_after_status": 200,
+        "gateway_before_and_after_exact_backend_body": true,
+        "captured_target_identity_equal_before_after_and_phase_end_source_asserted": true,
+        "runtime_NetworkPolicy_resourceVersions_unchanged_source_asserted": true
+      }
+    ],
+    "total_negative_timeout_denials": 48,
+    "total_positive_controls": 232,
+    "captured_identity": {
+      "pod_count": 18,
+      "service_count": 5,
+      "private_capture_sha256": "87e14a4c08aeeaceafa6507a2e6e040fc24eb22f92294a29c6ca523e20f320e2",
+      "pod_UID_and_IP_and_Service_UID_address_selector_ports_equal_source_asserted": true,
+      "after_identity_separately_recorded": false
+    },
+    "runtime_policy_integrity": {
+      "non_probe_NetworkPolicy_resourceVersions_compared_source_asserted": true,
+      "resourceVersion_maps_separately_recorded": false,
+      "other_resourceVersions_compared": false
+    },
+    "probe_isolation": {
+      "no_ServiceAccount_token_and_no_projected_credentials_source_asserted": true,
+      "untrusted_Pod_security_spec_nonroot_readonly_no_capabilities": true,
+      "Gateway_policy_identity_control_not_selected_by_Gateway_Service": true,
+      "scope": "Operator-created Gateway-namespace policy-identity TCP control; not an actual Envoy client. Requires operator namespace access; does not prove an untrusted caller can create Pods there."
+    },
+    "cleanup": {
+      "both_owned_Pods_and_both_owned_NetworkPolicies_absent_source_asserted": true,
+      "owned_resource_count": 4,
+      "cleanup_verified": true
+    },
+    "raw_sha256": "97ec182c0c58db0f1f4439b3787caeceb091add045516629ee7a43f2ab6d85d8",
+    "loaded_verify_network_sha256": "f1b0f94c5f628fa65de8057571eeb402173ab1ce45add6a4287faa08be99d7e1",
+    "evidence_boundaries": [
+      "Anonymous address identities preserve equality comparisons without disclosing addresses.",
+      "UID/address and runtime NetworkPolicy resourceVersion equality are terminal successful verifier assertions; after maps are not separately recorded.",
+      "Positive controls use actual authz Pods and an operator-created Gateway-namespace policy-identity control; the latter is not an actual Envoy client.",
+      "Security spec properties describe the loaded builder; token/projection absence was verified against actual created Pods.",
+      "The two phases contain 16 default-egress and 32 destination-ingress denials, 48 total, and 58 positive controls before and after each phase."
+    ]
+  },
+  "independent_gate_review": {
+    "passed": true,
+    "roles": [
+      "architect"
+    ],
+    "scope": "Recorded local scenario and gate-critical anonymous export; production approval is separate."
+  },
+  "staging_source_sha256": "ec54bb02357ebcd31c97873454b492fd455aeb97e8790b5cb40cda8ce94698c7"
+}

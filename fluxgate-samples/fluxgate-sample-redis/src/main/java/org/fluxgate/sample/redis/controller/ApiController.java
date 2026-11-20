@@ -144,11 +144,10 @@ public class ApiController {
             "timestamp", Instant.now().toString()));
   }
 
+  // Forwarding headers are client-controlled; only the starter's trusted-proxies handling may
+  // honour
+  // them. This sample uses the socket address.
   private String getClientIp(HttpServletRequest request) {
-    String xForwardedFor = request.getHeader("X-Forwarded-For");
-    if (xForwardedFor != null && !xForwardedFor.isEmpty()) {
-      return xForwardedFor.split(",")[0].trim();
-    }
     return request.getRemoteAddr();
   }
 }

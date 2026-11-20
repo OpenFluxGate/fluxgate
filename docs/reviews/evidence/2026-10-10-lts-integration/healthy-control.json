@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "scenario": "bounded-progress-healthy-control",
+  "diagnostic_only": true,
+  "credential_acceptance": false,
+  "availability_passed": false,
+  "global_acceptance": false,
+  "source_commit": "b57418fb3612f71203cab6ccd62b5eea94b98091",
+  "source_sha256": "f4dc99be9997dc68f058a5e0152e75490b477d7037d8d4f52e440fe2cf59d187",
+  "application_jar_sha256": "b01926fbf1a8a66acd573b3d7f2bac07f89660e5c4e84903c79ed207950d36ce",
+  "instrumented": false,
+  "scheduled": 1803,
+  "samples": 1802,
+  "omitted_schedules": 1,
+  "omissions": [
+    {
+      "first_sequence": 552,
+      "count": 1,
+      "reason": "lateness"
+    }
+  ],
+  "status_counts": {
+    "200": 1802
+  },
+  "sequence_accounting_verified": true,
+  "all_executed_samples_exact_backend": true,
+  "interval_ms": 100,
+  "duration_seconds": 180.40458512399346,
+  "max_dispatch_lag_ms": 98.81306695751846,
+  "max_service_latency_ms": 292.0425001066178,
+  "pending": 0,
+  "worker_failures": 0,
+  "drain_complete": true,
+  "progress_writer_failures": 0,
+  "progress_writer_drained": true,
+  "cleanup": {
+    "pod_absent": true,
+    "networkpolicy_absent": true,
+    "ownership_checked": true
+  },
+  "terminal_exit_code": 1,
+  "independent_terminal_witness_valid": true,
+  "harness_error": {
+    "class": "KeyError",
+    "missing_key": "pod_deleted",
+    "correct_cleanup_schema": [
+      "pod_absent",
+      "networkpolicy_absent",
+      "ownership_checked"
+    ],
+    "occurred_after_raw_write_and_context_cleanup": true,
+    "does_not_explain_prior_omission": true
+  },
+  "provenance": {
+    "raw": {
+      "sha256": "de60b5936ea0d88e1bc2427c5bc5b6100cef7d2d0b6cc9120f500cdc5eae2797",
+      "bytes": 647012
+    },
+    "log": {
+      "sha256": "dfe6f05a537347628a4b976aa35b274d3b2e3f2fa0ff687823333f9766553cbb",
+      "bytes": 249
+    },
+    "witness": {
+      "sha256": "b602a236b6cfb84c8f33a461b0c493588684c63ae6f01e08fa230b5118346cda",
+      "bytes": 7280
+    },
+    "harness": {
+      "sha256": "0999264aafe2e80b32869f7b93e63960c265612f48901319ae04a926a7f1884e",
+      "bytes": 2549
+    },
+    "source": {
+      "sha256": "f4dc99be9997dc68f058a5e0152e75490b477d7037d8d4f52e440fe2cf59d187",
+      "bytes": 168690
+    }
+  },
+  "limits": [
+    "Complete raw diagnostic and correct cleanup do not turn the failed terminal harness into PASS.",
+    "One omission independently fails the mandatory zero-omission healthy control.",
+    "No full credential progress rerun or aggregate acceptance is claimed."
+  ]
+}

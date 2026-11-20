@@ -1,0 +1,54 @@
+{
+  "accepted": false,
+  "application_jar_sha256": "b03409f989d8a6b228689bf8daf8880d3b68a1e95b2166b7ae46625e32485a40",
+  "reason": "Original30-second dense recovery gate failed; no retroactive acceptance",
+  "phase": "redis-promotion",
+  "exception_class": "TimeoutExpired",
+  "timestamps": {
+    "rto_budget_started": {
+      "unix_ms": 1791588837968,
+      "utc": "2026-10-09T23:33:57.968Z"
+    },
+    "fault_start": {
+      "unix_ms": 1791588838512,
+      "utc": "2026-10-09T23:33:58.512Z"
+    },
+    "paused_verified": {
+      "unix_ms": 1791588839158,
+      "utc": "2026-10-09T23:33:59.158Z"
+    }
+  },
+  "dense_batches": [],
+  "observed": {
+    "completed_requests": 12000,
+    "all_statuses": {
+      "200": 9406,
+      "503": 2594
+    },
+    "omitted_schedules": 0,
+    "latency_ms": {
+      "p50": 8.980646962299943,
+      "p95": 824.7166939545423,
+      "p99": 2639.4854688551277,
+      "max": 5452.0105961710215
+    },
+    "achieved_rps": 99.97598017003926
+  },
+  "last_minute": {
+    "completed_requests": 6000,
+    "all_statuses": {
+      "200": 6000
+    },
+    "omitted_schedules": 0,
+    "latency_ms": {
+      "p50": 8.312419056892395,
+      "p95": 144.06695310026407,
+      "p99": 321.3872448541224,
+      "max": 579.2338410392404
+    },
+    "achieved_rps": 100.0
+  },
+  "all_subprocesses_terminal": true,
+  "raw_sha256": "4ce3427468d60d9c8226e60e8625495dbe14a0cb832d1c240d775ab8db2df0ad",
+  "failure_sha256": "8f6dc95e2a2e5cc9ae51aa3c3160626743a55645c0c9e52a5ad739acbb3d2d2a"
+}

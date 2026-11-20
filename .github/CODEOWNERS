@@ -1,0 +1,13 @@
+# Code owners for FluxGate.
+#
+# Every pull request needs a review from an owner listed here. Combined with branch
+# protection on `main` and `release/*` this is what keeps an unreviewed push from
+# reaching Maven Central through .github/workflows/release.yml.
+#
+# Later entries win, so the catch-all comes first.
+
+* @rojae
+
+# Release and CI plumbing: a change here can publish artifacts or leak secrets.
+/.github/ @rojae
+/pom.xml @rojae

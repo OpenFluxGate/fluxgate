@@ -1,0 +1,23 @@
+{
+  "result": "REJECTED",
+  "complete": false,
+  "process_exit": 1,
+  "reason": "Weak three-success recovery gate was followed by a quota request returning503; this attempt is not complete HA or successful combined load.",
+  "phase": "redis-promotion",
+  "promotion_seconds": 5.307,
+  "recovery_probe_seconds": 21.238,
+  "raw_counter_preserved_before_failed_boundary_check": true,
+  "jar_sha256": "8774b4dc7be69c17b97e4a4b9c4f1b9a4b2ca7b414d4ba3ff99d56713d111d5f",
+  "private_artifact_hashes": {
+    "summary.json": "523ced2b0b788d12513fbbf6f3dda82d81578d9834882242b01627b382f20c61",
+    "raw-load.json": "697683aba1977ee720a05976fcb1eda6adca576337f554830133733be6ded5b2",
+    "ha.log": "67f35da11977c23ee4f994429adc2469e8916fba8740ab0cde49580f0ebdf3cd",
+    "identity.json": "0c4b390a879f622b664ed8230dde74daa45656c9aaacfdc0862511060d8ce034",
+    "readiness.json": "e500764c94107a393159daee3a78ba7cc6fb3b69cad83d918e38bdf92b8eff8f",
+    "prepare.log": "fe441c249f809d8cebacc6cfc7a425b031793962979b00e86cc8606c54dc56e9",
+    "load.log": "697683aba1977ee720a05976fcb1eda6adca576337f554830133733be6ded5b2",
+    "ha/publisher-cleanup.json": "57e8e56038862ba9a5c4fa07c09710c15fae33396cfddb7604ae8791186dd848",
+    "ha/progress.json": "28b91fa39c0a3663cb26bfd70a95f642495bba7f44e76a01ccc8b1228b2898bc",
+    "ha/failure.json": "629bd5c75660899653f4aa9d555c03884485a40386d2d8d5dedd76d473e40e8d"
+  }
+}

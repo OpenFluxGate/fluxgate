@@ -1,0 +1,57 @@
+name: Question
+description: Ask a question about how to use FluxGate.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the [documentation](https://github.com/OpenFluxGate/fluxgate#documentation)
+        and existing issues before opening a new question.
+
+  - type: input
+    id: fluxgate-version
+    attributes:
+      label: FluxGate version
+      placeholder: "0.4.0"
+    validations:
+      required: true
+
+  - type: input
+    id: java-version
+    attributes:
+      label: Java version
+      placeholder: "21"
+    validations:
+      required: true
+
+  - type: input
+    id: spring-boot-version
+    attributes:
+      label: Spring Boot version
+      placeholder: "3.3.5"
+    validations:
+      required: true
+
+  - type: input
+    id: redis-version
+    attributes:
+      label: Redis version (if relevant)
+      placeholder: "7.4.0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What are you trying to do? Include any relevant configuration or code.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: What did you find in the docs or issues? What did you try that did not work?
+    validations:
+      required: false

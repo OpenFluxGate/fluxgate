@@ -4,12 +4,14 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
- * FluxGate Full API Gateway Sample Application.
+ * FluxGate API Gateway Sample Application: an HTTP demo that ties two other samples together.
  *
- * <p>This sample demonstrates the complete FluxGate integration: - MongoDB for rule storage and
- * management - Redis for distributed rate limiting - HTTP Filter for request interception
+ * <p>A gateway that ties the two other samples together over HTTP: rules are managed in the
+ * Control-plane ({@code fluxgate-sample-mongo}, MongoDB) and enforced by the Data-plane ({@code
+ * fluxgate-sample-redis}, Redis). This application itself uses neither database.
  *
- * <p>Prerequisites: - MongoDB running at localhost:27017 - Redis running at localhost:6379
+ * <p>Prerequisites: {@code fluxgate-sample-mongo} on localhost:8081 and {@code
+ * fluxgate-sample-redis} on localhost:8082 ({@code fluxgate.services.*-url}).
  *
  * <p>Run with:
  *
@@ -20,14 +22,14 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * <p>Usage:
  *
  * <pre>
- * # 1. Create sample rules
+ * # 1. Create sample rules in MongoDB (Control-plane, fluxgate-sample-mongo on 8081)
  * curl -X POST http://localhost:8080/admin/rules/init
  *
- * # 2. Test rate limiting
- * for i in {1..15}; do curl -s http://localhost:8080/api/hello; echo; done
+ * # 2. Register the rule set in Redis (Data-plane, fluxgate-sample-redis on 8082)
+ * curl -X POST "http://localhost:8080/admin/sync?ruleSetId=api-gateway-rules"
  *
- * # 3. Check rate limit headers
- * curl -i http://localhost:8080/api/hello
+ * # 3. Test rate limiting: one request more than the synced capacity (100 per 60 s) gets 429
+ * for i in {1..101}; do curl -s "http://localhost:8080/api/test?ruleSetId=api-gateway-rules"; echo; done
  * </pre>
  */
 @SpringBootApplication

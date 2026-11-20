@@ -3,6 +3,7 @@ package org.fluxgate.redis.connection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Abstraction layer for Redis operations that supports both Standalone and Cluster modes.
@@ -97,6 +98,21 @@ public interface RedisConnectionProvider extends AutoCloseable {
   long del(String... keys);
 
   /**
+   * Deletes one or more keys, reclaiming the memory in a background thread where the server
+   * supports it.
+   *
+   * <p>{@code UNLINK} keeps a bulk delete off the Redis event loop, which matters when a rule
+   * reload drops a large number of buckets at once. The default implementation delegates to {@link
+   * #del(String...)} so that providers talking to a server older than Redis 4 keep working.
+   *
+   * @param keys the keys to delete
+   * @return the number of keys deleted
+   */
+  default long unlink(String... keys) {
+    return del(keys);
+  }
+
+  /**
    * Adds members to a set.
    *
    * @param key the set key
@@ -141,12 +157,54 @@ public interface RedisConnectionProvider extends AutoCloseable {
   /**
    * Finds all keys matching the given pattern.
    *
-   * <p>Warning: This operation can be slow on large databases. Use with caution in production.
+   * <p>Built-in providers use SCAN, not the blocking Redis KEYS command. Results are unique but are
+   * not an atomic snapshot. Prefer the streaming overload for large keyspaces.
    *
    * @param pattern the pattern to match (e.g., "fluxgate:*")
    * @return list of matching keys
    */
   java.util.List<String> keys(String pattern);
+
+  /**
+   * Incrementally scans keys matching the given pattern.
+   *
+   * <p>Uses incremental Redis SCAN semantics. Results are not an atomic snapshot: concurrent
+   * additions/removals may or may not be observed. Custom providers must implement SCAN; the
+   * default fails explicitly rather than silently falling back to blocking KEYS.
+   *
+   * @param pattern the pattern to match (e.g., "fluxgate:*")
+   * @param count scan batch size hint
+   * @return list of matching keys
+   */
+  default java.util.List<String> scanKeys(String pattern, long count) {
+    throw new UnsupportedOperationException("This provider must implement incremental SCAN");
+  }
+
+  /**
+   * Incrementally scans keys matching the given pattern and hands each non-empty SCAN page to
+   * {@code pageConsumer} as soon as it arrives.
+   *
+   * <p>Unlike {@link #scanKeys(String, long)}, the matching keys are never collected into one list,
+   * so a caller that deletes them page by page keeps its memory bounded by the page size however
+   * large the keyspace is. The default implementation delegates to {@link #scanKeys(String, long)}
+   * and delivers its result as a single page. Custom providers must implement at least one SCAN
+   * overload; providers implementing only keys no longer support resets.
+   *
+   * <p>Pages may contain duplicates and COUNT is only a hint, not a page-size limit. Consumers must
+   * tolerate duplicates and concurrent changes. In a cluster the built-in provider traverses the
+   * initial primary topology via Lettuce's composite cursor with default ReadFrom. Externally
+   * supplied replica-read commands may observe stale data. Topology changes are not a snapshot.
+   *
+   * @param pattern the pattern to match (e.g., "fluxgate:*")
+   * @param count scan batch size hint
+   * @param pageConsumer receives every non-empty page of matching keys
+   */
+  default void scanKeys(String pattern, long count, Consumer<List<String>> pageConsumer) {
+    List<String> keys = scanKeys(pattern, count);
+    if (keys != null && !keys.isEmpty()) {
+      pageConsumer.accept(keys);
+    }
+  }
 
   /**
    * Flushes the current database (deletes all keys).

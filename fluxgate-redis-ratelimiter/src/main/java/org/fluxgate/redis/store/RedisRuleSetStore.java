@@ -1,6 +1,7 @@
 package org.fluxgate.redis.store;
 
 import java.util.*;
+import org.fluxgate.core.exception.InvalidRuleConfigException;
 import org.fluxgate.redis.connection.RedisConnectionProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,7 +13,18 @@ import org.slf4j.LoggerFactory;
  * fluxgate:ruleset:{ruleSetId}
  *
  * <p>Supports both Standalone and Cluster Redis deployments via {@link RedisConnectionProvider}.
+ *
+ * @deprecated {@link RuleSetData} holds a single capacity/window pair and therefore cannot
+ *     represent the multi-rule, multi-band model of {@code
+ *     org.fluxgate.core.ratelimiter.RateLimitRuleSet}; this store also does not implement {@code
+ *     org.fluxgate.core.ratelimiter.RateLimitRuleSetProvider}, so nothing in the rate limiting path
+ *     reads it. Store rule sets in MongoDB through {@code
+ *     org.fluxgate.adapter.mongo.MongoRuleSetProvider}, or implement {@code
+ *     RateLimitRuleSetProvider} against your own storage. This class will be removed in a future
+ *     release.
  */
+@Deprecated(since = "0.4.0")
+@SuppressWarnings("deprecation") // RuleSetData is deprecated alongside this store
 public class RedisRuleSetStore {
 
   private static final Logger log = LoggerFactory.getLogger(RedisRuleSetStore.class);
@@ -78,9 +90,9 @@ public class RedisRuleSetStore {
     }
 
     RuleSetData data = new RuleSetData();
-    data.setRuleSetId(hash.get("ruleSetId"));
-    data.setCapacity(Long.parseLong(hash.getOrDefault("capacity", "10")));
-    data.setWindowSeconds(Long.parseLong(hash.getOrDefault("windowSeconds", "60")));
+    data.setRuleSetId(requiredField(hash, key, "ruleSetId"));
+    data.setCapacity(requiredLongField(hash, key, "capacity"));
+    data.setWindowSeconds(requiredLongField(hash, key, "windowSeconds"));
     data.setKeyStrategyId(hash.getOrDefault("keyStrategyId", "clientIp"));
     data.setCreatedAt(Long.parseLong(hash.getOrDefault("createdAt", "0")));
 
@@ -162,5 +174,35 @@ public class RedisRuleSetStore {
    */
   public RedisConnectionProvider.RedisMode getMode() {
     return connectionProvider.getMode();
+  }
+
+  /**
+   * Reads a field that a stored rule set must have.
+   *
+   * <p>A missing field used to be replaced by a silent default (capacity 10), which turned a
+   * half-written hash into a rate limit nobody configured. It is now an error that names the field
+   * and the key it is missing from. Only the fields that define the limit are required; {@code
+   * keyStrategyId} and {@code createdAt} keep their defaults.
+   */
+  private static String requiredField(Map<String, String> hash, String key, String field) {
+    String value = hash.get(field);
+    if (value == null || value.trim().isEmpty()) {
+      throw new InvalidRuleConfigException(
+          "RuleSet hash " + key + " is missing the required field '" + field + "'",
+          hash.get("ruleSetId"));
+    }
+    return value;
+  }
+
+  private static long requiredLongField(Map<String, String> hash, String key, String field) {
+    String value = requiredField(hash, key, field);
+    try {
+      return Long.parseLong(value.trim());
+    } catch (NumberFormatException e) {
+      throw new InvalidRuleConfigException(
+          "RuleSet hash " + key + " has a non-numeric '" + field + "': " + value,
+          hash.get("ruleSetId"),
+          e);
+    }
   }
 }

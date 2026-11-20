@@ -1,0 +1,10 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/OpenFluxGate/fluxgate/security/advisories/new
+    about: >
+      Please report security vulnerabilities privately via GitHub's private vulnerability
+      reporting. Do not open a public issue.
+  - name: Support & usage questions
+    url: https://github.com/OpenFluxGate/fluxgate/issues/new?template=question.yml
+    about: General usage questions and how-to help.

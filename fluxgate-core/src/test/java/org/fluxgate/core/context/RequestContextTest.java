@@ -444,6 +444,54 @@ class RequestContextTest {
     }
   }
 
+  // ==================== Header Name Case Tests ====================
+
+  @Nested
+  @DisplayName("Header Name Case Tests")
+  class HeaderNameCaseTests {
+
+    @Test
+    @DisplayName("getHeader should be case-insensitive on the header name")
+    void getHeader_shouldIgnoreNameCase() {
+      RequestContext context =
+          RequestContext.builder().header("X-Tier", "premium").header("x-request-id", "r1").build();
+
+      assertEquals("premium", context.getHeader("x-tier"));
+      assertEquals("premium", context.getHeader("X-TIER"));
+      assertEquals("r1", context.getHeader("X-Request-Id"));
+      assertTrue(context.getHeaders().containsKey("x-tier"));
+    }
+
+    @Test
+    @DisplayName("headers differing only in case should collapse into one entry")
+    void header_shouldCollapseNamesDifferingInCase() {
+      Map<String, String> headers = new HashMap<>();
+      headers.put("Accept", "a");
+      RequestContext context =
+          RequestContext.builder().headers(headers).header("ACCEPT", "b").build();
+
+      assertEquals(1, context.getHeaders().size());
+      assertEquals("b", context.getHeader("accept"));
+    }
+
+    @Test
+    @DisplayName("builder getHeader should be case-insensitive")
+    void builderGetHeader_shouldIgnoreNameCase() {
+      RequestContext.Builder builder = RequestContext.builder().header("User-Agent", "UA");
+
+      assertEquals("UA", builder.getHeader("user-agent"));
+    }
+
+    @Test
+    @DisplayName("null header names should be ignored and look up as absent")
+    void nullHeaderName_shouldBeIgnored() {
+      RequestContext context = RequestContext.builder().header(null, "v").build();
+
+      assertTrue(context.getHeaders().isEmpty());
+      assertNull(context.getHeader(null));
+    }
+  }
+
   // ==================== Builder Getters Tests ====================
 
   @Nested
