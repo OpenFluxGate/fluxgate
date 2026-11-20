@@ -53,7 +53,7 @@
           the Java 11 sample.
         -->
         <logback.version>1.6.5</logback.version>
-        <lettuce.version>6.8.2.RELEASE</lettuce.version>
+        <lettuce.version>6.9.0.RELEASE</lettuce.version>
         <!-- Java 11 SDKs use the patched 4.1 family; the server manages its own family. -->
         <netty.version>4.1.139.Final</netty.version>
         <log4j.version>2.25.5</log4j.version>
