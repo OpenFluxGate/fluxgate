@@ -24,7 +24,7 @@
         <maven.compiler.target>11</maven.compiler.target>
         <!-- Spring Boot 2.7.x for Java 11 -->
         <spring-boot.version>2.7.18</spring-boot.version>
-        <spring.version>5.3.39</spring.version>
+        <spring.version>7.0.9</spring.version>
         <skipJacocoForPom>false</skipJacocoForPom>
     </properties>
 
