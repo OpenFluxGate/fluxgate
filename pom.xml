@@ -61,7 +61,7 @@
         <!-- Patched Jackson 2.x line shared with Envoy; remains compatible with Java 11. -->
         <jackson.version>2.21.7</jackson.version>
         <!-- Public CVE-2026-40984 and CVE-2026-59296 fixes shared with Envoy. -->
-        <micrometer.version>1.16.7</micrometer.version>
+        <micrometer.version>1.17.2</micrometer.version>
         <junit.jupiter.version>5.11.3</junit.jupiter.version>
         <assertj.version>3.26.3</assertj.version>
         <mockito.version>5.14.2</mockito.version>
