@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] – 2026-11-20
+
+For Maven coordinates, Spring Boot compatibility and the Redis upgrade procedure, see the [Core 0.5.0 release notes](docs/release-0.5.0.md) ([한국어](docs/release-0.5.0.ko.md)).
+
 ### Added
 
 - Opt-in `CompositeKeyEncoder` for length-framed SHA-256 CUSTOM identities, preserving literal IPv6 input without changing legacy keys. See [encoding and rollout contract](docs/architecture/composite-custom-keys.md).
@@ -1384,4 +1388,5 @@ See [docs/en/operations/migration-0.4.md](docs/en/operations/migration-0.4.md)
 for the full upgrade walkthrough
 ([한국어](docs/ko/operations/migration-0.4.ko.md)).
 
-[Unreleased]: https://github.com/OpenFluxGate/fluxgate/compare/v0.3.7...HEAD
+[Unreleased]: https://github.com/OpenFluxGate/fluxgate/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/OpenFluxGate/fluxgate/compare/v0.3.7...v0.5.0
