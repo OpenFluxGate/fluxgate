@@ -20,7 +20,7 @@
     <description>MongoDB adapter for FluxGate distributed rate limiting</description>
 
     <properties>
-        <mongodb.driver.version>5.2.1</mongodb.driver.version>
+        <mongodb.driver.version>5.14.0</mongodb.driver.version>
         <skipJacocoForPom>false</skipJacocoForPom>
         <!-- Lower branch coverage threshold for this module (health checker has many branches) -->
         <jacoco.branch.coverage>0.65</jacoco.branch.coverage>
