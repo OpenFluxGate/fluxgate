@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794927627463,
+  "lastUpdate": 1795135183813,
   "repoUrl": "https://github.com/OpenFluxGate/fluxgate",
   "entries": {
     "FluxGate Standalone Benchmark": [
@@ -934,6 +934,78 @@ window.BENCHMARK_DATA = {
           {
             "name": "org.fluxgate.testkit.benchmark.StandaloneRateLimiterBenchmark.tryConsumeSingleThread",
             "value": 0.15506056240277152,
+            "unit": "us/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "41769568+rojae@users.noreply.github.com",
+            "name": "JaeSeong Oh",
+            "username": "rojae"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3b3be156be5b3e3b45f1af7d2bf97683524a510f",
+          "message": "Merge pull request #90 from OpenFluxGate/development/integration-0.5.0-candidate-20261118\n\nintegration: validate combined 0.5.0 and composite identity candidate",
+          "timestamp": "2026-11-20T09:37:03+09:00",
+          "tree_id": "58c2d8bbba5344b1198d274d2380bc6d21c53c01",
+          "url": "https://github.com/OpenFluxGate/fluxgate/commit/3b3be156be5b3e3b45f1af7d2bf97683524a510f"
+        },
+        "date": 1795135183268,
+        "tool": "jmh",
+        "benches": [
+          {
+            "name": "org.fluxgate.benchmark.StandaloneRateLimiterBenchmark.tryConsumeBurst",
+            "value": 1.3859990145719379,
+            "unit": "ops/us",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.benchmark.StandaloneRateLimiterBenchmark.tryConsumeMultiThread",
+            "value": 0.6672714027979321,
+            "unit": "ops/us",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.benchmark.StandaloneRateLimiterBenchmark.tryConsumeMultipleClients",
+            "value": 3.1192536908868123,
+            "unit": "ops/us",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.benchmark.StandaloneRateLimiterBenchmark.tryConsumeSingleThread",
+            "value": 1.3909918980404368,
+            "unit": "ops/us",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.benchmark.StandaloneRateLimiterBenchmark.tryConsumeBurst",
+            "value": 0.6919100195201242,
+            "unit": "us/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 1"
+          },
+          {
+            "name": "org.fluxgate.benchmark.StandaloneRateLimiterBenchmark.tryConsumeMultiThread",
+            "value": 5.926317491925796,
+            "unit": "us/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.benchmark.StandaloneRateLimiterBenchmark.tryConsumeMultipleClients",
+            "value": 1.2595904845391543,
+            "unit": "us/op",
+            "extra": "iterations: 5\nforks: 1\nthreads: 4"
+          },
+          {
+            "name": "org.fluxgate.benchmark.StandaloneRateLimiterBenchmark.tryConsumeSingleThread",
+            "value": 0.7934612032345031,
             "unit": "us/op",
             "extra": "iterations: 5\nforks: 1\nthreads: 1"
           }
