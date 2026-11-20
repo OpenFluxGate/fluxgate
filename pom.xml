@@ -59,7 +59,7 @@
         <log4j.version>2.25.5</log4j.version>
         <aspectj.version>1.9.22</aspectj.version>
         <!-- Patched Jackson 2.x line shared with Envoy; remains compatible with Java 11. -->
-        <jackson.version>2.21.7</jackson.version>
+        <jackson.version>2.23.0</jackson.version>
         <!-- Public CVE-2026-40984 and CVE-2026-59296 fixes shared with Envoy. -->
         <micrometer.version>1.16.7</micrometer.version>
         <junit.jupiter.version>5.11.3</junit.jupiter.version>
