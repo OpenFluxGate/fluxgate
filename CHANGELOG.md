@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0] – 2026-11-20
 
+For Maven coordinates, Spring Boot compatibility and the Redis upgrade procedure, see the [Core 0.5.0 release notes](docs/release-0.5.0.md) ([한국어](docs/release-0.5.0.ko.md)).
+
 ### Added
 
 - Opt-in `CompositeKeyEncoder` for length-framed SHA-256 CUSTOM identities, preserving literal IPv6 input without changing legacy keys. See [encoding and rollout contract](docs/architecture/composite-custom-keys.md).
