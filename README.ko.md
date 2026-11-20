@@ -1,6 +1,6 @@
 # FluxGate
 
-> **0.5.0 준비 상태:** Boot 2·3 호환성을 함께 검증하고 있습니다. [출시 준비 상태](docs/release-0.5.0-readiness.ko.md)와 [애플리케이션의 Spring 의존성 확인 방법](docs/release-0.5.0-readiness.ko.md#spring-의존성-안내)을 참조하세요.
+> [FluxGate 0.5.0](https://github.com/OpenFluxGate/fluxgate/releases/tag/v0.5.0)은 Spring Boot 2.7과 3용 스타터를 제공합니다. [릴리스 노트](docs/release-0.5.0.ko.md)와 [애플리케이션의 Spring 의존성 확인 방법](docs/release-0.5.0-readiness.ko.md#spring-의존성-안내)을 참고하세요.
 
 
 [![Java](https://img.shields.io/badge/Java-11%2B-blue.svg)](https://openjdk.org/)
@@ -128,34 +128,20 @@ Limiter로, 첫 데모나 단일 인스턴스 서비스에 적합합니다. **�
 
 - Java 17+ 및 Maven 3.8+ (경로 A)
 - 기존 Spring Boot 웹 애플리케이션; 아래 예제에 `/api/hello` 컨트롤러를 포함합니다.
-- Java 11 / Spring Boot 2.7도 `fluxgate-spring-boot2-starter`로 지원
+- Java 11과 Spring Boot 2.7에서는 [Boot 2 스타터](https://central.sonatype.com/artifact/io.github.openfluxgate/fluxgate-spring-boot2-starter/0.5.0)를 사용합니다.
 - Docker (경로 B, Redis/MongoDB 시작용)
 
-이 브랜치는 Envoy 판정 서비스를 포함한 **0.5.0**을 준비하며 소스에서 빌드합니다.
-Maven Central의 공개 릴리스는 0.3.7이고, 0.5.0은 아직 게시하지 않았습니다.
-아래 예제는 현재 브랜치 API를 사용하므로 먼저 소스 빌드가 필요합니다.
+아래 예제처럼 애플리케이션의 `pom.xml`에 [Maven Central의 Boot 3 스타터](https://central.sonatype.com/artifact/io.github.openfluxgate/fluxgate-spring-boot3-starter/0.5.0)를 추가하세요.
+스타터와 함께 사용하는 FluxGate 어댑터에는 같은 그룹 `io.github.openfluxgate`와 버전 `0.5.0`을 지정합니다.
 Spring 호환 범위와 아직 확정하지 않은 LTS 보안 지원 범위는
 [지원 표](GOVERNANCE.md#supported-spring-boot-and-java-matrix)와
 [보안 정책](SECURITY.md#050-source-preparation)에 명시했습니다.
-Java 21과 실행 중인 Docker로 라이브러리를 먼저 준비합니다.
-
-```bash
-git clone --branch feature/lts-0.5.0 https://github.com/OpenFluxGate/openfluxgate-core.git
-cd openfluxgate-core
-export FLUXGATE_M2_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fluxgate-quickstart-m2.XXXXXX")"
-./mvnw -B -Dmaven.repo.local="$FLUXGATE_M2_DIR" \
-  -pl fluxgate-spring-boot3-starter,fluxgate-control-support -am install spotless:check
-```
-
-같은 터미널에서 애플리케이션의 Maven 명령에도 `-Dmaven.repo.local="$FLUXGATE_M2_DIR"`를
-전달합니다. 공개 0.3.7을 사용하려면 해당 릴리스의 README와 API를 참고하세요.
-소스 빌드의 테스트에는 Docker가 필요하며, 준비된 경로 A 애플리케이션은 저장소 없이 실행됩니다.
 
 ---
 
 ### 경로 A — 인메모리 (인프라 불필요)
 
-소스 라이브러리를 준비한 뒤 기존 Spring Boot 3 웹 애플리케이션에 아래 단계를 적용합니다.
+기존 Spring Boot 3 웹 애플리케이션에 아래 단계를 적용합니다.
 실행 시 Redis·MongoDB 없이 클라이언트 IP별 분당 5건 제한을 적용합니다.
 
 #### A-1. 의존성 추가
@@ -292,6 +278,8 @@ Content-Type: application/problem+json;charset=UTF-8
 #### B-1. Redis 시작
 
 ```bash
+git clone --depth 1 --branch v0.5.0 https://github.com/OpenFluxGate/fluxgate.git
+cd fluxgate
 # docker/infra/redis-standalone.yml이 프로젝트에 포함되어 있습니다 (포트는 127.0.0.1에만 바인딩)
 docker compose -f docker/infra/redis-standalone.yml up -d
 ```
@@ -480,9 +468,8 @@ fluxgate:
 
 ### 샘플 실행
 
-샘플은 FluxGate 모듈의 현재 `SNAPSHOT`에 의존합니다. 갓 클론한 저장소의 로컬 Maven 저장소에는 아직
-이 버전이 없으므로, 처음 `spring-boot:run`을 실행하기 전에 한 번 설치하세요. 프로젝트 전체를
-설치하거나(JDK 21 필요), 샘플마다 의존하는 모듈만 설치합니다(`-pl <sample> -am`). 샘플별로 필요한
+소스에서 샘플을 실행하려면 프로젝트 전체를 빌드하거나(JDK 21 필요), 실행할 샘플과 그 의존 모듈을
+함께 설치합니다(`-pl <sample> -am`). 샘플별로 필요한
 JDK는 [Build Once](fluxgate-samples/README.md#build-once)를 참고하세요.
 
 ```bash

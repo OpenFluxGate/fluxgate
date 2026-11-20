@@ -1,6 +1,6 @@
 # FluxGate
 
-> **0.5.0 readiness:** The candidate includes Boot 2 and Boot 3. See the [release readiness checks](docs/release-0.5.0-readiness.md) and the [Spring dependency notice for applications](docs/release-0.5.0-readiness.md#spring-dependency-notice).
+> [FluxGate 0.5.0](https://github.com/OpenFluxGate/fluxgate/releases/tag/v0.5.0) includes starters for Spring Boot 2.7 and 3. See the [release notes](docs/release-0.5.0.md) and the [Spring dependency notice for applications](docs/release-0.5.0-readiness.md#spring-dependency-notice).
 
 
 [![Java](https://img.shields.io/badge/Java-11%2B-blue.svg)](https://openjdk.org/)
@@ -126,34 +126,20 @@ management without restarts.
 
 - Java 17+ and Maven 3.8+ (Path A)
 - An existing Spring Boot web application; the example below adds its `/api/hello` controller.
-- Java 11 with Spring Boot 2.7 is also supported via `fluxgate-spring-boot2-starter`
+- For Java 11 and Spring Boot 2.7, use the [Boot 2 starter](https://central.sonatype.com/artifact/io.github.openfluxgate/fluxgate-spring-boot2-starter/0.5.0).
 - Docker (Path B, to start Redis/MongoDB)
 
-This branch prepares **0.5.0**, including the Envoy authorization service, and is built from
-source. The published Maven Central release is 0.3.7; 0.5.0 has not been published yet.
-The examples below use the current branch APIs and require the source build.
+Add the [Boot 3 starter from Maven Central](https://central.sonatype.com/artifact/io.github.openfluxgate/fluxgate-spring-boot3-starter/0.5.0) to your application's `pom.xml` as shown below.
+Use group `io.github.openfluxgate` and version `0.5.0` for the starter and any FluxGate adapters.
 The Spring compatibility and pending LTS security boundary are documented in the
 [support matrix](GOVERNANCE.md#supported-spring-boot-and-java-matrix) and
 [security policy](SECURITY.md#050-source-preparation).
-Prepare the paired libraries once with Java 21 and Docker running:
-
-```bash
-git clone --branch feature/lts-0.5.0 https://github.com/OpenFluxGate/openfluxgate-core.git
-cd openfluxgate-core
-export FLUXGATE_M2_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fluxgate-quickstart-m2.XXXXXX")"
-./mvnw -B -Dmaven.repo.local="$FLUXGATE_M2_DIR" \
-  -pl fluxgate-spring-boot3-starter,fluxgate-control-support -am install spotless:check
-```
-
-Keep this terminal and pass `-Dmaven.repo.local="$FLUXGATE_M2_DIR"` to Maven commands in your
-application as well. For published 0.3.7, use that release's README and APIs instead.
-The source-build tests need Docker even if the resulting Path A application uses no stores.
 
 ---
 
 ### Path A — In-Memory (no infrastructure required)
 
-After preparing the source libraries, apply these steps to a Spring Boot 3 web application.
+Apply these steps to a Spring Boot 3 web application.
 The running app needs no Redis or MongoDB and enforces a 5-requests-per-minute limit per client IP.
 
 #### A-1. Add the dependency
@@ -291,6 +277,8 @@ Content-Type: application/problem+json;charset=UTF-8
 #### B-1. Start Redis
 
 ```bash
+git clone --depth 1 --branch v0.5.0 https://github.com/OpenFluxGate/fluxgate.git
+cd fluxgate
 # docker/infra/redis-standalone.yml ships with the project (ports bind to 127.0.0.1 only)
 docker compose -f docker/infra/redis-standalone.yml up -d
 ```
@@ -481,9 +469,7 @@ fluxgate:
 
 ### Running Samples
 
-The samples depend on the current `SNAPSHOT` of the FluxGate modules, which a fresh clone does not
-have in the local Maven repository yet. Install them once before the first `spring-boot:run`, either
-the whole project (needs JDK 21) or each sample with only the modules it depends on
+To run the samples from source, build the whole project (needs JDK 21) or install each sample and its dependencies
 (`-pl <sample> -am`). See [Build Once](fluxgate-samples/README.md#build-once) for the JDK each
 sample needs.
 
