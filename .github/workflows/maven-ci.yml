@@ -102,7 +102,7 @@ jobs:
           python3 .github/scripts/check-sample-startup-tests.py
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@0f8570b1a125f4937846a11fcfa3bcd548bd8c97 # v4.6.0
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           files: '**/target/site/jacoco/jacoco.xml'
           fail_ci_if_error: false
