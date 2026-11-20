@@ -16,9 +16,11 @@ from check_dependency_advisories import (
     HTTP_INVOKER,
     RUNTIME_EXCEPTION,
     TEST_EXCEPTION_EXPIRY,
+    TEST_EXCEPTIONS,
     SnapshotNotReady,
     check,
     check_release,
+    check_runtime_trees,
     comparison,
     fetch_comparison,
     review_pull_request,
@@ -183,6 +185,99 @@ class ReleaseExpiryTest(unittest.TestCase):
     def test_exact_version_in_non_test_scope_is_unaccepted_even_before_expiry(self):
         with self.assertRaisesRegex(ValueError, "outside approved test scope"):
             self.verify(TODAY, pom_project(BOOT2_ARTIFACT, "5.3.39", "runtime"), pom_project(BOOT3_ARTIFACT))
+
+
+REPOSITORY = Path(__file__).resolve().parents[2]
+MAVEN = {"m": "http://maven.apache.org/POM/4.0.0"}
+
+
+def repository_pom(manifest):
+    return ElementTree.parse(REPOSITORY / manifest).getroot()
+
+
+def mvc_declarations(pom):
+    # Every spring-webmvc element, including profiles, dependencyManagement, and plugin dependencies.
+    return [
+        dep for dep in pom.iter(f"{{{MAVEN['m']}}}dependency")
+        if dep.findtext("m:groupId", namespaces=MAVEN) == "org.springframework"
+        and dep.findtext("m:artifactId", namespaces=MAVEN) == "spring-webmvc"
+    ]
+
+
+class AcceptedScopeTest(unittest.TestCase):
+    """Ties the 2026-11-20 acceptance to the repository so that it cannot widen unreviewed."""
+
+    def test_acceptance_is_exactly_the_seven_reviewed_rows_until_the_review_date(self):
+        self.assertEqual(date(2026, 12, 19), TEST_EXCEPTION_EXPIRY)
+        accepted = {(BOOT2_MANIFEST, "5.3.39", ghsa, severity) for ghsa, severity in BOOT2_IDS.items()}
+        accepted |= {(BOOT3_MANIFEST, "6.2.19", ghsa, severity) for ghsa, severity in BOOT3_IDS.items()}
+        self.assertEqual(7, len(accepted))
+        self.assertEqual(accepted, TEST_EXCEPTIONS)
+
+    def test_each_waived_starter_declares_its_waived_mvc_version_once_and_only_for_tests(self):
+        for manifest, version in sorted({(manifest, version) for manifest, version, _, _ in TEST_EXCEPTIONS}):
+            with self.subTest(manifest=manifest):
+                pom = repository_pom(manifest)
+                declarations = mvc_declarations(pom)
+                self.assertEqual(1, len(declarations))
+                mvc = declarations[0]
+                self.assertEqual("test", mvc.findtext("m:scope", namespaces=MAVEN))
+                self.assertEqual("${spring.version}", mvc.findtext("m:version", namespaces=MAVEN))
+                self.assertEqual(version, pom.findtext("m:properties/m:spring.version", namespaces=MAVEN))
+
+    def test_no_other_published_module_declares_spring_webmvc(self):
+        modules = repository_pom("pom.xml").findall("m:modules/m:module", MAVEN)
+        published = ["pom.xml"] + [
+            manifest for manifest in (f"{module.text}/pom.xml" for module in modules)
+            if repository_pom(manifest).findtext("m:properties/m:maven.deploy.skip", namespaces=MAVEN) != "true"
+        ]
+        # Parent, core, Mongo, Redis, both starters, control-support, and Envoy.
+        self.assertEqual(8, len(published))
+        for manifest in published:
+            if manifest not in (BOOT2_MANIFEST, BOOT3_MANIFEST):
+                with self.subTest(manifest=manifest):
+                    self.assertEqual([], mvc_declarations(repository_pom(manifest)))
+
+
+CORE_PATH = "+- io.github.openfluxgate:fluxgate-core:jar:0.5.0:compile"
+WEB_PATH = "+- org.springframework:spring-web:jar:5.3.39:compile (optional)"
+
+
+def runtime_tree(artifact, *paths):
+    return "\n".join([f"io.github.openfluxgate:{artifact}:jar:0.5.0", *paths]) + "\n"
+
+
+class RuntimeTreeTest(unittest.TestCase):
+    def test_both_starters_without_runtime_mvc_pass(self):
+        boot3 = runtime_tree(BOOT3_ARTIFACT, CORE_PATH)
+        check_runtime_trees([runtime_tree(BOOT2_ARTIFACT, CORE_PATH, WEB_PATH), boot3])
+
+    def test_direct_optional_or_transitive_runtime_mvc_is_rejected(self):
+        boot3 = runtime_tree(BOOT3_ARTIFACT, CORE_PATH)
+        for path in (
+            "\\- org.springframework:spring-webmvc:jar:5.3.39:compile",
+            "\\- org.springframework:spring-webmvc:jar:5.3.39:compile (optional)",
+            "\\- org.example:web-support:jar:1.0:runtime\n"
+            "   \\- org.springframework:spring-webmvc:jar:5.3.39:runtime",
+            # Verbose output of a transitive copy hidden by the starter's own test declaration.
+            "\\- org.springframework.boot:spring-boot-starter-web:jar:2.7.18:compile\n"
+            "   \\- (org.springframework:spring-webmvc:jar:5.3.31:compile - omitted for conflict with 5.3.39)",
+        ):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "outside test scope"):
+                check_runtime_trees([runtime_tree(BOOT2_ARTIFACT, CORE_PATH, path), boot3])
+
+    def test_missing_duplicate_foreign_or_filtered_trees_are_rejected(self):
+        boot2 = runtime_tree(BOOT2_ARTIFACT, CORE_PATH)
+        for trees in (
+            [],
+            [boot2],
+            [boot2, boot2],
+            [boot2, runtime_tree("fluxgate-core", CORE_PATH)],
+            [boot2, ""],
+            [boot2, runtime_tree(BOOT3_ARTIFACT)],
+        ):
+            with self.subTest(trees=trees), self.assertRaisesRegex(ValueError, "one complete runtime"):
+                check_runtime_trees(trees)
 
 
 class MarketplaceHandoffTest(unittest.TestCase):

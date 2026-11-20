@@ -42,6 +42,29 @@ absence of HTTP Invoker use. Applications that supply Spring Web themselves must
 their use of HTTP Invoker and Java deserialization independently. Spring Framework 6
 removed the affected HTTP Invoker components.
 
+### Release owner acceptance (2026-11-20)
+
+On 2026-11-20 the [release maintainer](../MAINTAINERS.md) accepted the eight records above
+as 0.5.0 release conditions.
+
+| Target | Records | Basis | Review by |
+| --- | --- | --- | --- |
+| Boot 2 test dependency `spring-webmvc:5.3.39` | 5 | MockMvc tests only; not passed on to starter users | 2026-12-19 00:00 UTC (CI exception expiry) |
+| Boot 3 test dependency `spring-webmvc:6.2.19` | 2 | MockMvc tests only; not passed on to starter users | 2026-12-19 00:00 UTC (CI exception expiry) |
+| Boot 2 optional `spring-web:5.3.39` (GHSA-4wrc-f8pq-fpqp) | 1 | Optional filter dependency; no HTTP Invoker use | 2026-12-19 (no expiry in code) |
+
+These checks hold the acceptance to that scope:
+
+- The PR check `Enforce scoped advisory policy` fails in any of these cases:
+  - The seven exceptions or their expiry in `check_dependency_advisories.py` change.
+  - Either starter POM moves `spring-webmvc` out of test scope or to a version other than
+    the excepted one.
+  - Another published module declares `spring-webmvc`.
+- Java 21 CI fails if `spring-webmvc` reaches either starter's runtime dependency tree,
+  optional dependencies included, directly or transitively.
+- The release workflow rechecks test scope and expiry in the effective POMs just before
+  publishing.
+
 ### Check your application runtime
 
 Run the command for your build from the application module, with the profiles and

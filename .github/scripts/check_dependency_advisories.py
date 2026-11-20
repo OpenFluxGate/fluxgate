@@ -7,6 +7,7 @@ import re
 import sys
 import time
 from datetime import date, datetime, timezone
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -17,6 +18,11 @@ BOOT2_MANIFEST = "fluxgate-spring-boot2-starter/pom.xml"
 BOOT3_MANIFEST = "fluxgate-spring-boot3-starter/pom.xml"
 
 # Existing HTTP Invoker exception. Its exact runtime identity governs separately.
+# GHSA-4wrc-f8pq-fpqp (CVE-2016-1000027, critical): Java deserialization through HTTP Invoker.
+# The Boot 2 starter declares spring-web 5.3.39 as optional for its servlet filter and never uses
+# HTTP Invoker (fluxgate-spring-boot2-starter/HTTP-INVOKER.ko.md). Spring 6 removed HTTP Invoker,
+# so the Boot 3 starter is not affected. The release owner accepted this exception for 0.5.0 on
+# 2026-11-20. It has no expiry in code. Review it with the test exceptions by 2026-12-19 UTC.
 RUNTIME_EXCEPTION = {
     "manifest": BOOT2_MANIFEST,
     "ecosystem": "maven",
@@ -26,16 +32,39 @@ RUNTIME_EXCEPTION = {
     "scope": "runtime",
 }
 
-# Release maintainer review is required before this exclusive UTC expiry.
+# Temporary test exceptions. The release owner accepted all seven rows for 0.5.0 on 2026-11-20.
+# Each row is spring-webmvc that one starter declares with <scope>test</scope> so that MockMvc can
+# drive RateLimitExceededExceptionHandler through a real DispatcherServlet. They stay out of the
+# published starters for three reasons:
+#   - Maven never passes a test dependency on to consumers. Any MVC in an application is its own.
+#   - Starter main code compiles without spring-webmvc. It names MVC only in a @ConditionalOnClass
+#     string, so the exception handler activates only on the application's own MVC.
+#   - check() accepts a row only as a "development" dependency of that exact starter and version.
+#     check_release() rejects the waived version outside test scope in the effective POM,
+#     check_runtime_trees() rejects spring-webmvc anywhere on a starter's runtime classpath, and
+#     test_dependency_advisories.py pins these rows to the starter POMs.
+# No public 5.3.x or 6.2.x release fixes these rows. Those lines get fixes only through enterprise
+# support. Spring Framework 7.0.9 is the public fix.
+# Review every row before the exclusive UTC expiry below: upgrade, drop MockMvc, or record a new
+# acceptance. Move the date only with that review.
 TEST_EXCEPTION_OWNER = "release maintainer"
 TEST_EXCEPTION_EXPIRY = date(2026, 12, 19)
 TEST_EXCEPTIONS = {
+    # fluxgate-spring-boot2-starter, spring-webmvc 5.3.39 (Spring Boot 2.7.18), test scope only.
+    # CVE-2026-41845: cross-site scripting through JavaScriptUtils escaping.
     (BOOT2_MANIFEST, "5.3.39", "GHSA-3chg-m5w7-qfv5", "high"),
+    # CVE-2024-38816: path traversal in functional web framework static resources.
     (BOOT2_MANIFEST, "5.3.39", "GHSA-cx7f-g6mp-7hqm", "high"),
+    # CVE-2024-38819: path traversal in functional web framework static resources.
     (BOOT2_MANIFEST, "5.3.39", "GHSA-g5vr-rgqm-vf78", "high"),
+    # CVE-2026-47884: improper path limitation in XsltView.
     (BOOT2_MANIFEST, "5.3.39", "GHSA-pc63-qcmh-9cmg", "critical"),
+    # CVE-2026-41842: denial of service through versioned resources.
     (BOOT2_MANIFEST, "5.3.39", "GHSA-x23c-287f-qqv5", "high"),
+    # fluxgate-spring-boot3-starter, spring-webmvc 6.2.19 (Spring Boot 3.5.16), test scope only.
+    # CVE-2026-47890: server-sent event stream corruption while rendering fragments.
     (BOOT3_MANIFEST, "6.2.19", "GHSA-j9f9-w8pj-32f8", "critical"),
+    # CVE-2026-47884: improper path limitation in XsltView.
     (BOOT3_MANIFEST, "6.2.19", "GHSA-pc63-qcmh-9cmg", "critical"),
 }
 BLOCKING_SEVERITIES = {"high", "critical"}
@@ -242,6 +271,29 @@ def check_release(effective_pom, today):
         raise ValueError(f"test advisory exceptions expired {TEST_EXCEPTION_EXPIRY} UTC: {', '.join(expired)}")
 
 
+def check_runtime_trees(trees):
+    # Each tree is the unfiltered `dependency:tree -Dscope=runtime -Dverbose` text of one waived
+    # starter: its compile and runtime classpath, optional dependencies included. That is a superset
+    # of what an application inherits, so spring-webmvc anywhere in it voids the test-only basis of
+    # TEST_EXCEPTIONS. Verbose output matters: Maven mediation lets the starter's direct test
+    # declaration hide a transitive compile copy that applications would still inherit, and only
+    # verbose output keeps that copy, as an "omitted for conflict" line. A tree without dependency
+    # lines proves nothing and is rejected, because a filtered tree (-Dincludes) can come out empty.
+    expected = {manifest.removesuffix("/pom.xml") for manifest, _, _, _ in TEST_EXCEPTIONS}
+    seen = set()
+    for tree in trees:
+        lines = [line for line in tree.splitlines() if line.strip()]
+        root = lines and re.fullmatch(r"io[.]github[.]openfluxgate:([a-z0-9-]+):jar:[0-9A-Za-z._+-]+", lines[0])
+        if not root or root.group(1) not in expected or root.group(1) in seen or len(lines) < 2:
+            raise ValueError("expected one complete runtime dependency tree per FluxGate starter")
+        seen.add(root.group(1))
+        mvc = [line.strip() for line in lines if "org.springframework:spring-webmvc:" in line]
+        if mvc:
+            raise ValueError(f"{root.group(1)} resolves spring-webmvc outside test scope: {'; '.join(mvc)}")
+    if seen != expected:
+        raise ValueError("expected one complete runtime dependency tree per FluxGate starter")
+
+
 def review_pull_request():
     with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as event_file:
         event = json.load(event_file)
@@ -269,11 +321,15 @@ def review_pull_request():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release-effective-pom", metavar="FILE")
+    parser.add_argument("--starter-runtime-tree", metavar="FILE", action="append")
     args = parser.parse_args()
     if args.release_effective_pom:
         today = datetime.now(timezone.utc).date()
         check_release(args.release_effective_pom, today)
         print(f"Release advisory expiry check passed on {today} UTC.")
+    elif args.starter_runtime_tree:
+        check_runtime_trees([Path(tree).read_text(encoding="utf-8") for tree in args.starter_runtime_tree])
+        print("Neither FluxGate starter resolves spring-webmvc outside test scope.")
     else:
         review_pull_request()
 

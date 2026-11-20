@@ -81,6 +81,20 @@ jobs:
       - name: Build & Install (skip tests first)
         run: ./mvnw -B install -DskipTests
 
+      # The 0.5.0 spring-webmvc advisory exceptions in .github/scripts/check_dependency_advisories.py
+      # hold only while MVC stays a starter test dependency. Fail if either starter's compile or
+      # runtime classpath (optional dependencies included) resolves it, directly or transitively.
+      # -Dverbose keeps a transitive copy that the starter's own test declaration would hide, and -am
+      # reads sibling POMs from the reactor so that a missing local copy cannot shorten the tree.
+      - name: Keep spring-webmvc off the starter runtime classpath
+        run: |
+          ./mvnw -B -ntp -pl fluxgate-spring-boot2-starter,fluxgate-spring-boot3-starter -am \
+            org.apache.maven.plugins:maven-dependency-plugin:3.8.1:tree \
+            -Dscope=runtime -Dverbose -DoutputFile=target/runtime-dependency-tree.txt
+          python3 .github/scripts/check_dependency_advisories.py \
+            --starter-runtime-tree fluxgate-spring-boot2-starter/target/runtime-dependency-tree.txt \
+            --starter-runtime-tree fluxgate-spring-boot3-starter/target/runtime-dependency-tree.txt
+
       - name: Run unit + integration tests with coverage
         run: |
           ./mvnw -B verify -Predis-cluster-it -Dfluxgate.redis.cluster.require=true
